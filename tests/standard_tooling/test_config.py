@@ -10,6 +10,7 @@ import pytest
 from standard_tooling.lib.config import (
     CiConfig,
     ConfigError,
+    GithubOverrides,
     MarkdownlintConfig,
     read_config,
     st_install_tag,
@@ -251,3 +252,26 @@ def test_read_config_no_ci_section(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
     cfg = read_config(tmp_path)
     assert cfg.ci is None
+
+
+# -- [github] section ---------------------------------------------------------
+
+_GITHUB_OVERRIDE_TOML = (
+    _VALID_TOML
+    + """
+[github]
+skip-rulesets = true
+"""
+)
+
+
+def test_read_config_github_overrides(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_GITHUB_OVERRIDE_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.github == GithubOverrides(skip_rulesets=True)
+
+
+def test_read_config_no_github_section(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.github == GithubOverrides(skip_rulesets=False)

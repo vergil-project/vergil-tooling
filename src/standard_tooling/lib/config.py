@@ -58,11 +58,17 @@ class CiConfig:
 
 
 @dataclass
+class GithubOverrides:
+    skip_rulesets: bool
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
     ci: CiConfig | None
+    github: GithubOverrides
 
 
 def read_config(repo_root: Path) -> StConfig:
@@ -131,6 +137,11 @@ def read_config(repo_root: Path) -> StConfig:
             integration_tests=bool(ci_raw.get("integration-tests", False)),
         )
 
+    github_raw = raw.get("github", {})
+    github_overrides = GithubOverrides(
+        skip_rulesets=bool(github_raw.get("skip-rulesets", False)),
+    )
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -139,7 +150,13 @@ def read_config(repo_root: Path) -> StConfig:
         primary_language=project_raw["primary-language"],
         co_authors=co_authors,
     )
-    return StConfig(project=project, dependencies=dict(deps), markdownlint=markdownlint, ci=ci)
+    return StConfig(
+        project=project,
+        dependencies=dict(deps),
+        markdownlint=markdownlint,
+        ci=ci,
+        github=github_overrides,
+    )
 
 
 def st_install_tag(repo_root: Path) -> str:
