@@ -527,6 +527,8 @@
       
         
       
+        
+      
     
     
     
@@ -570,6 +572,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.4.14/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.14
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -1462,15 +1487,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#st-markdown-standards" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-markdown-standards
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -1763,7 +1779,7 @@
   
   
   <span class="md-ellipsis">
-    markdown-standards
+    markdown-validation
     
   </span>
   
@@ -2347,15 +2363,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#st-markdown-standards" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-markdown-standards
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -2918,8 +2925,9 @@ from the repository profile, then dispatches to
 </table>
 <h3 id="st-validate-local-common">st-validate-local-common<a class="headerlink" href="#st-validate-local-common" title="Permanent link">&para;</a></h3>
 <p>Shared validation checks for all repos: repository profile
-validation, markdown standards, shellcheck on <code>scripts/</code>, and
-yamllint on <code>.github/</code> and <code>docs/</code> YAML files.</p>
+validation, markdownlint on published markdown (<code>docs/site/**/*.md</code>
+and <code>README.md</code>) using the bundled canonical config, shellcheck on
+<code>scripts/</code>, and yamllint on <code>.github/</code> and <code>docs/</code> YAML files.</p>
 <table>
 <thead>
 <tr>
@@ -3023,44 +3031,6 @@ placeholder values.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 valid, 1 invalid, 2 file not found</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="st-markdown-standards">st-markdown-standards<a class="headerlink" href="#st-markdown-standards" title="Permanent link">&para;</a></h3>
-<p>Validate published documentation against markdown standards.
-Runs markdownlint on <code>docs/site/**/*.md</code> and structural checks
-(H1 count, ToC heading, heading-level skips) on <code>README.md</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>standard_tooling.bin.markdown_standards</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>[file...]</code> (optional; defaults to docs/site + README.md)</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td><code>markdownlint</code> on PATH</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Exit 2 if markdownlint not found</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 passed, 1 violations found, 2 tool missing</td>
 </tr>
 <tr>
 <td>Status</td>

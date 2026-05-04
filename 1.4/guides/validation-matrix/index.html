@@ -527,6 +527,8 @@
       
         
       
+        
+      
     
     
     
@@ -570,6 +572,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.4.14/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.14
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -1437,7 +1462,7 @@
   
   
   <span class="md-ellipsis">
-    markdown-standards
+    markdown-validation
     
   </span>
   
@@ -1902,9 +1927,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-markdown-standards" class="md-nav__link">
+  <a href="#markdown-validation-st-validate-local-common" class="md-nav__link">
     <span class="md-ellipsis">
-      st-markdown-standards
+      Markdown validation (st-validate-local-common)
     </span>
   </a>
   
@@ -2051,9 +2076,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-markdown-standards" class="md-nav__link">
+  <a href="#markdown-validation-st-validate-local-common" class="md-nav__link">
     <span class="md-ellipsis">
-      st-markdown-standards
+      Markdown validation (st-validate-local-common)
     </span>
   </a>
   
@@ -2128,7 +2153,7 @@ and its exit codes.</p>
 <td>Markdown standards</td>
 <td>--</td>
 <td>Yes</td>
-<td><code>st-markdown-standards</code></td>
+<td><code>st-validate-local-common</code></td>
 </tr>
 <tr>
 <td>PR issue linkage</td>
@@ -2183,11 +2208,12 @@ and its exit codes.</p>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Validates <code>docs/repository-standards.md</code> has all six required
 attributes.</p>
-<h3 id="st-markdown-standards">st-markdown-standards<a class="headerlink" href="#st-markdown-standards" title="Permanent link">&para;</a></h3>
+<h3 id="markdown-validation-st-validate-local-common">Markdown validation (st-validate-local-common)<a class="headerlink" href="#markdown-validation-st-validate-local-common" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
-<p>Runs markdownlint on all markdown files. Structural checks (single
-H1, TOC, heading hierarchy) apply to standard docs only -- not
-doc-site pages or CHANGELOG.md.</p>
+<p>Runs markdownlint on published markdown (<code>docs/site/**/*.md</code> and
+<code>README.md</code>) using the canonical config bundled in standard-tooling.
+See the <a href="../../reference/lint/markdown-standards/">Markdown Validation</a>
+reference for config details and file scope.</p>
 <h3 id="st-pr-issue-linkage">st-pr-issue-linkage<a class="headerlink" href="#st-pr-issue-linkage" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Validates the PR body contains <code>Fixes #N</code>, <code>Closes #N</code>,

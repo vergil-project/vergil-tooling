@@ -527,6 +527,8 @@
       
         
       
+        
+      
     
     
     
@@ -570,6 +572,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v1.4.14/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.14
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -1448,7 +1473,7 @@
   
   
   <span class="md-ellipsis">
-    markdown-standards
+    markdown-validation
     
   </span>
   
@@ -2080,7 +2105,7 @@ enables auto-merge.</p>
 <li>Must be on the <code>develop</code> branch</li>
 <li>Working tree must be clean</li>
 <li>Local <code>develop</code> must match <code>origin/develop</code></li>
-<li>Required tools: <code>gh</code>, <code>git-cliff</code>, <code>markdownlint</code></li>
+<li>Required tools: <code>gh</code>, <code>git-cliff</code></li>
 </ul>
 <h2 id="ecosystem-detection">Ecosystem Detection<a class="headerlink" href="#ecosystem-detection" title="Permanent link">&para;</a></h2>
 <p>The tool auto-detects the project ecosystem to find the version:</p>
@@ -2119,7 +2144,7 @@ enables auto-merge.</p>
 <li><strong>Merge main</strong> -- incorporates prior release history to prevent
    changelog conflicts. Uses <code>-X ours</code> for auto-resolution.</li>
 <li><strong>Generate changelog</strong> -- runs <code>git-cliff</code> with a boundary tag,
-   validates with markdownlint.</li>
+   validates the generated output.</li>
 <li><strong>Push branch</strong> -- pushes <code>release/{version}</code> to origin.</li>
 <li><strong>Create PR</strong> -- creates a PR targeting <code>main</code> with
    <code>Ref #{issue}</code> linkage.</li>
