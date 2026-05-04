@@ -52,10 +52,17 @@ class MarkdownlintConfig:
 
 
 @dataclass
+class CiConfig:
+    versions: list[str]
+    integration_tests: bool
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
+    ci: CiConfig | None
 
 
 def read_config(repo_root: Path) -> StConfig:
@@ -106,6 +113,24 @@ def read_config(repo_root: Path) -> StConfig:
         raise ConfigError(msg)
     markdownlint = MarkdownlintConfig(ignore=ml_ignore)
 
+    ci_raw = raw.get("ci")
+    ci: CiConfig | None = None
+    if ci_raw is not None:
+        versions = ci_raw.get("versions")
+        if versions is None:
+            msg = f"{CONFIG_FILE}: [ci] missing required field 'versions'"
+            raise ConfigError(msg)
+        if not isinstance(versions, list) or not versions:
+            msg = f"{CONFIG_FILE}: [ci].versions must be a list with at least one entry"
+            raise ConfigError(msg)
+        if not all(isinstance(v, str) for v in versions):
+            msg = f"{CONFIG_FILE}: [ci].versions entries must be strings"
+            raise ConfigError(msg)
+        ci = CiConfig(
+            versions=versions,
+            integration_tests=bool(ci_raw.get("integration-tests", False)),
+        )
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -114,7 +139,7 @@ def read_config(repo_root: Path) -> StConfig:
         primary_language=project_raw["primary-language"],
         co_authors=co_authors,
     )
-    return StConfig(project=project, dependencies=dict(deps), markdownlint=markdownlint)
+    return StConfig(project=project, dependencies=dict(deps), markdownlint=markdownlint, ci=ci)
 
 
 def st_install_tag(repo_root: Path) -> str:
