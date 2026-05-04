@@ -27,10 +27,11 @@ def read_output(*args: str) -> str:
     return result.stdout.strip()
 
 
-def read_json(*args: str) -> dict | list:
+def read_json(*args: str) -> dict[str, object] | list[object]:
     """Run a gh command and return parsed JSON from stdout."""
     raw = read_output(*args)
-    return json.loads(raw)
+    result: dict[str, object] | list[object] = json.loads(raw)
+    return result
 
 
 def create_pr(*, base: str, title: str, body_file: str) -> str:
