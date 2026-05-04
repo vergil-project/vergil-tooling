@@ -219,7 +219,7 @@ def test_read_config_ci_section(tmp_path: Path) -> None:
 
 
 def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
-    toml = _VALID_TOML + "[ci]\nversions = [\"3.14\"]\n"
+    toml = _VALID_TOML + '[ci]\nversions = ["3.14"]\n'
     (tmp_path / "standard-tooling.toml").write_text(toml)
     cfg = read_config(tmp_path)
     assert cfg.ci is not None
