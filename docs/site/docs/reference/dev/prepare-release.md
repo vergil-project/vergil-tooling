@@ -25,7 +25,7 @@ st-prepare-release --issue 42
 - Must be on the `develop` branch
 - Working tree must be clean
 - Local `develop` must match `origin/develop`
-- Required tools: `gh`, `git-cliff`, `markdownlint`
+- Required tools: `gh`, `git-cliff`
 
 ## Ecosystem Detection
 
@@ -47,7 +47,7 @@ The tool auto-detects the project ecosystem to find the version:
 3. **Merge main** -- incorporates prior release history to prevent
    changelog conflicts. Uses `-X ours` for auto-resolution.
 4. **Generate changelog** -- runs `git-cliff` with a boundary tag,
-   validates with markdownlint.
+   validates the generated output.
 5. **Push branch** -- pushes `release/{version}` to origin.
 6. **Create PR** -- creates a PR targeting `main` with
    `Ref #{issue}` linkage.

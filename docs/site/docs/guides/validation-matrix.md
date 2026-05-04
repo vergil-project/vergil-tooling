@@ -9,7 +9,7 @@ and its exit codes.
 | ----- | ---- | -- | ------ |
 | Branch naming | Yes | -- | `pre-commit` |
 | Repository profile | -- | Yes | `st-repo-profile` |
-| Markdown standards | -- | Yes | `st-markdown-standards` |
+| Markdown standards | -- | Yes | `st-validate-local-common` |
 | PR issue linkage | -- | Yes | `st-pr-issue-linkage` |
 | Shellcheck | -- | Yes | CI workflow step |
 
@@ -35,13 +35,14 @@ and its exit codes.
 Validates `docs/repository-standards.md` has all six required
 attributes.
 
-### st-markdown-standards
+### Markdown validation (st-validate-local-common)
 
 **Trigger:** PR opened or updated
 
-Runs markdownlint on all markdown files. Structural checks (single
-H1, TOC, heading hierarchy) apply to standard docs only -- not
-doc-site pages or CHANGELOG.md.
+Runs markdownlint on published markdown (`docs/site/**/*.md` and
+`README.md`) using the canonical config bundled in standard-tooling.
+See the [Markdown Validation](../reference/lint/markdown-standards.md)
+reference for config details and file scope.
 
 ### st-pr-issue-linkage
 

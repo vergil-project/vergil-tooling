@@ -47,9 +47,15 @@ class ProjectConfig:
 
 
 @dataclass
+class MarkdownlintConfig:
+    ignore: list[str]
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
+    markdownlint: MarkdownlintConfig
 
 
 def read_config(repo_root: Path) -> StConfig:
@@ -93,6 +99,13 @@ def read_config(repo_root: Path) -> StConfig:
         msg = f"{CONFIG_FILE}: [dependencies] must contain 'standard-tooling'"
         raise ConfigError(msg)
 
+    ml_raw = raw.get("markdownlint", {})
+    ml_ignore = ml_raw.get("ignore", [])
+    if not isinstance(ml_ignore, list) or not all(isinstance(p, str) for p in ml_ignore):
+        msg = f"{CONFIG_FILE}: [markdownlint].ignore must be a list of strings"
+        raise ConfigError(msg)
+    markdownlint = MarkdownlintConfig(ignore=ml_ignore)
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -101,7 +114,7 @@ def read_config(repo_root: Path) -> StConfig:
         primary_language=project_raw["primary-language"],
         co_authors=co_authors,
     )
-    return StConfig(project=project, dependencies=dict(deps))
+    return StConfig(project=project, dependencies=dict(deps), markdownlint=markdownlint)
 
 
 def st_install_tag(repo_root: Path) -> str:

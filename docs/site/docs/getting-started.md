@@ -135,8 +135,8 @@ If all three behave as expected, you're wired up correctly.
 ## Next steps
 
 - **[Consuming Repo Setup](guides/consuming-repo-setup.md)** —
-  detailed walkthrough including CI workflow, markdownlint config,
-  plugin nuances, and troubleshooting.
+  detailed walkthrough including CI workflow, plugin nuances, and
+  troubleshooting.
 - **[Git Workflow](guides/git-workflow.md)** — branching, commit /
   PR / finalize cycle, two-layer enforcement, worktrees in practice.
 - **[Worktree convention spec][worktree-spec]**

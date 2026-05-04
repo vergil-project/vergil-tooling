@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "standard-tooling"
-version = "1.4.13"
+version = "1.4.14"
 description = "Shared development tooling for managed repositories"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"

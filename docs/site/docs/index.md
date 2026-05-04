@@ -12,8 +12,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 `st-finalize-repo`, `st-validate-local`
 
 **Lint tools** (installed as `st-*`):
-`st-repo-profile`, `st-markdown-standards`,
-`st-pr-issue-linkage`, validation drivers
+`st-repo-profile`, `st-pr-issue-linkage`, validation drivers
 
 **Git hooks** (`.githooks/`):
 Env-var gate that admits `st-commit` and blocks raw `git commit`

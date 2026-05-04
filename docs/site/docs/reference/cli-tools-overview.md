@@ -185,8 +185,9 @@ from the repository profile, then dispatches to
 ### st-validate-local-common
 
 Shared validation checks for all repos: repository profile
-validation, markdown standards, shellcheck on `scripts/`, and
-yamllint on `.github/` and `docs/` YAML files.
+validation, markdownlint on published markdown (`docs/site/**/*.md`
+and `README.md`) using the bundled canonical config, shellcheck on
+`scripts/`, and yamllint on `.github/` and `docs/` YAML files.
 
 | Attribute | Value |
 |---|---|
@@ -225,21 +226,6 @@ placeholder values.
 | Preconditions | `docs/repository-standards.md` exists |
 | Failure mode | Exit 2 if profile file not found; exit 1 for missing or placeholder attributes |
 | Exit codes | 0 valid, 1 invalid, 2 file not found |
-| Status | Active |
-
-### st-markdown-standards
-
-Validate published documentation against markdown standards.
-Runs markdownlint on `docs/site/**/*.md` and structural checks
-(H1 count, ToC heading, heading-level skips) on `README.md`.
-
-| Attribute | Value |
-|---|---|
-| Source | `standard_tooling.bin.markdown_standards` |
-| Args | `[file...]` (optional; defaults to docs/site + README.md) |
-| Preconditions | `markdownlint` on PATH |
-| Failure mode | Exit 2 if markdownlint not found |
-| Exit codes | 0 passed, 1 violations found, 2 tool missing |
 | Status | Active |
 
 ## CI-only tools

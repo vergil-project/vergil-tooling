@@ -36,7 +36,7 @@ Run inside dev containers launched by `st-docker-run`.
 | `st-validate-local-go` | Go-specific validation |
 | `st-validate-local-java` | Java-specific validation |
 | [st-repo-profile](lint/repo-profile.md) | Repository profile attribute validation |
-| [st-markdown-standards](lint/markdown-standards.md) | Markdown linting and structural checks |
+| [Markdown validation](lint/markdown-standards.md) | Markdownlint with bundled canonical config |
 
 ## CI-only tools
 

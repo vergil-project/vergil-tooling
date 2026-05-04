@@ -7,7 +7,12 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.lib.config import ConfigError, read_config, st_install_tag
+from standard_tooling.lib.config import (
+    ConfigError,
+    MarkdownlintConfig,
+    read_config,
+    st_install_tag,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -135,3 +140,60 @@ def test_read_config_no_co_authors(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text("".join(lines))
     cfg = read_config(tmp_path)
     assert cfg.project.co_authors == {}
+
+
+# -- [markdownlint] section ---------------------------------------------------
+
+_ML_IGNORE_TOML = (
+    _VALID_TOML
+    + """
+[markdownlint]
+ignore = ["docs/site/docs/research"]
+"""
+)
+
+
+def test_read_config_markdownlint_ignore(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_ML_IGNORE_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint == MarkdownlintConfig(ignore=["docs/site/docs/research"])
+
+
+def test_read_config_markdownlint_multiple_ignores(tmp_path: Path) -> None:
+    toml = (
+        _VALID_TOML
+        + '[markdownlint]\nignore = ["docs/site/docs/research", "docs/site/docs/archive"]\n'
+    )
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint.ignore == [
+        "docs/site/docs/research",
+        "docs/site/docs/archive",
+    ]
+
+
+def test_read_config_no_markdownlint_section(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint == MarkdownlintConfig(ignore=[])
+
+
+def test_read_config_markdownlint_empty_ignore(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[markdownlint]\nignore = []\n"
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint.ignore == []
+
+
+def test_read_config_markdownlint_no_ignore_key(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[markdownlint]\n"
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.markdownlint.ignore == []
+
+
+def test_read_config_markdownlint_ignore_not_a_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\nignore = "not-a-list"\n'
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[markdownlint\]\.ignore must be a list"):
+        read_config(tmp_path)

@@ -67,7 +67,7 @@ nav:
           - pre-commit: reference/hooks/pre-commit.md
       - Validators:
           - repo-profile: reference/lint/repo-profile.md
-          - markdown-standards: reference/lint/markdown-standards.md
+          - markdown-validation: reference/lint/markdown-standards.md
           - pr-issue-linkage: reference/lint/pr-issue-linkage.md
       - CLI Tools:
           - st-commit: reference/dev/commit.md

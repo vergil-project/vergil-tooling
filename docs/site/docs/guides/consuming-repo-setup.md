@@ -238,38 +238,7 @@ plugin's commit-block hook activates against the presence of
 For how to actually use worktrees during development, see
 [Git Workflow → Parallel work with worktrees](git-workflow.md#parallel-work-with-worktrees).
 
-## Step 7: Markdownlint configuration
-
-Create `.markdownlint.yaml` at your repo root:
-
-```yaml
-default: true
-no-duplicate-heading:
-  siblings_only: true
-# Exempt tables and code blocks from the 80-char line-length check.
-# Wide reference tables and pasted commands legitimately exceed it.
-MD013:
-  line_length: 80
-  tables: false
-  code_blocks: false
-# Disable the table-column-style rule. Tables render correctly
-# regardless of strict pipe alignment; enforcing it adds maintenance
-# burden for no reader benefit.
-MD060: false
-```
-
-The base rule set (`default: true`) plus the three customizations
-above match what standard-tooling itself uses, so markdown files
-that pass locally will pass in CI.
-
-Optional: add `.markdownlintignore` to skip generated files:
-
-```text
-CHANGELOG.md
-releases/
-```
-
-## Step 8: CI workflow
+## Step 7: CI workflow
 
 Use the `standards-compliance` composite action from
 `wphillipmoore/standard-actions`. Minimal workflow
@@ -300,7 +269,6 @@ jobs:
 What the composite action runs inside the `dev-base` container:
 
 - `st-repo-profile` — validates `docs/repository-standards.md`
-- `st-markdown-standards` — markdownlint + structural checks
 - `st-pr-issue-linkage` — validates PR body has an issue linkage
   keyword (`Fixes`, `Closes`, `Resolves`, `Ref`)
 
@@ -310,7 +278,7 @@ no further setup is needed in the workflow.
 See the [CI Architecture](ci-architecture.md) guide if you also want
 per-language test/lint/audit tiers.
 
-## Step 9: Verify end-to-end
+## Step 8: Verify end-to-end
 
 Once the above is in place, sanity-check each layer:
 

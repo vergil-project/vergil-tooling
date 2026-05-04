@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 
 from standard_tooling.bin import repo_profile_cli
 from standard_tooling.lib import git
+from standard_tooling.lib.config import read_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,13 +38,16 @@ def _find_shell_files(repo_root: Path) -> list[str]:
     return sorted(found)
 
 
-def _find_markdown_files(repo_root: Path) -> list[str]:
+def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
     """Discover published markdown files: docs/site/**/*.md and README.md."""
     found: list[str] = []
+    ignore_paths = [repo_root / p for p in (ignore or [])]
 
     site_dir = repo_root / "docs" / "site"
     if site_dir.is_dir():
         for path in site_dir.rglob("*.md"):
+            if any(path.is_relative_to(ip) for ip in ignore_paths):
+                continue
             found.append(str(path))
 
     readme = repo_root / "README.md"
@@ -96,7 +100,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if rc != 0:
         return rc
 
-    md_files = _find_markdown_files(repo_root)
+    cfg = read_config(repo_root)
+    md_files = _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
     if md_files:
         print(f"Running: markdownlint ({len(md_files)} files)")
         config = files("standard_tooling.configs") / "markdownlint.yaml"
