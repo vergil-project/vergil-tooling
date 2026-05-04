@@ -11,6 +11,7 @@ from standard_tooling.lib import github
 from standard_tooling.lib.config import StConfig, _parse_raw_config
 from standard_tooling.lib.github_config import (
     ConfigDiff,
+    apply_desired_state,
     compute_desired_state,
     compute_diff,
     fetch_actual_state,
@@ -85,6 +86,12 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
         print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
 
 
+def _apply_repo(repo: str, config: StConfig) -> None:
+    """Apply desired state to a repo."""
+    desired = compute_desired_state(config)
+    apply_desired_state(repo, desired)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repos = _resolve_repos(args)
@@ -102,7 +109,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diff":
         return 0
 
-    # apply mode — not yet implemented
+    non_compliant = [
+        r for r in repos if not _audit_repo(r, _fetch_remote_config(r)).is_compliant()
+    ]
+    if not non_compliant:
+        print("All repos compliant, nothing to apply.")
+        return 0
+
+    if not args.yes:
+        print(f"\nAbout to apply changes to {len(non_compliant)} repo(s):")
+        for repo in non_compliant:
+            print(f"  - {repo}")
+        answer = input("\nProceed? [y/N] ")
+        if answer.lower() != "y":
+            print("Aborted.")
+            return 1
+
+    for repo in non_compliant:
+        config = _fetch_remote_config(repo)
+        print(f"  Applying to {repo}...")
+        _apply_repo(repo, config)
+        print(f"  {repo}: applied")
+
     return 0
 
 
