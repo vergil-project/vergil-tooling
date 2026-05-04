@@ -30,6 +30,18 @@ def test_read_output_returns_stripped_stdout() -> None:
     )
 
 
+def test_read_json_parses_dict() -> None:
+    with patch("standard_tooling.lib.github.read_output", return_value='{"key": "value"}'):
+        result = github.read_json("api", "repos/o/r")
+    assert result == {"key": "value"}
+
+
+def test_read_json_parses_list() -> None:
+    with patch("standard_tooling.lib.github.read_output", return_value='[{"id": 1}]'):
+        result = github.read_json("api", "repos/o/r/rulesets")
+    assert result == [{"id": 1}]
+
+
 def test_create_pr_returns_url() -> None:
     with patch("standard_tooling.lib.github.read_output", return_value="https://github.com/pr/1"):
         url = github.create_pr(base="main", title="title", body_file="body.md")
