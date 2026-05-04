@@ -305,14 +305,15 @@ needed — just the config file via `gh api`).
 
 **`st-github-config apply [--repo OWNER/REPO | --owner OWNER --project N] [--yes]`**
 
-Same computation as audit, but writes corrections via `gh api`.
-Reports what it changed. Requires confirmation unless `--yes`.
+Declarative: computes the desired state, diffs it against actual,
+displays the diff, then writes corrections via `gh api`. Reports
+what it changed. Requires confirmation unless `--yes`.
 
-**Safety gate:** `apply` refuses to act unless `audit` confirms
-that the current CI workflows already produce the expected check
-names. This prevents applying rulesets that reference check names
-the workflows don't produce yet, which would block merges
-fleet-wide.
+`apply` does not gate on audit results — it unconditionally asserts
+the desired state. The phased rollout (implementation step 8)
+mitigates risk: each repo's CI workflows are refactored to produce
+the canonical check names and verified via `audit` before `apply`
+is run fleet-wide.
 
 **`st-github-config diff [--repo OWNER/REPO | --owner OWNER --project N]`**
 
@@ -464,7 +465,7 @@ for parallelization.
 
 Steps 1-4 can ship independently and immediately fix the rulesets.
 Steps 5-8 are the larger CI/validation refactor. Step 9 ties them
-together with a safety gate.
+together.
 
 1. Define the canonical check name registry (names, job structure,
    matrix naming convention)
@@ -488,9 +489,9 @@ together with a safety gate.
    - Run `st-github-config audit` per repo to confirm alignment
      before proceeding to step 9
 9. Run `st-github-config apply` across all repos to enforce
-   rulesets. The `apply` safety gate requires `audit` to pass
-   first — rulesets cannot be applied until CI workflows produce
-   the expected check names.
+   rulesets. `apply` is declarative — it asserts the desired state.
+   The phased rollout in step 8 (audit each repo before proceeding)
+   is the mitigation against mismatched check names.
 10. Remove `scripts/dev/{lint,typecheck,test,audit}.sh` from all
     repos, remove `st-docker-test`, and remove deprecated
     `st-validate-local*` entry points
