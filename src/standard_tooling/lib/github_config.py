@@ -8,7 +8,7 @@ against the actual GitHub API state to produce audit diffs.
 from __future__ import annotations
 
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -405,3 +405,90 @@ def fetch_actual_state(repo: str) -> DesiredState:
         actions_permissions=actions_permissions,
         rulesets=rulesets,
     )
+
+
+# ---------------------------------------------------------------------------
+# Diff computation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class DiffItem:
+    field: str
+    expected: object
+    actual: object
+
+
+@dataclass
+class ConfigDiff:
+    items: list[DiffItem] = field(default_factory=list)
+
+    def is_compliant(self) -> bool:
+        return len(self.items) == 0
+
+
+def _diff_dataclass(
+    prefix: str,
+    desired: object,
+    actual: object,
+    items: list[DiffItem],
+) -> None:
+    if not hasattr(desired, "__dataclass_fields__"):
+        if desired != actual:
+            items.append(DiffItem(field=prefix, expected=desired, actual=actual))
+        return
+    for field_name in desired.__dataclass_fields__:
+        d_val = getattr(desired, field_name)
+        a_val = getattr(actual, field_name)
+        _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items)
+
+
+def _diff_rulesets(
+    desired: list[DesiredRuleset],
+    actual: list[DesiredRuleset],
+    items: list[DiffItem],
+) -> None:
+    desired_by_name = {r.name: r for r in desired}
+    actual_by_name = {r.name: r for r in actual}
+
+    for name in desired_by_name:
+        if name not in actual_by_name:
+            items.append(
+                DiffItem(
+                    field=f"rulesets.{name}",
+                    expected="present",
+                    actual="missing",
+                )
+            )
+        else:
+            _diff_dataclass(
+                f"rulesets.{name}",
+                desired_by_name[name],
+                actual_by_name[name],
+                items,
+            )
+
+    for name in actual_by_name:
+        if name not in desired_by_name:
+            items.append(
+                DiffItem(
+                    field=f"rulesets.{name}",
+                    expected="absent",
+                    actual="present",
+                )
+            )
+
+
+def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
+    """Compare desired vs actual state and return structured diff."""
+    items: list[DiffItem] = []
+    _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items)
+    _diff_dataclass("security", desired.security, actual.security, items)
+    _diff_dataclass(
+        "actions_permissions",
+        desired.actions_permissions,
+        actual.actions_permissions,
+        items,
+    )
+    _diff_rulesets(desired.rulesets, actual.rulesets, items)
+    return ConfigDiff(items=items)

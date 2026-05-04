@@ -13,9 +13,11 @@ from standard_tooling.lib.config import (
     StConfig,
 )
 from standard_tooling.lib.github_config import (
+    DesiredRuleset,
     _fetch_vulnerability_alerts,
     _lang_has_check,
     compute_desired_state,
+    compute_diff,
     desired_actions_permissions,
     desired_branch_protection_ruleset,
     desired_ci_gates_ruleset,
@@ -640,3 +642,69 @@ def test_fetch_vulnerability_alerts_disabled() -> None:
     )
     with patch("standard_tooling.lib.github_config.subprocess.run", return_value=cp):
         assert _fetch_vulnerability_alerts("o/r") is False
+
+
+# ---------------------------------------------------------------------------
+# Diff computation tests
+# ---------------------------------------------------------------------------
+
+
+def test_diff_identical_states_is_empty() -> None:
+    state = compute_desired_state(_st_config())
+    diff = compute_diff(desired=state, actual=state)
+    assert diff.is_compliant()
+    assert diff.items == []
+
+
+def test_diff_detects_repo_setting_mismatch() -> None:
+    desired = compute_desired_state(_st_config())
+    actual = compute_desired_state(_st_config())
+    actual.repo_settings.allow_auto_merge = True
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not diff.is_compliant()
+    assert any(d.field == "repo_settings.allow_auto_merge" for d in diff.items)
+
+
+def test_diff_detects_missing_ruleset() -> None:
+    desired = compute_desired_state(_st_config())
+    actual = compute_desired_state(_st_config())
+    actual.rulesets = []
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not diff.is_compliant()
+    assert any(d.field.startswith("rulesets.") for d in diff.items)
+
+
+def test_diff_detects_extra_ruleset() -> None:
+    desired = compute_desired_state(_st_config())
+    actual = compute_desired_state(_st_config())
+    actual.rulesets.append(
+        DesiredRuleset(
+            name="Extra",
+            target="branch",
+            enforcement="active",
+            ref_include=[],
+            bypass_actors=[],
+            rules=[],
+        )
+    )
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not diff.is_compliant()
+    assert any(d.field == "rulesets.Extra" and d.expected == "absent" for d in diff.items)
+
+
+def test_diff_detects_actions_permission_mismatch() -> None:
+    desired = compute_desired_state(_st_config())
+    actual = compute_desired_state(_st_config())
+    actual.actions_permissions.default_workflow_permissions = "write"
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not diff.is_compliant()
+    assert any(d.field == "actions_permissions.default_workflow_permissions" for d in diff.items)
+
+
+def test_diff_detects_security_mismatch() -> None:
+    desired = compute_desired_state(_st_config())
+    actual = compute_desired_state(_st_config())
+    actual.security.vulnerability_alerts = True
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not diff.is_compliant()
+    assert any(d.field == "security.vulnerability_alerts" for d in diff.items)
