@@ -35,6 +35,9 @@ primary-language = "python"
 claude = "Co-Authored-By: wphillipmoore-claude <255925739+wphillipmoore-claude@users.noreply.github.com>"
 codex = "Co-Authored-By: wphillipmoore-codex <255923655+wphillipmoore-codex@users.noreply.github.com>"
 
+[markdownlint]
+ignore = ["docs/site/docs/research"]
+
 [dependencies]
 standard-tooling = "v1.4"
 ```
@@ -76,6 +79,21 @@ Repos with no AI agent workflow may omit this table entirely.
 Expected value format: `Co-Authored-By: <name> <<email>>` — a
 standard git trailer. The validator checks for the `Co-Authored-By:`
 prefix and the presence of angle-bracketed email.
+
+### `[markdownlint]` table
+
+Optional. Controls markdownlint behavior for `st-validate-local-common`.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `ignore` | array of strings | `[]` | Relative paths (from repo root) to exclude from markdown file discovery |
+
+Files under any ignored path are skipped during `_find_markdown_files()`
+discovery. This is useful for repos with large auto-generated markdown
+trees (e.g., research output) that should not be linted.
+
+Repos without this section get default behavior — all files under
+`docs/site/` and `README.md` are linted.
 
 ### `[dependencies]` table
 
