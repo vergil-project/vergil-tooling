@@ -6,7 +6,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,20 +71,8 @@ class StConfig:
     github: GithubOverrides
 
 
-def read_config(repo_root: Path) -> StConfig:
-    """Parse, validate, and return ``standard-tooling.toml``."""
-    config_path = repo_root / CONFIG_FILE
-    if not config_path.is_file():
-        msg = f"{CONFIG_FILE} not found at {repo_root}"
-        raise FileNotFoundError(msg)
-
-    try:
-        with config_path.open("rb") as f:
-            raw = tomllib.load(f)
-    except tomllib.TOMLDecodeError as exc:
-        msg = f"{CONFIG_FILE} is not valid TOML: {exc}"
-        raise ConfigError(msg) from exc
-
+def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
+    """Parse and validate a raw TOML dict into StConfig."""
     project_raw = raw.get("project", {})
 
     for field in _PROJECT_FIELDS:
@@ -157,6 +145,23 @@ def read_config(repo_root: Path) -> StConfig:
         ci=ci,
         github=github_overrides,
     )
+
+
+def read_config(repo_root: Path) -> StConfig:
+    """Parse, validate, and return ``standard-tooling.toml``."""
+    config_path = repo_root / CONFIG_FILE
+    if not config_path.is_file():
+        msg = f"{CONFIG_FILE} not found at {repo_root}"
+        raise FileNotFoundError(msg)
+
+    try:
+        with config_path.open("rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{CONFIG_FILE} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+
+    return _parse_raw_config(raw)
 
 
 def st_install_tag(repo_root: Path) -> str:
