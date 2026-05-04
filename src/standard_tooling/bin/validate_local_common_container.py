@@ -38,9 +38,7 @@ def _find_shell_files(repo_root: Path) -> list[str]:
     return sorted(found)
 
 
-def _find_markdown_files(
-    repo_root: Path, ignore: list[str] | None = None
-) -> list[str]:
+def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
     """Discover published markdown files: docs/site/**/*.md and README.md."""
     found: list[str] = []
     ignore_paths = [repo_root / p for p in (ignore or [])]

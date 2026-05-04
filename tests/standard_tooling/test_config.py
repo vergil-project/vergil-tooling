@@ -190,3 +190,10 @@ def test_read_config_markdownlint_no_ignore_key(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(toml)
     cfg = read_config(tmp_path)
     assert cfg.markdownlint.ignore == []
+
+
+def test_read_config_markdownlint_ignore_not_a_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[markdownlint]\nignore = "not-a-list"\n'
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[markdownlint\]\.ignore must be a list"):
+        read_config(tmp_path)
