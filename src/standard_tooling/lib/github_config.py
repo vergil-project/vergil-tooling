@@ -606,9 +606,34 @@ def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
             github.delete(f"repos/{repo}/rulesets/{rs_id}")
 
 
-def apply_desired_state(repo: str, desired: DesiredState) -> None:
-    """Apply the desired configuration to a GitHub repo via the API."""
+def _cleanup_classic_branch_protection(repo: str, rulesets: list[DesiredRuleset]) -> list[str]:
+    """Remove legacy branch protection for branches covered by rulesets.
+
+    Returns list of branches where legacy protection was removed.
+    """
+    branches: set[str] = set()
+    for ruleset in rulesets:
+        if ruleset.target != "branch":
+            continue
+        for ref in ruleset.ref_include:
+            if ref.startswith("refs/heads/"):
+                branches.add(ref.removeprefix("refs/heads/"))
+
+    removed: list[str] = []
+    for branch in sorted(branches):
+        endpoint = f"repos/{repo}/branches/{branch}/protection"
+        if github.delete_if_exists(endpoint):
+            removed.append(branch)
+    return removed
+
+
+def apply_desired_state(repo: str, desired: DesiredState) -> list[str]:
+    """Apply the desired configuration to a GitHub repo via the API.
+
+    Returns list of branches where legacy branch protection was removed.
+    """
     _apply_repo_settings(repo, desired.repo_settings)
     _apply_security_settings(repo, desired.security)
     _apply_actions_permissions(repo, desired.actions_permissions)
     _apply_rulesets(repo, desired.rulesets)
+    return _cleanup_classic_branch_protection(repo, desired.rulesets)

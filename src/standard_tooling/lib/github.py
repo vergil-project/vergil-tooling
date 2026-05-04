@@ -55,6 +55,18 @@ def delete(endpoint: str) -> None:
     )
 
 
+def delete_if_exists(endpoint: str) -> bool:
+    """Call gh api DELETE; return True if deleted (2xx), False if 404."""
+    result = subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", "DELETE", "-i"),  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    first_line = result.stdout.split("\n")[0] if result.stdout else ""
+    return "404" not in first_line
+
+
 def create_pr(*, base: str, title: str, body_file: str) -> str:
     """Create a pull request and return its URL."""
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)

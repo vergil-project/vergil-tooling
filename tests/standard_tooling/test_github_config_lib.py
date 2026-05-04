@@ -18,6 +18,7 @@ from standard_tooling.lib.github_config import (
     _apply_repo_settings,
     _apply_rulesets,
     _apply_security_settings,
+    _cleanup_classic_branch_protection,
     _fetch_vulnerability_alerts,
     _lang_has_check,
     _ruleset_body,
@@ -908,9 +909,98 @@ def test_apply_desired_state_orchestrates_all() -> None:
         patch("standard_tooling.lib.github_config._apply_security_settings") as mock_sec,
         patch("standard_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
         patch("standard_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
+        patch(
+            "standard_tooling.lib.github_config._cleanup_classic_branch_protection",
+            return_value=[],
+        ) as mock_cleanup,
     ):
-        apply_desired_state("o/r", state)
+        result = apply_desired_state("o/r", state)
     mock_repo.assert_called_once_with("o/r", state.repo_settings)
     mock_sec.assert_called_once_with("o/r", state.security)
     mock_actions.assert_called_once_with("o/r", state.actions_permissions)
     mock_rulesets.assert_called_once_with("o/r", state.rulesets)
+    mock_cleanup.assert_called_once_with("o/r", state.rulesets)
+    assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Classic branch protection cleanup tests
+# ---------------------------------------------------------------------------
+
+
+def test_cleanup_removes_legacy_protection_for_covered_branches() -> None:
+    rulesets = [desired_branch_protection_ruleset()]
+    with patch(
+        "standard_tooling.lib.github_config.github.delete_if_exists",
+        return_value=True,
+    ) as mock_del:
+        removed = _cleanup_classic_branch_protection("o/r", rulesets)
+    assert sorted(removed) == ["develop", "main"]
+    assert mock_del.call_count == 2
+    endpoints = sorted(c[0][0] for c in mock_del.call_args_list)
+    assert endpoints == [
+        "repos/o/r/branches/develop/protection",
+        "repos/o/r/branches/main/protection",
+    ]
+
+
+def test_cleanup_returns_empty_when_no_legacy_protection() -> None:
+    rulesets = [desired_branch_protection_ruleset()]
+    with patch(
+        "standard_tooling.lib.github_config.github.delete_if_exists",
+        return_value=False,
+    ):
+        removed = _cleanup_classic_branch_protection("o/r", rulesets)
+    assert removed == []
+
+
+def test_cleanup_skips_tag_rulesets() -> None:
+    rulesets = [desired_tag_protection_ruleset()]
+    with patch(
+        "standard_tooling.lib.github_config.github.delete_if_exists",
+    ) as mock_del:
+        removed = _cleanup_classic_branch_protection("o/r", rulesets)
+    mock_del.assert_not_called()
+    assert removed == []
+
+
+def test_cleanup_ignores_non_heads_refs() -> None:
+    rulesets = [
+        DesiredRuleset(
+            name="Mixed refs",
+            target="branch",
+            enforcement="active",
+            ref_include=["refs/heads/main", "refs/tags/v*"],
+            bypass_actors=[],
+            rules=[],
+        ),
+    ]
+    with patch(
+        "standard_tooling.lib.github_config.github.delete_if_exists",
+        return_value=True,
+    ) as mock_del:
+        removed = _cleanup_classic_branch_protection("o/r", rulesets)
+    mock_del.assert_called_once_with("repos/o/r/branches/main/protection")
+    assert removed == ["main"]
+
+
+def test_cleanup_deduplicates_branches_across_rulesets() -> None:
+    rulesets = [
+        desired_branch_protection_ruleset(),
+        DesiredRuleset(
+            name="CI gates",
+            target="branch",
+            enforcement="active",
+            ref_include=["refs/heads/main", "refs/heads/develop"],
+            bypass_actors=[],
+            rules=[],
+        ),
+    ]
+    with patch(
+        "standard_tooling.lib.github_config.github.delete_if_exists",
+        return_value=True,
+    ) as mock_del:
+        removed = _cleanup_classic_branch_protection("o/r", rulesets)
+    # Should only call once per unique branch
+    assert mock_del.call_count == 2
+    assert sorted(removed) == ["develop", "main"]
