@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -124,6 +125,22 @@ def test_list_project_repos_empty() -> None:
         return_value="",
     ):
         assert github.list_project_repos("acme", "5") == []
+
+
+def test_read_json_returns_parsed_dict() -> None:
+    payload = {"name": "test", "value": 42}
+    cp = _completed(stdout=json.dumps(payload) + "\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        result = github.read_json("api", "repos/o/r")
+    assert result == payload
+
+
+def test_read_json_returns_parsed_list() -> None:
+    payload = [{"id": 1}, {"id": 2}]
+    cp = _completed(stdout=json.dumps(payload) + "\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        result = github.read_json("api", "repos/o/r/rulesets")
+    assert result == payload
 
 
 def test_checks_registered_returns_false_when_phrase_in_stdout() -> None:
