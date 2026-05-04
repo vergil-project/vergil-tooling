@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.14] - 2026-05-04
+
+### Bug fixes
+
+- fix formatting and add coverage for invalid ignore type
+
+### Chores
+
+- retrigger CI with issue linkage (#482)
+- sweep post-1.4.13 dependency updates (#482)
+
+### Documentation
+
+- update published docs for bundled markdownlint config
+- add cross-repo cleanup implementation plan
+
+### Features
+
+- add [markdownlint].ignore support to standard-tooling.toml
+
 ## [1.4.13] - 2026-05-03
 
 ### CI
