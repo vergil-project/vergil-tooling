@@ -8,6 +8,10 @@ against the actual GitHub API state to produce audit diffs.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from standard_tooling.lib.config import CiConfig, ProjectConfig
 
 
 @dataclass
@@ -144,5 +148,102 @@ def desired_tag_protection_ruleset() -> DesiredRuleset:
             {"type": "deletion"},
             {"type": "non_fast_forward"},
             {"type": "update"},
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# CI gates ruleset derivation
+# ---------------------------------------------------------------------------
+
+_GITHUB_ACTIONS_INTEGRATION_ID = 15368
+
+_CODEQL_SUPPORTED_LANGUAGES = frozenset(
+    {
+        "python",
+        "go",
+        "java",
+        "ruby",
+        "rust",
+    }
+)
+
+
+def _make_check(context: str) -> dict[str, object]:
+    return {
+        "context": context,
+        "integration_id": _GITHUB_ACTIONS_INTEGRATION_ID,
+    }
+
+
+def _lang_has_check(language: str, check: str) -> bool:
+    """Consult the per-language command registry."""
+    from standard_tooling.lib.validate_commands import CheckKind, language_commands
+
+    kind_map = {
+        "lint": CheckKind.LINT,
+        "typecheck": CheckKind.TYPECHECK,
+        "unit": CheckKind.TEST,
+        "dependencies": CheckKind.AUDIT,
+    }
+    kind = kind_map.get(check)
+    if kind is None:
+        return False
+    return len(language_commands(language, kind)) > 0
+
+
+def desired_ci_gates_ruleset(
+    project: ProjectConfig,
+    ci: CiConfig,
+) -> DesiredRuleset:
+    """Derive the CI gates ruleset from project identity and CI config."""
+    checks: list[dict[str, object]] = []
+    lang = project.primary_language
+
+    # Always present
+    checks.append(_make_check("quality / common"))
+    checks.append(_make_check("security / trivy"))
+    checks.append(_make_check("security / semgrep"))
+    checks.append(_make_check("security / standards"))
+
+    # CodeQL for supported languages
+    if lang in _CODEQL_SUPPORTED_LANGUAGES:
+        checks.append(_make_check("security / codeql"))
+
+    # Versioned checks — only emitted when the language has
+    # a command registry entry for the check
+    for version in ci.versions:
+        if _lang_has_check(lang, "lint"):
+            checks.append(_make_check(f"quality / lint / {version}"))
+        if _lang_has_check(lang, "typecheck"):
+            checks.append(_make_check(f"quality / typecheck / {version}"))
+        if _lang_has_check(lang, "unit"):
+            checks.append(_make_check(f"test / unit / {version}"))
+        if _lang_has_check(lang, "dependencies"):
+            checks.append(_make_check(f"audit / dependencies / {version}"))
+
+    # Integration tests per version (when enabled)
+    if ci.integration_tests:
+        for version in ci.versions:
+            checks.append(_make_check(f"test / integration / {version}"))
+
+    # Release check
+    if project.release_model != "none":
+        checks.append(_make_check("release / version-bump"))
+
+    return DesiredRuleset(
+        name="CI gates",
+        target="branch",
+        enforcement="active",
+        ref_include=["refs/heads/main", "refs/heads/develop"],
+        bypass_actors=[],
+        rules=[
+            {
+                "type": "required_status_checks",
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": checks,
+                },
+            },
         ],
     )
