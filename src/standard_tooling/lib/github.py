@@ -34,6 +34,27 @@ def read_json(*args: str) -> dict[str, object] | list[object]:
     return result
 
 
+def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
+    """Call gh api with a JSON body via stdin."""
+    subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", method, "--input", "-"),  # noqa: S607
+        input=json.dumps(body),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def delete(endpoint: str) -> None:
+    """Call gh api with DELETE method."""
+    subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", "DELETE"),  # noqa: S607
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
 def create_pr(*, base: str, title: str, body_file: str) -> str:
     """Create a pull request and return its URL."""
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)

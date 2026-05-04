@@ -492,3 +492,123 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     )
     _diff_rulesets(desired.rulesets, actual.rulesets, items)
     return ConfigDiff(items=items)
+
+
+# ---------------------------------------------------------------------------
+# Apply desired state via GitHub API
+# ---------------------------------------------------------------------------
+
+
+def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
+    github.write_json(
+        "PATCH",
+        f"repos/{repo}",
+        {
+            "default_branch": settings.default_branch,
+            "allow_auto_merge": settings.allow_auto_merge,
+            "delete_branch_on_merge": settings.delete_branch_on_merge,
+            "allow_merge_commit": settings.allow_merge_commit,
+            "allow_squash_merge": settings.allow_squash_merge,
+            "allow_rebase_merge": settings.allow_rebase_merge,
+            "has_issues": settings.has_issues,
+            "has_projects": settings.has_projects,
+            "has_wiki": settings.has_wiki,
+        },
+    )
+
+
+def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:
+    github.write_json(
+        "PATCH",
+        f"repos/{repo}",
+        {
+            "security_and_analysis": {
+                "secret_scanning": {"status": security.secret_scanning},
+                "secret_scanning_push_protection": {
+                    "status": security.secret_scanning_push_protection,
+                },
+                "dependabot_security_updates": {
+                    "status": security.dependabot_security_updates,
+                },
+            },
+        },
+    )
+    if security.vulnerability_alerts:
+        github.write_json("PUT", f"repos/{repo}/vulnerability-alerts", {})
+    else:
+        github.delete(f"repos/{repo}/vulnerability-alerts")
+
+
+def _apply_actions_permissions(repo: str, perms: DesiredActionsPermissions) -> None:
+    github.write_json(
+        "PUT",
+        f"repos/{repo}/actions/permissions",
+        {"allowed_actions": perms.allowed_actions},
+    )
+    github.write_json(
+        "PUT",
+        f"repos/{repo}/actions/permissions/workflow",
+        {
+            "default_workflow_permissions": perms.default_workflow_permissions,
+            "can_approve_pull_request_reviews": perms.can_approve_pull_request_reviews,
+        },
+    )
+    if perms.allowed_actions == "selected":
+        github.write_json(
+            "PUT",
+            f"repos/{repo}/actions/permissions/selected-actions",
+            {"patterns_allowed": perms.patterns_allowed},
+        )
+
+
+def _ruleset_body(ruleset: DesiredRuleset) -> dict[str, object]:
+    return {
+        "name": ruleset.name,
+        "target": ruleset.target,
+        "enforcement": ruleset.enforcement,
+        "conditions": {
+            "ref_name": {
+                "include": ruleset.ref_include,
+                "exclude": [],
+            },
+        },
+        "bypass_actors": ruleset.bypass_actors,
+        "rules": ruleset.rules,
+    }
+
+
+def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
+    raw_rulesets = github.read_json("api", f"repos/{repo}/rulesets")
+    existing: dict[str, int] = {}
+    if isinstance(raw_rulesets, list):
+        for rs in raw_rulesets:
+            if isinstance(rs, dict):
+                name = rs.get("name")
+                rs_id = rs.get("id")
+                if isinstance(name, str) and isinstance(rs_id, int):
+                    existing[name] = rs_id
+
+    desired_names = {r.name for r in desired}
+
+    for ruleset in desired:
+        body = _ruleset_body(ruleset)
+        if ruleset.name in existing:
+            github.write_json(
+                "PUT",
+                f"repos/{repo}/rulesets/{existing[ruleset.name]}",
+                body,
+            )
+        else:
+            github.write_json("POST", f"repos/{repo}/rulesets", body)
+
+    for name, rs_id in existing.items():
+        if name not in desired_names:
+            github.delete(f"repos/{repo}/rulesets/{rs_id}")
+
+
+def apply_desired_state(repo: str, desired: DesiredState) -> None:
+    """Apply the desired configuration to a GitHub repo via the API."""
+    _apply_repo_settings(repo, desired.repo_settings)
+    _apply_security_settings(repo, desired.security)
+    _apply_actions_permissions(repo, desired.actions_permissions)
+    _apply_rulesets(repo, desired.rulesets)

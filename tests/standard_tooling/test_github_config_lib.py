@@ -14,8 +14,14 @@ from standard_tooling.lib.config import (
 )
 from standard_tooling.lib.github_config import (
     DesiredRuleset,
+    _apply_actions_permissions,
+    _apply_repo_settings,
+    _apply_rulesets,
+    _apply_security_settings,
     _fetch_vulnerability_alerts,
     _lang_has_check,
+    _ruleset_body,
+    apply_desired_state,
     compute_desired_state,
     compute_diff,
     desired_actions_permissions,
@@ -708,3 +714,203 @@ def test_diff_detects_security_mismatch() -> None:
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
     assert any(d.field == "security.vulnerability_alerts" for d in diff.items)
+
+
+# ---------------------------------------------------------------------------
+# Apply tests
+# ---------------------------------------------------------------------------
+
+
+def test_apply_repo_settings_calls_write_json() -> None:
+    settings = desired_repo_settings()
+    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+        _apply_repo_settings("o/r", settings)
+    mock_write.assert_called_once()
+    call_args = mock_write.call_args
+    assert call_args[0][0] == "PATCH"
+    assert call_args[0][1] == "repos/o/r"
+    body = call_args[0][2]
+    assert body["default_branch"] == "develop"
+    assert body["delete_branch_on_merge"] is True
+
+
+def test_apply_security_settings_enables_vuln_alerts() -> None:
+    from standard_tooling.lib.github_config import DesiredSecuritySettings
+
+    sec = DesiredSecuritySettings(
+        secret_scanning="enabled",  # noqa: S106
+        secret_scanning_push_protection="enabled",  # noqa: S106
+        vulnerability_alerts=True,
+        dependabot_security_updates="disabled",
+    )
+    with (
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_security_settings("o/r", sec)
+    assert mock_write.call_count == 2
+    # First call is PATCH repos/o/r with security_and_analysis
+    assert mock_write.call_args_list[0][0][0] == "PATCH"
+    # Second call is PUT vulnerability-alerts
+    assert mock_write.call_args_list[1][0][0] == "PUT"
+    assert "vulnerability-alerts" in mock_write.call_args_list[1][0][1]
+    mock_del.assert_not_called()
+
+
+def test_apply_security_settings_disables_vuln_alerts() -> None:
+    from standard_tooling.lib.github_config import DesiredSecuritySettings
+
+    sec = DesiredSecuritySettings(
+        secret_scanning="enabled",  # noqa: S106
+        secret_scanning_push_protection="enabled",  # noqa: S106
+        vulnerability_alerts=False,
+        dependabot_security_updates="disabled",
+    )
+    with (
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_security_settings("o/r", sec)
+    assert mock_write.call_count == 1
+    mock_del.assert_called_once_with("repos/o/r/vulnerability-alerts")
+
+
+def test_apply_actions_permissions_selected() -> None:
+    perms = desired_actions_permissions()
+    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+        _apply_actions_permissions("o/r", perms)
+    assert mock_write.call_count == 3
+    endpoints = [c[0][1] for c in mock_write.call_args_list]
+    assert "repos/o/r/actions/permissions" in endpoints
+    assert "repos/o/r/actions/permissions/workflow" in endpoints
+    assert "repos/o/r/actions/permissions/selected-actions" in endpoints
+
+
+def test_apply_actions_permissions_not_selected_skips_patterns() -> None:
+    from standard_tooling.lib.github_config import DesiredActionsPermissions
+
+    perms = DesiredActionsPermissions(
+        default_workflow_permissions="read",
+        can_approve_pull_request_reviews=False,
+        allowed_actions="all",
+        patterns_allowed=[],
+    )
+    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+        _apply_actions_permissions("o/r", perms)
+    assert mock_write.call_count == 2
+    endpoints = [c[0][1] for c in mock_write.call_args_list]
+    assert "repos/o/r/actions/permissions/selected-actions" not in endpoints
+
+
+def test_apply_rulesets_creates_new() -> None:
+    ruleset = desired_branch_protection_ruleset()
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            return_value=[],
+        ),
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_rulesets("o/r", [ruleset])
+    mock_write.assert_called_once()
+    assert mock_write.call_args[0][0] == "POST"
+    assert mock_write.call_args[0][1] == "repos/o/r/rulesets"
+    mock_del.assert_not_called()
+
+
+def test_apply_rulesets_updates_existing() -> None:
+    ruleset = desired_branch_protection_ruleset()
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            return_value=[{"name": "Branch protection", "id": 42}],
+        ),
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_rulesets("o/r", [ruleset])
+    mock_write.assert_called_once()
+    assert mock_write.call_args[0][0] == "PUT"
+    assert mock_write.call_args[0][1] == "repos/o/r/rulesets/42"
+    mock_del.assert_not_called()
+
+
+def test_apply_rulesets_deletes_extra() -> None:
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            return_value=[{"name": "Old rule", "id": 99}],
+        ),
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_rulesets("o/r", [])
+    mock_write.assert_not_called()
+    mock_del.assert_called_once_with("repos/o/r/rulesets/99")
+
+
+def test_apply_rulesets_skips_invalid_entries() -> None:
+    ruleset = desired_branch_protection_ruleset()
+    # Mix of invalid entries: non-dict, missing name, missing id
+    existing: list[object] = [
+        "not-a-dict",
+        {"name": 123, "id": 1},  # name not str
+        {"name": "Valid", "id": "not-int"},  # id not int
+        {"name": "Branch protection", "id": 7},
+    ]
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            return_value=existing,
+        ),
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete"),
+    ):
+        _apply_rulesets("o/r", [ruleset])
+    assert mock_write.call_args[0][0] == "PUT"
+    assert mock_write.call_args[0][1] == "repos/o/r/rulesets/7"
+
+
+def test_apply_rulesets_non_list_response_creates_all() -> None:
+    ruleset = desired_branch_protection_ruleset()
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            return_value={"error": "unexpected"},
+        ),
+        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_rulesets("o/r", [ruleset])
+    mock_write.assert_called_once()
+    assert mock_write.call_args[0][0] == "POST"
+    mock_del.assert_not_called()
+
+
+def test_ruleset_body_structure() -> None:
+    ruleset = desired_tag_protection_ruleset()
+    body = _ruleset_body(ruleset)
+    assert body["name"] == "Tag protection"
+    assert body["target"] == "tag"
+    assert body["enforcement"] == "active"
+    assert body["conditions"] == {
+        "ref_name": {"include": ["refs/tags/v*.*.*"], "exclude": []},
+    }
+    assert body["bypass_actors"] == ruleset.bypass_actors
+    assert body["rules"] == ruleset.rules
+
+
+def test_apply_desired_state_orchestrates_all() -> None:
+    state = compute_desired_state(_st_config())
+    with (
+        patch("standard_tooling.lib.github_config._apply_repo_settings") as mock_repo,
+        patch("standard_tooling.lib.github_config._apply_security_settings") as mock_sec,
+        patch("standard_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
+        patch("standard_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
+    ):
+        apply_desired_state("o/r", state)
+    mock_repo.assert_called_once_with("o/r", state.repo_settings)
+    mock_sec.assert_called_once_with("o/r", state.security)
+    mock_actions.assert_called_once_with("o/r", state.actions_permissions)
+    mock_rulesets.assert_called_once_with("o/r", state.rulesets)

@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from standard_tooling.bin.github_config import (
+    _apply_repo,
     _audit_repo,
     _fetch_remote_config,
     _resolve_repos,
@@ -246,3 +247,112 @@ def test_audit_repo_calls_compute_and_diff() -> None:
     mock_fetch.assert_called_once_with("o/r")
     mock_diff.assert_called_once()
     assert result.is_compliant()
+
+
+# -- _apply_repo ---------------------------------------------------------------
+
+
+def test_apply_repo_calls_apply_desired_state() -> None:
+    cfg = _make_config()
+    with (
+        patch("standard_tooling.bin.github_config.compute_desired_state") as mock_desired,
+        patch("standard_tooling.bin.github_config.apply_desired_state") as mock_apply,
+    ):
+        _apply_repo("o/r", cfg)
+    mock_desired.assert_called_once_with(cfg)
+    mock_apply.assert_called_once_with("o/r", mock_desired.return_value)
+
+
+# -- apply mode integration ----------------------------------------------------
+
+
+def test_apply_all_compliant_does_nothing() -> None:
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            return_value=_mock_compliant(),
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch("standard_tooling.bin.github_config._fetch_remote_config"),
+        patch("standard_tooling.bin.github_config._apply_repo") as mock_apply,
+    ):
+        result = main(["apply", "--repo", "o/r", "--yes"])
+    assert result == 0
+    mock_apply.assert_not_called()
+
+
+def test_apply_with_yes_applies_noncompliant() -> None:
+    call_count = [0]
+
+    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
+        call_count[0] += 1
+        return _mock_noncompliant()
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            side_effect=audit_side_effect,
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch("standard_tooling.bin.github_config._fetch_remote_config"),
+        patch("standard_tooling.bin.github_config._apply_repo") as mock_apply,
+    ):
+        result = main(["apply", "--repo", "o/r", "--yes"])
+    assert result == 0
+    mock_apply.assert_called_once()
+
+
+def test_apply_without_yes_prompts_and_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    call_count = [0]
+
+    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
+        call_count[0] += 1
+        return _mock_noncompliant()
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            side_effect=audit_side_effect,
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch("standard_tooling.bin.github_config._fetch_remote_config"),
+        patch("standard_tooling.bin.github_config._apply_repo") as mock_apply,
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 1
+    mock_apply.assert_not_called()
+
+
+def test_apply_without_yes_prompts_and_proceeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    call_count = [0]
+
+    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
+        call_count[0] += 1
+        return _mock_noncompliant()
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            side_effect=audit_side_effect,
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch("standard_tooling.bin.github_config._fetch_remote_config"),
+        patch("standard_tooling.bin.github_config._apply_repo") as mock_apply,
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 0
+    mock_apply.assert_called_once()
