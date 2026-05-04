@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
-from standard_tooling.lib.config import CiConfig, ProjectConfig
+from standard_tooling.lib.config import (
+    CiConfig,
+    GithubOverrides,
+    MarkdownlintConfig,
+    ProjectConfig,
+    StConfig,
+)
 from standard_tooling.lib.github_config import (
     _lang_has_check,
+    compute_desired_state,
     desired_actions_permissions,
     desired_branch_protection_ruleset,
     desired_ci_gates_ruleset,
@@ -198,3 +205,63 @@ def test_ci_gates_shell_has_no_versioned_checks() -> None:
 
 def test_lang_has_check_returns_false_for_unknown_check() -> None:
     assert _lang_has_check("python", "nonexistent") is False
+
+
+# ---------------------------------------------------------------------------
+# compute_desired_state tests
+# ---------------------------------------------------------------------------
+
+
+def _st_config(
+    *,
+    language: str = "python",
+    release_model: str = "tagged-release",
+    versions: list[str] | None = None,
+    integration_tests: bool = False,
+    skip_rulesets: bool = False,
+) -> StConfig:
+    return StConfig(
+        project=_project(language=language, release_model=release_model),
+        dependencies={"standard-tooling": "v1.4"},
+        markdownlint=MarkdownlintConfig(ignore=[]),
+        ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
+        github=GithubOverrides(skip_rulesets=skip_rulesets),
+    )
+
+
+def test_compute_desired_state_has_three_rulesets() -> None:
+    state = compute_desired_state(_st_config())
+    assert len(state.rulesets) == 3
+    names = [r.name for r in state.rulesets]
+    assert "Branch protection" in names
+    assert "Tag protection" in names
+    assert "CI gates" in names
+
+
+def test_compute_desired_state_skip_rulesets() -> None:
+    state = compute_desired_state(_st_config(skip_rulesets=True))
+    assert state.rulesets == []
+
+
+def test_compute_desired_state_no_ci_section() -> None:
+    cfg = _st_config()
+    cfg.ci = None
+    state = compute_desired_state(cfg)
+    assert len(state.rulesets) == 2
+    names = [r.name for r in state.rulesets]
+    assert "CI gates" not in names
+
+
+def test_compute_desired_state_includes_repo_settings() -> None:
+    state = compute_desired_state(_st_config())
+    assert state.repo_settings.default_branch == "develop"
+
+
+def test_compute_desired_state_includes_security() -> None:
+    state = compute_desired_state(_st_config())
+    assert state.security.secret_scanning == "enabled"  # noqa: S105
+
+
+def test_compute_desired_state_includes_actions() -> None:
+    state = compute_desired_state(_st_config())
+    assert state.actions_permissions.allowed_actions == "selected"

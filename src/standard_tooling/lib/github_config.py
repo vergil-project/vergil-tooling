@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from standard_tooling.lib.config import CiConfig, ProjectConfig
+    from standard_tooling.lib.config import CiConfig, ProjectConfig, StConfig
 
 
 @dataclass
@@ -246,4 +246,23 @@ def desired_ci_gates_ruleset(
                 },
             },
         ],
+    )
+
+
+def compute_desired_state(config: StConfig) -> DesiredState:
+    """Compute the full desired GitHub configuration from a repo's StConfig."""
+    rulesets: list[DesiredRuleset] = []
+
+    if not config.github.skip_rulesets:
+        rulesets.append(desired_branch_protection_ruleset())
+        rulesets.append(desired_tag_protection_ruleset())
+
+        if config.ci is not None:
+            rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
+
+    return DesiredState(
+        repo_settings=desired_repo_settings(),
+        security=desired_security_settings(),
+        actions_permissions=desired_actions_permissions(),
+        rulesets=rulesets,
     )
