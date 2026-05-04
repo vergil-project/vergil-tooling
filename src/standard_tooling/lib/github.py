@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 
@@ -24,6 +25,12 @@ def read_output(*args: str) -> str:
         capture_output=True,
     )
     return result.stdout.strip()
+
+
+def read_json(*args: str) -> dict | list:
+    """Run a gh command and return parsed JSON from stdout."""
+    raw = read_output(*args)
+    return json.loads(raw)
 
 
 def create_pr(*, base: str, title: str, body_file: str) -> str:
