@@ -906,9 +906,7 @@ def test_apply_desired_state_orchestrates_all() -> None:
     with (
         patch("standard_tooling.lib.github_config._apply_repo_settings") as mock_repo,
         patch("standard_tooling.lib.github_config._apply_security_settings") as mock_sec,
-        patch(
-            "standard_tooling.lib.github_config._apply_actions_permissions"
-        ) as mock_actions,
+        patch("standard_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
         patch("standard_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
     ):
         apply_desired_state("o/r", state)

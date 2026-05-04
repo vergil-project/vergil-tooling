@@ -109,9 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diff":
         return 0
 
-    non_compliant = [
-        r for r in repos if not _audit_repo(r, _fetch_remote_config(r)).is_compliant()
-    ]
+    non_compliant = [r for r in repos if not _audit_repo(r, _fetch_remote_config(r)).is_compliant()]
     if not non_compliant:
         print("All repos compliant, nothing to apply.")
         return 0

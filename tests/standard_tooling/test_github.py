@@ -179,9 +179,7 @@ def test_write_json_put_method() -> None:
         mock_run.return_value = _completed()
         github.write_json("PUT", "repos/o/r/actions/permissions", {"allowed_actions": "all"})
     call_args = mock_run.call_args
-    expected_cmd = (
-        "gh", "api", "repos/o/r/actions/permissions", "-X", "PUT", "--input", "-"
-    )
+    expected_cmd = ("gh", "api", "repos/o/r/actions/permissions", "-X", "PUT", "--input", "-")
     assert call_args[0][0] == expected_cmd
     assert json.loads(call_args[1]["input"]) == {"allowed_actions": "all"}
 
