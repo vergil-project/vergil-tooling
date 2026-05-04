@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from standard_tooling.lib.config import CiConfig, ProjectConfig
 from standard_tooling.lib.github_config import (
+    _lang_has_check,
     desired_actions_permissions,
     desired_branch_protection_ruleset,
     desired_ci_gates_ruleset,
@@ -193,3 +194,7 @@ def test_ci_gates_shell_has_no_versioned_checks() -> None:
     assert "quality / common" in names
     assert not any("quality / lint" in n for n in names)
     assert not any("test / unit" in n for n in names)
+
+
+def test_lang_has_check_returns_false_for_unknown_check() -> None:
+    assert _lang_has_check("python", "nonexistent") is False
