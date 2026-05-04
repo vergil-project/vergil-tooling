@@ -16,6 +16,18 @@ from standard_tooling.bin.validate_local_common_container import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+_MINIMAL_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+standard-tooling = "v1.4"
+"""
+
 
 # -- _find_shell_files --------------------------------------------------------
 
@@ -109,10 +121,65 @@ def test_find_markdown_files_sorted(tmp_path: Path) -> None:
     assert result == sorted(result)
 
 
+def test_find_markdown_files_ignore_directory(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    research = site / "docs" / "research"
+    research.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    (research / "report.md").write_text("# Report\n")
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    assert len(result) == 1
+    assert result[0].endswith("index.md")
+
+
+def test_find_markdown_files_ignore_nested(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    deep = site / "docs" / "research" / "2026" / "output"
+    deep.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    (deep / "report.md").write_text("# Report\n")
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    assert len(result) == 1
+    assert result[0].endswith("index.md")
+
+
+def test_find_markdown_files_ignore_multiple(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    research = site / "docs" / "research"
+    archive = site / "docs" / "archive"
+    research.mkdir(parents=True)
+    archive.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    (research / "report.md").write_text("# Report\n")
+    (archive / "old.md").write_text("# Old\n")
+    result = _find_markdown_files(
+        tmp_path,
+        ignore=["docs/site/docs/research", "docs/site/docs/archive"],
+    )
+    assert len(result) == 1
+    assert result[0].endswith("index.md")
+
+
+def test_find_markdown_files_ignore_does_not_affect_readme(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Hello\n")
+    result = _find_markdown_files(tmp_path, ignore=["docs/site/docs/research"])
+    assert len(result) == 1
+    assert result[0].endswith("README.md")
+
+
+def test_find_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    result = _find_markdown_files(tmp_path, ignore=[])
+    assert len(result) == 1
+
+
 # -- main --------------------------------------------------------------------
 
 
 def test_main_all_pass(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     with (
         patch(
             "standard_tooling.bin.validate_local_common_container.git.repo_root",
@@ -141,6 +208,7 @@ def test_main_repo_profile_fails(tmp_path: Path) -> None:
 
 
 def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
@@ -169,6 +237,7 @@ def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
 
 
 def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
@@ -197,6 +266,7 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
 
 
 def test_main_markdownlint_fails(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     (tmp_path / "README.md").write_text("# Hello\n")
 
     with (
@@ -216,7 +286,40 @@ def test_main_markdownlint_fails(tmp_path: Path) -> None:
         assert main() == 1
 
 
+def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
+    toml = _MINIMAL_TOML + '\n[markdownlint]\nignore = ["docs/site/docs/research"]\n'
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    site = tmp_path / "docs" / "site"
+    research = site / "docs" / "research"
+    research.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    (research / "report.md").write_text("# Report\n")
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    ml_call = mock_run.call_args_list[0][0][0]
+    assert ml_call[0] == "markdownlint"
+    md_args = ml_call[3:]
+    assert len(md_args) == 1
+    assert md_args[0].endswith("index.md")
+    assert not any("research" in a for a in md_args)
+
+
 def test_main_shellcheck_runs(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     scripts = tmp_path / "scripts" / "dev"
     scripts.mkdir(parents=True)
     (scripts / "lint.sh").write_text("#!/bin/bash\n")
@@ -242,6 +345,7 @@ def test_main_shellcheck_runs(tmp_path: Path) -> None:
 
 
 def test_main_shellcheck_fails(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     scripts = tmp_path / "scripts" / "dev"
     scripts.mkdir(parents=True)
     (scripts / "lint.sh").write_text("#!/bin/bash\n")
@@ -332,6 +436,7 @@ def test_find_yaml_files_sorted_and_deduped(tmp_path: Path) -> None:
 
 
 def test_main_yamllint_runs(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
@@ -357,6 +462,7 @@ def test_main_yamllint_runs(tmp_path: Path) -> None:
 
 
 def test_main_yamllint_fails(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
