@@ -72,6 +72,9 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Install dependencies
         run: uv sync --group dev --frozen
 
