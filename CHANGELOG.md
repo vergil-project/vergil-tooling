@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.15] - 2026-05-05
+
+### Bug fixes
+
+- add explicit type annotations to read_json() for mypy
+- include enabled field in actions permissions PUT body
+
+### Chores
+
+- sweep post-1.4.14 dependency updates (#492)
+
+### Features
+
+- add desired state data model
+- add read_json() helper for gh api calls
+- add [ci] section to standard-tooling.toml schema
+- add [github] override section to TOML schema
+- add fixed desired state functions
+- add per-language command registry
+- add CI gates ruleset derivation
+- add compute_desired_state() top-level function
+- add fetch_actual_state() for GitHub API reads
+- add diff computation engine
+- add st-github-config CLI with audit and diff modes
+- implement apply mode for st-github-config CLI
+- add classic branch protection cleanup during apply
+
+### Styling
+
+- format test_config.py with ruff
+- apply ruff format to new files
+
+### Testing
+
+- cover _lang_has_check unknown check kind branch
+
 ## [1.4.14] - 2026-05-04
 
 ### Bug fixes
