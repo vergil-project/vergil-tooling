@@ -41,7 +41,7 @@ def _run_commands(cmds: list[str], label: str, *, fail_fast: bool = False) -> in
     worst = 0
     for cmd in cmds:
         print(f"Running ({label}): {cmd}")
-        result = subprocess.run(cmd, shell=True, check=False)  # noqa: S602
+        result = subprocess.run(cmd.split(), check=False)  # noqa: S603
         if result.returncode != 0:
             if fail_fast:
                 return result.returncode
