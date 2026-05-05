@@ -44,7 +44,8 @@ def _is_self_repo(repo_root: Path) -> bool:
 
         with pyproject.open("rb") as f:
             data = tomllib.load(f)
-        return data.get("project", {}).get("name") == _SELF_PROJECT_NAME
+        name: object = data.get("project", {}).get("name")
+        return name == _SELF_PROJECT_NAME
     except (OSError, tomllib.TOMLDecodeError, KeyError):
         return False
 

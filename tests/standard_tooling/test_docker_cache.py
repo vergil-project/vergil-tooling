@@ -485,7 +485,7 @@ def test_is_self_repo_false_no_pyproject(tmp_path: Path) -> None:
 
 def test_is_self_repo_false_no_project_table(tmp_path: Path) -> None:
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[tool.ruff]\nline-length = 100\n')
+    pyproject.write_text("[tool.ruff]\nline-length = 100\n")
     assert _is_self_repo(tmp_path) is False
 
 
