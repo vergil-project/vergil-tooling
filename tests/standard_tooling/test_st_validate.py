@@ -184,11 +184,13 @@ def test_run_commands_success() -> None:
 
 
 def test_run_commands_failure_runs_all_by_default() -> None:
-    results = iter([
-        subprocess.CompletedProcess(args=[], returncode=1),
-        subprocess.CompletedProcess(args=[], returncode=0),
-        subprocess.CompletedProcess(args=[], returncode=2),
-    ])
+    results = iter(
+        [
+            subprocess.CompletedProcess(args=[], returncode=1),
+            subprocess.CompletedProcess(args=[], returncode=0),
+            subprocess.CompletedProcess(args=[], returncode=2),
+        ]
+    )
     with patch("standard_tooling.bin.st_validate.subprocess.run", side_effect=results) as mock:
         assert _run_commands(["cmd1", "cmd2", "cmd3"], "test") == 2
     assert mock.call_count == 3
