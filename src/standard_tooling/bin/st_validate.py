@@ -111,7 +111,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
         return _run_common_checks(repo_root)
 
     kind = _CHECK_KINDS[check]
-    assert kind is not None
+    assert kind is not None  # noqa: S101
     cmds = language_commands(language, kind)
     if not cmds:
         print(f"No {check} commands for language '{language}'")
