@@ -8,6 +8,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from standard_tooling.lib.config import st_install_tag
+from standard_tooling.lib.validate_commands import CheckKind, language_commands
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -25,13 +26,10 @@ _CACHE_FILES: dict[str, list[str]] = {
 }
 _DEFAULT_CACHE_FILES = ["standard-tooling.toml"]
 
-_WARMUP_COMMANDS: dict[str, str] = {
-    "python": "uv sync --group dev",
-    "ruby": "bundle install --jobs 4",
-    "rust": "cargo fetch && cargo build --lib",
-    "go": "go mod download && go build ./...",
-    "java": "./mvnw dependency:resolve",
-}
+
+def _warmup_command(lang: str) -> str:
+    cmds = language_commands(lang, CheckKind.INSTALL)
+    return " && ".join(cmds) if cmds else ""
 
 
 def _is_self_repo(repo_root: Path) -> bool:
@@ -111,7 +109,7 @@ def _build_cached_image(
 ) -> str:
     """Build a cached image with standard-tooling installed."""
     self_repo = _is_self_repo(repo_root)
-    warmup = _WARMUP_COMMANDS.get(lang)
+    warmup = _warmup_command(lang)
 
     if self_repo:
         setup = warmup or "true"
