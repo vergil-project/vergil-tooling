@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import time
 
@@ -24,6 +25,46 @@ def read_output(*args: str) -> str:
         capture_output=True,
     )
     return result.stdout.strip()
+
+
+def read_json(*args: str) -> dict[str, object] | list[object]:
+    """Run a gh command and return parsed JSON from stdout."""
+    raw = read_output(*args)
+    result: dict[str, object] | list[object] = json.loads(raw)
+    return result
+
+
+def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
+    """Call gh api with a JSON body via stdin."""
+    subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", method, "--input", "-"),  # noqa: S607
+        input=json.dumps(body),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def delete(endpoint: str) -> None:
+    """Call gh api with DELETE method."""
+    subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", "DELETE"),  # noqa: S607
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def delete_if_exists(endpoint: str) -> bool:
+    """Call gh api DELETE; return True if deleted (2xx), False if 404."""
+    result = subprocess.run(  # noqa: S603
+        ("gh", "api", endpoint, "-X", "DELETE", "-i"),  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    first_line = result.stdout.split("\n")[0] if result.stdout else ""
+    return "404" not in first_line
 
 
 def create_pr(*, base: str, title: str, body_file: str) -> str:

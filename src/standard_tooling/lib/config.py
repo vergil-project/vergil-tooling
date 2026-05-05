@@ -6,7 +6,7 @@ import os
 import re
 import tomllib
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -52,26 +52,27 @@ class MarkdownlintConfig:
 
 
 @dataclass
+class CiConfig:
+    versions: list[str]
+    integration_tests: bool
+
+
+@dataclass
+class GithubOverrides:
+    skip_rulesets: bool
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
+    ci: CiConfig | None
+    github: GithubOverrides
 
 
-def read_config(repo_root: Path) -> StConfig:
-    """Parse, validate, and return ``standard-tooling.toml``."""
-    config_path = repo_root / CONFIG_FILE
-    if not config_path.is_file():
-        msg = f"{CONFIG_FILE} not found at {repo_root}"
-        raise FileNotFoundError(msg)
-
-    try:
-        with config_path.open("rb") as f:
-            raw = tomllib.load(f)
-    except tomllib.TOMLDecodeError as exc:
-        msg = f"{CONFIG_FILE} is not valid TOML: {exc}"
-        raise ConfigError(msg) from exc
-
+def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
+    """Parse and validate a raw TOML dict into StConfig."""
     project_raw = raw.get("project", {})
 
     for field in _PROJECT_FIELDS:
@@ -106,6 +107,29 @@ def read_config(repo_root: Path) -> StConfig:
         raise ConfigError(msg)
     markdownlint = MarkdownlintConfig(ignore=ml_ignore)
 
+    ci_raw = raw.get("ci")
+    ci: CiConfig | None = None
+    if ci_raw is not None:
+        versions = ci_raw.get("versions")
+        if versions is None:
+            msg = f"{CONFIG_FILE}: [ci] missing required field 'versions'"
+            raise ConfigError(msg)
+        if not isinstance(versions, list) or not versions:
+            msg = f"{CONFIG_FILE}: [ci].versions must be a list with at least one entry"
+            raise ConfigError(msg)
+        if not all(isinstance(v, str) for v in versions):
+            msg = f"{CONFIG_FILE}: [ci].versions entries must be strings"
+            raise ConfigError(msg)
+        ci = CiConfig(
+            versions=versions,
+            integration_tests=bool(ci_raw.get("integration-tests", False)),
+        )
+
+    github_raw = raw.get("github", {})
+    github_overrides = GithubOverrides(
+        skip_rulesets=bool(github_raw.get("skip-rulesets", False)),
+    )
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -114,7 +138,30 @@ def read_config(repo_root: Path) -> StConfig:
         primary_language=project_raw["primary-language"],
         co_authors=co_authors,
     )
-    return StConfig(project=project, dependencies=dict(deps), markdownlint=markdownlint)
+    return StConfig(
+        project=project,
+        dependencies=dict(deps),
+        markdownlint=markdownlint,
+        ci=ci,
+        github=github_overrides,
+    )
+
+
+def read_config(repo_root: Path) -> StConfig:
+    """Parse, validate, and return ``standard-tooling.toml``."""
+    config_path = repo_root / CONFIG_FILE
+    if not config_path.is_file():
+        msg = f"{CONFIG_FILE} not found at {repo_root}"
+        raise FileNotFoundError(msg)
+
+    try:
+        with config_path.open("rb") as f:
+            raw = tomllib.load(f)
+    except tomllib.TOMLDecodeError as exc:
+        msg = f"{CONFIG_FILE} is not valid TOML: {exc}"
+        raise ConfigError(msg) from exc
+
+    return _parse_raw_config(raw)
 
 
 def st_install_tag(repo_root: Path) -> str:

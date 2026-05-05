@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -126,6 +127,22 @@ def test_list_project_repos_empty() -> None:
         assert github.list_project_repos("acme", "5") == []
 
 
+def test_read_json_returns_parsed_dict() -> None:
+    payload = {"name": "test", "value": 42}
+    cp = _completed(stdout=json.dumps(payload) + "\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        result = github.read_json("api", "repos/o/r")
+    assert result == payload
+
+
+def test_read_json_returns_parsed_list() -> None:
+    payload = [{"id": 1}, {"id": 2}]
+    cp = _completed(stdout=json.dumps(payload) + "\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        result = github.read_json("api", "repos/o/r/rulesets")
+    assert result == payload
+
+
 def test_checks_registered_returns_false_when_phrase_in_stdout() -> None:
     cp = _completed(returncode=1, stdout="no checks reported on the 'main' branch\n")
     with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
@@ -142,3 +159,56 @@ def test_checks_registered_returns_true_when_checks_exist() -> None:
     cp = _completed(stdout="ci/tests\tpass\nhttps://example.com\n")
     with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
         assert github._checks_registered("https://github.com/pr/1") is True
+
+
+def test_write_json_sends_body_via_stdin() -> None:
+    with patch("standard_tooling.lib.github.subprocess.run") as mock_run:
+        mock_run.return_value = _completed()
+        github.write_json("PATCH", "repos/o/r", {"key": "value"})
+    mock_run.assert_called_once_with(
+        ("gh", "api", "repos/o/r", "-X", "PATCH", "--input", "-"),
+        input='{"key": "value"}',
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_write_json_put_method() -> None:
+    with patch("standard_tooling.lib.github.subprocess.run") as mock_run:
+        mock_run.return_value = _completed()
+        github.write_json("PUT", "repos/o/r/actions/permissions", {"allowed_actions": "all"})
+    call_args = mock_run.call_args
+    expected_cmd = ("gh", "api", "repos/o/r/actions/permissions", "-X", "PUT", "--input", "-")
+    assert call_args[0][0] == expected_cmd
+    assert json.loads(call_args[1]["input"]) == {"allowed_actions": "all"}
+
+
+def test_delete_calls_gh_api() -> None:
+    with patch("standard_tooling.lib.github.subprocess.run") as mock_run:
+        mock_run.return_value = _completed()
+        github.delete("repos/o/r/vulnerability-alerts")
+    mock_run.assert_called_once_with(
+        ("gh", "api", "repos/o/r/vulnerability-alerts", "-X", "DELETE"),
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_delete_if_exists_returns_true_on_success() -> None:
+    cp = _completed(stdout="HTTP/2.0 204 No Content\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
+
+
+def test_delete_if_exists_returns_false_on_404() -> None:
+    cp = _completed(returncode=1, stdout="HTTP/2.0 404 Not Found\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is False
+
+
+def test_delete_if_exists_returns_true_on_empty_stdout() -> None:
+    cp = _completed(stdout="")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
