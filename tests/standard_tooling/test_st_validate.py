@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.st_validate import main
+from standard_tooling.bin.st_validate import (
+    _find_custom_validator,
+    _in_dev_container,
+    _run_commands,
+    _run_common_checks,
+    _run_custom_validator,
+    main,
+)
+from standard_tooling.lib.validate_commands import CheckKind
 
 
 @pytest.fixture(autouse=True)
@@ -146,6 +155,238 @@ def test_run_all_language_none_skips_language_checks(tmp_path: Path) -> None:
     with (
         patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
         patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate._find_custom_validator", return_value=None),
+    ):
+        result = main([])
+    assert result == 0
+
+
+# -- Unit tests for internal functions ----------------------------------------
+
+
+def test_in_dev_container_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ST_IN_DEV_CONTAINER", "1")
+    assert _in_dev_container() is True
+
+
+def test_in_dev_container_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("ST_IN_DEV_CONTAINER", raising=False)
+    with patch("standard_tooling.bin.st_validate.Path.exists", return_value=False):
+        assert _in_dev_container() is False
+
+
+def test_run_commands_success() -> None:
+    with patch(
+        "standard_tooling.bin.st_validate.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=0),
+    ):
+        assert _run_commands(["echo hello"], "test") == 0
+
+
+def test_run_commands_failure() -> None:
+    with patch(
+        "standard_tooling.bin.st_validate.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=1),
+    ):
+        assert _run_commands(["false"], "test") == 1
+
+
+def test_find_custom_validator_entry_point() -> None:
+    with patch("standard_tooling.bin.st_validate.shutil.which", return_value="/usr/bin/custom"):
+        assert _find_custom_validator(Path("/fake")) == "/usr/bin/custom"
+
+
+def test_find_custom_validator_local_script(tmp_path: Path) -> None:
+    scripts_bin = tmp_path / "scripts" / "bin"
+    scripts_bin.mkdir(parents=True)
+    script = scripts_bin / "validate-local-custom"
+    script.write_text("#!/bin/bash\n")
+    script.chmod(0o755)
+    with patch("standard_tooling.bin.st_validate.shutil.which", return_value=None):
+        assert _find_custom_validator(tmp_path) == str(script)
+
+
+def test_find_custom_validator_none(tmp_path: Path) -> None:
+    with patch("standard_tooling.bin.st_validate.shutil.which", return_value=None):
+        assert _find_custom_validator(tmp_path) is None
+
+
+def test_run_custom_validator() -> None:
+    with patch(
+        "standard_tooling.bin.st_validate.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=0),
+    ):
+        assert _run_custom_validator("/path/to/script") == 0
+
+
+def test_run_custom_validator_failure() -> None:
+    with patch(
+        "standard_tooling.bin.st_validate.subprocess.run",
+        return_value=subprocess.CompletedProcess(args=[], returncode=1),
+    ):
+        assert _run_custom_validator("/path/to/script") == 1
+
+
+# -- Config error handling ---------------------------------------------------
+
+
+def test_missing_config_uses_empty_language(tmp_path: Path) -> None:
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+    ):
+        result = main(["--check", "lint"])
+    assert result == 0
+
+
+def test_config_error_returns_1(tmp_path: Path) -> None:
+    from standard_tooling.lib.config import ConfigError
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch(
+            "standard_tooling.bin.st_validate.config.read_config",
+            side_effect=ConfigError("bad config"),
+        ),
+    ):
+        result = main(["--check", "lint"])
+    assert result == 1
+
+
+# -- Install failure stops single check --------------------------------------
+
+
+def test_check_lint_install_failure_stops(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+    call_count = 0
+
+    def mock_run_commands(cmds: list[str], label: str) -> int:
+        nonlocal call_count
+        call_count += 1
+        if label == "install":
+            return 1
+        return 0
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_commands", side_effect=mock_run_commands),
+    ):
+        result = main(["--check", "lint"])
+    assert result == 1
+    assert call_count == 1
+
+
+# -- Run all: language check failure stops -----------------------------------
+
+
+def test_run_all_language_check_failure_stops(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+
+    def mock_commands(cmds: list[str], label: str) -> int:
+        if label == "lint":
+            return 1
+        return 0
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate._run_commands", side_effect=mock_commands),
+    ):
+        result = main([])
+    assert result == 1
+
+
+# -- Run all: custom validator failure stops ---------------------------------
+
+
+def test_run_all_custom_validator_failure(tmp_path: Path) -> None:
+    _write_config(tmp_path, "none")
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch(
+            "standard_tooling.bin.st_validate._find_custom_validator",
+            return_value="/path/to/custom",
+        ),
+        patch("standard_tooling.bin.st_validate._run_custom_validator", return_value=1),
+    ):
+        result = main([])
+    assert result == 1
+
+
+# -- Run all: install failure stops ------------------------------------------
+
+
+def test_run_all_install_failure_stops(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+
+    def mock_commands(cmds: list[str], label: str) -> int:
+        if label == "install":
+            return 1
+        return 0
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate._run_commands", side_effect=mock_commands),
+    ):
+        result = main([])
+    assert result == 1
+
+
+# -- _run_common_checks body --------------------------------------------------
+
+
+def test_run_common_checks_calls_common_main() -> None:
+    with patch(
+        "standard_tooling.bin.validate_local_common_container.main", return_value=0,
+    ) as mock:
+        result = _run_common_checks(Path("/fake"))
+    assert result == 0
+    mock.assert_called_once()
+
+
+# -- Branch: no install commands for single check -----------------------------
+
+
+def test_single_check_no_install_commands(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+
+    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[str]:
+        if kind == CheckKind.INSTALL:
+            return []
+        if kind == CheckKind.LINT:
+            return ["ruff check src/"]
+        return []
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate.language_commands", side_effect=mock_lang_cmds),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0) as mock_run,
+    ):
+        result = main(["--check", "lint"])
+    assert result == 0
+    mock_run.assert_called_once_with(["ruff check src/"], "lint")
+
+
+# -- Branch: no install commands in run-all mode ------------------------------
+
+
+def test_run_all_no_install_commands(tmp_path: Path) -> None:
+    _write_config(tmp_path, "python")
+
+    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[str]:
+        if kind == CheckKind.INSTALL:
+            return []
+        if kind == CheckKind.LINT:
+            return ["ruff check src/"]
+        return []
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate.language_commands", side_effect=mock_lang_cmds),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0),
         patch("standard_tooling.bin.st_validate._find_custom_validator", return_value=None),
     ):
         result = main([])

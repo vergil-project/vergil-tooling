@@ -235,3 +235,67 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
     with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_not_called()
+
+
+# -- _discover_version_file error paths ----------------------------------------
+
+
+def test_discover_ruby_no_match(tmp_path: Path) -> None:
+    from standard_tooling.lib.version import _discover_version_file
+
+    with pytest.raises(FileNotFoundError, match="No lib"):
+        _discover_version_file(tmp_path, "ruby")
+
+
+def test_discover_go_no_match(tmp_path: Path) -> None:
+    from standard_tooling.lib.version import _discover_version_file
+
+    with pytest.raises(FileNotFoundError, match="No .*/version.go"):
+        _discover_version_file(tmp_path, "go")
+
+
+def test_discover_unsupported_language(tmp_path: Path) -> None:
+    from standard_tooling.lib.version import _discover_version_file
+
+    with pytest.raises(ValueError, match="Unsupported language"):
+        _discover_version_file(tmp_path, "fortran")
+
+
+# -- _read_version error paths -------------------------------------------------
+
+
+def test_read_version_ruby_bad_format() -> None:
+    from standard_tooling.lib.version import _read_version
+
+    with pytest.raises(ValueError, match="No VERSION"):
+        _read_version("no version here", "ruby")
+
+
+def test_read_version_go_bad_format() -> None:
+    from standard_tooling.lib.version import _read_version
+
+    with pytest.raises(ValueError, match="No Version"):
+        _read_version("no version here", "go")
+
+
+def test_read_version_java_bad_format() -> None:
+    from standard_tooling.lib.version import _read_version
+
+    with pytest.raises(ValueError, match="No <version>"):
+        _read_version("no version here", "java")
+
+
+# -- _read_version_from_ref body -----------------------------------------------
+
+
+def test_read_version_from_ref_body(tmp_path: Path) -> None:
+    from standard_tooling.lib.version import _read_version_from_ref
+
+    with patch(
+        "standard_tooling.lib.version.subprocess.run",
+        return_value=__import__("subprocess").CompletedProcess(
+            args=[], returncode=0, stdout="1.2.3\n"
+        ),
+    ):
+        result = _read_version_from_ref("origin/main", "VERSION", "shell")
+    assert result == "1.2.3"

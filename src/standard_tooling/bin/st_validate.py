@@ -46,7 +46,7 @@ def _run_commands(cmds: list[str], label: str) -> int:
     return 0
 
 
-def _run_common_checks(repo_root: Path) -> int:
+def _run_common_checks(repo_root: Path) -> int:  # noqa: ARG001
     from standard_tooling.bin.validate_local_common_container import main as common_main
 
     return common_main()
@@ -111,6 +111,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
         return _run_common_checks(repo_root)
 
     kind = _CHECK_KINDS[check]
+    assert kind is not None
     cmds = language_commands(language, kind)
     if not cmds:
         print(f"No {check} commands for language '{language}'")

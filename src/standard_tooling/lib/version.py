@@ -9,9 +9,12 @@ from __future__ import annotations
 import re
 import subprocess
 import tomllib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from standard_tooling.lib.config import read_config
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _RUBY_VERSION_RE = re.compile(r"VERSION\s*=\s*'([^']+)'")
 _GO_VERSION_RE = re.compile(r'Version\s*=\s*"([^"]+)"')
@@ -110,8 +113,8 @@ def _version_file_relative(repo_root: Path) -> tuple[str, str]:
 
 
 def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
-    result = subprocess.run(  # noqa: S603, S607
-        ["git", "show", f"{ref}:{relative_path}"],
+    result = subprocess.run(  # noqa: S603
+        ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
         capture_output=True,
         text=True,
         check=True,

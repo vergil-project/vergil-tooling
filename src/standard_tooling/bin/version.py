@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 from standard_tooling.lib.version import bump, show, show_major_minor
@@ -38,7 +37,7 @@ def main() -> None:
             print(show_major_minor(repo_root, ref=args.ref))  # noqa: T201
         else:
             print(show(repo_root, ref=args.ref))  # noqa: T201
-    elif args.command == "bump":
+    else:
         new_version = bump(repo_root)
         print(new_version)  # noqa: T201
 
