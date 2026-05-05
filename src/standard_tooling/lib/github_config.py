@@ -543,7 +543,7 @@ def _apply_actions_permissions(repo: str, perms: DesiredActionsPermissions) -> N
     github.write_json(
         "PUT",
         f"repos/{repo}/actions/permissions",
-        {"allowed_actions": perms.allowed_actions},
+        {"enabled": True, "allowed_actions": perms.allowed_actions},
     )
     github.write_json(
         "PUT",
