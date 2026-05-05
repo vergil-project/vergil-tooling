@@ -12,6 +12,8 @@ from standard_tooling.lib.config import st_install_tag
 if TYPE_CHECKING:
     from pathlib import Path
 
+_SELF_PROJECT_NAME = "standard-tooling"
+
 _ST_GIT_URL = "https://github.com/wphillipmoore/standard-tooling"
 
 _CACHE_FILES: dict[str, list[str]] = {
@@ -30,6 +32,22 @@ _WARMUP_COMMANDS: dict[str, str] = {
     "go": "go mod download && go build ./...",
     "java": "./mvnw dependency:resolve",
 }
+
+
+def _is_self_repo(repo_root: Path) -> bool:
+    """Return True when *repo_root* is the standard-tooling project itself."""
+    pyproject = repo_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    try:
+        import tomllib
+
+        with pyproject.open("rb") as f:
+            data = tomllib.load(f)
+        name: object = data.get("project", {}).get("name")
+        return name == _SELF_PROJECT_NAME
+    except (OSError, tomllib.TOMLDecodeError, KeyError):
+        return False
 
 
 def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
@@ -92,14 +110,22 @@ def _build_cached_image(
     target_tag: str,
 ) -> str:
     """Build a cached image with standard-tooling installed."""
-    tag = st_install_tag(repo_root)
-    uv_install = f"uv tool install --quiet 'standard-tooling @ git+{_ST_GIT_URL}@{tag}'"
+    self_repo = _is_self_repo(repo_root)
     warmup = _WARMUP_COMMANDS.get(lang)
-    setup = f"{uv_install} && {warmup}" if warmup else uv_install
+
+    if self_repo:
+        setup = warmup or "true"
+    else:
+        tag = st_install_tag(repo_root)
+        uv_install = f"uv tool install --quiet 'standard-tooling @ git+{_ST_GIT_URL}@{tag}'"
+        setup = f"{uv_install} && {warmup}" if warmup else uv_install
 
     print(f"Building cached image: {target_tag}")
     print(f"  Base:    {base_image}")
-    print(f"  Install: standard-tooling@{tag}")
+    if self_repo:
+        print("  Install: skipped (self-repo uses local dev version)")
+    else:
+        print(f"  Install: standard-tooling@{tag}")
     if warmup:
         print(f"  Warmup:  {warmup}")
 
