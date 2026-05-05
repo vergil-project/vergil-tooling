@@ -74,45 +74,37 @@ fleet to behave consistently.
 4. **Dev-tree override via `PATH` ordering.** When testing an
    unreleased version, prepend the local checkout's venv to `PATH`
    for the shell. No framework, no flags.
-5. **Python consumers MUST declare `standard-tooling` as a dev dep.**
-   Pinned to the rolling minor tag via `[tool.uv.sources]`. This
-   makes the project's `.venv` — not the image's pre-bake — the
-   source of `st-*` inside the container, eliminating drift between
-   the repo and the image. Non-Python consumers cannot declare, so
-   they rely on the image's pre-bake; see principle 6.
-6. **Non-Python consumers get `standard-tooling` at container
-   runtime via `st-docker-run`'s cache-first architecture.**
-   `st-docker-run` reads the repo's `standard-tooling.toml` for the
-   version tag, builds a per-branch cached Docker image with
-   standard-tooling pre-installed, and runs commands against it.
-   Dev container images no longer carry pre-baked standard-tooling.
+5. **All consumers get `standard-tooling` at container runtime via
+   `st-docker-run`'s cache-first architecture.** `st-docker-run`
+   reads the repo's `standard-tooling.toml` for the version tag,
+   builds a per-branch cached Docker image with standard-tooling
+   pre-installed via `uv tool install`, and runs commands against it.
+   This applies to all languages equally — Python consumers no longer
+   need a dev-dep declaration for standard-tooling.
+6. **Python consumers MAY still declare `standard-tooling` as a dev
+   dep** for backwards compatibility, but it is no longer required.
+   The cache-first install ensures `st-*` is on PATH regardless.
+   Consumers are encouraged to remove the dev dep to eliminate
+   version drift from stale lockfiles.
 
 ## Deployment targets
 
 | Target | Install mechanism | Who uses it | Freshness mechanism |
 |---|---|---|---|
 | **Developer host** | `uv tool install` from git URL | Host-side commands: `st-docker-run`, `st-commit`, `st-submit-pr`, `st-prepare-release`, `st-finalize-repo` | Manual one-liner after each release |
-| **Python project `.venv`** (MUST for Python consumers) | `[tool.uv.sources]` git URL + `uv sync` | `uv run st-*` inside the container for validators: `st-validate-local`, `st-validate-local-python`, `st-markdown-standards`, etc. | `uv lock --upgrade-package standard-tooling` per repo; rolling tag means the upgrade is a no-arg re-lock |
-| **Non-Python container runtime** (cache-first) | `st-docker-run` reads `standard-tooling.toml`, builds per-branch cached image with `uv tool install` from git URL | `st-*` inside the container for non-Python consumers (plugin, docker, docs) | Automatic cache rebuild when `standard-tooling.toml` tag changes or lockfile changes |
+| **Container runtime** (cache-first, all languages) | `st-docker-run` reads `standard-tooling.toml`, builds per-branch cached image with `uv tool install` from git URL | `st-*` inside the container for all consumers | Automatic cache rebuild when `standard-tooling.toml` tag changes or lockfile changes |
 
-These targets are coordinated, not redundant. Each covers a failure
-mode the others cannot:
+These targets are coordinated, not redundant:
 
 - Without the **host install**, `st-docker-run` cannot launch a
   container in the first place; nothing else matters.
-- Without the **project `.venv` declaration**, Python consumers run
-  whatever version was in the image at build time — which is exactly
-  the drift problem in #51.
-- Without the **cache-first runtime install**, non-Python consumers
-  (plugin, docker, docs) have no `st-*` on PATH inside the container
-  at all.
+- Without the **cache-first runtime install**, consumers have no
+  `st-*` on PATH inside the container at all.
 
-Consistency across the fleet means all Python consumers take the same
-path (project `.venv`) and all non-Python consumers take the other
-(image pre-bake). Mixing — some Python repos declare, others rely on
-the image — is explicitly forbidden because it creates two debugging
-surfaces where one suffices. See
-[Why MUST, not SHOULD](#why-must-not-should).
+Consistency across the fleet means all consumers — Python and
+non-Python alike — take the same container-runtime path via
+`standard-tooling.toml`. This gives one debugging surface and
+one freshness mechanism for in-container tooling.
 
 ## Canonical install (host)
 
@@ -214,65 +206,38 @@ sibling checkout). It is **not** the normal install mechanism —
 that remains `uv tool install` as described under
 [Canonical install](#canonical-install-host).
 
-## Python consumer dev-dep declaration (required)
+## Container-runtime install (all languages)
 
-Every Python consumer MUST declare `standard-tooling` as a dev dep:
+Every consumer — Python or not — gets `standard-tooling` at container
+runtime via `st-docker-run`'s cache-first architecture. The version
+is controlled by `standard-tooling.toml` under `[dependencies]`:
 
 ```toml
-# pyproject.toml
-[dependency-groups]
-dev = [
-    "standard-tooling",
-    # … other dev deps …
-]
-
-[tool.uv.sources]
-standard-tooling = { git = "https://github.com/wphillipmoore/standard-tooling", tag = "v1.2" }
+[dependencies]
+standard-tooling = "v1.4"
 ```
 
-After `uv sync --group dev`, `.venv/bin/st-*` contains the pinned
-version. Inside the container, `uv run st-validate-local` resolves
-against `.venv/` and the image's pre-bake is not consulted.
+At cache build time, `st-docker-run` runs `uv tool install` from the
+git URL at this tag. For Python consumers, it also runs
+`uv sync --group dev` as a warmup step (installing project-level
+dependencies). The two are independent: `uv tool install` puts `st-*`
+on PATH; `uv sync` populates the project's `.venv`.
 
-### Why MUST, not SHOULD
+### Migration from dev-dep model
 
-Uniformity across Python repos is load-bearing. If repo A declares
-the dev dep and repo B does not:
+Python consumers that previously declared `standard-tooling` as a dev
+dep in `[dependency-groups]` can remove it. The cache-first install
+ensures `st-*` commands are available on PATH regardless. Removing the
+dev dep eliminates version drift from stale `uv.lock` pins.
 
-- Repo A runs the tag-pinned version from `.venv/`.
-- Repo B runs the image's pre-baked copy.
-- Debugging "why does validation behave differently in A vs B?"
-  becomes a multi-source version-archaeology exercise.
+The `uv run st-validate-local` invocation continues to work: `uv run`
+falls back to PATH for commands not provided by the project's venv.
 
-The freshness guarantee this spec is trying to deliver —
-"`st-validate-local` runs the version the pin says" — only holds
-fleet-wide if every Python consumer takes the same path. Optional
-adoption guarantees some repos fall off.
+### Legacy: Non-Python consumers
 
-### Keeping lockfiles current
-
-The rolling-minor tag means `uv lock --upgrade-package
-standard-tooling` resolves to the current tip of `v1.2`. Consumers
-bump their lockfile by running that command and committing `uv.lock`.
-
-The cadence for these bumps is left to each consumer. Automation
-(dependabot, scheduled refresh PRs) is desirable but out of scope
-for this spec. What IS in scope: pinning to the rolling minor tag
-rather than a fixed patch tag, so the bump is a no-arg re-lock and
-does not require editing `pyproject.toml`.
-
-### Non-Python consumers
-
-Non-Python consumers (`standard-tooling-plugin`, `standard-tooling-docker`,
-`the-infrastructure-mindset`, `standards-and-conventions`, and the
-Ruby / Go / Rust / Java variants of `mq-rest-admin-*`) cannot
-declare `standard-tooling` as a dev dep because they have no
-`pyproject.toml` to declare in. They get `standard-tooling` at
-container runtime via `st-docker-run`'s cache-first architecture:
-each repo's `standard-tooling.toml` declares the version tag, and
-`st-docker-run` builds a per-branch cached image with
-standard-tooling pre-installed (see
-[Cache-first runtime install](#cache-first-runtime-install)).
+Non-Python consumers already used the cache-first path exclusively.
+No changes needed for them — the unification brings Python consumers
+onto the same mechanism.
 
 ## Cache-first runtime install
 
@@ -299,8 +264,10 @@ image is rebuilt on next invocation.
 This decouples `standard-tooling` releases from dev container image
 rebuilds. Images rebuild on their own schedule (push to main,
 manual trigger) and no longer carry `standard-tooling` at all.
-Non-Python repos get standard-tooling transparently via the cache
-layer; Python repos continue to use `uv sync --group dev`.
+All repos get standard-tooling transparently via the cache layer.
+Python repos also run `uv sync --group dev` as a warmup step to
+install project-level dependencies, but standard-tooling availability
+no longer depends on that declaration.
 
 The `repository_dispatch` trigger that previously fired image
 rebuilds on each `standard-tooling` release has been removed from
@@ -312,35 +279,26 @@ This supersedes the image pre-bake policy originally tracked in
 
 ## CI install path
 
-CI is not a separate deployment target. Every consumer's CI falls
-into one of the two existing paths:
-
-- **Python consumer CI** — uses the project `.venv` path. A workflow
-  step that runs `uv sync --group dev` installs `standard-tooling`
-  from the dev-dep declaration, exactly as on a developer's host.
-  No separate install step.
-- **Non-Python consumer CI** — uses the cache-first runtime path.
-  Workflows invoke `st-docker-run` from the runner, which builds
-  (or reuses) a cached image with standard-tooling installed per
-  `standard-tooling.toml`. CI runners are ephemeral and cannot reuse
-  cached images across runs, so each CI run pays the one-time
-  install cost (~5-10s).
+CI is not a separate deployment target. All consumers use the
+cache-first runtime path: workflows invoke `st-docker-run` from the
+runner, which builds a cached image with standard-tooling installed
+per `standard-tooling.toml`. CI runners are ephemeral and cannot
+reuse cached images across runs, so each CI run pays the one-time
+install cost (~5-10s).
 
 Consequently: the `standards-compliance` composite action in
 [`standard-actions`](https://github.com/wphillipmoore/standard-actions)
 must stop cloning `standard-tooling` and adding `scripts/bin/` to
 `PATH`. That path is a transitional artifact from before the
 container pre-bake existed; under this spec, `standards-compliance`
-either runs inside the dev container (non-Python case) or relies on
-the consumer's own `uv sync --group dev` (Python case). Updating the
+runs inside the dev container via `st-docker-run`. Updating the
 action is part of this spec's rollout (see
 [Acceptance criteria](#acceptance-criteria)).
 
 The same principle applies to any other `standard-actions` composite
-that currently bootstraps `standard-tooling` onto the runner: if the
-work can run inside the dev container, that's the canonical path; if
-the consumer is Python, `uv sync --group dev` covers it. No CI
-workflow should need a bespoke `uv tool install`.
+that currently bootstraps `standard-tooling` onto the runner: the
+canonical path is running inside the dev container. No CI workflow
+should need a bespoke `uv tool install`.
 
 ## Git hooks
 
