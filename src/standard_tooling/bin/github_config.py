@@ -86,10 +86,10 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
         print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
 
 
-def _apply_repo(repo: str, config: StConfig) -> None:
-    """Apply desired state to a repo."""
+def _apply_repo(repo: str, config: StConfig) -> list[str]:
+    """Apply desired state to a repo. Returns branches with legacy protection removed."""
     desired = compute_desired_state(config)
-    apply_desired_state(repo, desired)
+    return apply_desired_state(repo, desired)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -126,8 +126,11 @@ def main(argv: list[str] | None = None) -> int:
     for repo in non_compliant:
         config = _fetch_remote_config(repo)
         print(f"  Applying to {repo}...")
-        _apply_repo(repo, config)
-        print(f"  {repo}: applied")
+        removed = _apply_repo(repo, config)
+        if removed:
+            print(f"  {repo}: applied (legacy protection removed: {', '.join(removed)})")
+        else:
+            print(f"  {repo}: applied")
 
     return 0
 

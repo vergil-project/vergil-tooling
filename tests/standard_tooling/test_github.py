@@ -194,3 +194,21 @@ def test_delete_calls_gh_api() -> None:
         text=True,
         capture_output=True,
     )
+
+
+def test_delete_if_exists_returns_true_on_success() -> None:
+    cp = _completed(stdout="HTTP/2.0 204 No Content\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
+
+
+def test_delete_if_exists_returns_false_on_404() -> None:
+    cp = _completed(returncode=1, stdout="HTTP/2.0 404 Not Found\n")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is False
+
+
+def test_delete_if_exists_returns_true_on_empty_stdout() -> None:
+    cp = _completed(stdout="")
+    with patch("standard_tooling.lib.github.subprocess.run", return_value=cp):
+        assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
