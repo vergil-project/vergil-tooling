@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.19] - 2026-05-05
+
+### Bug fixes
+
+- suppress S101 on type-narrowing assertion
+- run independent check commands to completion instead of short-circuiting on first failure
+- use cmd.split() instead of shell=True for subprocess.run
+
+### Features
+
+- fix Python commands and add install entries to command registry
+- add st-validate command with registry-driven check dispatch
+- add hadolint and actionlint to common validation checks
+- add st-version library and CLI with per-language version discovery, show, bump, and --ref support
+
+### Refactoring
+
+- replace _WARMUP_COMMANDS with registry-driven install lookup
+- call st-validate instead of st-validate-local in post-finalization
+
+### Styling
+
+- apply ruff format to new and modified files
+- apply ruff format to test_st_validate
+
+### Testing
+
+- achieve 100% branch coverage for st-validate and st-version
+
 ## [1.4.18] - 2026-05-05
 
 ### Bug fixes
