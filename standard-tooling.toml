@@ -14,5 +14,9 @@ consumer-refresh = """\
 uv tool install 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v<VERSION>'
 """
 
+[ci]
+versions = ["3.12"]
+integration-tests = false
+
 [dependencies]
 standard-tooling = "v1.4"
