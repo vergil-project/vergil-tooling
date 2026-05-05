@@ -87,7 +87,7 @@ def _make_profile(tmp_path: Path, model: str) -> None:
 
 
 def _validation_ok() -> CompletedProcess[bytes]:
-    return CompletedProcess(args=("st-validate-local",), returncode=0)
+    return CompletedProcess(args=("st-validate",), returncode=0)
 
 
 def test_main_library_release(tmp_path: Path) -> None:
@@ -219,7 +219,7 @@ def test_main_validation_fails(tmp_path: Path) -> None:
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
             "standard_tooling.bin.finalize_repo.subprocess.run",
-            return_value=CompletedProcess(args=("st-validate-local",), returncode=1),
+            return_value=CompletedProcess(args=("st-validate",), returncode=1),
         ),
         patch(_MOD + "._check_docs_workflow_status", return_value=None),
     ):
@@ -241,7 +241,7 @@ def test_main_calls_docker_run(tmp_path: Path) -> None:
     assert result == 0
     cmd = mock_sub.call_args[0][0]
     assert cmd[0] == "st-docker-run"
-    assert cmd[1:] == ("--", "st-validate-local")
+    assert cmd[1:] == ("--", "st-validate")
 
 
 def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
@@ -258,7 +258,7 @@ def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     cmd = mock_sub.call_args[0][0]
-    assert cmd == ("st-docker-run", "--", "uv", "run", "st-validate-local")
+    assert cmd == ("st-docker-run", "--", "uv", "run", "st-validate")
 
 
 # -- _check_docs_workflow_status (issue #303) --------------------------------
