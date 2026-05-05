@@ -37,13 +37,16 @@ def _in_dev_container() -> bool:
     return Path("/.dockerenv").exists() or bool(os.environ.get("ST_IN_DEV_CONTAINER"))
 
 
-def _run_commands(cmds: list[str], label: str) -> int:
+def _run_commands(cmds: list[str], label: str, *, fail_fast: bool = False) -> int:
+    worst = 0
     for cmd in cmds:
         print(f"Running ({label}): {cmd}")
         result = subprocess.run(cmd, shell=True, check=False)  # noqa: S602
         if result.returncode != 0:
-            return result.returncode
-    return 0
+            if fail_fast:
+                return result.returncode
+            worst = result.returncode
+    return worst
 
 
 def _run_common_checks(repo_root: Path) -> int:  # noqa: ARG001
@@ -119,7 +122,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
 
     install_cmds = language_commands(language, CheckKind.INSTALL)
     if install_cmds:
-        rc = _run_commands(install_cmds, "install")
+        rc = _run_commands(install_cmds, "install", fail_fast=True)
         if rc != 0:
             return rc
 
@@ -141,7 +144,7 @@ def _run_all_checks(language: str, repo_root: Path) -> int:
         install_cmds = language_commands(language, CheckKind.INSTALL)
         if install_cmds:
             print()
-            rc = _run_commands(install_cmds, "install")
+            rc = _run_commands(install_cmds, "install", fail_fast=True)
             if rc != 0:
                 return rc
 

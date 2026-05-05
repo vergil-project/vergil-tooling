@@ -62,7 +62,7 @@ def test_check_lint_runs_install_then_lint(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
     calls: list[str] = []
 
-    def mock_run_commands(cmds: list[str], label: str) -> int:
+    def mock_run_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
         calls.extend(cmds)
         return 0
 
@@ -94,7 +94,7 @@ def test_run_all_calls_common_then_language_checks(tmp_path: Path) -> None:
         order.append("common")
         return 0
 
-    def mock_commands(cmds: list[str], label: str) -> int:
+    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
         order.append(label)
         return 0
 
@@ -183,12 +183,24 @@ def test_run_commands_success() -> None:
         assert _run_commands(["echo hello"], "test") == 0
 
 
-def test_run_commands_failure() -> None:
+def test_run_commands_failure_runs_all_by_default() -> None:
+    results = iter([
+        subprocess.CompletedProcess(args=[], returncode=1),
+        subprocess.CompletedProcess(args=[], returncode=0),
+        subprocess.CompletedProcess(args=[], returncode=2),
+    ])
+    with patch("standard_tooling.bin.st_validate.subprocess.run", side_effect=results) as mock:
+        assert _run_commands(["cmd1", "cmd2", "cmd3"], "test") == 2
+    assert mock.call_count == 3
+
+
+def test_run_commands_fail_fast_stops_on_first() -> None:
     with patch(
         "standard_tooling.bin.st_validate.subprocess.run",
         return_value=subprocess.CompletedProcess(args=[], returncode=1),
-    ):
-        assert _run_commands(["false"], "test") == 1
+    ) as mock:
+        assert _run_commands(["cmd1", "cmd2"], "test", fail_fast=True) == 1
+    assert mock.call_count == 1
 
 
 def test_find_custom_validator_entry_point() -> None:
@@ -259,7 +271,7 @@ def test_check_lint_install_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
     call_count = 0
 
-    def mock_run_commands(cmds: list[str], label: str) -> int:
+    def mock_run_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
         nonlocal call_count
         call_count += 1
         if label == "install":
@@ -281,7 +293,7 @@ def test_check_lint_install_failure_stops(tmp_path: Path) -> None:
 def test_run_all_language_check_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_commands(cmds: list[str], label: str) -> int:
+    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
         if label == "lint":
             return 1
         return 0
@@ -320,7 +332,7 @@ def test_run_all_custom_validator_failure(tmp_path: Path) -> None:
 def test_run_all_install_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_commands(cmds: list[str], label: str) -> int:
+    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
         if label == "install":
             return 1
         return 0
