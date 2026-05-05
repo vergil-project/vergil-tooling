@@ -65,8 +65,8 @@ class DesiredState:
 
 
 _ALLOWED_ACTION_PATTERNS = [
-    "actions/*",
     "actions-rust-lang/*",
+    "actions/*",
     "astral-sh/*",
     "docker/*",
     "github/*",
@@ -287,6 +287,26 @@ def _fetch_vulnerability_alerts(repo: str) -> bool:
     return "204" in result.stdout.split("\n")[0]
 
 
+_STRIP_RULE_PARAMS = frozenset({"do_not_enforce_on_create"})
+
+
+def _normalize_rules(rules: list[object]) -> list[dict[str, object]]:
+    """Strip API-default fields from rule parameters for clean comparison."""
+    normalized: list[dict[str, object]] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        params = rule.get("parameters")
+        if isinstance(params, dict):
+            cleaned_params = {
+                k: v for k, v in params.items() if k not in _STRIP_RULE_PARAMS
+            }
+            normalized.append({**rule, "parameters": cleaned_params})
+        else:
+            normalized.append(dict(rule))
+    return normalized
+
+
 def fetch_actual_state(repo: str) -> DesiredState:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
@@ -386,7 +406,9 @@ def fetch_actual_state(repo: str) -> DesiredState:
             bypass_raw = rs_detail.get("bypass_actors")
             bypass = bypass_raw if isinstance(bypass_raw, list) else []
             rules_raw = rs_detail.get("rules")
-            rules = rules_raw if isinstance(rules_raw, list) else []
+            rules = _normalize_rules(
+                rules_raw if isinstance(rules_raw, list) else []
+            )
 
             rulesets.append(
                 DesiredRuleset(
