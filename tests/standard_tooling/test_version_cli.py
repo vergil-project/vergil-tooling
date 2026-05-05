@@ -33,9 +33,7 @@ def test_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert capsys.readouterr().out.strip() == "1.2.3"
 
 
-def test_show_major_minor(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_show_major_minor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (

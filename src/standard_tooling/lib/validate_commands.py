@@ -18,25 +18,27 @@ class CheckKind(Enum):
     AUDIT = "audit"
 
 
-_PIP_LICENSES_ALLOWLIST = ";".join([
-    "Apache-2.0",
-    "Apache-2.0 AND CNRI-Python",
-    "Apache-2.0 OR BSD-2-Clause",
-    "Apache-2.0 OR BSD-3-Clause",
-    "Apache Software License",
-    "BSD License",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "GPL-3.0-only",
-    "GPL-3.0-or-later",
-    "ISC License (ISCL)",
-    "MIT",
-    "MIT License",
-    "Mozilla Public License 2.0 (MPL 2.0)",
-    "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
-    "PSF-2.0",
-    "Python Software Foundation License",
-])
+_PIP_LICENSES_ALLOWLIST = ";".join(
+    [
+        "Apache-2.0",
+        "Apache-2.0 AND CNRI-Python",
+        "Apache-2.0 OR BSD-2-Clause",
+        "Apache-2.0 OR BSD-3-Clause",
+        "Apache Software License",
+        "BSD License",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "GPL-3.0-only",
+        "GPL-3.0-or-later",
+        "ISC License (ISCL)",
+        "MIT",
+        "MIT License",
+        "Mozilla Public License 2.0 (MPL 2.0)",
+        "MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later",
+        "PSF-2.0",
+        "Python Software Foundation License",
+    ]
+)
 
 _REGISTRY: dict[str, dict[CheckKind, list[str]]] = {
     "python": {

@@ -339,7 +339,8 @@ def test_run_all_install_failure_stops(tmp_path: Path) -> None:
 
 def test_run_common_checks_calls_common_main() -> None:
     with patch(
-        "standard_tooling.bin.validate_local_common_container.main", return_value=0,
+        "standard_tooling.bin.validate_local_common_container.main",
+        return_value=0,
     ) as mock:
         result = _run_common_checks(Path("/fake"))
     assert result == 0

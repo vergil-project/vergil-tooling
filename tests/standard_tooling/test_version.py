@@ -29,9 +29,7 @@ def _write_toml(tmp_path: Path, language: str) -> None:
 
 def test_show_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "example"\nversion = "1.2.3"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.2.3"\n')
     assert show(tmp_path) == "1.2.3"
 
 
@@ -43,9 +41,7 @@ def test_show_generic_version_file(tmp_path: Path) -> None:
 
 def test_show_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "example"\nversion = "0.3.7"\n'
-    )
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
     assert show(tmp_path) == "0.3.7"
 
 
@@ -67,9 +63,7 @@ def test_show_go(tmp_path: Path) -> None:
 
 def test_show_java(tmp_path: Path) -> None:
     _write_toml(tmp_path, "java")
-    (tmp_path / "pom.xml").write_text(
-        "<project>\n  <version>3.2.1</version>\n</project>\n"
-    )
+    (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
     assert show(tmp_path) == "3.2.1"
 
 
@@ -134,9 +128,7 @@ def test_bump_generic(tmp_path: Path) -> None:
 
 def test_bump_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "example"\nversion = "2.0.0"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.0.0"\n')
     with patch("standard_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "2.0.1"
@@ -146,9 +138,7 @@ def test_bump_python(tmp_path: Path) -> None:
 
 def test_bump_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "example"\nversion = "0.3.7"\n'
-    )
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
     with patch("standard_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "0.3.8"
@@ -181,9 +171,7 @@ def test_bump_go(tmp_path: Path) -> None:
 
 def test_bump_java(tmp_path: Path) -> None:
     _write_toml(tmp_path, "java")
-    (tmp_path / "pom.xml").write_text(
-        "<project>\n  <version>3.2.1</version>\n</project>\n"
-    )
+    (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
     result = bump(tmp_path)
     assert result == "3.2.2"
     text = (tmp_path / "pom.xml").read_text()
@@ -195,25 +183,25 @@ def test_bump_java(tmp_path: Path) -> None:
 
 def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
-    (tmp_path / "pyproject.toml").write_text(
-        '[project]\nname = "example"\nversion = "1.0.0"\n'
-    )
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
     with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
-            ["uv", "lock"], cwd=tmp_path, check=True,
+            ["uv", "lock"],
+            cwd=tmp_path,
+            check=True,
         )
 
 
 def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
-    (tmp_path / "Cargo.toml").write_text(
-        '[package]\nname = "example"\nversion = "0.1.0"\n'
-    )
+    (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
     with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
-            ["cargo", "update", "--workspace"], cwd=tmp_path, check=True,
+            ["cargo", "update", "--workspace"],
+            cwd=tmp_path,
+            check=True,
         )
 
 
@@ -225,7 +213,9 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
     with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
-            ["bundle", "install"], cwd=tmp_path, check=True,
+            ["bundle", "install"],
+            cwd=tmp_path,
+            check=True,
         )
 
 
