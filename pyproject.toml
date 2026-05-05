@@ -35,6 +35,7 @@ st-validate-local-common = "standard_tooling.bin.validate_local_common_container
 st-pr-issue-linkage = "standard_tooling.bin.pr_issue_linkage:main"
 st-github-config = "standard_tooling.bin.github_config:main"
 st-validate = "standard_tooling.bin.st_validate:main"
+st-version = "standard_tooling.bin.version:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
