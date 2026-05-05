@@ -5,11 +5,11 @@ on:
   workflow_call:
     inputs:
       run-security:
-        type: string
-        default: 'true'
-      run-release-gates:
-        type: string
-        default: 'true'
+        type: boolean
+        default: true
+      run-release:
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -21,24 +21,23 @@ concurrency:
 jobs:
 
   # ---------------------------------------------------------------------------
-  # Quality: lint, type-check, tests, shellcheck, dependency audit
+  # Quality
   # ---------------------------------------------------------------------------
 
-  python:
-    name: "ci: python"
+  quality:
+    uses: wphillipmoore/standard-actions/.github/workflows/ci-quality.yml@v1.5
+    with:
+      language: python
+      versions: '["3.12"]'
+
+  lint:
+    name: "quality / lint / 3.12"
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/wphillipmoore/dev-python:3.12
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
-
-      - name: Mark workspace safe for git
-        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
-
-      - name: Fetch base branch for version checks
-        if: github.event_name == 'pull_request'
-        run: git fetch origin ${{ github.base_ref }} --depth=1
 
       - name: Install dependencies
         run: uv sync --group dev --frozen
@@ -49,30 +48,41 @@ jobs:
       - name: Format check
         run: uv run ruff format --check .
 
-      - name: Type check
-        run: uv run mypy src/
-
-      - name: Tests
-        run: uv run pytest tests/ --cov=standard_tooling --cov-branch --cov-fail-under=100
-
-  shellcheck:
-    name: "ci: shellcheck"
+  typecheck:
+    name: "quality / typecheck / 3.12"
     runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wphillipmoore/dev-python:3.12
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Run shellcheck
-        run: |
-          files=$(find scripts -type f \( -path '*/bin/*' -o -path '*/git-hooks/*' \) | sort)
-          if [ -n "$files" ]; then
-            echo "$files" | xargs shellcheck
-          else
-            echo "No shell scripts found."
-          fi
+      - name: Install dependencies
+        run: uv sync --group dev --frozen
 
-  dependency-audit:
-    name: "ci: dependency-audit"
+      - name: Type check
+        run: uv run mypy src/
+
+  test:
+    name: "test / unit / 3.12"
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/wphillipmoore/dev-python:3.12
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Mark workspace safe for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Install dependencies
+        run: uv sync --group dev --frozen
+
+      - name: Tests
+        run: uv run pytest tests/ --cov=standard_tooling --cov-branch --cov-fail-under=100
+
+  audit:
+    name: "audit / dependencies / 3.12"
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/wphillipmoore/dev-python:3.12
@@ -84,26 +94,26 @@ jobs:
         run: uv lock --check
 
   # ---------------------------------------------------------------------------
-  # Security and standards (shared reusable workflow)
+  # Security and standards
   # ---------------------------------------------------------------------------
 
-  security-and-standards:
-    uses: wphillipmoore/standard-actions/.github/workflows/ci-security.yml@v1.4
+  security:
+    uses: wphillipmoore/standard-actions/.github/workflows/ci-security.yml@v1.5
     with:
       language: python
-      run-standards: ${{ inputs.run-release-gates || 'true' }}
-      run-security: ${{ inputs.run-security || 'true' }}
+      run-standards: ${{ inputs.run-release || true }}
+      run-security: ${{ inputs.run-security || true }}
     permissions:
       contents: read
       security-events: write
 
   # ---------------------------------------------------------------------------
-  # Release gates (PR only)
+  # Release
   # ---------------------------------------------------------------------------
 
-  release-gates:
-    name: "release: gates"
-    if: ${{ inputs.run-release-gates != 'false' }}
+  release:
+    name: "release / version-bump"
+    if: ${{ inputs.run-release != false }}
     runs-on: ubuntu-latest
     container:
       image: ghcr.io/wphillipmoore/dev-python:3.12
@@ -124,7 +134,7 @@ jobs:
 
       - name: Version divergence gate (PRs targeting develop)
         if: github.event_name == 'pull_request' && github.base_ref == 'develop'
-        uses: wphillipmoore/standard-actions/actions/release-gates/version-divergence@v1.4
+        uses: wphillipmoore/standard-actions/actions/release-gates/version-divergence@v1.5
         with:
           head-version-command: python3 -c "import tomllib; from pathlib import Path; print(tomllib.loads(Path('pyproject.toml').read_text())['project']['version'])"
           main-version-command: git show origin/main:pyproject.toml | python3 -c "import sys, tomllib; print(tomllib.loads(sys.stdin.read())['project']['version'])"

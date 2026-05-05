@@ -24,6 +24,6 @@ jobs:
           fetch-depth: 0
 
       - name: Deploy docs
-        uses: wphillipmoore/standard-actions/actions/docs-deploy@v1.4
+        uses: wphillipmoore/standard-actions/actions/docs-deploy@v1.5
         with:
           version-command: python3 -c "import tomllib; from pathlib import Path; v=tomllib.loads(Path('pyproject.toml').read_text())['project']['version']; print('.'.join(v.split('.')[:2]))"
