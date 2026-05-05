@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.16] - 2026-05-05
+
+### Bug fixes
+
+- normalize audit comparison for patterns ordering and API default fields
+
+### Chores
+
+- sweep post-1.4.15 dependency updates
+
+### Styling
+
+- apply ruff format
+
 ## [1.4.15] - 2026-05-05
 
 ### Bug fixes
