@@ -298,9 +298,7 @@ def _normalize_rules(rules: list[object]) -> list[dict[str, object]]:
             continue
         params = rule.get("parameters")
         if isinstance(params, dict):
-            cleaned_params = {
-                k: v for k, v in params.items() if k not in _STRIP_RULE_PARAMS
-            }
+            cleaned_params = {k: v for k, v in params.items() if k not in _STRIP_RULE_PARAMS}
             normalized.append({**rule, "parameters": cleaned_params})
         else:
             normalized.append(dict(rule))
@@ -406,9 +404,7 @@ def fetch_actual_state(repo: str) -> DesiredState:
             bypass_raw = rs_detail.get("bypass_actors")
             bypass = bypass_raw if isinstance(bypass_raw, list) else []
             rules_raw = rs_detail.get("rules")
-            rules = _normalize_rules(
-                rules_raw if isinstance(rules_raw, list) else []
-            )
+            rules = _normalize_rules(rules_raw if isinstance(rules_raw, list) else [])
 
             rulesets.append(
                 DesiredRuleset(
