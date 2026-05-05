@@ -418,7 +418,7 @@ def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
     assert result != "img:1"
 
 
-def test_build_cached_image_python_skips_uv_install(tmp_path: Path) -> None:
+def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
@@ -433,8 +433,8 @@ def test_build_cached_image_python_skips_uv_install(tmp_path: Path) -> None:
     with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
-    assert "uv tool install" not in setup_cmd
-    assert "uv sync" in setup_cmd
+    assert "uv tool install" in setup_cmd
+    assert "uv sync --group dev" in setup_cmd
 
 
 def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:

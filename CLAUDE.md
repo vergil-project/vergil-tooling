@@ -239,14 +239,13 @@ Consumed via `git config core.hooksPath .githooks`:
 
 ### Consumption Model
 
-`standard-tooling` has three coordinated deployment targets (see
+`standard-tooling` has two coordinated deployment targets (see
 `docs/specs/host-level-tool.md` for the full spec):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
 | **Developer host** | `uv tool install` from git URL | Host-side commands: `st-docker-run`, `st-commit`, `st-submit-pr`, `st-prepare-release`, `st-finalize-repo` |
-| **Python project `.venv`** | `[tool.uv.sources]` dev dep + `uv sync` | `uv run st-*` inside the container for validators |
-| **Non-Python container runtime** | `st-docker-run` cache-first install per `standard-tooling.toml` | `st-*` inside the container for non-Python consumers |
+| **Container runtime** (all languages) | `st-docker-run` cache-first install per `standard-tooling.toml` | `st-*` inside the container for all consumers |
 
 **Host install** (canonical):
 
@@ -262,10 +261,10 @@ rejects raw `git commit`) and enables it once per clone:
 git config core.hooksPath .githooks
 ```
 
-**CI (GitHub Actions)**: Python repos use `uv sync --group dev`
-(the dev-dep declaration); non-Python repos get `standard-tooling`
-at container runtime via `st-docker-run`'s cache-first install
-(reads `standard-tooling.toml` for the version tag).
+**CI (GitHub Actions)**: All repos use the cache-first runtime path
+via `st-docker-run`, which reads `standard-tooling.toml` for the
+version tag and builds a per-branch cached image with
+standard-tooling pre-installed.
 
 ### Key Constraints
 

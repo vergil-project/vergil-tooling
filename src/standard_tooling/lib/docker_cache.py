@@ -95,12 +95,7 @@ def _build_cached_image(
     tag = st_install_tag(repo_root)
     uv_install = f"uv tool install --quiet 'standard-tooling @ git+{_ST_GIT_URL}@{tag}'"
     warmup = _WARMUP_COMMANDS.get(lang)
-    if lang == "python":
-        setup = warmup or ""
-    elif warmup:
-        setup = f"{uv_install} && {warmup}"
-    else:
-        setup = uv_install
+    setup = f"{uv_install} && {warmup}" if warmup else uv_install
 
     print(f"Building cached image: {target_tag}")
     print(f"  Base:    {base_image}")
