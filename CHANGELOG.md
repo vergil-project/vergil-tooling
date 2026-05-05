@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.17] - 2026-05-05
+
+### Bug fixes
+
+- add safe.directory for git worktree tests in CI container
+
+### Chores
+
+- upgrade workflows to standard-actions v1.5 and add CI derivation config
+
+### Documentation
+
+- update host-level-tool spec for unified consumption model
+- update CLAUDE.md consumption model for unified install
+
+### Features
+
+- unify cache install — Python now gets uv tool install
+
 ## [1.4.16] - 2026-05-05
 
 ### Bug fixes
