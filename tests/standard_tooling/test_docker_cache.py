@@ -9,6 +9,7 @@ import pytest
 
 from standard_tooling.lib.docker_cache import (
     _build_cached_image,
+    _is_self_repo,
     _sanitize_branch,
     cache_image_tag,
     cache_sensitive_files,
@@ -461,3 +462,57 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
 
     assert len(built_tags) == 2
     assert built_tags[0] != built_tags[1], "repos with identical files must get distinct image tags"
+
+
+# -- _is_self_repo ------------------------------------------------------------
+
+
+def test_is_self_repo_true(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "standard-tooling"\n')
+    assert _is_self_repo(tmp_path) is True
+
+
+def test_is_self_repo_false_different_name(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[project]\nname = "my-app"\n')
+    assert _is_self_repo(tmp_path) is False
+
+
+def test_is_self_repo_false_no_pyproject(tmp_path: Path) -> None:
+    assert _is_self_repo(tmp_path) is False
+
+
+def test_is_self_repo_false_no_project_table(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text('[tool.ruff]\nline-length = 100\n')
+    assert _is_self_repo(tmp_path) is False
+
+
+def test_is_self_repo_false_invalid_toml(tmp_path: Path) -> None:
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text("not valid [[[toml content")
+    assert _is_self_repo(tmp_path) is False
+
+
+# -- _build_cached_image self-repo skip ----------------------------------------
+
+
+def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "standard-tooling"\n')
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    ok = MagicMock(returncode=0)
+    create_cmd: list[str] = []
+
+    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+        if cmd[1] == "create":
+            create_cmd.extend(cmd)
+            return create_result
+        return ok
+
+    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
+    setup_cmd = create_cmd[-1]
+    assert "uv tool install" not in setup_cmd
+    assert "uv sync --group dev" in setup_cmd
