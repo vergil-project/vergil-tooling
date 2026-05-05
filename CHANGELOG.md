@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.18] - 2026-05-05
+
+### Bug fixes
+
+- skip uv tool install when running in the standard-tooling repo itself
+- resolve CI failures: mypy no-any-return and ruff format
+
+### Chores
+
+- sweep post-1.4.17 dependency updates
+
 ## [1.4.17] - 2026-05-05
 
 ### Bug fixes
