@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from standard_tooling.bin.validate_local_common_container import (
+    _find_dockerfiles,
     _find_markdown_files,
     _find_shell_files,
     _find_yaml_files,
@@ -456,9 +457,8 @@ def test_main_yamllint_runs(tmp_path: Path) -> None:
         ) as mock_run,
     ):
         assert main() == 0
-    mock_run.assert_called_once()
-    call_args = mock_run.call_args[0][0]
-    assert call_args[0] == "yamllint"
+    yamllint_call = mock_run.call_args_list[0][0][0]
+    assert yamllint_call[0] == "yamllint"
 
 
 def test_main_yamllint_fails(tmp_path: Path) -> None:
@@ -479,6 +479,146 @@ def test_main_yamllint_fails(tmp_path: Path) -> None:
         patch(
             "standard_tooling.bin.validate_local_common_container.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
+        ),
+    ):
+        assert main() == 1
+
+
+# -- _find_dockerfiles -------------------------------------------------------
+
+
+def test_find_dockerfiles_none(tmp_path: Path) -> None:
+    assert _find_dockerfiles(tmp_path) == []
+
+
+def test_find_dockerfiles_discovers_dockerfile(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+    result = _find_dockerfiles(tmp_path)
+    assert len(result) == 1
+    assert result[0].endswith("Dockerfile")
+
+
+def test_find_dockerfiles_discovers_variants(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+    (tmp_path / "Dockerfile.dev").write_text("FROM python:3.12\n")
+    result = _find_dockerfiles(tmp_path)
+    assert len(result) == 2
+
+
+def test_find_dockerfiles_sorted(tmp_path: Path) -> None:
+    (tmp_path / "Dockerfile.dev").write_text("FROM python:3.12\n")
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+    result = _find_dockerfiles(tmp_path)
+    assert result == sorted(result)
+
+
+def test_find_dockerfiles_ignores_non_dockerfile(tmp_path: Path) -> None:
+    (tmp_path / "README.md").write_text("# Project\n")
+    (tmp_path / "Makefile").write_text("build:\n")
+    assert _find_dockerfiles(tmp_path) == []
+
+
+# -- main: hadolint path ----------------------------------------------------
+
+
+def test_main_hadolint_runs(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    hadolint_call = mock_run.call_args_list[0][0][0]
+    assert hadolint_call[0] == "hadolint"
+
+
+def test_main_hadolint_fails(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1),
+        ),
+    ):
+        assert main() == 1
+
+
+# -- main: actionlint path --------------------------------------------------
+
+
+def test_main_actionlint_runs(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: CI\n")
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    tool_names = [call[0][0][0] for call in mock_run.call_args_list]
+    assert "actionlint" in tool_names
+
+
+def test_main_actionlint_fails(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: CI\n")
+
+    calls = []
+
+    def mock_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+        calls.append(cmd)
+        if cmd[0] == "actionlint":
+            return subprocess.CompletedProcess(args=cmd, returncode=1)
+        return subprocess.CompletedProcess(args=cmd, returncode=0)
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            side_effect=mock_run,
         ),
     ):
         assert main() == 1

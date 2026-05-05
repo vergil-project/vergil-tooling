@@ -435,7 +435,7 @@ def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
         _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
     assert "uv tool install" in setup_cmd
-    assert "uv sync --group dev" in setup_cmd
+    assert "uv sync --frozen --group dev" in setup_cmd
 
 
 def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
@@ -515,4 +515,4 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
         _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
     assert "uv tool install" not in setup_cmd
-    assert "uv sync --group dev" in setup_cmd
+    assert "uv sync --frozen --group dev" in setup_cmd

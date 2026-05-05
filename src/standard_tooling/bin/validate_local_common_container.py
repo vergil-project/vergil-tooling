@@ -6,6 +6,8 @@ Runs inside the dev container via ``st-docker-run``:
      the bundled canonical config
   3. shellcheck on all shell scripts under ``scripts/``
   4. yamllint on YAML files under ``.github/`` and ``docs/`` (issue #302)
+  5. hadolint on Dockerfile* files at the repo root
+  6. actionlint on ``.github/workflows/``
 """
 
 from __future__ import annotations
@@ -54,6 +56,15 @@ def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> li
     if readme.is_file():
         found.append(str(readme))
 
+    return sorted(found)
+
+
+def _find_dockerfiles(repo_root: Path) -> list[str]:
+    """Discover Dockerfile* files at the repo root."""
+    found: list[str] = []
+    for path in repo_root.iterdir():
+        if path.is_file() and path.name.startswith("Dockerfile"):
+            found.append(str(path))
     return sorted(found)
 
 
@@ -125,6 +136,26 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         print(f"Running: yamllint ({len(yaml_files)} files)")
         result = subprocess.run(  # noqa: S603
             ["yamllint", *yaml_files],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    dockerfile_files = _find_dockerfiles(repo_root)
+    if dockerfile_files:
+        print(f"Running: hadolint ({len(dockerfile_files)} files)")
+        result = subprocess.run(  # noqa: S603
+            ["hadolint", *dockerfile_files],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    workflows_dir = repo_root / ".github" / "workflows"
+    if workflows_dir.is_dir():
+        print("Running: actionlint")
+        result = subprocess.run(  # noqa: S603
+            ["actionlint"],  # noqa: S607
             check=False,
         )
         if result.returncode != 0:

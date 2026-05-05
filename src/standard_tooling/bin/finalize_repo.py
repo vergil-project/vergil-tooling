@@ -239,15 +239,15 @@ def main(argv: list[str] | None = None) -> int:
         print("Running post-finalization validation via st-docker-run...")
         repo_root = Path(git.repo_root())
         if (repo_root / "pyproject.toml").is_file():
-            cmd: tuple[str, ...] = ("st-docker-run", "--", "uv", "run", "st-validate-local")
+            cmd: tuple[str, ...] = ("st-docker-run", "--", "uv", "run", "st-validate")
         else:
-            cmd = ("st-docker-run", "--", "st-validate-local")
+            cmd = ("st-docker-run", "--", "st-validate")
 
         result = subprocess.run(cmd, check=False)  # noqa: S603
         if result.returncode != 0:
             validation_failed = True
     else:
-        print("  [dry-run] st-docker-run -- [uv run] st-validate-local")
+        print("  [dry-run] st-docker-run -- [uv run] st-validate")
 
     # Docs-publish sanity check (issue #303). Runs after validation
     # so a real validation failure stays the headline; a docs failure
