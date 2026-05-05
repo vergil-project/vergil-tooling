@@ -21,6 +21,7 @@ from standard_tooling.lib.github_config import (
     _cleanup_classic_branch_protection,
     _fetch_vulnerability_alerts,
     _lang_has_check,
+    _normalize_rules,
     _ruleset_body,
     apply_desired_state,
     compute_desired_state,
@@ -1004,3 +1005,30 @@ def test_cleanup_deduplicates_branches_across_rulesets() -> None:
     # Should only call once per unique branch
     assert mock_del.call_count == 2
     assert sorted(removed) == ["develop", "main"]
+
+
+def test_normalize_rules_strips_default_params() -> None:
+    rules: list[object] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "do_not_enforce_on_create": False,
+                "required_status_checks": [],
+            },
+        },
+    ]
+    result = _normalize_rules(rules)
+    assert len(result) == 1
+    assert "do_not_enforce_on_create" not in result[0]["parameters"]
+    assert result[0]["parameters"]["strict_required_status_checks_policy"] is True
+
+
+def test_normalize_rules_skips_non_dict_entries() -> None:
+    rules: list[object] = [
+        "not-a-dict",
+        {"type": "deletion"},
+    ]
+    result = _normalize_rules(rules)
+    assert len(result) == 1
+    assert result[0] == {"type": "deletion"}
