@@ -12,6 +12,7 @@ from standard_tooling.bin.github_config import (
     _apply_repo,
     _audit_repo,
     _fetch_remote_config,
+    _load_local_config,
     _resolve_repos,
     main,
     parse_args,
@@ -58,6 +59,26 @@ def test_parse_project_mode() -> None:
 def test_parse_no_target_fails() -> None:
     with pytest.raises(SystemExit):
         parse_args(["audit"])
+
+
+def test_parse_config_flag_audit() -> None:
+    args = parse_args(["audit", "--repo", "o/r", "--config", "local/st.toml"])
+    assert args.config == "local/st.toml"
+
+
+def test_parse_config_flag_diff() -> None:
+    args = parse_args(["diff", "--repo", "o/r", "--config", "./st.toml"])
+    assert args.config == "./st.toml"
+
+
+def test_parse_config_flag_apply() -> None:
+    args = parse_args(["apply", "--repo", "o/r", "--config", "st.toml"])
+    assert args.config == "st.toml"
+
+
+def test_parse_config_flag_absent() -> None:
+    args = parse_args(["audit", "--repo", "o/r"])
+    assert args.config is None
 
 
 def test_parse_no_command_fails() -> None:
@@ -206,6 +227,24 @@ def test_fetch_remote_config_no_content_field() -> None:
         pytest.raises(RuntimeError, match="No content field"),
     ):
         _fetch_remote_config("o/r")
+
+
+# -- _load_local_config --------------------------------------------------------
+
+
+def test_load_local_config_success(tmp_path: object) -> None:
+    from pathlib import Path
+
+    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p.write_bytes(_VALID_TOML)
+    cfg = _load_local_config(str(p))
+    assert cfg.project.primary_language == "python"
+    assert cfg.project.versioning_scheme == "semver"
+
+
+def test_load_local_config_file_not_found() -> None:
+    with pytest.raises(FileNotFoundError):
+        _load_local_config("/nonexistent/path/standard-tooling.toml")
 
 
 # -- _audit_repo ---------------------------------------------------------------
@@ -384,3 +423,85 @@ def test_apply_reports_legacy_protection_removed(monkeypatch: pytest.MonkeyPatch
     assert result == 0
     output = " ".join(str(c) for c in mock_print.call_args_list)
     assert "legacy protection removed" in output
+
+
+# -- --config flag integration -------------------------------------------------
+
+
+def test_config_flag_bypasses_remote_fetch(tmp_path: object) -> None:
+    from pathlib import Path
+
+    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p.write_bytes(_VALID_TOML)
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            return_value=_mock_compliant(),
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch(
+            "standard_tooling.bin.github_config._fetch_remote_config",
+        ) as mock_remote,
+    ):
+        result = main(["audit", "--repo", "o/r", "--config", str(p)])
+    assert result == 0
+    mock_remote.assert_not_called()
+
+
+def test_config_flag_passes_parsed_config_to_audit(tmp_path: object) -> None:
+    from pathlib import Path
+
+    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p.write_bytes(_VALID_TOML)
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            return_value=_mock_compliant(),
+        ) as mock_audit,
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+    ):
+        main(["audit", "--repo", "o/r", "--config", str(p)])
+    cfg = mock_audit.call_args[0][1]
+    assert cfg.project.primary_language == "python"
+
+
+def test_config_flag_apply_uses_local_config(tmp_path: object) -> None:
+    from pathlib import Path
+
+    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p.write_bytes(_VALID_TOML)
+
+    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
+        return _mock_noncompliant()
+
+    with (
+        patch(
+            "standard_tooling.bin.github_config._audit_repo",
+            side_effect=audit_side_effect,
+        ),
+        patch(
+            "standard_tooling.bin.github_config._resolve_repos",
+            return_value=["o/r"],
+        ),
+        patch(
+            "standard_tooling.bin.github_config._fetch_remote_config",
+        ) as mock_remote,
+        patch(
+            "standard_tooling.bin.github_config._apply_repo",
+            return_value=[],
+        ) as mock_apply,
+    ):
+        result = main(["apply", "--repo", "o/r", "--yes", "--config", str(p)])
+    assert result == 0
+    mock_remote.assert_not_called()
+    mock_apply.assert_called_once()
+    cfg = mock_apply.call_args[0][1]
+    assert cfg.project.primary_language == "python"
