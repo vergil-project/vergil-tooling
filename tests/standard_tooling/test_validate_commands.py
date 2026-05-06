@@ -7,37 +7,51 @@ from standard_tooling.lib.validate_commands import (
     language_commands,
 )
 
+
+def _joined(cmds: list[list[str]]) -> list[str]:
+    return [" ".join(c) for c in cmds]
+
+
 # -- Python ------------------------------------------------------------------
 
 
 def test_python_install_commands() -> None:
     cmds = language_commands("python", CheckKind.INSTALL)
-    assert cmds == ["uv sync --frozen --group dev"]
+    assert cmds == [["uv", "sync", "--frozen", "--group", "dev"]]
 
 
 def test_python_lint_commands() -> None:
-    cmds = language_commands("python", CheckKind.LINT)
-    assert cmds == ["ruff check src/ tests/", "ruff format --check src/ tests/"]
+    joined = _joined(language_commands("python", CheckKind.LINT))
+    assert "ruff check src/ tests/" in joined
+    assert "ruff format --check src/ tests/" in joined
 
 
 def test_python_typecheck_commands() -> None:
-    cmds = language_commands("python", CheckKind.TYPECHECK)
-    assert "mypy src/ tests/" in cmds
-    assert "ty check src tests" in cmds
+    joined = _joined(language_commands("python", CheckKind.TYPECHECK))
+    assert "mypy src/" in joined
+    assert "ty check src tests" in joined
 
 
 def test_python_test_commands() -> None:
-    cmds = language_commands("python", CheckKind.TEST)
-    assert any("pytest" in c for c in cmds)
-    assert any("--cov=src" in c for c in cmds)
+    joined = _joined(language_commands("python", CheckKind.TEST))
+    assert any("pytest" in c for c in joined)
+    assert any("--cov=src" in c for c in joined)
 
 
 def test_python_audit_commands() -> None:
+    joined = _joined(language_commands("python", CheckKind.AUDIT))
+    assert any("uv sync --check" in c for c in joined)
+    assert any("uv lock --check" in c for c in joined)
+    assert "pip-audit" in joined
+    assert any("pip-licenses" in c for c in joined)
+
+
+def test_python_audit_pip_licenses_allowlist_intact() -> None:
     cmds = language_commands("python", CheckKind.AUDIT)
-    assert any("uv sync --check" in c for c in cmds)
-    assert any("uv lock --check" in c for c in cmds)
-    assert "pip-audit" in cmds
-    assert any("pip-licenses" in c for c in cmds)
+    pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"]
+    assert len(pip_licenses_cmd) == 1
+    assert len(pip_licenses_cmd[0]) == 2
+    assert pip_licenses_cmd[0][1].startswith("--allow-only=")
 
 
 # -- Go ----------------------------------------------------------------------
@@ -45,30 +59,30 @@ def test_python_audit_commands() -> None:
 
 def test_go_install_commands() -> None:
     cmds = language_commands("go", CheckKind.INSTALL)
-    assert cmds == ["go mod download"]
+    assert cmds == [["go", "mod", "download"]]
 
 
 def test_go_lint_commands() -> None:
-    cmds = language_commands("go", CheckKind.LINT)
-    assert "golangci-lint run ./..." in cmds
-    assert any("gocyclo" in c for c in cmds)
+    joined = _joined(language_commands("go", CheckKind.LINT))
+    assert "golangci-lint run ./..." in joined
+    assert any("gocyclo" in c for c in joined)
 
 
 def test_go_typecheck_commands() -> None:
-    cmds = language_commands("go", CheckKind.TYPECHECK)
-    assert "go vet ./..." in cmds
+    joined = _joined(language_commands("go", CheckKind.TYPECHECK))
+    assert "go vet ./..." in joined
 
 
 def test_go_test_commands() -> None:
-    cmds = language_commands("go", CheckKind.TEST)
-    assert any("go test" in c for c in cmds)
-    assert any("go-test-coverage" in c for c in cmds)
+    joined = _joined(language_commands("go", CheckKind.TEST))
+    assert any("go test" in c for c in joined)
+    assert any("go-test-coverage" in c for c in joined)
 
 
 def test_go_audit_commands() -> None:
-    cmds = language_commands("go", CheckKind.AUDIT)
-    assert any("govulncheck" in c for c in cmds)
-    assert any("go-licenses" in c for c in cmds)
+    joined = _joined(language_commands("go", CheckKind.AUDIT))
+    assert any("govulncheck" in c for c in joined)
+    assert any("go-licenses" in c for c in joined)
 
 
 # -- Java ---------------------------------------------------------------------
@@ -76,29 +90,29 @@ def test_go_audit_commands() -> None:
 
 def test_java_install_commands() -> None:
     cmds = language_commands("java", CheckKind.INSTALL)
-    assert cmds == ["./mvnw dependency:resolve -B"]
+    assert cmds == [["./mvnw", "dependency:resolve", "-B"]]
 
 
 def test_java_lint_commands() -> None:
-    cmds = language_commands("java", CheckKind.LINT)
-    assert any("spotless:check" in c for c in cmds)
-    assert any("checkstyle:check" in c for c in cmds)
+    joined = _joined(language_commands("java", CheckKind.LINT))
+    assert any("spotless:check" in c for c in joined)
+    assert any("checkstyle:check" in c for c in joined)
 
 
 def test_java_typecheck_commands() -> None:
-    cmds = language_commands("java", CheckKind.TYPECHECK)
-    assert any("compile" in c for c in cmds)
+    joined = _joined(language_commands("java", CheckKind.TYPECHECK))
+    assert any("compile" in c for c in joined)
 
 
 def test_java_test_commands() -> None:
-    cmds = language_commands("java", CheckKind.TEST)
-    assert any("verify" in c for c in cmds)
+    joined = _joined(language_commands("java", CheckKind.TEST))
+    assert any("verify" in c for c in joined)
 
 
 def test_java_audit_commands() -> None:
-    cmds = language_commands("java", CheckKind.AUDIT)
-    assert any("dependency:tree" in c for c in cmds)
-    assert any("license-maven-plugin" in c for c in cmds)
+    joined = _joined(language_commands("java", CheckKind.AUDIT))
+    assert any("dependency:tree" in c for c in joined)
+    assert any("license-maven-plugin" in c for c in joined)
 
 
 # -- Ruby ---------------------------------------------------------------------
@@ -106,27 +120,27 @@ def test_java_audit_commands() -> None:
 
 def test_ruby_install_commands() -> None:
     cmds = language_commands("ruby", CheckKind.INSTALL)
-    assert cmds == ["bundle install --jobs 4"]
+    assert cmds == [["bundle", "install", "--jobs", "4"]]
 
 
 def test_ruby_lint_commands() -> None:
-    cmds = language_commands("ruby", CheckKind.LINT)
-    assert any("rubocop" in c for c in cmds)
+    joined = _joined(language_commands("ruby", CheckKind.LINT))
+    assert any("rubocop" in c for c in joined)
 
 
 def test_ruby_typecheck_commands() -> None:
-    cmds = language_commands("ruby", CheckKind.TYPECHECK)
-    assert any("steep check" in c for c in cmds)
+    joined = _joined(language_commands("ruby", CheckKind.TYPECHECK))
+    assert any("steep check" in c for c in joined)
 
 
 def test_ruby_test_commands() -> None:
-    cmds = language_commands("ruby", CheckKind.TEST)
-    assert any("rake" in c for c in cmds)
+    joined = _joined(language_commands("ruby", CheckKind.TEST))
+    assert any("rake" in c for c in joined)
 
 
 def test_ruby_audit_commands() -> None:
-    cmds = language_commands("ruby", CheckKind.AUDIT)
-    assert any("bundle-audit" in c for c in cmds)
+    joined = _joined(language_commands("ruby", CheckKind.AUDIT))
+    assert any("bundle-audit" in c for c in joined)
 
 
 # -- Rust ---------------------------------------------------------------------
@@ -134,28 +148,28 @@ def test_ruby_audit_commands() -> None:
 
 def test_rust_install_commands() -> None:
     cmds = language_commands("rust", CheckKind.INSTALL)
-    assert cmds == ["cargo fetch"]
+    assert cmds == [["cargo", "fetch"]]
 
 
 def test_rust_lint_commands() -> None:
-    cmds = language_commands("rust", CheckKind.LINT)
-    assert any("cargo fmt" in c for c in cmds)
-    assert any("cargo clippy" in c for c in cmds)
+    joined = _joined(language_commands("rust", CheckKind.LINT))
+    assert any("cargo fmt" in c for c in joined)
+    assert any("cargo clippy" in c for c in joined)
 
 
 def test_rust_typecheck_commands() -> None:
-    cmds = language_commands("rust", CheckKind.TYPECHECK)
-    assert "cargo check" in cmds
+    joined = _joined(language_commands("rust", CheckKind.TYPECHECK))
+    assert "cargo check" in joined
 
 
 def test_rust_test_commands() -> None:
-    cmds = language_commands("rust", CheckKind.TEST)
-    assert any("cargo llvm-cov" in c for c in cmds)
+    joined = _joined(language_commands("rust", CheckKind.TEST))
+    assert any("cargo llvm-cov" in c for c in joined)
 
 
 def test_rust_audit_commands() -> None:
-    cmds = language_commands("rust", CheckKind.AUDIT)
-    assert "cargo deny check" in cmds
+    joined = _joined(language_commands("rust", CheckKind.AUDIT))
+    assert "cargo deny check" in joined
 
 
 # -- Edge cases ---------------------------------------------------------------

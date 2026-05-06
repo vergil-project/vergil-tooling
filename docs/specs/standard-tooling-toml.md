@@ -53,7 +53,7 @@ enum-constrained:
 | `versioning-scheme` | `library`, `semver`, `application`, `none` |
 | `branching-model` | `library-release`, `application-promotion`, `docs-single-branch` |
 | `release-model` | `artifact-publishing`, `tagged-release`, `environment-promotion`, `none` |
-| `primary-language` | `python`, `go`, `java`, `ruby`, `rust`, `shell`, `none` |
+| `primary-language` | `python`, `go`, `java`, `ruby`, `rust`, `shell`, `none`, `claude-plugin` |
 
 Value definitions:
 
@@ -61,7 +61,7 @@ Value definitions:
 - **`versioning-scheme`**: `library` — major-version release lines with independent support windows; `semver` — single active release line following semver; `application` — deploy-driven versioning without public release lines; `none` — no versioned releases.
 - **`branching-model`**: `library-release` — develop + main with release branches; `application-promotion` — environment promotion (dev → staging → prod); `docs-single-branch` — single default branch, no release flow.
 - **`release-model`**: `artifact-publishing` — release produces a published artifact (package, action); `tagged-release` — release is a git tag consumed directly; `environment-promotion` — release is a deploy, not a tag; `none` — no formal release process.
-- **`primary-language`**: the dominant language for toolchain selection; `none` for repos with no runtime code.
+- **`primary-language`**: the dominant language for toolchain selection; `claude-plugin` for Claude plugin repos (version in `.claude-plugin/plugin.json`); `none` for repos with no runtime code.
 
 > **Note:** Some `versioning-scheme` values may be functionally
 > identical — a follow-on issue will audit and rationalize the enum

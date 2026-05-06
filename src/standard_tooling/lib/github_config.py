@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from standard_tooling.lib.config import CiConfig, ProjectConfig, StConfig
 
 from standard_tooling.lib import github
@@ -290,12 +292,13 @@ def _fetch_vulnerability_alerts(repo: str) -> bool:
 _STRIP_RULE_PARAMS = frozenset({"do_not_enforce_on_create"})
 
 
-def _normalize_rules(rules: list[object]) -> list[dict[str, object]]:
+def _normalize_rules(rules: Sequence[object]) -> list[dict[str, object]]:
     """Strip API-default fields from rule parameters for clean comparison."""
     normalized: list[dict[str, object]] = []
-    for rule in rules:
-        if not isinstance(rule, dict):
+    for raw in rules:
+        if not isinstance(raw, dict):
             continue
+        rule = cast("dict[str, object]", raw)
         params = rule.get("parameters")
         if isinstance(params, dict):
             cleaned_params = {k: v for k, v in params.items() if k not in _STRIP_RULE_PARAMS}
@@ -309,9 +312,8 @@ def fetch_actual_state(repo: str) -> DesiredState:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
 
-    sa = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
-    if not isinstance(sa, dict):
-        sa = {}
+    sa_raw = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
+    sa: dict[str, object] = cast("dict[str, object]", sa_raw) if isinstance(sa_raw, dict) else {}
 
     repo_settings = DesiredRepoSettings(
         default_branch=str(repo_data.get("default_branch", ""))
@@ -341,12 +343,15 @@ def fetch_actual_state(repo: str) -> DesiredState:
         has_wiki=bool(repo_data.get("has_wiki", False)) if isinstance(repo_data, dict) else False,
     )
 
-    ss = sa.get("secret_scanning")
-    ss_status = ss.get("status", "disabled") if isinstance(ss, dict) else "disabled"
-    sspp = sa.get("secret_scanning_push_protection")
-    sspp_status = sspp.get("status", "disabled") if isinstance(sspp, dict) else "disabled"
-    dsu = sa.get("dependabot_security_updates")
-    dsu_status = dsu.get("status", "disabled") if isinstance(dsu, dict) else "disabled"
+    ss_raw = sa.get("secret_scanning")
+    ss = cast("dict[str, object]", ss_raw) if isinstance(ss_raw, dict) else {}
+    ss_status = str(ss.get("status", "disabled"))
+    sspp_raw = sa.get("secret_scanning_push_protection")
+    sspp = cast("dict[str, object]", sspp_raw) if isinstance(sspp_raw, dict) else {}
+    sspp_status = str(sspp.get("status", "disabled"))
+    dsu_raw = sa.get("dependabot_security_updates")
+    dsu = cast("dict[str, object]", dsu_raw) if isinstance(dsu_raw, dict) else {}
+    dsu_status = str(dsu.get("status", "disabled"))
 
     security = DesiredSecuritySettings(
         secret_scanning=ss_status,
@@ -385,24 +390,31 @@ def fetch_actual_state(repo: str) -> DesiredState:
     raw_rulesets = github.read_json("api", f"repos/{repo}/rulesets")
     rulesets: list[DesiredRuleset] = []
     if isinstance(raw_rulesets, list):
-        for rs_summary in raw_rulesets:
-            if not isinstance(rs_summary, dict):
+        for raw_rs in raw_rulesets:
+            if not isinstance(raw_rs, dict):
                 continue
+            rs_summary = cast("dict[str, object]", raw_rs)
             rs_id = rs_summary.get("id")
             if rs_id is None:
                 continue
             rs_detail = github.read_json("api", f"repos/{repo}/rulesets/{rs_id}")
             if not isinstance(rs_detail, dict):
                 continue
-            conditions = rs_detail.get("conditions")
-            conditions = conditions if isinstance(conditions, dict) else {}
-            ref_name = conditions.get("ref_name")
-            ref_name = ref_name if isinstance(ref_name, dict) else {}
+            cond_raw = rs_detail.get("conditions")
+            conditions: dict[str, object] = (
+                cast("dict[str, object]", cond_raw) if isinstance(cond_raw, dict) else {}
+            )
+            rn_raw = conditions.get("ref_name")
+            ref_name: dict[str, object] = (
+                cast("dict[str, object]", rn_raw) if isinstance(rn_raw, dict) else {}
+            )
             include = ref_name.get("include")
             include = include if isinstance(include, list) else []
 
             bypass_raw = rs_detail.get("bypass_actors")
-            bypass = bypass_raw if isinstance(bypass_raw, list) else []
+            bypass: list[dict[str, object]] = (
+                cast("list[dict[str, object]]", bypass_raw) if isinstance(bypass_raw, list) else []
+            )
             rules_raw = rs_detail.get("rules")
             rules = _normalize_rules(rules_raw if isinstance(rules_raw, list) else [])
 
@@ -455,7 +467,7 @@ def _diff_dataclass(
         if desired != actual:
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
         return
-    for field_name in desired.__dataclass_fields__:
+    for field_name in cast("dict[str, object]", desired.__dataclass_fields__):
         d_val = getattr(desired, field_name)
         a_val = getattr(actual, field_name)
         _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items)
@@ -599,8 +611,9 @@ def _apply_rulesets(repo: str, desired: list[DesiredRuleset]) -> None:
     raw_rulesets = github.read_json("api", f"repos/{repo}/rulesets")
     existing: dict[str, int] = {}
     if isinstance(raw_rulesets, list):
-        for rs in raw_rulesets:
-            if isinstance(rs, dict):
+        for raw_rs in raw_rulesets:
+            if isinstance(raw_rs, dict):
+                rs = cast("dict[str, object]", raw_rs)
                 name = rs.get("name")
                 rs_id = rs.get("id")
                 if isinstance(name, str) and isinstance(rs_id, int):

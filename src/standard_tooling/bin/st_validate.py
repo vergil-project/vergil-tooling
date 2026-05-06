@@ -37,11 +37,11 @@ def _in_dev_container() -> bool:
     return Path("/.dockerenv").exists() or bool(os.environ.get("ST_IN_DEV_CONTAINER"))
 
 
-def _run_commands(cmds: list[str], label: str, *, fail_fast: bool = False) -> int:
+def _run_commands(cmds: list[list[str]], label: str, *, fail_fast: bool = False) -> int:
     worst = 0
     for cmd in cmds:
-        print(f"Running ({label}): {cmd}")
-        result = subprocess.run(cmd.split(), check=False)  # noqa: S603
+        print(f"Running ({label}): {' '.join(cmd)}")
+        result = subprocess.run(cmd, check=False)  # noqa: S603
         if result.returncode != 0:
             if fail_fast:
                 return result.returncode

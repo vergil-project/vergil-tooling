@@ -601,7 +601,7 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
 
     calls = []
 
-    def mock_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **kwargs: object) -> subprocess.CompletedProcess[bytes]:
         calls.append(cmd)
         if cmd[0] == "actionlint":
             return subprocess.CompletedProcess(args=cmd, returncode=1)

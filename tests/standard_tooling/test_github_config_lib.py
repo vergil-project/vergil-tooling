@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from typing import cast
 from unittest.mock import patch
 
 from standard_tooling.lib.config import (
@@ -82,7 +83,7 @@ def test_branch_protection_ruleset() -> None:
 def test_branch_protection_pr_rule_details() -> None:
     r = desired_branch_protection_ruleset()
     pr_rule = next(rule for rule in r.rules if rule["type"] == "pull_request")
-    params = pr_rule["parameters"]
+    params = cast("dict[str, object]", pr_rule["parameters"])
     assert params["required_approving_review_count"] == 0
     assert params["dismiss_stale_reviews_on_push"] is True
     assert params["require_code_owner_review"] is False
@@ -133,10 +134,11 @@ def _ci(
     )
 
 
-def _check_names(ruleset) -> list[str]:  # noqa: ANN001
+def _check_names(ruleset: DesiredRuleset) -> list[str]:
     """Extract check context names from a CI gates ruleset."""
     status_rule = next(rule for rule in ruleset.rules if rule["type"] == "required_status_checks")
-    return [c["context"] for c in status_rule["parameters"]["required_status_checks"]]
+    params = cast("dict[str, list[dict[str, str]]]", status_rule["parameters"])
+    return [c["context"] for c in params["required_status_checks"]]
 
 
 def test_ci_gates_structure() -> None:
@@ -151,7 +153,8 @@ def test_ci_gates_structure() -> None:
 def test_ci_gates_strict_policy() -> None:
     r = desired_ci_gates_ruleset(_project(), _ci())
     status_rule = next(rule for rule in r.rules if rule["type"] == "required_status_checks")
-    assert status_rule["parameters"]["strict_required_status_checks_policy"] is True
+    params = cast("dict[str, object]", status_rule["parameters"])
+    assert params["strict_required_status_checks_policy"] is True
 
 
 def test_ci_gates_always_includes_common_and_security() -> None:
@@ -1020,8 +1023,9 @@ def test_normalize_rules_strips_default_params() -> None:
     ]
     result = _normalize_rules(rules)
     assert len(result) == 1
-    assert "do_not_enforce_on_create" not in result[0]["parameters"]
-    assert result[0]["parameters"]["strict_required_status_checks_policy"] is True
+    params = cast("dict[str, object]", result[0]["parameters"])
+    assert "do_not_enforce_on_create" not in params
+    assert params["strict_required_status_checks_policy"] is True
 
 
 def test_normalize_rules_skips_non_dict_entries() -> None:
