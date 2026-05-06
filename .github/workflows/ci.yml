@@ -1,5 +1,5 @@
 name: CI
-# All jobs delegate to standard-actions reusable workflows.
+# All jobs delegate to standard-actions reusable workflows (v1.5).
 
 on:
   pull_request:
