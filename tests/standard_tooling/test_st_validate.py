@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 import pytest
 
@@ -185,7 +189,7 @@ def test_run_commands_success() -> None:
 
 
 def test_run_commands_failure_runs_all_by_default() -> None:
-    results = iter(
+    results: Iterator[subprocess.CompletedProcess[bytes]] = iter(
         [
             subprocess.CompletedProcess(args=[], returncode=1),
             subprocess.CompletedProcess(args=[], returncode=0),
