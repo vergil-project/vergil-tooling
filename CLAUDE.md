@@ -132,19 +132,19 @@ below.
 ### Validation
 
 ```bash
-st-docker-run -- uv run st-validate-local              # Runs all checks
+st-docker-run -- uv run st-validate              # Runs all checks
 ```
 
 This is the **only** validation command. Do not run individual linters,
-formatters, or other tools outside of `st-validate-local`. If a tool is not
-invoked by `st-validate-local`, it is not part of the validation pipeline.
+formatters, or other tools outside of `st-validate`. If a tool is not
+invoked by `st-validate`, it is not part of the validation pipeline.
 
 ### Two-Tier CI Model
 
 Testing is split across two tiers with increasing scope and cost:
 
 **Tier 1 — Local pre-commit (seconds):** The single entry point
-`st-docker-run -- uv run st-validate-local` runs everything
+`st-docker-run -- uv run st-validate` runs everything
 (lint, typecheck, tests, audit, common checks) inside one dev
 container. Enforced via the `.githooks` pre-commit gate on every commit.
 
@@ -153,7 +153,7 @@ all quality checks, security scanners (CodeQL, Trivy, Semgrep), standards
 compliance, and release gates.
 Workflow: `.github/workflows/ci.yml`.
 
-Push-CI was retired once `st-validate-local` reached parity with PR-CI.
+Push-CI was retired once `st-validate` reached parity with PR-CI.
 See `docs/site/docs/guides/ci-architecture.md` for the full rationale and
 wphillipmoore/standard-actions#176 for the parity audit.
 
@@ -163,12 +163,12 @@ Docker is the only host prerequisite. The validation stack uses
 exactly one container per run:
 
 - **Outer layer**: `st-docker-run` launches the dev container once
-  and runs the validation driver inside.
-- **Inner layer**: `scripts/dev/{lint,test,typecheck,audit}.sh`
-  are tiny, container-local scripts. They assume they are already
-  running inside the dev container and invoke tooling directly
-  (`uv run ruff check`, `uv run pytest`, etc.). They do **not**
-  re-containerize.
+  and runs `st-validate` inside.
+- **Inner layer**: `st-validate` reads `primary_language` from
+  `standard-tooling.toml` and runs common checks (markdownlint,
+  shellcheck, yamllint, hadolint, actionlint), then language-specific
+  checks (lint, typecheck, test, audit) from the built-in command
+  registry.
 
 Dev container images are maintained in
 [standard-tooling-docker](https://github.com/wphillipmoore/standard-tooling-docker).
@@ -178,13 +178,8 @@ Dev container images are maintained in
 cd ../standard-tooling-docker && docker/build.sh
 
 # Run the full validation pipeline in one container
-st-docker-run -- uv run st-validate-local
+st-docker-run -- uv run st-validate
 ```
-
-If you need to tweak what validation runs for this repo, edit
-`scripts/dev/*.sh` — those scripts are the per-repo customization
-point. Keep them container-local (no `st-docker-run`, no
-`st-docker-test`, no `DOCKER_*` env vars).
 
 ## Architecture
 
@@ -200,7 +195,7 @@ CLI tools installed as `st-*` console scripts:
   manual-merge policy)
 - **`st-prepare-release`** — Automate release preparation (branch, changelog, PR)
 - **`st-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
-- **`st-validate-local`** — Driver for pre-PR local validation
+- **`st-validate`** — Unified validation driver (runs inside dev container)
 - **`st-ensure-label`** — Idempotent GitHub label creation
 - **`st-docker-run`** — Run arbitrary commands inside a dev container
 - **`st-docker-test`** — Run repo test suite inside a dev container
