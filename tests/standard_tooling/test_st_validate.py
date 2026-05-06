@@ -219,7 +219,7 @@ def test_find_custom_validator_entry_point() -> None:
 def test_find_custom_validator_local_script(tmp_path: Path) -> None:
     scripts_bin = tmp_path / "scripts" / "bin"
     scripts_bin.mkdir(parents=True)
-    script = scripts_bin / "validate-local-custom"
+    script = scripts_bin / "validate-custom"
     script.write_text("#!/bin/bash\n")
     script.chmod(0o755)
     with patch("standard_tooling.bin.st_validate.shutil.which", return_value=None):
@@ -359,7 +359,7 @@ def test_run_all_install_failure_stops(tmp_path: Path) -> None:
 
 def test_run_common_checks_calls_common_main() -> None:
     with patch(
-        "standard_tooling.bin.validate_local_common_container.main",
+        "standard_tooling.bin.validate_common.main",
         return_value=0,
     ) as mock:
         result = _run_common_checks(Path("/fake"))
