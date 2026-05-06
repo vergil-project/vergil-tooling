@@ -413,9 +413,7 @@ def fetch_actual_state(repo: str) -> DesiredState:
 
             bypass_raw = rs_detail.get("bypass_actors")
             bypass: list[dict[str, object]] = (
-                cast("list[dict[str, object]]", bypass_raw)
-                if isinstance(bypass_raw, list)
-                else []
+                cast("list[dict[str, object]]", bypass_raw) if isinstance(bypass_raw, list) else []
             )
             rules_raw = rs_detail.get("rules")
             rules = _normalize_rules(rules_raw if isinstance(rules_raw, list) else [])
