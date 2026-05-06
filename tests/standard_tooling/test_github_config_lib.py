@@ -136,7 +136,7 @@ def _ci(
 
 def _check_names(ruleset: DesiredRuleset) -> list[str]:
     """Extract check context names from a CI gates ruleset."""
-    return [c["context"] for c in _checks(ruleset)]
+    return [str(c["context"]) for c in _checks(ruleset)]
 
 
 def _checks(ruleset: DesiredRuleset) -> list[dict[str, object]]:
