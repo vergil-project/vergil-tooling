@@ -38,7 +38,7 @@ environment variables:
   ST_DOCKER_INSTALL_TAG   override the standard-tooling version tag from standard-tooling.toml
 
 examples:
-  st-docker-run -- uv run st-validate-local
+  st-docker-run -- uv run st-validate
   st-docker-run -- uv run pytest tests/
   DOCKER_DEV_IMAGE=custom:img st-docker-run -- make build
 """
