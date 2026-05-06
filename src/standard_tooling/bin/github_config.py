@@ -6,6 +6,7 @@ import argparse
 import base64
 import sys
 import tomllib
+from pathlib import Path
 
 from standard_tooling.lib import github
 from standard_tooling.lib.config import StConfig, _parse_raw_config
@@ -29,6 +30,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         sp.add_argument("--repo", help="Single repo (OWNER/REPO)")
         sp.add_argument("--owner", help="GitHub owner (project mode)")
         sp.add_argument("--project", help="GitHub Project number")
+        sp.add_argument(
+            "--config",
+            help="Local path to standard-tooling.toml (overrides remote fetch)",
+        )
         if name == "apply":
             sp.add_argument(
                 "--yes",
@@ -49,6 +54,13 @@ def _resolve_repos(args: argparse.Namespace) -> list[str]:
     if args.repo:
         return [args.repo]
     return github.list_project_repos(args.owner, args.project)
+
+
+def _load_local_config(path: str) -> StConfig:
+    """Load and parse standard-tooling.toml from a local file path."""
+    with Path(path).open("rb") as f:
+        raw = tomllib.load(f)
+    return _parse_raw_config(raw)
 
 
 def _fetch_remote_config(repo: str) -> StConfig:
@@ -97,8 +109,13 @@ def main(argv: list[str] | None = None) -> int:
     repos = _resolve_repos(args)
     all_compliant = True
 
+    local_config = _load_local_config(args.config) if args.config else None
+
+    def get_config(repo: str) -> StConfig:
+        return local_config if local_config is not None else _fetch_remote_config(repo)
+
     for repo in repos:
-        config = _fetch_remote_config(repo)
+        config = get_config(repo)
         diff = _audit_repo(repo, config)
         _print_diff(repo, diff)
         if not diff.is_compliant():
@@ -109,7 +126,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "diff":
         return 0
 
-    non_compliant = [r for r in repos if not _audit_repo(r, _fetch_remote_config(r)).is_compliant()]
+    non_compliant = [r for r in repos if not _audit_repo(r, get_config(r)).is_compliant()]
     if not non_compliant:
         print("All repos compliant, nothing to apply.")
         return 0
@@ -124,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     for repo in non_compliant:
-        config = _fetch_remote_config(repo)
+        config = get_config(repo)
         print(f"  Applying to {repo}...")
         removed = _apply_repo(repo, config)
         if removed:
