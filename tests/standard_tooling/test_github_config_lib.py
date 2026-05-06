@@ -136,9 +136,14 @@ def _ci(
 
 def _check_names(ruleset: DesiredRuleset) -> list[str]:
     """Extract check context names from a CI gates ruleset."""
+    return [str(c["context"]) for c in _checks(ruleset)]
+
+
+def _checks(ruleset: DesiredRuleset) -> list[dict[str, object]]:
+    """Extract all check dicts from a CI gates ruleset."""
     status_rule = next(rule for rule in ruleset.rules if rule["type"] == "required_status_checks")
-    params = cast("dict[str, list[dict[str, str]]]", status_rule["parameters"])
-    return [c["context"] for c in params["required_status_checks"]]
+    params = cast("dict[str, list[dict[str, object]]]", status_rule["parameters"])
+    return params["required_status_checks"]
 
 
 def test_ci_gates_structure() -> None:
@@ -164,6 +169,16 @@ def test_ci_gates_always_includes_common_and_security() -> None:
     assert "security / trivy" in check_names
     assert "security / semgrep" in check_names
     assert "security / standards" in check_names
+    assert "Trivy" in check_names
+    assert "Semgrep OSS" in check_names
+
+
+def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
+    r = desired_ci_gates_ruleset(_project(), _ci())
+    checks = _checks(r)
+    ghas_names = ("Trivy", "Semgrep OSS")
+    ghas_checks = {c["context"]: c["integration_id"] for c in checks if c["context"] in ghas_names}
+    assert ghas_checks == {"Trivy": 57789, "Semgrep OSS": 57789}
 
 
 def test_ci_gates_codeql_for_supported_language() -> None:

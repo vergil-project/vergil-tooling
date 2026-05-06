@@ -162,6 +162,7 @@ def desired_tag_protection_ruleset() -> DesiredRuleset:
 # ---------------------------------------------------------------------------
 
 _GITHUB_ACTIONS_INTEGRATION_ID = 15368
+_GHAS_INTEGRATION_ID = 57789
 
 _CODEQL_SUPPORTED_LANGUAGES = frozenset(
     {
@@ -178,6 +179,13 @@ def _make_check(context: str) -> dict[str, object]:
     return {
         "context": context,
         "integration_id": _GITHUB_ACTIONS_INTEGRATION_ID,
+    }
+
+
+def _make_ghas_check(context: str) -> dict[str, object]:
+    return {
+        "context": context,
+        "integration_id": _GHAS_INTEGRATION_ID,
     }
 
 
@@ -210,6 +218,12 @@ def desired_ci_gates_ruleset(
     checks.append(_make_check("security / trivy"))
     checks.append(_make_check("security / semgrep"))
     checks.append(_make_check("security / standards"))
+
+    # GHAS check runs — created by GitHub Advanced Security (app 57789)
+    # when workflows upload SARIF via codeql-action/upload-sarif.  These
+    # gate on whether the PR introduces new alerts in changed lines.
+    checks.append(_make_ghas_check("Trivy"))
+    checks.append(_make_ghas_check("Semgrep OSS"))
 
     # CodeQL for supported languages
     if lang in _CODEQL_SUPPORTED_LANGUAGES:

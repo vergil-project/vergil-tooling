@@ -11,11 +11,11 @@ codex = "Co-Authored-By: wphillipmoore-codex <255923655+wphillipmoore-codex@user
 
 [publish]
 consumer-refresh = """\
-uv tool install 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v<VERSION>'
+uv tool install --python 3.14 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v<VERSION>'
 """
 
 [ci]
-versions = ["3.14"]
+versions = ["3.12", "3.13", "3.14"]
 integration-tests = false
 
 [dependencies]

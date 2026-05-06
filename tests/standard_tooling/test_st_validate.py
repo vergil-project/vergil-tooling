@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -390,6 +391,40 @@ def test_single_check_no_install_commands(tmp_path: Path) -> None:
 
 
 # -- Branch: no install commands in run-all mode ------------------------------
+
+
+def test_venv_bin_prepended_to_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_config(tmp_path, "python")
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0),
+    ):
+        result = main(["--check", "lint"])
+    assert result == 0
+    assert str(venv_bin) in os.environ["PATH"].split(os.pathsep)
+
+
+def test_venv_bin_not_prepended_when_already_on_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write_config(tmp_path, "python")
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", f"{venv_bin}:/usr/bin")
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0),
+    ):
+        main(["--check", "lint"])
+    count = os.environ["PATH"].split(os.pathsep).count(str(venv_bin))
+    assert count == 1
 
 
 def test_run_all_no_install_commands(tmp_path: Path) -> None:
