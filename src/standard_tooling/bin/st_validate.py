@@ -95,6 +95,13 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = git.repo_root()
 
+    # Ensure .venv/bin is on PATH so tools installed by `uv sync` are
+    # reachable regardless of the container's working directory.
+    venv_bin = str(repo_root / ".venv" / "bin")
+    current_path = os.environ.get("PATH", "")
+    if venv_bin not in current_path.split(os.pathsep):
+        os.environ["PATH"] = f"{venv_bin}{os.pathsep}{current_path}"
+
     try:
         st_config = config.read_config(repo_root)
         language = st_config.project.primary_language

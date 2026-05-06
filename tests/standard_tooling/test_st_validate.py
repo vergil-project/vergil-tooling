@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -385,6 +386,37 @@ def test_single_check_no_install_commands(tmp_path: Path) -> None:
 
 
 # -- Branch: no install commands in run-all mode ------------------------------
+
+
+def test_venv_bin_prepended_to_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_config(tmp_path, "python")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    venv_bin = tmp_path / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0),
+        patch("standard_tooling.bin.st_validate._find_custom_validator", return_value=None),
+    ):
+        main([])
+    assert os.environ["PATH"].startswith(str(venv_bin))
+
+
+def test_venv_bin_not_duplicated_on_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _write_config(tmp_path, "python")
+    venv_bin = str(tmp_path / ".venv" / "bin")
+    monkeypatch.setenv("PATH", f"{venv_bin}:/usr/bin")
+
+    with (
+        patch("standard_tooling.bin.st_validate.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_validate._run_common_checks", return_value=0),
+        patch("standard_tooling.bin.st_validate._run_commands", return_value=0),
+        patch("standard_tooling.bin.st_validate._find_custom_validator", return_value=None),
+    ):
+        main([])
+    assert os.environ["PATH"].count(venv_bin) == 1
 
 
 def test_run_all_no_install_commands(tmp_path: Path) -> None:
