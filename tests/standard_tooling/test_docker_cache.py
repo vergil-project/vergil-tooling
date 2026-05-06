@@ -240,7 +240,7 @@ def test_clean_branch_images_removes_matching() -> None:
     mock_result = MagicMock(returncode=0, stdout=docker_output)
     calls = []
 
-    def capture_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
         calls.append(cmd)
         return mock_result
 
@@ -273,7 +273,7 @@ def test_build_cached_image_success(tmp_path: Path) -> None:
 
     calls: list[list[str]] = []
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         calls.append(cmd)
         if cmd[1] == "create":
             return create_result
@@ -306,7 +306,7 @@ def test_build_cached_image_start_fails(tmp_path: Path) -> None:
     start_result = MagicMock(returncode=1)
     rm_result = MagicMock(returncode=0)
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             return create_result
         if cmd[1] == "start":
@@ -327,7 +327,7 @@ def test_build_cached_image_warmup_printed(
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             return create_result
         return ok
@@ -345,7 +345,7 @@ def test_build_cached_image_no_warmup_for_unknown_lang(
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             return create_result
         return ok
@@ -362,7 +362,7 @@ def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             create_cmd.extend(cmd)
             return create_result
@@ -425,7 +425,7 @@ def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             create_cmd.extend(cmd)
             return create_result
@@ -448,7 +448,7 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
 
     built_tags: list[str] = []
 
-    def capture_build(repo_root, lang, base_image, target_tag) -> str:  # noqa: ANN001
+    def capture_build(repo_root: Path, lang: str, base_image: str, target_tag: str) -> str:
         built_tags.append(target_tag)
         return target_tag
 
@@ -505,7 +505,7 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
 
-    def mock_run(cmd, **_kwargs):  # noqa: ANN001, ANN003
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
         if cmd[1] == "create":
             create_cmd.extend(cmd)
             return create_result

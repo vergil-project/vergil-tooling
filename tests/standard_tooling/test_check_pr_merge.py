@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -90,7 +91,7 @@ class TestMain:
     """End-to-end tests for main() (Task 3)."""
 
     @staticmethod
-    def _mock_branch(branch: str):
+    def _mock_branch(branch: str) -> Any:
         """Return a context manager that mocks gh pr view to return a branch."""
         return patch(
             f"{_MOD}.github.read_output",

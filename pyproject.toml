@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "standard-tooling"
-version = "1.4.19"
+version = "1.4.20"
 description = "Shared development tooling for managed repositories"
-requires-python = ">=3.12,<4.0"
+requires-python = ">=3.14,<4.0"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = []
@@ -38,7 +38,7 @@ st-validate = "standard_tooling.bin.st_validate:main"
 st-version = "standard_tooling.bin.version:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

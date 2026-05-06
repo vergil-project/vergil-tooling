@@ -29,7 +29,7 @@ _DEFAULT_CACHE_FILES = ["standard-tooling.toml"]
 
 def _warmup_command(lang: str) -> str:
     cmds = language_commands(lang, CheckKind.INSTALL)
-    return " && ".join(cmds) if cmds else ""
+    return " && ".join(" ".join(cmd) for cmd in cmds) if cmds else ""
 
 
 def _is_self_repo(repo_root: Path) -> bool:

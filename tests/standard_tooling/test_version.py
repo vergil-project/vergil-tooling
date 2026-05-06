@@ -67,6 +67,14 @@ def test_show_java(tmp_path: Path) -> None:
     assert show(tmp_path) == "3.2.1"
 
 
+def test_show_claude_plugin(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.4.19"\n}\n')
+    assert show(tmp_path) == "1.4.19"
+
+
 # -- show_major_minor() tests ------------------------------------------------
 
 
@@ -178,6 +186,18 @@ def test_bump_java(tmp_path: Path) -> None:
     assert "<version>3.2.2</version>" in text
 
 
+def test_bump_claude_plugin(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.4.19"\n}\n')
+    result = bump(tmp_path)
+    assert result == "1.4.20"
+    text = (plugin_dir / "plugin.json").read_text()
+    assert '"version": "1.4.20"' in text
+    assert '"name": "example"' in text
+
+
 # -- lockfile maintenance tests -----------------------------------------------
 
 
@@ -222,6 +242,16 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
 def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path, "shell")
     (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+        bump(tmp_path)
+        mock_run.assert_not_called()
+
+
+def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.0.0"\n}\n')
     with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_not_called()
@@ -273,6 +303,13 @@ def test_read_version_java_bad_format() -> None:
 
     with pytest.raises(ValueError, match="No <version>"):
         _read_version("no version here", "java")
+
+
+def test_read_version_claude_plugin_missing_key() -> None:
+    from standard_tooling.lib.version import _read_version
+
+    with pytest.raises(ValueError, match="No 'version' key"):
+        _read_version('{"name": "example"}', "claude-plugin")
 
 
 # -- _read_version_from_ref body -----------------------------------------------

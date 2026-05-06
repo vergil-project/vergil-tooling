@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.20] - 2026-05-06
+
+### Bug fixes
+
+- prepend .venv/bin to PATH in st-validate for CI compatibility
+- use explicit argument lists in command registry instead of string splitting
+- add missing type annotations in test files for mypy strict mode
+- add ty as dev dependency and resolve ty type checker diagnostics
+
+### CI
+
+- remove bespoke lint and typecheck jobs duplicated by ci-quality.yml
+- remove all bespoke jobs, use reusable workflows for test, audit, and release
+- trigger fresh workflow run after standard-actions fix
+- trigger fresh CI run after standard-actions self-install fix
+- trigger fresh CI run after dev container image rebuild
+- trigger fresh CI run after standard-actions PATH fix
+- trigger fresh CI run after standard-actions PATH fix for all jobs
+- use Python container for common, standards, and release jobs
+
+### Chores
+
+- require Python 3.14 as minimum version
+
+### Documentation
+
+- add claude-plugin to primary-language spec
+
+### Features
+
+- add claude-plugin to primary-language enum
+- add claude-plugin version discovery, read, and write
+
+### Refactoring
+
+- remove .venv/bin PATH logic from st-validate
+
+### Styling
+
+- format test_version.py
+- format github_config.py for ruff on Python 3.14
+
+### Testing
+
+- add failing test for st-version claude-plugin show
+- add bump test for claude-plugin
+- verify claude-plugin skips lockfile maintenance
+- verify error on missing version key in plugin.json
+
 ## [1.4.19] - 2026-05-05
 
 ### Bug fixes
