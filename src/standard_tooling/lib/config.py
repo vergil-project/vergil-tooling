@@ -20,7 +20,7 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust", "shell", "none"},
+    "primary-language": {"python", "go", "java", "ruby", "rust", "shell", "none", "claude-plugin"},
 }
 
 _PROJECT_FIELDS = (
