@@ -67,6 +67,16 @@ def test_show_java(tmp_path: Path) -> None:
     assert show(tmp_path) == "3.2.1"
 
 
+def test_show_claude_plugin(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        '{\n  "name": "example",\n  "version": "1.4.19"\n}\n'
+    )
+    assert show(tmp_path) == "1.4.19"
+
+
 # -- show_major_minor() tests ------------------------------------------------
 
 
