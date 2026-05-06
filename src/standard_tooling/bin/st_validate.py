@@ -57,10 +57,10 @@ def _run_common_checks(repo_root: Path) -> int:  # noqa: ARG001
 
 def _find_custom_validator(repo_root: Path) -> str | None:
     scripts_bin = repo_root / "scripts" / "bin"
-    entry_point = shutil.which("st-validate-local-custom")
+    entry_point = shutil.which("st-validate-custom")
     if entry_point is not None:
         return entry_point
-    local = scripts_bin / "validate-local-custom"
+    local = scripts_bin / "validate-custom"
     if local.is_file() and os.access(local, os.X_OK):
         return str(local)
     return None
