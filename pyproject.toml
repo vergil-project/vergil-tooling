@@ -38,7 +38,7 @@ st-validate = "standard_tooling.bin.st_validate:main"
 st-version = "standard_tooling.bin.version:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

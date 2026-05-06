@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+if TYPE_CHECKING:
+    from contextlib import AbstractContextManager
 
 import pytest
 
@@ -29,7 +33,7 @@ def test_parse_args_rejects_unknown_strategy() -> None:
 _MOD = "standard_tooling.bin.merge_when_green"
 
 
-def _mock_branch(branch: str = "release/1.0.0") -> patch:  # type: ignore[type-arg]
+def _mock_branch(branch: str = "release/1.0.0") -> AbstractContextManager[object]:
     return patch(f"{_MOD}.github.read_output", return_value=branch)
 
 
