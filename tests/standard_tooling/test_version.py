@@ -251,6 +251,18 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
         mock_run.assert_not_called()
 
 
+def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        '{\n  "name": "example",\n  "version": "1.0.0"\n}\n'
+    )
+    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+        bump(tmp_path)
+        mock_run.assert_not_called()
+
+
 # -- _discover_version_file error paths ----------------------------------------
 
 
