@@ -29,19 +29,21 @@ jobs:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-quality.yml@v1.5
     with:
       language: python
-      versions: '["3.12"]'
+      versions: '["3.14"]'
+      container-tag: '3.14'
+      container-suffix: python
 
   test:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-test.yml@v1.5
     with:
       language: python
-      versions: '["3.12"]'
+      versions: '["3.14"]'
 
   audit:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-audit.yml@v1.5
     with:
       language: python
-      versions: '["3.12"]'
+      versions: '["3.14"]'
 
   # ---------------------------------------------------------------------------
   # Security and standards
@@ -53,6 +55,8 @@ jobs:
       language: python
       run-standards: ${{ inputs.run-release || true }}
       run-security: ${{ inputs.run-security || true }}
+      container-tag: '3.14'
+      container-suffix: python
     permissions:
       contents: read
       security-events: write
@@ -66,3 +70,5 @@ jobs:
     with:
       language: python
       run-release: ${{ inputs.run-release != false }}
+      container-tag: '3.14'
+      container-suffix: python
