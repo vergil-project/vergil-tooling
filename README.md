@@ -47,7 +47,7 @@ git config core.hooksPath .githooks
 - `st-submit-pr` — Standards-compliant PR creation with auto-merge
 - `st-prepare-release` — Automated release preparation
 - `st-finalize-repo` — Post-merge cleanup
-- `st-validate-local` — Pre-PR local validation driver
+- `st-validate` — Unified validation driver (via st-docker-run)
 - `st-ensure-label` — Idempotent GitHub label creation
 
 ## Git hooks

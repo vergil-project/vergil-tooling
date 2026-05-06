@@ -223,10 +223,10 @@ def test_non_python_uses_cached_image(tmp_path: Path) -> None:
         patch("standard_tooling.bin.docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
-        main(["--", "st-validate-local"])
+        main(["--", "st-validate"])
     args = mock_exec.call_args[0][1]
     assert cached in args
-    assert args[-1] == "st-validate-local"
+    assert args[-1] == "st-validate"
 
 
 def test_non_python_command_not_wrapped(tmp_path: Path) -> None:
