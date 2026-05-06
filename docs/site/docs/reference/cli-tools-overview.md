@@ -81,8 +81,8 @@ runs validation, and checks the Documentation workflow status.
 |---|---|
 | Source | `standard_tooling.bin.finalize_repo` |
 | Args | `--target-branch` (default: develop), `--dry-run` |
-| Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `st-docker-run` or `st-validate-local` on PATH |
-| Failure mode | `SystemExit` if neither validator is found; validation failures return exit 1; docs workflow failure is a soft warning (exit 0) |
+| Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `st-docker-run` on PATH |
+| Failure mode | Validation failures return exit 1; docs workflow failure is a soft warning (exit 0) |
 | Exit codes | 0 success, 1 validation failure or unrecognized branching model |
 | Status | Active |
 
@@ -166,52 +166,22 @@ Container tools run inside dev containers launched by `st-docker-run`.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.
 
-### st-validate-local
-
-Shared driver for pre-PR local validation. Reads `primary_language`
-from the repository profile, then dispatches to
-`validate-local-common`, `validate-local-<lang>`, and optionally
-`validate-local-custom`.
-
-| Attribute | Value |
-|---|---|
-| Source | `standard_tooling.bin.validate_local` |
-| Args | None |
-| Preconditions | Git repo; repository profile (soft — falls back to empty language) |
-| Failure mode | Propagates exit codes from child validators |
-| Exit codes | 0 all passed, 1 any check failed |
-| Status | Active |
-
-### st-validate-local-common
+### st-validate-common
 
 Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (`docs/site/**/*.md`
 and `README.md`) using the bundled canonical config, shellcheck on
-`scripts/`, and yamllint on `.github/` and `docs/` YAML files.
+`scripts/`, yamllint on `.github/` and `docs/` YAML files, hadolint
+on `Dockerfile*`, and actionlint on `.github/workflows/`.
 
 | Attribute | Value |
 |---|---|
-| Source | `standard_tooling.bin.validate_local_common_container` |
+| Source | `standard_tooling.bin.validate_common` |
 | Args | None |
 | Preconditions | Git repo, `shellcheck` and `yamllint` on PATH |
 | Failure mode | Propagates exit codes from each tool |
 | Exit codes | 0 all passed, non-zero on first failure |
-| Status | Active |
-
-### st-validate-local-python / -rust / -go / -java
-
-Language-specific validation. Runs `scripts/dev/{lint,typecheck,test,audit}.sh`
-in sequence. All four entry points share a single source module;
-the language is determined from the entry point name or `--language`.
-
-| Attribute | Value |
-|---|---|
-| Source | `standard_tooling.bin.validate_local_lang` |
-| Args | `--language` (optional; inferred from entry point name) |
-| Preconditions | Git repo, `scripts/dev/*.sh` present and executable |
-| Failure mode | Error message if language cannot be determined; propagates script exit codes |
-| Exit codes | 0 all passed, 1 any script failed |
-| Status | Active |
+| Status | Active (called internally by `st-validate`) |
 
 ### st-repo-profile
 
@@ -294,9 +264,3 @@ interface than argparse would provide. No alignment needed.
 
 The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.
-
-### st-validate-local-common
-
-`st-validate-local-common` points directly at the
-`validate_local_common_container` module. The former passthrough
-wrapper (`validate_local_common.py`) was removed in issue #403.
