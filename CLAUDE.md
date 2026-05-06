@@ -250,7 +250,7 @@ Consumed via `git config core.hooksPath .githooks`:
 **Host install** (canonical):
 
 ```bash
-uv tool install 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v1.4'
+uv tool install --python 3.14 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v1.4'
 ```
 
 **Git hooks** (any consuming repo): each repo checks in its own
