@@ -6,6 +6,7 @@ Discovers, reads, and bumps version strings based on the
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 import tomllib
@@ -32,6 +33,7 @@ _DEFAULT_VERSION_FILES: dict[str, str] = {
     "java": "pom.xml",
     "shell": "VERSION",
     "none": "VERSION",
+    "claude-plugin": ".claude-plugin/plugin.json",
 }
 
 
@@ -86,6 +88,14 @@ def _read_version(text: str, language: str) -> str:
             msg = "No <version>...</version> found"
             raise ValueError(msg)
         return m.group(1)
+
+    if language == "claude-plugin":
+        data = json.loads(text)
+        version = data.get("version")
+        if version is None:
+            msg = "No 'version' key in plugin.json"
+            raise ValueError(msg)
+        return str(version)
 
     return text.strip()
 
@@ -154,6 +164,8 @@ def _write_version(version_file: Path, language: str, old: str, new: str) -> Non
         text = text.replace(f'Version = "{old}"', f'Version = "{new}"', 1)
     elif language == "java":
         text = text.replace(f"<version>{old}</version>", f"<version>{new}</version>", 1)
+    elif language == "claude-plugin":
+        text = text.replace(f'"version": "{old}"', f'"version": "{new}"', 1)
     else:
         text = new + "\n"
 
