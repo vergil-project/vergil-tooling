@@ -1,4 +1,4 @@
-"""Common validation checks (container-local).
+"""Common validation checks.
 
 Runs inside the dev container via ``st-docker-run``:
   1. Repository profile validation (includes README structural checks)

@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.validate_local_common_container."""
+"""Tests for standard_tooling.bin.validate_common."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from standard_tooling.bin.validate_local_common_container import (
+from standard_tooling.bin.validate_common import (
     _find_dockerfiles,
     _find_markdown_files,
     _find_shell_files,
@@ -183,11 +183,11 @@ def test_main_all_pass(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
     ):
@@ -197,11 +197,11 @@ def test_main_all_pass(tmp_path: Path) -> None:
 def test_main_repo_profile_fails(tmp_path: Path) -> None:
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=1,
         ),
     ):
@@ -216,15 +216,15 @@ def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -246,15 +246,15 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -272,15 +272,15 @@ def test_main_markdownlint_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -298,15 +298,15 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -327,15 +327,15 @@ def test_main_shellcheck_runs(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -353,15 +353,15 @@ def test_main_shellcheck_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -444,15 +444,15 @@ def test_main_yamllint_runs(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -469,15 +469,15 @@ def test_main_yamllint_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -527,15 +527,15 @@ def test_main_hadolint_runs(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -550,15 +550,15 @@ def test_main_hadolint_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -576,15 +576,15 @@ def test_main_actionlint_runs(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -609,15 +609,15 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_local_common_container.git.repo_root",
+            "standard_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_local_common_container.subprocess.run",
+            "standard_tooling.bin.validate_common.subprocess.run",
             side_effect=mock_run,
         ),
     ):
