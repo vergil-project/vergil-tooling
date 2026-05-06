@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.21] - 2026-05-06
+
+### Bug fixes
+
+- use str() in _check_names to satisfy ty type checker
+- restore Python 3.12+ support and auto-prepend .venv/bin in st-validate
+
+### Features
+
+- add GHAS check runs (Semgrep OSS, Trivy) to CI gates required checks
+- add --config flag to override remote config source
+
 ## [1.4.20] - 2026-05-06
 
 ### Bug fixes
