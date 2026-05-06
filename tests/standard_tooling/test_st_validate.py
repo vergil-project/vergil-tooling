@@ -60,9 +60,9 @@ def test_check_common_runs_common_checks(tmp_path: Path) -> None:
 
 def test_check_lint_runs_install_then_lint(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
-    calls: list[str] = []
+    calls: list[list[str]] = []
 
-    def mock_run_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
+    def mock_run_commands(cmds: list[list[str]], label: str, **kwargs: bool) -> int:
         calls.extend(cmds)
         return 0
 
@@ -72,8 +72,9 @@ def test_check_lint_runs_install_then_lint(tmp_path: Path) -> None:
     ):
         result = main(["--check", "lint"])
     assert result == 0
-    assert "uv sync --frozen --group dev" in calls
-    assert "ruff check src/ tests/" in calls
+    joined = [" ".join(c) for c in calls]
+    assert "uv sync --frozen --group dev" in joined
+    assert "ruff check src/ tests/" in joined
 
 
 def test_check_lint_no_commands_for_shell(tmp_path: Path) -> None:
@@ -94,7 +95,7 @@ def test_run_all_calls_common_then_language_checks(tmp_path: Path) -> None:
         order.append("common")
         return 0
 
-    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
+    def mock_commands(cmds: list[list[str]], label: str, **kwargs: bool) -> int:
         order.append(label)
         return 0
 
@@ -180,7 +181,7 @@ def test_run_commands_success() -> None:
         "standard_tooling.bin.st_validate.subprocess.run",
         return_value=subprocess.CompletedProcess(args=[], returncode=0),
     ):
-        assert _run_commands(["echo hello"], "test") == 0
+        assert _run_commands([["echo", "hello"]], "test") == 0
 
 
 def test_run_commands_failure_runs_all_by_default() -> None:
@@ -192,7 +193,7 @@ def test_run_commands_failure_runs_all_by_default() -> None:
         ]
     )
     with patch("standard_tooling.bin.st_validate.subprocess.run", side_effect=results) as mock:
-        assert _run_commands(["cmd1", "cmd2", "cmd3"], "test") == 2
+        assert _run_commands([["cmd1"], ["cmd2"], ["cmd3"]], "test") == 2
     assert mock.call_count == 3
 
 
@@ -201,7 +202,7 @@ def test_run_commands_fail_fast_stops_on_first() -> None:
         "standard_tooling.bin.st_validate.subprocess.run",
         return_value=subprocess.CompletedProcess(args=[], returncode=1),
     ) as mock:
-        assert _run_commands(["cmd1", "cmd2"], "test", fail_fast=True) == 1
+        assert _run_commands([["cmd1"], ["cmd2"]], "test", fail_fast=True) == 1
     assert mock.call_count == 1
 
 
@@ -273,7 +274,7 @@ def test_check_lint_install_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
     call_count = 0
 
-    def mock_run_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
+    def mock_run_commands(cmds: list[list[str]], label: str, **kwargs: bool) -> int:
         nonlocal call_count
         call_count += 1
         if label == "install":
@@ -295,7 +296,7 @@ def test_check_lint_install_failure_stops(tmp_path: Path) -> None:
 def test_run_all_language_check_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
+    def mock_commands(cmds: list[list[str]], label: str, **kwargs: bool) -> int:
         if label == "lint":
             return 1
         return 0
@@ -334,7 +335,7 @@ def test_run_all_custom_validator_failure(tmp_path: Path) -> None:
 def test_run_all_install_failure_stops(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_commands(cmds: list[str], label: str, **kwargs: bool) -> int:
+    def mock_commands(cmds: list[list[str]], label: str, **kwargs: bool) -> int:
         if label == "install":
             return 1
         return 0
@@ -367,11 +368,11 @@ def test_run_common_checks_calls_common_main() -> None:
 def test_single_check_no_install_commands(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[str]:
+    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
         if kind == CheckKind.INSTALL:
             return []
         if kind == CheckKind.LINT:
-            return ["ruff check src/"]
+            return [["ruff", "check", "src/"]]
         return []
 
     with (
@@ -381,7 +382,7 @@ def test_single_check_no_install_commands(tmp_path: Path) -> None:
     ):
         result = main(["--check", "lint"])
     assert result == 0
-    mock_run.assert_called_once_with(["ruff check src/"], "lint")
+    mock_run.assert_called_once_with([["ruff", "check", "src/"]], "lint")
 
 
 # -- Branch: no install commands in run-all mode ------------------------------
@@ -390,11 +391,11 @@ def test_single_check_no_install_commands(tmp_path: Path) -> None:
 def test_run_all_no_install_commands(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
 
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[str]:
+    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
         if kind == CheckKind.INSTALL:
             return []
         if kind == CheckKind.LINT:
-            return ["ruff check src/"]
+            return [["ruff", "check", "src/"]]
         return []
 
     with (
