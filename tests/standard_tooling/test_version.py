@@ -311,6 +311,13 @@ def test_read_version_java_bad_format() -> None:
         _read_version("no version here", "java")
 
 
+def test_read_version_claude_plugin_missing_key() -> None:
+    from standard_tooling.lib.version import _read_version
+
+    with pytest.raises(ValueError, match="No 'version' key"):
+        _read_version('{"name": "example"}', "claude-plugin")
+
+
 # -- _read_version_from_ref body -----------------------------------------------
 
 
