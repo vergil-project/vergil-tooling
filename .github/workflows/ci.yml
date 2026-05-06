@@ -29,7 +29,7 @@ jobs:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-quality.yml@v1.5
     with:
       language: python
-      versions: '["3.14"]'
+      versions: '["3.12", "3.13", "3.14"]'
       container-tag: '3.14'
       container-suffix: python
 
@@ -37,13 +37,13 @@ jobs:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-test.yml@v1.5
     with:
       language: python
-      versions: '["3.14"]'
+      versions: '["3.12", "3.13", "3.14"]'
 
   audit:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-audit.yml@v1.5
     with:
       language: python
-      versions: '["3.14"]'
+      versions: '["3.12", "3.13", "3.14"]'
 
   # ---------------------------------------------------------------------------
   # Security and standards
