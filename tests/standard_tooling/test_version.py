@@ -188,6 +188,20 @@ def test_bump_java(tmp_path: Path) -> None:
     assert "<version>3.2.2</version>" in text
 
 
+def test_bump_claude_plugin(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "claude-plugin")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text(
+        '{\n  "name": "example",\n  "version": "1.4.19"\n}\n'
+    )
+    result = bump(tmp_path)
+    assert result == "1.4.20"
+    text = (plugin_dir / "plugin.json").read_text()
+    assert '"version": "1.4.20"' in text
+    assert '"name": "example"' in text
+
+
 # -- lockfile maintenance tests -----------------------------------------------
 
 
