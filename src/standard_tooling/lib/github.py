@@ -153,6 +153,31 @@ def wait_for_checks(
     run("pr", "checks", pr, "--watch", "--fail-fast")
 
 
+def merge_state_status(pr: str) -> str:
+    """Return the PR's mergeStateStatus (e.g. ``CLEAN``, ``BEHIND``, ``DIRTY``)."""
+    return read_output(
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "mergeStateStatus",
+        "--jq",
+        ".mergeStateStatus",
+    )
+
+
+def update_branch(pr: str) -> None:
+    """Fast-forward merge the base branch into the PR branch.
+
+    Uses the GitHub REST API ``PUT /repos/{owner}/{repo}/pulls/{number}/update-branch``.
+    Only appropriate when the branch is behind the base — not when there are
+    merge conflicts.
+    """
+    number = read_output("pr", "view", pr, "--json", "number", "--jq", ".number")
+    repo = read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
+
+
 def merge(pr: str, *, strategy: str) -> None:
     """Merge a PR synchronously (without ``--auto``).
 
