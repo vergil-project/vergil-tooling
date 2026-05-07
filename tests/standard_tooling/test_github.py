@@ -100,6 +100,48 @@ def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
     mock_sleep.assert_called_once_with(10)
 
 
+def test_merge_state_status_returns_clean() -> None:
+    with patch("standard_tooling.lib.github.read_output", return_value="CLEAN"):
+        assert github.merge_state_status("https://github.com/pr/1") == "CLEAN"
+
+
+def test_merge_state_status_returns_behind() -> None:
+    with patch("standard_tooling.lib.github.read_output", return_value="BEHIND"):
+        assert github.merge_state_status("https://github.com/pr/1") == "BEHIND"
+
+
+def test_update_branch_calls_api() -> None:
+    with patch(
+        "standard_tooling.lib.github.read_output",
+        side_effect=["42", "acme/repo", ""],
+    ) as mock_read:
+        github.update_branch("https://github.com/pr/1")
+    calls = mock_read.call_args_list
+    assert calls[0].args == (
+        "pr",
+        "view",
+        "https://github.com/pr/1",
+        "--json",
+        "number",
+        "--jq",
+        ".number",
+    )
+    assert calls[1].args == (
+        "repo",
+        "view",
+        "--json",
+        "nameWithOwner",
+        "--jq",
+        ".nameWithOwner",
+    )
+    assert calls[2].args == (
+        "api",
+        "repos/acme/repo/pulls/42/update-branch",
+        "-X",
+        "PUT",
+    )
+
+
 def test_merge_delegates_to_gh() -> None:
     with patch("standard_tooling.lib.github.run") as mock_run:
         github.merge("https://github.com/pr/1", strategy="merge")
