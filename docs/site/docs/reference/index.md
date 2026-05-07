@@ -29,12 +29,7 @@ Run inside dev containers launched by `st-docker-run`.
 
 | Tool | Purpose |
 | ---- | ------- |
-| [st-validate-local](dev/validate-local.md) | Local validation driver |
-| `st-validate-local-common` | Shared checks (repo profile, markdown, shellcheck, yamllint) |
-| `st-validate-local-python` | Python-specific validation (lint, typecheck, test, audit) |
-| `st-validate-local-rust` | Rust-specific validation |
-| `st-validate-local-go` | Go-specific validation |
-| `st-validate-local-java` | Java-specific validation |
+| [st-validate](cli-tools-overview.md#st-validate) | Unified validation driver (common + language-specific checks) |
 | [st-repo-profile](lint/repo-profile.md) | Repository profile attribute validation |
 | [Markdown validation](lint/markdown-standards.md) | Markdownlint with bundled canonical config |
 
