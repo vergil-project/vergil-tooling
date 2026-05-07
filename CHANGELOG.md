@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.24] - 2026-05-07
+
+### Bug fixes
+
+- pass --platform to docker run and docker create for correct arch selection
+
+### Features
+
+- add retry with exponential backoff to all GitHub API calls
+- detect branch-behind state and auto-update before reporting success
+
 ## [1.4.23] - 2026-05-07
 
 ### Bug fixes

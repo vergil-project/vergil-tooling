@@ -1,24 +1,70 @@
-"""GitHub CLI (``gh``) subprocess wrappers."""
+"""GitHub CLI (``gh``) subprocess wrappers.
+
+All functions that use ``check=True`` retry transparently on transient
+GitHub API errors (HTTP 502, 503, 504, 429 and network-level timeouts)
+with exponential backoff.
+"""
 
 from __future__ import annotations
 
 import json
+import logging
+import random
 import subprocess
 import time
+from typing import Any
+
+log = logging.getLogger(__name__)
 
 _NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 60
 
+_MAX_RETRIES = 4
+_BASE_DELAY_SECS = 2.0
+_MAX_DELAY_SECS = 60.0
+_RETRYABLE_PATTERNS = (
+    "http 502",
+    "http 503",
+    "http 504",
+    "http 429",
+    "timed out",
+    "connection reset",
+)
+
+
+def _is_retryable(exc: subprocess.CalledProcessError) -> bool:
+    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+    return any(p in detail for p in _RETRYABLE_PATTERNS)
+
+
+def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    for attempt in range(_MAX_RETRIES + 1):
+        try:
+            return subprocess.run(*args, **kwargs)  # noqa: S603
+        except subprocess.CalledProcessError as exc:
+            if attempt == _MAX_RETRIES or not _is_retryable(exc):
+                raise
+            delay = min(_BASE_DELAY_SECS * (2**attempt), _MAX_DELAY_SECS)
+            delay *= 0.5 + random.random()  # noqa: S311
+            log.warning(
+                "GitHub API error (attempt %d/%d), retrying in %.1fs",
+                attempt + 1,
+                _MAX_RETRIES + 1,
+                delay,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
+
 
 def run(*args: str) -> None:
     """Run a gh command and raise on failure."""
-    subprocess.run(("gh", *args), check=True)  # noqa: S603, S607
+    _run_with_retry(("gh", *args), check=True)  # noqa: S607
 
 
 def read_output(*args: str) -> str:
     """Run a gh command and return stripped stdout."""
-    result = subprocess.run(  # noqa: S603
+    result = _run_with_retry(
         ("gh", *args),  # noqa: S607
         check=True,
         text=True,
@@ -36,7 +82,7 @@ def read_json(*args: str) -> dict[str, object] | list[object]:
 
 def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
     """Call gh api with a JSON body via stdin."""
-    subprocess.run(  # noqa: S603
+    _run_with_retry(
         ("gh", "api", endpoint, "-X", method, "--input", "-"),  # noqa: S607
         input=json.dumps(body),
         check=True,
@@ -47,7 +93,7 @@ def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
 
 def delete(endpoint: str) -> None:
     """Call gh api with DELETE method."""
-    subprocess.run(  # noqa: S603
+    _run_with_retry(
         ("gh", "api", endpoint, "-X", "DELETE"),  # noqa: S607
         check=True,
         text=True,
@@ -95,9 +141,9 @@ def wait_for_checks(
     ``poll_interval`` seconds for up to ``poll_timeout`` seconds before
     falling through to the blocking watch.
 
-    Surfaces the failure via ``subprocess.CalledProcessError`` — callers are
-    responsible for deciding how to react (the release-workflow convention is
-    to stop and surface; do not retry).
+    Transient GitHub API errors (502/503/504/429) are retried automatically
+    via the library-level retry wrapper.  Persistent failures surface as
+    ``subprocess.CalledProcessError``.
     """
     deadline = time.monotonic() + poll_timeout
     while not _checks_registered(pr):
@@ -105,6 +151,31 @@ def wait_for_checks(
             break
         time.sleep(poll_interval)
     run("pr", "checks", pr, "--watch", "--fail-fast")
+
+
+def merge_state_status(pr: str) -> str:
+    """Return the PR's mergeStateStatus (e.g. ``CLEAN``, ``BEHIND``, ``DIRTY``)."""
+    return read_output(
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "mergeStateStatus",
+        "--jq",
+        ".mergeStateStatus",
+    )
+
+
+def update_branch(pr: str) -> None:
+    """Fast-forward merge the base branch into the PR branch.
+
+    Uses the GitHub REST API ``PUT /repos/{owner}/{repo}/pulls/{number}/update-branch``.
+    Only appropriate when the branch is behind the base — not when there are
+    merge conflicts.
+    """
+    number = read_output("pr", "view", pr, "--json", "number", "--jq", ".number")
+    repo = read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
 
 
 def merge(pr: str, *, strategy: str) -> None:
