@@ -14,6 +14,7 @@ from standard_tooling.lib.docker import (
     build_docker_args,
     default_image,
     detect_language,
+    docker_platform,
     worktree_parent_gitdir,
 )
 
@@ -83,13 +84,37 @@ def test_default_image_empty_with_fallback() -> None:
     assert default_image("", fallback=True) == _FALLBACK_IMAGE
 
 
+# -- docker_platform ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [
+        ("arm64", "linux/arm64"),
+        ("aarch64", "linux/arm64"),
+        ("x86_64", "linux/amd64"),
+        ("AMD64", "linux/amd64"),
+    ],
+)
+def test_docker_platform_known(machine: str, expected: str) -> None:
+    with patch("standard_tooling.lib.docker.platform.machine", return_value=machine):
+        assert docker_platform() == expected
+
+
+def test_docker_platform_unknown_defaults_to_amd64() -> None:
+    with patch("standard_tooling.lib.docker.platform.machine", return_value="riscv64"):
+        assert docker_platform() == "linux/amd64"
+
+
 # -- build_docker_args --------------------------------------------------------
 
 
 def test_build_docker_args_basic(tmp_path: Path) -> None:
     with patch.dict("os.environ", {}, clear=True):
         args = build_docker_args(tmp_path, "img:1", ["echo", "hello"])
-    assert args[:4] == ["docker", "run", "--rm", "--pull=always"]
+    assert args[0:3] == ["docker", "run", "--rm"]
+    assert any(a.startswith("--platform=linux/") for a in args)
+    assert "--pull=always" in args
     assert f"{tmp_path}:/workspace" in args
     assert "img:1" in args
     assert args[-2:] == ["echo", "hello"]

@@ -11,6 +11,7 @@ import os
 import sys
 
 from standard_tooling.lib import git
+from standard_tooling.lib.docker import docker_platform
 
 
 def _usage(port: str) -> None:
@@ -62,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         "docker",
         "run",
         "--rm",
+        f"--platform={docker_platform()}",
         "-v",
         f"{repo_root}:/workspace",
         "-w",
