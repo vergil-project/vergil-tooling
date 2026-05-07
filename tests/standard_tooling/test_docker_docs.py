@@ -26,6 +26,7 @@ def test_serve_execvp(tmp_path: Path) -> None:
         main(["serve"])
     mock_exec.assert_called_once()
     args = mock_exec.call_args[0][1]
+    assert any(a.startswith("--platform=linux/") for a in args)
     assert "-p" in args
     assert "8000:8000" in args
     assert "mkdocs serve" in args[-1]

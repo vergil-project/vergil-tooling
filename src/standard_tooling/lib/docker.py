@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
@@ -26,6 +27,18 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
 }
 
 _FALLBACK_IMAGE = f"{_GHCR}/dev-base:latest"
+
+_MACHINE_TO_PLATFORM: dict[str, str] = {
+    "arm64": "linux/arm64",
+    "aarch64": "linux/arm64",
+    "x86_64": "linux/amd64",
+    "AMD64": "linux/amd64",
+}
+
+
+def docker_platform() -> str:
+    """Return the Docker ``--platform`` value for the host architecture."""
+    return _MACHINE_TO_PLATFORM.get(platform.machine(), "linux/amd64")
 
 
 def detect_language(repo_root: Path) -> str:
@@ -93,7 +106,7 @@ def build_docker_args(
     """Build the ``docker run`` argument list."""
     network = os.environ.get("DOCKER_NETWORK", "")
 
-    docker_args = ["docker", "run", "--rm"]
+    docker_args = ["docker", "run", "--rm", f"--platform={docker_platform()}"]
     if pull_policy != "never":
         docker_args.append("--pull=always")
     docker_args.extend(

@@ -8,6 +8,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from standard_tooling.lib.config import st_install_tag
+from standard_tooling.lib.docker import docker_platform
 from standard_tooling.lib.validate_commands import CheckKind, language_commands
 
 if TYPE_CHECKING:
@@ -131,6 +132,7 @@ def _build_cached_image(
         [  # noqa: S607
             "docker",
             "create",
+            f"--platform={docker_platform()}",
             "-v",
             f"{repo_root}:/workspace",
             "-w",
