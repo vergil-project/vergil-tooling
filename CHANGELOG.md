@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.23] - 2026-05-07
+
+### Bug fixes
+
+- remove stale validate-local references from mkdocs nav and reference index
+
 ## [1.4.22] - 2026-05-06
 
 ### Chores
