@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.22] - 2026-05-06
+
+### Chores
+
+- update dev dependencies for 1.4.22 cycle
+
+### Documentation
+
+- remove legacy st-validate-local reference page
+- update cli-tools-overview for st-validate-local removal
+- update CLAUDE.md to reference st-validate instead of st-validate-local
+- update README.md to reference st-validate
+
+### Refactoring
+
+- rename validate_local_common_container to validate_common
+- update imports and patch targets for validate_common rename
+- remove legacy validate_local and validate_local_lang modules
+- remove legacy scripts/dev/ shell scripts
+- remove legacy st-validate-local console_script entries
+- rename custom validator lookup from validate-local-custom to validate-custom
+- update usage example to reference st-validate
+
 ## [1.4.21] - 2026-05-06
 
 ### Bug fixes
