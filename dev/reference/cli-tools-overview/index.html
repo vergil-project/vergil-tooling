@@ -543,6 +543,8 @@
       
         
       
+        
+      
     
     
     
@@ -586,6 +588,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.4.22/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.22
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -1627,27 +1652,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#st-validate-local" class="md-nav__link">
+  <a href="#st-validate-common" class="md-nav__link">
     <span class="md-ellipsis">
-      st-validate-local
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-common" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-common
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-python-rust-go-java" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-python / -rust / -go / -java
+      st-validate-common
     </span>
   </a>
   
@@ -1756,15 +1763,6 @@
   <a href="#exit-code-contract" class="md-nav__link">
     <span class="md-ellipsis">
       Exit code contract
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-common_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-common
     </span>
   </a>
   
@@ -2013,8 +2011,6 @@
       
         
       
-        
-      
     
     
     
@@ -2136,29 +2132,6 @@
   
   <span class="md-ellipsis">
     st-finalize-repo
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../dev/validate-local/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    st-validate-local
     
   </span>
   
@@ -2503,27 +2476,9 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#st-validate-local" class="md-nav__link">
+  <a href="#st-validate-common" class="md-nav__link">
     <span class="md-ellipsis">
-      st-validate-local
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-common" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-common
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-python-rust-go-java" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-python / -rust / -go / -java
+      st-validate-common
     </span>
   </a>
   
@@ -2632,15 +2587,6 @@
   <a href="#exit-code-contract" class="md-nav__link">
     <span class="md-ellipsis">
       Exit code contract
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#st-validate-local-common_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      st-validate-local-common
     </span>
   </a>
   
@@ -2850,11 +2796,11 @@ runs validation, and checks the Documentation workflow status.</p>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, worktree-aware (auto-switches to main worktree), <code>st-docker-run</code> or <code>st-validate-local</code> on PATH</td>
+<td>Git repo, worktree-aware (auto-switches to main worktree), <code>st-docker-run</code> on PATH</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td><code>SystemExit</code> if neither validator is found; validation failures return exit 1; docs workflow failure is a soft warning (exit 0)</td>
+<td>Validation failures return exit 1; docs workflow failure is a soft warning (exit 0)</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -3059,50 +3005,12 @@ between <code>BEGIN/END GENERATED MQSC METHODS</code> markers.</p>
 <p>Container tools run inside dev containers launched by <code>st-docker-run</code>.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.</p>
-<h3 id="st-validate-local">st-validate-local<a class="headerlink" href="#st-validate-local" title="Permanent link">&para;</a></h3>
-<p>Shared driver for pre-PR local validation. Reads <code>primary_language</code>
-from the repository profile, then dispatches to
-<code>validate-local-common</code>, <code>validate-local-&lt;lang&gt;</code>, and optionally
-<code>validate-local-custom</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>standard_tooling.bin.validate_local</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td>None</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Git repo; repository profile (soft — falls back to empty language)</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Propagates exit codes from child validators</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 all passed, 1 any check failed</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="st-validate-local-common">st-validate-local-common<a class="headerlink" href="#st-validate-local-common" title="Permanent link">&para;</a></h3>
+<h3 id="st-validate-common">st-validate-common<a class="headerlink" href="#st-validate-common" title="Permanent link">&para;</a></h3>
 <p>Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (<code>docs/site/**/*.md</code>
 and <code>README.md</code>) using the bundled canonical config, shellcheck on
-<code>scripts/</code>, and yamllint on <code>.github/</code> and <code>docs/</code> YAML files.</p>
+<code>scripts/</code>, yamllint on <code>.github/</code> and <code>docs/</code> YAML files, hadolint
+on <code>Dockerfile*</code>, and actionlint on <code>.github/workflows/</code>.</p>
 <table>
 <thead>
 <tr>
@@ -3113,7 +3021,7 @@ and <code>README.md</code>) using the bundled canonical config, shellcheck on
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>standard_tooling.bin.validate_local_common_container</code></td>
+<td><code>standard_tooling.bin.validate_common</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -3133,45 +3041,7 @@ and <code>README.md</code>) using the bundled canonical config, shellcheck on
 </tr>
 <tr>
 <td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
-<h3 id="st-validate-local-python-rust-go-java">st-validate-local-python / -rust / -go / -java<a class="headerlink" href="#st-validate-local-python-rust-go-java" title="Permanent link">&para;</a></h3>
-<p>Language-specific validation. Runs <code>scripts/dev/{lint,typecheck,test,audit}.sh</code>
-in sequence. All four entry points share a single source module;
-the language is determined from the entry point name or <code>--language</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>standard_tooling.bin.validate_local_lang</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td><code>--language</code> (optional; inferred from entry point name)</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td>Git repo, <code>scripts/dev/*.sh</code> present and executable</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Error message if language cannot be determined; propagates script exit codes</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 all passed, 1 any script failed</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
+<td>Active (called internally by <code>st-validate</code>)</td>
 </tr>
 </tbody>
 </table>
@@ -3292,10 +3162,6 @@ interface than argparse would provide. No alignment needed.</p>
 </ul>
 <p>The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.</p>
-<h3 id="st-validate-local-common_1">st-validate-local-common<a class="headerlink" href="#st-validate-local-common_1" title="Permanent link">&para;</a></h3>
-<p><code>st-validate-local-common</code> points directly at the
-<code>validate_local_common_container</code> module. The former passthrough
-wrapper (<code>validate_local_common.py</code>) was removed in issue #403.</p>
 
 
 
