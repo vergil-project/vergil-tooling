@@ -2776,7 +2776,8 @@ full flag list.</p>
 <ul>
 <li>Pushes the current branch to <code>origin</code>.</li>
 <li>Constructs a standards-compliant PR body with issue linkage
-  (<code>Fixes #42</code>, <code>Closes</code>, <code>Resolves</code>, or <code>Ref</code>).</li>
+  (<code>Ref #42</code>). Auto-close keywords (<code>Fixes</code>, <code>Closes</code>,
+  <code>Resolves</code>) are not accepted.</li>
 <li>Creates the PR via <code>gh pr create</code> under the hood.</li>
 </ul>
 <div class="admonition note">

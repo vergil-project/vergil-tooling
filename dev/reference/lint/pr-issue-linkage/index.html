@@ -2265,23 +2265,24 @@
 
 <h1 id="st-pr-issue-linkage">st-pr-issue-linkage<a class="headerlink" href="#st-pr-issue-linkage" title="Permanent link">&para;</a></h1>
 <p><strong>Installed as:</strong> <code>st-pr-issue-linkage</code> (Python console script)</p>
-<p>Validates that a pull request body contains issue linkage. Runs in
-CI using the GitHub event payload.</p>
+<p>Validates that a pull request body uses <code>Ref</code> for issue linkage
+and rejects auto-close keywords. Runs in CI using the GitHub event
+payload.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <p>This script is called by CI workflows, not invoked directly. It
 reads the PR body from <code>$GITHUB_EVENT_PATH</code>.</p>
 <h2 id="validation-rules">Validation Rules<a class="headerlink" href="#validation-rules" title="Permanent link">&para;</a></h2>
 <p>The PR body must contain at least one line matching:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Fixes #123
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Closes #123
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>Resolves #123
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>Ref #123
-</code></pre></div>
-<p>Cross-repository references are also accepted:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>Fixes owner/repo#123
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Ref #123
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Ref owner/repo#123
 </code></pre></div>
 <p>The pattern allows optional leading whitespace, list markers
 (<code>-</code> or <code>*</code>), and an optional colon after the keyword.</p>
+<p>Auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code> and all
+variants like <code>Fix</code>, <code>Fixed</code>, <code>Close</code>, <code>Closed</code>, <code>Resolve</code>,
+<code>Resolved</code>) are rejected. Issues must remain open until
+post-merge workflows succeed; premature closure loses tracking
+for multi-PR and multi-repo work.</p>
 <h2 id="environment">Environment<a class="headerlink" href="#environment" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -2310,11 +2311,11 @@ reads the PR body from <code>$GITHUB_EVENT_PATH</code>.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Valid issue linkage found</td>
+<td>Valid <code>Ref</code> linkage found</td>
 </tr>
 <tr>
 <td>1</td>
-<td>No issue linkage or empty PR body</td>
+<td>Auto-close keyword used, no linkage, or empty PR body</td>
 </tr>
 <tr>
 <td>2</td>
