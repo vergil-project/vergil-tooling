@@ -74,6 +74,7 @@ _ALLOWED_ACTION_PATTERNS = [
     "github/*",
     "pypa/*",
     "ruby/*",
+    "swatinem/*",
     "wphillipmoore/*",
 ]
 
