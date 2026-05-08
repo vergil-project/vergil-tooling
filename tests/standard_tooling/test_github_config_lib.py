@@ -40,7 +40,7 @@ from standard_tooling.lib.github_config import (
 
 
 def test_desired_repo_settings_are_fixed() -> None:
-    s = desired_repo_settings()
+    s = desired_repo_settings(visibility="public")
     assert s.default_branch == "develop"
     assert s.allow_auto_merge is False
     assert s.delete_branch_on_merge is True
@@ -287,7 +287,7 @@ def _st_config(
 
 
 def test_compute_desired_state_has_three_rulesets() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     assert len(state.rulesets) == 3
     names = [r.name for r in state.rulesets]
     assert "Branch protection" in names
@@ -296,31 +296,31 @@ def test_compute_desired_state_has_three_rulesets() -> None:
 
 
 def test_compute_desired_state_skip_rulesets() -> None:
-    state = compute_desired_state(_st_config(skip_rulesets=True))
+    state = compute_desired_state(_st_config(skip_rulesets=True), visibility="public")
     assert state.rulesets == []
 
 
 def test_compute_desired_state_no_ci_section() -> None:
     cfg = _st_config()
     cfg.ci = None
-    state = compute_desired_state(cfg)
+    state = compute_desired_state(cfg, visibility="public")
     assert len(state.rulesets) == 2
     names = [r.name for r in state.rulesets]
     assert "CI gates" not in names
 
 
 def test_compute_desired_state_includes_repo_settings() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     assert state.repo_settings.default_branch == "develop"
 
 
 def test_compute_desired_state_includes_security() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     assert state.security.secret_scanning == "enabled"  # noqa: S105
 
 
 def test_compute_desired_state_includes_actions() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     assert state.actions_permissions.allowed_actions == "selected"
 
 
@@ -374,7 +374,8 @@ def test_fetch_actual_state_repo_settings() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert actual.repo_settings.default_branch == "develop"
     assert actual.repo_settings.delete_branch_on_merge is True
@@ -430,7 +431,8 @@ def test_fetch_actual_state_with_rulesets() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert len(actual.rulesets) == 1
     assert actual.rulesets[0].name == "Branch protection"
@@ -470,7 +472,8 @@ def test_fetch_actual_state_no_selected_actions_skips_patterns() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert "repos/o/r/actions/permissions/selected-actions" not in call_log
     assert actual.actions_permissions.patterns_allowed == []
@@ -508,7 +511,8 @@ def test_fetch_actual_state_missing_security_and_analysis() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert actual.security.secret_scanning == "disabled"  # noqa: S105
     assert actual.security.secret_scanning_push_protection == "disabled"  # noqa: S105
@@ -556,7 +560,8 @@ def test_fetch_actual_state_rulesets_edge_cases() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     # All invalid rulesets should be skipped
     assert actual.rulesets == []
@@ -594,7 +599,8 @@ def test_fetch_actual_state_rulesets_not_a_list() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert actual.rulesets == []
 
@@ -634,7 +640,8 @@ def test_fetch_actual_state_selected_actions_non_dict_response() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert actual.actions_permissions.patterns_allowed == []
 
@@ -673,7 +680,8 @@ def test_fetch_actual_state_selected_actions_non_list_patterns() -> None:
             return_value=False,
         ),
     ):
-        actual = fetch_actual_state("o/r")
+        result = fetch_actual_state("o/r")
+    actual = result.state
 
     assert actual.actions_permissions.patterns_allowed == []
 
@@ -836,15 +844,15 @@ def test_fetch_vulnerability_alerts_disabled() -> None:
 
 
 def test_diff_identical_states_is_empty() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert diff.items == []
 
 
 def test_diff_detects_repo_setting_mismatch() -> None:
-    desired = compute_desired_state(_st_config())
-    actual = compute_desired_state(_st_config())
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
     actual.repo_settings.allow_auto_merge = True
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -852,8 +860,8 @@ def test_diff_detects_repo_setting_mismatch() -> None:
 
 
 def test_diff_detects_missing_ruleset() -> None:
-    desired = compute_desired_state(_st_config())
-    actual = compute_desired_state(_st_config())
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
     actual.rulesets = []
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -861,8 +869,8 @@ def test_diff_detects_missing_ruleset() -> None:
 
 
 def test_diff_detects_extra_ruleset() -> None:
-    desired = compute_desired_state(_st_config())
-    actual = compute_desired_state(_st_config())
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
     actual.rulesets.append(
         DesiredRuleset(
             name="Extra",
@@ -879,8 +887,8 @@ def test_diff_detects_extra_ruleset() -> None:
 
 
 def test_diff_detects_actions_permission_mismatch() -> None:
-    desired = compute_desired_state(_st_config())
-    actual = compute_desired_state(_st_config())
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
     actual.actions_permissions.default_workflow_permissions = "write"
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -888,8 +896,8 @@ def test_diff_detects_actions_permission_mismatch() -> None:
 
 
 def test_diff_detects_security_mismatch() -> None:
-    desired = compute_desired_state(_st_config())
-    actual = compute_desired_state(_st_config())
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
     actual.security.vulnerability_alerts = True
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -913,7 +921,7 @@ def test_diff_detects_new_repo_setting_drift() -> None:
 
 
 def test_apply_repo_settings_calls_write_json() -> None:
-    settings = desired_repo_settings()
+    settings = desired_repo_settings(visibility="public")
     with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     mock_write.assert_called_once()
@@ -1108,7 +1116,7 @@ def test_ruleset_body_structure() -> None:
 
 
 def test_apply_desired_state_orchestrates_all() -> None:
-    state = compute_desired_state(_st_config())
+    state = compute_desired_state(_st_config(), visibility="public")
     with (
         patch("standard_tooling.lib.github_config._apply_repo_settings") as mock_repo,
         patch("standard_tooling.lib.github_config._apply_security_settings") as mock_sec,
@@ -1246,7 +1254,7 @@ def test_normalize_rules_skips_non_dict_entries() -> None:
 
 def test_compute_desired_state_includes_publish() -> None:
     config = _st_config()
-    state = compute_desired_state(config)
+    state = compute_desired_state(config, visibility="public")
     assert state.publish is not None
     assert state.publish.release is False
     assert state.publish.docs is True
@@ -1261,6 +1269,6 @@ def test_compute_desired_state_publish_release_true() -> None:
         github=GithubOverrides(skip_rulesets=False),
         publish=PublishConfig(release=True, docs=True),
     )
-    state = compute_desired_state(config)
+    state = compute_desired_state(config, visibility="public")
     assert state.publish.release is True
     assert state.publish.docs is True
