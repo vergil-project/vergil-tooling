@@ -63,12 +63,19 @@ class GithubOverrides:
 
 
 @dataclass
+class PublishConfig:
+    release: bool
+    docs: bool
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
     ci: CiConfig | None
     github: GithubOverrides
+    publish: PublishConfig
 
 
 def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
@@ -130,6 +137,12 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         skip_rulesets=bool(github_raw.get("skip-rulesets", False)),
     )
 
+    publish_raw = raw.get("publish", {})
+    publish = PublishConfig(
+        release=bool(publish_raw.get("release", False)),
+        docs=bool(publish_raw.get("docs", True)),
+    )
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -144,6 +157,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         markdownlint=markdownlint,
         ci=ci,
         github=github_overrides,
+        publish=publish,
     )
 
 

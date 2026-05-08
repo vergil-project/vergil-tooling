@@ -11,6 +11,7 @@ from standard_tooling.lib.config import (
     GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
+    PublishConfig,
     StConfig,
 )
 from standard_tooling.lib.github_config import (
@@ -259,6 +260,7 @@ def _st_config(
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
         github=GithubOverrides(skip_rulesets=skip_rulesets),
+        publish=PublishConfig(release=False, docs=True),
     )
 
 
