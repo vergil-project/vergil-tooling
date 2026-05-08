@@ -896,6 +896,17 @@ def test_diff_detects_security_mismatch() -> None:
     assert any(d.field == "security.vulnerability_alerts" for d in diff.items)
 
 
+def test_diff_detects_new_repo_setting_drift() -> None:
+    desired = compute_desired_state(_st_config(), visibility="public")
+    actual = compute_desired_state(_st_config(), visibility="public")
+    actual.repo_settings.merge_commit_title = "PR_TITLE"
+    actual.repo_settings.web_commit_signoff_required = False
+    diff = compute_diff(desired=desired, actual=actual)
+    fields = {item.field for item in diff.items}
+    assert "repo_settings.merge_commit_title" in fields
+    assert "repo_settings.web_commit_signoff_required" in fields
+
+
 # ---------------------------------------------------------------------------
 # Apply tests
 # ---------------------------------------------------------------------------
@@ -912,6 +923,21 @@ def test_apply_repo_settings_calls_write_json() -> None:
     body = call_args[0][2]
     assert body["default_branch"] == "develop"
     assert body["delete_branch_on_merge"] is True
+
+
+def test_apply_repo_settings_includes_new_fields() -> None:
+    settings = desired_repo_settings(visibility="public")
+    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+        _apply_repo_settings("o/r", settings)
+    body = mock_write.call_args[0][2]
+    assert body["allow_forking"] is True
+    assert body["allow_update_branch"] is True
+    assert body["has_downloads"] is False
+    assert body["merge_commit_title"] == "MERGE_MESSAGE"
+    assert body["merge_commit_message"] == "PR_TITLE"
+    assert body["squash_merge_commit_title"] == "COMMIT_OR_PR_TITLE"
+    assert body["squash_merge_commit_message"] == "COMMIT_MESSAGES"
+    assert body["web_commit_signoff_required"] is True
 
 
 def test_apply_security_settings_enables_vuln_alerts() -> None:

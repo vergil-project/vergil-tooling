@@ -627,6 +627,14 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
             "has_issues": settings.has_issues,
             "has_projects": settings.has_projects,
             "has_wiki": settings.has_wiki,
+            "allow_forking": settings.allow_forking,
+            "allow_update_branch": settings.allow_update_branch,
+            "has_downloads": settings.has_downloads,
+            "merge_commit_title": settings.merge_commit_title,
+            "merge_commit_message": settings.merge_commit_message,
+            "squash_merge_commit_title": settings.squash_merge_commit_title,
+            "squash_merge_commit_message": settings.squash_merge_commit_message,
+            "web_commit_signoff_required": settings.web_commit_signoff_required,
         },
     )
 
