@@ -269,8 +269,9 @@ jobs:
 What the composite action runs inside the `dev-base` container:
 
 - `st-repo-profile` — validates `docs/repository-standards.md`
-- `st-pr-issue-linkage` — validates PR body has an issue linkage
-  keyword (`Fixes`, `Closes`, `Resolves`, `Ref`)
+- `st-pr-issue-linkage` — validates PR body uses `Ref` for issue
+  linkage and rejects auto-close keywords (`Fixes`, `Closes`,
+  `Resolves`)
 
 The `dev-base` container already has standard-tooling on PATH, so
 no further setup is needed in the workflow.

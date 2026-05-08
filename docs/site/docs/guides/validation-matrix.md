@@ -48,8 +48,10 @@ reference for config details and file scope.
 
 **Trigger:** PR opened or updated
 
-Validates the PR body contains `Fixes #N`, `Closes #N`,
-`Resolves #N`, or `Ref #N`.
+Validates the PR body uses `Ref #N` for issue linkage.
+Rejects auto-close keywords (`Fixes`, `Closes`, `Resolves`
+and variants) to keep issues open until post-merge workflows
+succeed.
 
 ## Exit Code Reference
 

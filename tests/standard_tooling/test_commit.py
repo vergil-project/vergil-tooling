@@ -363,6 +363,54 @@ def test_validate_admits_main_worktree_feature_commit_without_worktrees_dir(
 
 
 # --------------------------------------------------------------------------
+# Check 6: auto-close keywords in commit body
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Closes #42",
+        "closes #42",
+        "CLOSES #42",
+        "Close #42",
+        "Closed #42",
+        "Fixes #42",
+        "fixes #42",
+        "Fix #42",
+        "Fixed #42",
+        "Resolves #42",
+        "resolves #42",
+        "Resolve #42",
+        "Resolved #42",
+        "Fixes: #42",
+        "Closes owner/repo#42",
+        "Some context.\n\nCloses #99",
+    ],
+)
+def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) -> None:
+    with _commit_environment(tmp_path):
+        result = main(["--type", "feat", "--message", "test", "--body", body, "--agent", "claude"])
+    assert result == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Ref #42",
+        "This closes the loop on the design.",
+        "Fixed the edge case for empty input.",
+        "Resolves a long-standing performance issue.",
+        "",
+    ],
+)
+def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
+    with _commit_environment(tmp_path):
+        result = main(["--type", "feat", "--message", "test", "--body", body, "--agent", "claude"])
+    assert result == 0
+
+
+# --------------------------------------------------------------------------
 # Task 1.2 — `git.run` is responsible for setting ST_COMMIT_CONTEXT=1
 # (issue #295 moved the contract from commit.py to lib/git.py). The
 # pinning test for that contract lives in tests/standard_tooling/test_git.py;

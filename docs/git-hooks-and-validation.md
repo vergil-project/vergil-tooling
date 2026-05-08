@@ -158,9 +158,11 @@ issue linkage.
 **Requires**: `GITHUB_EVENT_PATH` environment variable
 pointing to the GitHub Actions event payload JSON.
 
-**Accepted linkage keywords**: `Fixes`, `Closes`,
-`Resolves`, `Ref` — followed by `#123` or a cross-repo
-reference like `owner/repo#123`.
+**Accepted linkage keyword**: `Ref` — followed by `#123`
+or a cross-repo reference like `owner/repo#123`. Auto-close
+keywords (`Fixes`, `Closes`, `Resolves` and variants) are
+rejected to keep issues open until post-merge workflows
+succeed.
 
 The keyword may optionally include a colon and may appear
 as a list item.
@@ -275,10 +277,14 @@ markdown files were discovered. Ensure docs exist under
 **`"ERROR: pull request body is empty"`** — The PR has
 no body text. Add issue linkage to the PR description.
 
+**`"ERROR: pull request body contains a GitHub auto-close
+keyword"`** — The PR body uses `Fixes`, `Closes`, `Resolves`
+or a variant. Replace with `Ref #N`. Issues must remain open
+until post-merge workflows succeed.
+
 **`"ERROR: pull request body must include primary issue
-linkage"`** — The PR body does not contain a recognized
-linkage keyword (`Fixes`, `Closes`, `Resolves`, or `Ref`)
-followed by an issue reference.
+linkage"`** — The PR body does not contain `Ref` followed by
+an issue reference.
 
 **`"ERROR: repository profile not found"`** — The file
 `docs/repository-standards.md` does not exist. Create it

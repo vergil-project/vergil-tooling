@@ -142,7 +142,8 @@ st-submit-pr \
 
 - Pushes the current branch to `origin`.
 - Constructs a standards-compliant PR body with issue linkage
-  (`Fixes #42`, `Closes`, `Resolves`, or `Ref`).
+  (`Ref #42`). Auto-close keywords (`Fixes`, `Closes`,
+  `Resolves`) are not accepted.
 - Creates the PR via `gh pr create` under the hood.
 
 !!! note "Auto-merge is disabled"
