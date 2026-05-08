@@ -1,1016 +1,933 @@
-## [develop-v1.4.25] - 2026-05-08
+# Changelog
 
-### 🚀 Features
+All notable changes to this project will be documented in this file.
 
-- *(validate)* Bundle canonical yamllint config like markdownlint
-- *(commit)* Reject GitHub auto-close keywords in commit bodies and PR bodies
-- *(release)* Centralize git-cliff configs as bundled package data
+The format is based on [Keep a Changelog](https://keepachangelog.com/)
+and this project adheres to [Semantic Versioning](https://semver.org/).
 
-### 🐛 Bug Fixes
+## [1.4.26] - 2026-05-08
 
-- *(commit)* Tighten cliff regexes, fix doc to docs, add build and revert types
+### Bug fixes
 
-### ⚙️ Miscellaneous Tasks
+- remove unreachable early return to restore 100% coverage
 
-- Bump version to 1.4.25
+### Chores
+
+- prepare release 1.4.25
+- bump version to 1.4.26
+- add #603 design spec and implementation plan
+
+### Documentation
+
+- add design spec and implementation plan for Go license allowlist (#604)
+- add design spec and implementation plan for Java license audit (#600)
+
+### Features
+
+- add swatinem/* to allowed action patterns
+- add Go license allowlist to centralized audit (#604)
+- add license_finder decisions file for Ruby audit
+- add {configs} placeholder expansion to language_commands()
+- add license_finder to Ruby audit registry
+- add Java license allowlist to centralized audit (#600)
+
+### Styling
+
+- format validate_commands.py
+
+### Testing
+
+- add failing test for Go license allowlist (#604)
+- strengthen Go audit test to verify allowlist flag (#604)
+
+## [1.4.25] - 2026-05-08
+
+### Bug fixes
+
+- tighten cliff regexes, fix doc to docs, add build and revert types
+
+### Chores
+
+- prepare release 1.4.24
+- bump version to 1.4.25
+
+### Features
+
+- bundle canonical yamllint config like markdownlint
+- reject GitHub auto-close keywords in commit bodies and PR bodies
+- centralize git-cliff configs as bundled package data
+
 ## [1.4.24] - 2026-05-07
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.24
-## [develop-v1.4.24] - 2026-05-07
+- pass --platform to docker run and docker create for correct arch selection
 
-### 🚀 Features
+### Chores
 
-- *(github)* Add retry with exponential backoff to all GitHub API calls
-- *(wait-until-green)* Detect branch-behind state and auto-update before reporting success
+- prepare release 1.4.23
+- bump version to 1.4.24
 
-### 🐛 Bug Fixes
+### Features
 
-- *(docker)* Pass --platform to docker run and docker create for correct arch selection
+- add retry with exponential backoff to all GitHub API calls
+- detect branch-behind state and auto-update before reporting success
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.24
 ## [1.4.23] - 2026-05-07
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.23
-## [develop-v1.4.23] - 2026-05-07
+- remove stale validate-local references from mkdocs nav and reference index
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Bump version to 1.4.23
+- prepare release 1.4.22
+- bump version to 1.4.23
+
 ## [1.4.22] - 2026-05-06
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(docs)* Remove stale validate-local references from mkdocs nav and reference index
+- prepare release 1.4.21
+- bump version to 1.4.22
+- update dev dependencies for 1.4.22 cycle
 
-### ⚙️ Miscellaneous Tasks
+### Documentation
 
-- Prepare release 1.4.22
-## [develop-v1.4.22] - 2026-05-06
+- remove legacy st-validate-local reference page
+- update cli-tools-overview for st-validate-local removal
+- update CLAUDE.md to reference st-validate instead of st-validate-local
+- update README.md to reference st-validate
 
-### 🚜 Refactor
+### Refactoring
 
-- *(validate)* Rename validate_local_common_container to validate_common
-- *(validate)* Update imports and patch targets for validate_common rename
-- *(validate)* Remove legacy validate_local and validate_local_lang modules
-- *(validate)* Remove legacy scripts/dev/ shell scripts
-- *(validate)* Remove legacy st-validate-local console_script entries
-- *(validate)* Rename custom validator lookup from validate-local-custom to validate-custom
-- *(docker-run)* Update usage example to reference st-validate
+- rename validate_local_common_container to validate_common
+- update imports and patch targets for validate_common rename
+- remove legacy validate_local and validate_local_lang modules
+- remove legacy scripts/dev/ shell scripts
+- remove legacy st-validate-local console_script entries
+- rename custom validator lookup from validate-local-custom to validate-custom
+- update usage example to reference st-validate
 
-### 📚 Documentation
-
-- *(validate)* Remove legacy st-validate-local reference page
-- *(validate)* Update cli-tools-overview for st-validate-local removal
-- *(validate)* Update CLAUDE.md to reference st-validate instead of st-validate-local
-- *(validate)* Update README.md to reference st-validate
-
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.22
 ## [1.4.21] - 2026-05-06
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.21
-## [develop-v1.4.21] - 2026-05-06
+- use str() in _check_names to satisfy ty type checker
+- restore Python 3.12+ support and auto-prepend .venv/bin in st-validate
 
-### 🚀 Features
+### Chores
 
-- *(github-config)* Add GHAS check runs (Semgrep OSS, Trivy) to CI gates required checks
-- *(github-config)* Add --config flag to override remote config source
+- prepare release 1.4.20
+- bump version to 1.4.21
 
-### 🐛 Bug Fixes
+### Features
 
-- *(github-config)* Use str() in _check_names to satisfy ty type checker
-- *(ci)* Restore Python 3.12+ support and auto-prepend .venv/bin in st-validate
+- add GHAS check runs (Semgrep OSS, Trivy) to CI gates required checks
+- add --config flag to override remote config source
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.21
 ## [1.4.20] - 2026-05-06
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.20
-## [develop-v1.4.20] - 2026-05-06
+- prepend .venv/bin to PATH in st-validate for CI compatibility
+- use explicit argument lists in command registry instead of string splitting
+- add missing type annotations in test files for mypy strict mode
+- add ty as dev dependency and resolve ty type checker diagnostics
 
-### 🚀 Features
+### CI
 
-- Add claude-plugin to primary-language enum
-- Add claude-plugin version discovery, read, and write
+- remove bespoke lint and typecheck jobs duplicated by ci-quality.yml
+- remove all bespoke jobs, use reusable workflows for test, audit, and release
+- trigger fresh workflow run after standard-actions fix
+- trigger fresh CI run after standard-actions self-install fix
+- trigger fresh CI run after dev container image rebuild
+- trigger fresh CI run after standard-actions PATH fix
+- trigger fresh CI run after standard-actions PATH fix for all jobs
+- use Python container for common, standards, and release jobs
 
-### 🐛 Bug Fixes
+### Chores
 
-- Prepend .venv/bin to PATH in st-validate for CI compatibility
-- Use explicit argument lists in command registry instead of string splitting
-- Add missing type annotations in test files for mypy strict mode
-- Add ty as dev dependency and resolve ty type checker diagnostics
+- prepare release 1.4.19
+- bump version to 1.4.20
+- require Python 3.14 as minimum version
 
-### 🚜 Refactor
+### Documentation
 
-- Remove .venv/bin PATH logic from st-validate
+- add claude-plugin to primary-language spec
 
-### 📚 Documentation
+### Features
 
-- Add claude-plugin to primary-language spec
+- add claude-plugin to primary-language enum
+- add claude-plugin version discovery, read, and write
 
-### 🎨 Styling
+### Refactoring
 
-- Format test_version.py
-- Format github_config.py for ruff on Python 3.14
+- remove .venv/bin PATH logic from st-validate
 
-### 🧪 Testing
+### Styling
 
-- Add failing test for st-version claude-plugin show
-- Add bump test for claude-plugin
-- Verify claude-plugin skips lockfile maintenance
-- Verify error on missing version key in plugin.json
+- format test_version.py
+- format github_config.py for ruff on Python 3.14
 
-### ⚙️ Miscellaneous Tasks
+### Testing
 
-- Bump version to 1.4.20
-- Remove bespoke lint and typecheck jobs duplicated by ci-quality.yml
-- Remove all bespoke jobs, use reusable workflows for test, audit, and release
-- Trigger fresh workflow run after standard-actions fix
-- Trigger fresh CI run after standard-actions self-install fix
-- Trigger fresh CI run after dev container image rebuild
-- Trigger fresh CI run after standard-actions PATH fix
-- Trigger fresh CI run after standard-actions PATH fix for all jobs
-- Use Python container for common, standards, and release jobs
-- Require Python 3.14 as minimum version
+- add failing test for st-version claude-plugin show
+- add bump test for claude-plugin
+- verify claude-plugin skips lockfile maintenance
+- verify error on missing version key in plugin.json
+
 ## [1.4.19] - 2026-05-05
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.19
-## [develop-v1.4.19] - 2026-05-05
+- suppress S101 on type-narrowing assertion
+- run independent check commands to completion instead of short-circuiting on first failure
+- use cmd.split() instead of shell=True for subprocess.run
 
-### 🚀 Features
+### Chores
 
-- *(validate)* Fix Python commands and add install entries to command registry
-- *(validate)* Add st-validate command with registry-driven check dispatch
-- *(validate)* Add hadolint and actionlint to common validation checks
-- *(version)* Add st-version library and CLI with per-language version discovery, show, bump, and --ref support
+- prepare release 1.4.18
+- bump version to 1.4.19
 
-### 🐛 Bug Fixes
+### Features
 
-- *(validate)* Suppress S101 on type-narrowing assertion
-- *(validate)* Run independent check commands to completion instead of short-circuiting on first failure
-- *(validate)* Use cmd.split() instead of shell=True for subprocess.run
+- fix Python commands and add install entries to command registry
+- add st-validate command with registry-driven check dispatch
+- add hadolint and actionlint to common validation checks
+- add st-version library and CLI with per-language version discovery, show, bump, and --ref support
 
-### 🚜 Refactor
+### Refactoring
 
-- *(docker)* Replace _WARMUP_COMMANDS with registry-driven install lookup
-- *(finalize)* Call st-validate instead of st-validate-local in post-finalization
+- replace _WARMUP_COMMANDS with registry-driven install lookup
+- call st-validate instead of st-validate-local in post-finalization
 
-### 🎨 Styling
+### Styling
 
-- *(validate,version)* Apply ruff format to new and modified files
-- *(validate)* Apply ruff format to test_st_validate
+- apply ruff format to new and modified files
+- apply ruff format to test_st_validate
 
-### 🧪 Testing
+### Testing
 
-- *(validate,version)* Achieve 100% branch coverage for st-validate and st-version
+- achieve 100% branch coverage for st-validate and st-version
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.19
 ## [1.4.18] - 2026-05-05
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.18
-## [develop-v1.4.18] - 2026-05-05
+- skip uv tool install when running in the standard-tooling repo itself
+- resolve CI failures: mypy no-any-return and ruff format
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(docker-cache)* Skip uv tool install when running in the standard-tooling repo itself
-- *(docker-cache)* Resolve CI failures: mypy no-any-return and ruff format
+- prepare release 1.4.17
+- bump version to 1.4.18
+- sweep post-1.4.17 dependency updates
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.18
 ## [1.4.17] - 2026-05-05
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.17
-## [develop-v1.4.17] - 2026-05-05
+- add safe.directory for git worktree tests in CI container
 
-### 🚀 Features
+### Chores
 
-- *(docker)* Unify cache install — Python now gets uv tool install
+- prepare release 1.4.16
+- bump version to 1.4.17
+- upgrade workflows to standard-actions v1.5 and add CI derivation config
 
-### 🐛 Bug Fixes
+### Documentation
 
-- *(ci)* Add safe.directory for git worktree tests in CI container
+- update host-level-tool spec for unified consumption model
+- update CLAUDE.md consumption model for unified install
 
-### 📚 Documentation
+### Features
 
-- Update host-level-tool spec for unified consumption model
-- Update CLAUDE.md consumption model for unified install
+- unify cache install — Python now gets uv tool install
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.17
-- *(ci)* Upgrade workflows to standard-actions v1.5 and add CI derivation config
 ## [1.4.16] - 2026-05-05
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.16
-## [develop-v1.4.16] - 2026-05-05
+- normalize audit comparison for patterns ordering and API default fields
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(github-config)* Normalize audit comparison for patterns ordering and API default fields
+- prepare release 1.4.15
+- bump version to 1.4.16
+- sweep post-1.4.15 dependency updates
 
-### 🎨 Styling
+### Styling
 
-- *(github-config)* Apply ruff format
+- apply ruff format
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.16
 ## [1.4.15] - 2026-05-05
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.15
-## [develop-v1.4.15] - 2026-05-05
+- add explicit type annotations to read_json() for mypy
+- include enabled field in actions permissions PUT body
 
-### 🚀 Features
+### Chores
 
-- *(github-config)* Add desired state data model
-- *(github)* Add read_json() helper for gh api calls
-- *(config)* Add [ci] section to standard-tooling.toml schema
-- *(config)* Add [github] override section to TOML schema
-- *(github-config)* Add fixed desired state functions
-- *(validate)* Add per-language command registry
-- *(github-config)* Add CI gates ruleset derivation
-- *(github-config)* Add compute_desired_state() top-level function
-- *(github-config)* Add fetch_actual_state() for GitHub API reads
-- *(github-config)* Add diff computation engine
-- *(github-config)* Add st-github-config CLI with audit and diff modes
-- *(github-config)* Implement apply mode for st-github-config CLI
-- *(github-config)* Add classic branch protection cleanup during apply
+- prepare release 1.4.14
+- bump version to 1.4.15
+- sweep post-1.4.14 dependency updates (#492)
 
-### 🐛 Bug Fixes
+### Features
 
-- Add explicit type annotations to read_json() for mypy
-- *(github-config)* Include enabled field in actions permissions PUT body
+- add desired state data model
+- add read_json() helper for gh api calls
+- add [ci] section to standard-tooling.toml schema
+- add [github] override section to TOML schema
+- add fixed desired state functions
+- add per-language command registry
+- add CI gates ruleset derivation
+- add compute_desired_state() top-level function
+- add fetch_actual_state() for GitHub API reads
+- add diff computation engine
+- add st-github-config CLI with audit and diff modes
+- implement apply mode for st-github-config CLI
+- add classic branch protection cleanup during apply
 
-### 🎨 Styling
+### Styling
 
-- Format test_config.py with ruff
-- Apply ruff format to new files
+- format test_config.py with ruff
+- apply ruff format to new files
 
-### 🧪 Testing
+### Testing
 
-- Cover _lang_has_check unknown check kind branch
+- cover _lang_has_check unknown check kind branch
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.15
 ## [1.4.14] - 2026-05-04
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.14
-## [develop-v1.4.14] - 2026-05-04
+- fix formatting and add coverage for invalid ignore type
 
-### 🚀 Features
+### Chores
 
-- *(markdownlint)* Add [markdownlint].ignore support to standard-tooling.toml
+- prepare release 1.4.13
+- bump version to 1.4.14
+- retrigger CI with issue linkage (#482)
+- sweep post-1.4.13 dependency updates (#482)
 
-### 🐛 Bug Fixes
+### Documentation
 
-- *(markdownlint)* Fix formatting and add coverage for invalid ignore type
+- update published docs for bundled markdownlint config
+- add cross-repo cleanup implementation plan
 
-### 📚 Documentation
+### Features
 
-- *(markdownlint)* Update published docs for bundled markdownlint config
-- *(plans)* Add cross-repo cleanup implementation plan
+- add [markdownlint].ignore support to standard-tooling.toml
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.14
-- Retrigger CI with issue linkage (#482)
 ## [1.4.13] - 2026-05-03
 
-### ⚙️ Miscellaneous Tasks
+### CI
 
-- Prepare release 1.4.13
-## [develop-v1.4.13] - 2026-05-03
+- bump standard-actions CI pin to v1.4.7
 
-### 🚀 Features
+### Chores
 
-- *(finalize-repo)* Fail on dirty working tree after cleanup (#477)
-- *(markdownlint)* Bundle canonical config and remove per-repo configs (#476) (#481)
+- prepare release 1.4.12
+- bump version to 1.4.13
+- add memory management policy (#474)
+- replace blanket chore skip with targeted mechanical-commit filters (#475)
 
-### 📚 Documentation
+### Documentation
 
-- Markdownlint standardization spec, plan, and reviews (#476) (#478)
-- Narrow markdownlint standardization to published docs scope (#476) (#480)
+- markdownlint standardization spec, plan, and reviews (#476) (#478)
+- narrow markdownlint standardization to published docs scope (#476) (#480)
 
-### ⚙️ Miscellaneous Tasks
+### Features
 
-- Bump version to 1.4.13
-- Bump standard-actions CI pin to v1.4.7
-- Add memory management policy (#474)
-- *(changelog)* Replace blanket chore skip with targeted mechanical-commit filters (#475)
+- fail on dirty working tree after cleanup (#477)
+- bundle canonical config and remove per-repo configs (#476) (#481)
+
 ## [1.4.12] - 2026-05-01
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.12
-## [develop-v1.4.12] - 2026-05-01
+- make --title required in st-submit-pr
 
-### 🚀 Features
+### Chores
 
-- Add _checks_registered probe and polling loop to wait_for_checks
+- prepare release 1.4.11
+- bump version to 1.4.12
 
-### 🐛 Bug Fixes
+### Features
 
-- Make --title required in st-submit-pr
+- add _checks_registered probe and polling loop to wait_for_checks
 
-### 🎨 Styling
+### Styling
 
-- Apply ruff format to test_github.py
-- Fix line length in test_main_dry_run_release_branch
-- Apply ruff format to test_submit_pr.py
+- apply ruff format to test_github.py
+- fix line length in test_main_dry_run_release_branch
+- apply ruff format to test_submit_pr.py
 
-### 🧪 Testing
+### Testing
 
-- Cover wait_for_checks polling behavior
+- cover wait_for_checks polling behavior
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.12
 ## [1.4.11] - 2026-05-01
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Prepare release 1.4.11
-## [develop-v1.4.11] - 2026-05-01
+- prepare release 1.4.10
+- bump version to 1.4.11
 
-### 🚀 Features
+### Features
 
-- *(validate-local)* Add container guard to st-validate-local
+- add container guard to st-validate-local
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.11
 ## [1.4.10] - 2026-05-01
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.10
-## [develop-v1.4.10] - 2026-05-01
+- Fix --pull=always breaking cached image lookup; route Python through cache
+- Fix ruff format violations
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(docker)* Fix --pull=always breaking cached image lookup; route Python through cache
-- *(docker)* Fix ruff format violations
+- prepare release 1.4.9
+- bump version to 1.4.10
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.10
 ## [1.4.9] - 2026-05-01
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Prepare release 1.4.9
-## [develop-v1.4.9] - 2026-05-01
+- prepare release 1.4.8
+- bump version to 1.4.9
+- organize plans into proposed/in-progress/completed lifecycle
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.9
-- *(docs)* Organize plans into proposed/in-progress/completed lifecycle
 ## [1.4.8] - 2026-05-01
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.8
-## [develop-v1.4.8] - 2026-05-01
+- replace pip install with uv tool install in docker cache build
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(docker-cache)* Replace pip install with uv tool install in docker cache build
+- prepare release 1.4.7
+- bump version to 1.4.8
+- add consumer-refresh config to standard-tooling.toml
+- remove shutil.which guards and make docs failure fatal
+- remove _ensure_tool guard and shutil.which dependency
+- remove markdownlint shutil.which guard
+- remove all pip install references from host-level-tool spec
+- update docstring and validation failure label to reflect fatal semantics
+- fix S607 noqa, duplicate pytest import, and pip reference in releasing guide
 
-### 📚 Documentation
+### Documentation
 
-- Add spec, plan, and pushback review for uv tool install and guard cleanup
+- add spec, plan, and pushback review for uv tool install and guard cleanup
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.8
-- Add consumer-refresh config to standard-tooling.toml
-- *(finalize-repo)* Remove shutil.which guards and make docs failure fatal
-- *(prepare-release)* Remove _ensure_tool guard and shutil.which dependency
-- *(markdown-standards)* Remove markdownlint shutil.which guard
-- *(docs)* Remove all pip install references from host-level-tool spec
-- *(finalize-repo)* Update docstring and validation failure label to reflect fatal semantics
-- *(lint)* Fix S607 noqa, duplicate pytest import, and pip reference in releasing guide
 ## [1.4.7] - 2026-04-30
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.7
-## [develop-v1.4.7] - 2026-04-30
+- force-update tags on git fetch to prevent stale local state
+- add --pull=always to docker run to prevent stale image cache
+- use uv run for validation in Python repos during finalization
 
-### 🐛 Bug Fixes
+### Chores
 
-- Force-update tags on git fetch to prevent stale local state
-- Add --pull=always to docker run to prevent stale image cache
-- Use uv run for validation in Python repos during finalization
+- prepare release 1.4.6
+- bump version to 1.4.7
+- next-cycle dependency updates for 1.4.6
+- retire st-config.toml in favor of standard-tooling.toml
+- retrigger CI after standard-actions v1.4.5
+- retrigger CI (force action cache refresh)
+- retrigger CI (GitHub Actions tag cache)
+- trigger CI for PR #417
+- pin ci-security workflow to v1.4.5 to bypass tag cache
+- pin ci-security workflow to v1.4.6
+- remove dead validate_local_common wrapper
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.7
-- Retire st-config.toml in favor of standard-tooling.toml
-- Retrigger CI after standard-actions v1.4.5
-- Retrigger CI (force action cache refresh)
-- Retrigger CI (GitHub Actions tag cache)
-- Trigger CI for PR #417
-- Pin ci-security workflow to v1.4.5 to bypass tag cache
-- Pin ci-security workflow to v1.4.6
-- Remove dead validate_local_common wrapper
 ## [1.4.6] - 2026-04-29
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Prepare release 1.4.6
-## [develop-v1.4.6] - 2026-04-29
+- prepare release 1.4.5
+- bump version to 1.4.6
+- change license from GPL-3.0-only to GPL-3.0-or-later
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.6
-- Change license from GPL-3.0-only to GPL-3.0-or-later
 ## [1.4.5] - 2026-04-29
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.5
-## [develop-v1.4.5] - 2026-04-29
+- eliminate unreachable elif branch for full coverage
 
-### 🚀 Features
+### Chores
 
-- Add typed TOML reader for standard-tooling.toml
+- prepare release 1.4.4
+- bump version to 1.4.5
+- seed standard-tooling.toml with this repo's values
+- delete repo_profile.py — replaced by config.read_config
 
-### 🐛 Bug Fixes
+### Documentation
 
-- *(finalize)* Eliminate unreachable elif branch for full coverage
+- add spec, plan, and reviews for standard-tooling.toml migration (#363)
+- strip config sections from repository-standards.md, update references
 
-### 🚜 Refactor
+### Features
 
-- Migrate st-commit from repo_profile to config.read_config
-- Migrate st-validate-local from repo_profile to config.read_config
-- Migrate st-finalize-repo from repo_profile to config.read_config
-- Rewrite repo-profile-cli to validate standard-tooling.toml
+- add typed TOML reader for standard-tooling.toml
 
-### 📚 Documentation
+### Refactoring
 
-- Add spec, plan, and reviews for standard-tooling.toml migration (#363)
-- Strip config sections from repository-standards.md, update references
+- migrate st-commit from repo_profile to config.read_config
+- migrate st-validate-local from repo_profile to config.read_config
+- migrate st-finalize-repo from repo_profile to config.read_config
+- rewrite repo-profile-cli to validate standard-tooling.toml
 
-### 🎨 Styling
+### Styling
 
-- Fix ruff TC003 and SIM117 lint errors
-- Apply ruff format to modified files
+- fix ruff TC003 and SIM117 lint errors
+- apply ruff format to modified files
 
-### 🧪 Testing
+### Testing
 
-- Add failing tests for standard-tooling.toml reader
-- Rewrite repo-profile-cli tests for TOML validation
-- Add missing coverage for ConfigError handlers and dead code removal
+- add failing tests for standard-tooling.toml reader
+- rewrite repo-profile-cli tests for TOML validation
+- add missing coverage for ConfigError handlers and dead code removal
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.5
-- Seed standard-tooling.toml with this repo's values
-- Delete repo_profile.py — replaced by config.read_config
 ## [1.4.4] - 2026-04-29
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.4
-## [develop-v1.4.4] - 2026-04-29
+- reject invocation from secondary worktree instead of os.chdir
+- re-allow legacy chore/bump-version and chore/next-cycle-deps branch prefixes
 
-### 🚀 Features
+### Chores
 
-- Add st-wait-until-green command for CI polling
+- prepare release 1.4.3
+- bump version to 1.4.4
 
-### 🐛 Bug Fixes
+### Features
 
-- Reject invocation from secondary worktree instead of os.chdir
-- Re-allow legacy chore/bump-version and chore/next-cycle-deps branch prefixes
+- add st-wait-until-green command for CI polling
 
-### 🎨 Styling
+### Styling
 
-- Move Path import to TYPE_CHECKING block
-- Fix import ordering in release.py
+- move Path import to TYPE_CHECKING block
+- fix import ordering in release.py
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.4
 ## [1.4.3] - 2026-04-29
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.3
-## [develop-v1.4.3] - 2026-04-29
+- drop --delete-branch from st-merge-when-green; st-finalize-repo handles cleanup
+- use CWD-relative README.md lookup in repo-profile instead of git.repo_root
+- retain st-markdown-standards as markdownlint-only entry point for CI compatibility
 
-### 🚀 Features
+### CI
 
-- *(cli)* Add st-check-pr-merge and branch check in st-merge-when-green
-- Add next-cycle-deps pattern to release branch allow-list
+- retrigger checks after adding issue linkage
 
-### 🐛 Bug Fixes
+### Chores
 
-- Drop --delete-branch from st-merge-when-green; st-finalize-repo handles cleanup
-- Use CWD-relative README.md lookup in repo-profile instead of git.repo_root
-- Retain st-markdown-standards as markdownlint-only entry point for CI compatibility
+- prepare release 1.4.1
+- merge main into release/1.4.2
+- prepare release 1.4.2
+- bump version to 1.4.3
+- update all Python dependencies for next cycle
+- remove docker dispatch and verification pipeline
+- point ci-security ref to @develop for install fix (#362)
+- restore ci-security ref to @v1.4 after standard-actions 1.4.2 release (#379)
+- remove auto-close linkage keywords from st-submit-pr
 
-### 🚜 Refactor
+### Documentation
 
-- Unify release-cycle branches under release/ prefix
-- Decompose st-markdown-standards: direct markdownlint in validate-local, structural checks in repo-profile
+- update spec and docs for cache-first architecture (#362)
+- mark all decouple plan phases complete with PR refs and follow-up issue links (#385)
 
-### 📚 Documentation
+### Features
 
-- Update spec and docs for cache-first architecture (#362)
-- Mark all decouple plan phases complete with PR refs and follow-up issue links (#385)
+- add st-check-pr-merge and branch check in st-merge-when-green
+- add next-cycle-deps pattern to release branch allow-list
 
-### 🎨 Styling
+### Refactoring
 
-- Apply ruff format to new and modified files
-- Apply ruff format to test files
+- unify release-cycle branches under release/ prefix
+- decompose st-markdown-standards: direct markdownlint in validate-local, structural checks in repo-profile
 
-### 🧪 Testing
+### Styling
 
-- Add coverage tests for check_pr_merge edge cases
+- apply ruff format to new and modified files
+- apply ruff format to test files
 
-### ⚙️ Miscellaneous Tasks
+### Testing
 
-- Bump version to 1.4.3
-- Retrigger checks after adding issue linkage
-- Update all Python dependencies for next cycle
-- *(ci)* Remove docker dispatch and verification pipeline
-- *(ci)* Point ci-security ref to @develop for install fix (#362)
-- *(ci)* Restore ci-security ref to @v1.4 after standard-actions 1.4.2 release (#379)
-- Remove auto-close linkage keywords from st-submit-pr
+- add coverage tests for check_pr_merge edge cases
+
 ## [1.4.2] - 2026-04-29
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Merge main into release/1.4.2
-- Prepare release 1.4.2
+- bump version to 1.4.2 (#361)
+
+### Documentation
+
+- fix spec-plan alignment issues from pushback review (#366)
+
+### Features
+
+- decouple standard-tooling from dev container images (#362) (#364)
+
 ## [1.4.1] - 2026-04-28
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Prepare release 1.4.1
-## [develop-v1.4.2] - 2026-04-29
+- prepare release 1.4.0
+- bump version to 1.4.1
+- retrigger CI after adding issue linkage
+- upgrade standard-actions from @v1.3 to @v1.4
+- audit st-* catalog: remove broken entry points, add CLI tools overview
+- change st-submit-pr default linkage from Fixes to Ref (#358)
 
-### 🚀 Features
+### Documentation
 
-- *(docker)* Decouple standard-tooling from dev container images (#362) (#364)
+- rewrite docs for host-install model and deprecate include-and-remember
 
-### 📚 Documentation
-
-- *(spec)* Fix spec-plan alignment issues from pushback review (#366)
-
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.2 (#361)
-## [develop-v1.4.1] - 2026-04-28
-
-### 📚 Documentation
-
-- *(fleet)* Rewrite docs for host-install model and deprecate include-and-remember
-
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.4.1
-- Retrigger CI after adding issue linkage
-- *(ci)* Upgrade standard-actions from @v1.3 to @v1.4
-- *(cli)* Audit st-* catalog: remove broken entry points, add CLI tools overview
-- *(cli)* Change st-submit-pr default linkage from Fixes to Ref (#358)
 ## [1.4.0] - 2026-04-28
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.4.0
-## [develop-v1.4.0] - 2026-04-28
+- replace docker info with docker version for daemon reachability check
+- auto-chdir to main worktree instead of erroring from a secondary worktree
+- skip --delete-branch when running from a secondary worktree
+- bump stale standard-actions pins from @v1.1 to @v1.3
+- support --help and -h as program options
 
-### 🚀 Features
+### Chores
 
-- *(ci)* Add post-publish workflow to verify dev container images carry the released version
+- prepare release 1.3.4
+- bump version to 1.3.5
+- delete ci-push.yml; collapse three-tier CI to two-tier
+- migrate standard-actions refs from @develop to @v1.3
+- remove add-to-project.yml workflow
+- remove st-list-project-repos and st-set-project-field
+- remove st-observatory and dead-code registry module
+- bump version to 1.4.0
+- regenerate lockfile for 1.4.0
 
-### 🐛 Bug Fixes
+### Features
 
-- *(docker)* Replace docker info with docker version for daemon reachability check
-- *(finalize)* Auto-chdir to main worktree instead of erroring from a secondary worktree
-- *(merge)* Skip --delete-branch when running from a secondary worktree
-- *(ci)* Bump stale standard-actions pins from @v1.1 to @v1.3
-- *(docker-run)* Support --help and -h as program options
+- add post-publish workflow to verify dev container images carry the released version
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.3.5
-- *(ci)* Delete ci-push.yml; collapse three-tier CI to two-tier
-- *(ci)* Migrate standard-actions refs from @develop to @v1.3
-- *(workflows)* Remove add-to-project.yml workflow
-- *(cli)* Remove st-list-project-repos and st-set-project-field
-- *(observatory)* Remove st-observatory and dead-code registry module
-- *(version)* Bump version to 1.4.0
-- *(version)* Regenerate lockfile for 1.4.0
 ## [1.3.4] - 2026-04-27
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.3.4
-## [develop-v1.3.4] - 2026-04-27
+- declare GPL-3.0-only license metadata in pyproject.toml
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(packaging)* Declare GPL-3.0-only license metadata in pyproject.toml
+- prepare release 1.3.3
+- bump version to 1.3.4
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.3.4
 ## [1.3.3] - 2026-04-27
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.3.3
-## [develop-v1.3.3] - 2026-04-27
+- auto-remove worktree before deleting merged branch (#315)
 
-### 🐛 Bug Fixes
+### Chores
 
-- *(finalize)* Auto-remove worktree before deleting merged branch (#315)
+- prepare release 1.3.2
+- bump version to 1.3.3
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.3.3
 ## [1.3.2] - 2026-04-26
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.3.2
-## [develop-v1.3.2] - 2026-04-26
+- regenerate v1.3.1 notes with --unreleased
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Bump version to 1.3.2
+- prepare release 1.3.1
+- bump version to 1.3.2
+
 ## [1.3.1] - 2026-04-26
 
-### 🐛 Bug Fixes
+### Bug fixes
 
-- *(release)* Regenerate v1.3.1 notes with --unreleased
+- regenerate v1.3.0 release notes with correct content
+- use --unreleased instead of --latest for release notes (#298)
+- remove dead skip-filter from _find_yaml_files
+- move Path import into TYPE_CHECKING block (TC003)
+- use reference-style links to satisfy markdownlint and lint
+- add S607 noqa for gh CLI invocation
+- use shutil.which to get gh absolute path (S607)
+- use 'git branch -D' for already-vetted merged branches (#307)
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Prepare release 1.3.1
-## [develop-v1.3.1] - 2026-04-26
+- prepare release 1.3.0
+- bump version to 1.3.1
 
-### 🚀 Features
+### Documentation
 
-- *(publish)* Dispatch standard-tooling-released event after release tag (#301)
-- *(validate-local)* Add yamllint to canonical validation; pin rules in .yamllint (#302)
+- document patch/minor/major release workflow; add docs-publish sanity check (#303)
 
-### 🐛 Bug Fixes
+### Features
 
-- *(prepare-release)* Use --unreleased instead of --latest for release notes (#298)
-- *(validate-local)* Remove dead skip-filter from _find_yaml_files
-- *(validate-local)* Move Path import into TYPE_CHECKING block (TC003)
-- *(docs)* Use reference-style links to satisfy markdownlint and lint
-- *(docs)* Add S607 noqa for gh CLI invocation
-- *(finalize)* Use shutil.which to get gh absolute path (S607)
-- *(finalize)* Use 'git branch -D' for already-vetted merged branches (#307)
+- dispatch standard-tooling-released event after release tag (#301)
+- add yamllint to canonical validation; pin rules in .yamllint (#302)
 
-### 📚 Documentation
+### Styling
 
-- *(releasing)* Document patch/minor/major release workflow; add docs-publish sanity check (#303)
+- wrap git-cliff cmd tuple to satisfy line-length lint
+- apply ruff format
 
-### 🎨 Styling
-
-- *(prepare-release)* Wrap git-cliff cmd tuple to satisfy line-length lint
-- *(finalize)* Apply ruff format
-
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.3.1
 ## [1.3.0] - 2026-04-26
 
-### 🐛 Bug Fixes
+### Bug fixes
 
-- *(release)* Regenerate v1.3.0 release notes with correct content
+- scope markdownlint to docs/site and README.md only (#197) (#200)
+- accept st-docker-test entry point in validate-local preflight (#218)
+- use GHCR image URLs as default dev container references (#232)
+- update docker-test references to st-docker-test (#234)
+- mount host .gitconfig into container for git identity (#245)
+- mock Path.home in docker_test empty volumes test (#246)
+- remove individual validation commands from CLAUDE.md (#250)
+- refuse to run from a secondary worktree (#278)
+- set ST_COMMIT_CONTEXT=1 in git.run for commit calls (#295) (#296)
 
-### ⚙️ Miscellaneous Tasks
+### CI
 
-- Prepare release 1.3.0
-## [develop-v1.3.0] - 2026-04-26
+- use dev-docs container for docs CI (#210)
+- restore standards-compliance after wrapper fallback landed (#219)
 
-### 🚀 Features
+### Chores
 
-- *(release)* Add Rust/Cargo ecosystem support to st-prepare-release (#176)
-- *(prepare-release)* Add claude-plugin ecosystem detector (#186)
-- Run st-validate-local after finalization (#201)
-- *(markdown-standards)* Add single-file mode and remove sphinx references (#203)
-- Container-first validation infrastructure (#205)
-- Add docker-docs wrapper for containerised docs preview (#209)
-- Port all bash scripts to Python entry points (#216)
-- Pass GH_TOKEN through to dev containers (#223)
-- Add st-docker-run general-purpose container command wrapper (#239)
-- Add dual-venv host bootstrap for st-docker-run (#240)
-- Mount ~/.ssh in container for git SSH remote operations (#253)
-- Run validation via st-docker-run in st-finalize-repo (#254)
-- Adopt git worktree convention for parallel AI agent development (#264)
-- *(release)* Add st-merge-when-green and stop auto-merging PRs in st-submit-pr/st-prepare-release (#276)
-- Refuse feature-branch commits from main worktree (#259) (#275)
+- prepare release 1.2.2
+- bump version to 1.2.3
+- update dependencies for next development cycle (#172)
+- install standard-tooling plugin via marketplace (#180)
+- strip CLAUDE.md boilerplate now covered by plugin (#183)
+- use .markdownlintignore for lint exclusions (#195)
+- remove commit-msg hook and commit-message linter (#196)
+- update CLAUDE.md for docker-only standard-tooling (#221)
+- ban MEMORY.md usage in CLAUDE.md (#225)
+- remove legacy bash wrapper scripts and use st-* entry points directly (#227)
+- add .coverage to .gitignore (#229)
+- rename dev-docs references to dev-base (#252)
+- remove MEMORY.md ban from CLAUDE.md (#267)
 
-### 🐛 Bug Fixes
+### Documentation
 
-- Scope markdownlint to docs/site and README.md only (#197) (#200)
-- Accept st-docker-test entry point in validate-local preflight (#218)
-- Use GHCR image URLs as default dev container references (#232)
-- Update docker-test references to st-docker-test (#234)
-- Mount host .gitconfig into container for git identity (#245)
-- Mock Path.home in docker_test empty volumes test (#246)
-- Remove individual validation commands from CLAUDE.md (#250)
-- *(finalize)* Refuse to run from a secondary worktree (#278)
-- *(git)* Set ST_COMMIT_CONTEXT=1 in git.run for commit calls (#295) (#296)
+- add consolidated git-workflow guide as canonical entry point (#271)
+- rewrite onboarding docs for Docker/plugin/worktree reality (#273)
+- add git-URL dev-dependency convention spec (#285)
+- reject git-URL dev-dep approach; add pushback report (#287)
+- add host-level-tool spec, plan, pushback, and alignment artifacts (#290)
 
-### 🚜 Refactor
+### Features
 
-- *(validation)* Normalize validation stack to one container per run (#282)
-- *(commit)* Consolidate pre-commit checks into st-commit; add env-var gate (#292)
+- add Rust/Cargo ecosystem support to st-prepare-release (#176)
+- add claude-plugin ecosystem detector (#186)
+- run st-validate-local after finalization (#201)
+- add single-file mode and remove sphinx references (#203)
+- container-first validation infrastructure (#205)
+- add docker-docs wrapper for containerised docs preview (#209)
+- port all bash scripts to Python entry points (#216)
+- pass GH_TOKEN through to dev containers (#223)
+- add st-docker-run general-purpose container command wrapper (#239)
+- add dual-venv host bootstrap for st-docker-run (#240)
+- mount ~/.ssh in container for git SSH remote operations (#253)
+- run validation via st-docker-run in st-finalize-repo (#254)
+- adopt git worktree convention for parallel AI agent development (#264)
+- add st-merge-when-green and stop auto-merging PRs in st-submit-pr/st-prepare-release (#276)
+- refuse feature-branch commits from main worktree (#259) (#275)
 
-### 📚 Documentation
+### Refactoring
 
-- Add consolidated git-workflow guide as canonical entry point (#271)
-- Rewrite onboarding docs for Docker/plugin/worktree reality (#273)
-- *(specs)* Add git-URL dev-dependency convention spec (#285)
-- *(specs)* Reject git-URL dev-dep approach; add pushback report (#287)
-- *(specs)* Add host-level-tool spec, plan, pushback, and alignment artifacts (#290)
+- normalize validation stack to one container per run (#282)
+- consolidate pre-commit checks into st-commit; add env-var gate (#292)
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.2.3
-- Update dependencies for next development cycle (#172)
-- *(plugins)* Install standard-tooling plugin via marketplace (#180)
-- *(docs)* Strip CLAUDE.md boilerplate now covered by plugin (#183)
-- Use .markdownlintignore for lint exclusions (#195)
-- Remove commit-msg hook and commit-message linter (#196)
-- Use dev-docs container for docs CI (#210)
-- Restore standards-compliance after wrapper fallback landed (#219)
-- Update CLAUDE.md for docker-only standard-tooling (#221)
-- Ban MEMORY.md usage in CLAUDE.md (#225)
-- Remove legacy bash wrapper scripts and use st-* entry points directly (#227)
-- Add .coverage to .gitignore (#229)
-- Rename dev-docs references to dev-base (#252)
-- Remove MEMORY.md ban from CLAUDE.md (#267)
 ## [1.2.2] - 2026-03-01
 
-### ⚙️ Miscellaneous Tasks
-
-- Prepare release 1.2.2
-## [develop-v1.2.2] - 2026-03-01
-
-### 🚀 Features
-
-- Add Rust development tooling (#139)
-- *(generate)* Add st-generate-commands CLI for multi-language MQSC method generation (#154)
-- *(labels)* Add canonical label registry and sync modes to st-ensure-label (#164)
-
-### 🐛 Bug Fixes
+### Bug fixes
 
 - Ruby list DISPLAY methods without name_default use required positional name param (#158)
 
-### 📚 Documentation
+### CI
 
-- Move Releases nav to right of Home for consistency (#136)
-- Add multi-repo finalization workflow rules to CLAUDE.md (#156)
-- Add Python 3.12 to dev-python version matrix in CLAUDE.md (#166)
+- add concurrency group to ci-push workflow (#167)
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Bump version to 1.2.2
-- *(ci)* Pass run-standards and run-security flags to ci-security workflow (#137)
-- Deploy standardized issue template (#163)
-- Add concurrency group to ci-push workflow (#167)
+- prepare release 1.2.1
+- bump version to 1.2.2
+- update ruff 0.15.4, certifi 2026.2.25, hadolint 2.14.0 (#134)
+- pass run-standards and run-security flags to ci-security workflow (#137)
+- deploy standardized issue template (#163)
+
+### Documentation
+
+- move Releases nav to right of Home for consistency (#136)
+- add multi-repo finalization workflow rules to CLAUDE.md (#156)
+- add Python 3.12 to dev-python version matrix in CLAUDE.md (#166)
+
+### Features
+
+- add Rust development tooling (#139)
+- add st-generate-commands CLI for multi-language MQSC method generation (#154)
+- add canonical label registry and sync modes to st-ensure-label (#164)
+
 ## [1.2.1] - 2026-02-26
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.2.1
-## [develop-v1.2.1] - 2026-02-26
+- resolve commit-msg hook fallback relative to hook directory, not consuming repo (#90)
+- disable fail-fast in docker-publish matrix (#100)
+- bump Go dev images from 1.23 to 1.25 and 1.26 (#105)
+- use v2 module path for go-licenses (#107)
+- use hadolint binary instead of container to avoid musl/node24 incompatibility (#122)
+- suppress DL3028 hadolint warning for gem version pinning (#123)
+- exclude auto-generated markdown from markdownlint (#125)
+- add SHELL pipefail directive to all Dockerfiles (#127)
+- expand trivyignore with upstream-unfixable CVEs (#128)
 
-### 🚀 Features
+### CI
 
-- *(release)* Add Ruby ecosystem detection to st-prepare-release (#88)
-- Add st-observatory CLI for cross-repo health reports (#91)
-- *(hooks)* Allow dots in branch name validation (#93)
-- *(docker)* Add Docker dev images and docker-test script (#96)
-- *(docker)* Publish dev container images to GHCR (#98)
-- *(docker)* Add shellcheck and markdownlint to all dev images (#110)
-- *(release)* Generate per-release verbose release notes files (#114)
-- *(docker)* Add CI quality gates for dev container images (#121)
-- *(docker)* Harden dev images with patched base packages, Node 22 LTS, shellcheck 0.11.0 (#126)
+- migrate CI to three-tier model (#112)
 
-### 🐛 Bug Fixes
+### Chores
 
-- Resolve commit-msg hook fallback relative to hook directory, not consuming repo (#90)
-- *(docker)* Disable fail-fast in docker-publish matrix (#100)
-- *(docker)* Bump Go dev images from 1.23 to 1.25 and 1.26 (#105)
-- *(docker)* Use v2 module path for go-licenses (#107)
-- *(docker)* Use hadolint binary instead of container to avoid musl/node24 incompatibility (#122)
-- *(docker)* Suppress DL3028 hadolint warning for gem version pinning (#123)
-- Exclude auto-generated markdown from markdownlint (#125)
-- *(docker)* Add SHELL pipefail directive to all Dockerfiles (#127)
-- *(docker)* Expand trivyignore with upstream-unfixable CVEs (#128)
+- prepare release 1.2.0
+- merge main into release/1.2.0
+- prepare release 1.2.0
+- bump version to 1.2.1
+- trigger CI with updated PR body
+- add Python 3.12 and Java 17 to image matrix (#104)
+- add per-release notes and generate retroactive release notes (#116)
+- add typecheck.sh for mypy type checking (#119)
+- add Releases nav section with navigation.indexes support (#130)
 
-### 🚜 Refactor
+### Documentation
 
-- Remove --docs-only flag from st-submit-pr (#117)
+- add three-tier CI architecture guide (#109)
 
-### 📚 Documentation
+### Features
 
-- Add three-tier CI architecture guide (#109)
+- add Ruby ecosystem detection to st-prepare-release (#88)
+- add st-observatory CLI for cross-repo health reports (#91)
+- allow dots in branch name validation (#93)
+- add Docker dev images and docker-test script (#96)
+- publish dev container images to GHCR (#98)
+- add shellcheck and markdownlint to all dev images (#110)
+- generate per-release verbose release notes files (#114)
+- add CI quality gates for dev container images (#121)
+- harden dev images with patched base packages, Node 22 LTS, shellcheck 0.11.0 (#126)
 
-### ⚙️ Miscellaneous Tasks
+### Refactoring
 
-- Bump version to 1.2.1
-- Trigger CI with updated PR body
-- *(docker)* Add Python 3.12 and Java 17 to image matrix (#104)
-- Migrate CI to three-tier model (#112)
-- Add per-release notes and generate retroactive release notes (#116)
-- *(dev)* Add typecheck.sh for mypy type checking (#119)
-- *(docs)* Add Releases nav section with navigation.indexes support (#130)
+- remove --docs-only flag from st-submit-pr (#117)
+
 ## [1.2.0] - 2026-02-23
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.2.0
-- Merge main into release/1.2.0
-- Prepare release 1.2.0
-## [develop-v1.2.0] - 2026-02-23
+- update add-to-project action to v1.0.2 (#64)
+- read version from pyproject.toml in publish and docs workflows (#82)
 
-### 🚀 Features
+### Chores
 
-- *(hooks)* Add chore/ as allowed branch prefix in pre-commit hook (#66)
-- Restructure as Python package with PATH-based consumption (#73)
-- *(lint)* Add commit-messages range validator for CI (#76)
+- prepare release 1.1.4
+- bump version to 1.1.5
 
-### 🐛 Bug Fixes
+### Documentation
 
-- Update add-to-project action to v1.0.2 (#64)
-- *(ci)* Read version from pyproject.toml in publish and docs workflows (#82)
+- document git hooks and validation rules (#71)
+- add MkDocs documentation site (#72)
+- update documentation site for PATH-based architecture (#79)
 
-### 🚜 Refactor
+### Features
 
-- *(lint)* Remove commit-messages range validator (#77)
+- add chore/ as allowed branch prefix in pre-commit hook (#66)
+- restructure as Python package with PATH-based consumption (#73)
+- add commit-messages range validator for CI (#76)
 
-### 📚 Documentation
+### Refactoring
 
-- *(hooks)* Document git hooks and validation rules (#71)
-- Add MkDocs documentation site (#72)
-- Update documentation site for PATH-based architecture (#79)
+- remove commit-messages range validator (#77)
 
-### 🧪 Testing
+### Testing
 
-- Achieve 100% line and branch coverage for all Python modules (#74)
+- achieve 100% line and branch coverage for all Python modules (#74)
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.1.5
 ## [1.1.4] - 2026-02-21
 
-### ⚙️ Miscellaneous Tasks
+### Bug fixes
 
-- Prepare release 1.1.4
-## [develop-v1.1.4] - 2026-02-21
+- fix CHANGELOG.md formatting for markdownlint compliance
+- fix CHANGELOG.md formatting for markdownlint compliance
+- fix CHANGELOG.md formatting for markdownlint compliance
+- fix CHANGELOG.md formatting for markdownlint compliance
+- validate CHANGELOG.md with markdownlint before committing (#55)
+- allow merge commits through commit-msg hook (#57)
 
-### 🚀 Features
+### Chores
 
-- Annotate synced scripts with provenance comments (#58)
+- merge main into release/1.1.0
+- prepare release 1.1.0
+- merge main into release/1.1.1
+- prepare release 1.1.1
+- merge main into release/1.1.2
+- prepare release 1.1.2
+- merge main into release/1.1.3
+- prepare release 1.1.3
+- bump version to 1.1.4
 
-### 🐛 Bug Fixes
+### Features
 
-- Validate CHANGELOG.md with markdownlint before committing (#55)
-- Allow merge commits through commit-msg hook (#57)
+- annotate synced scripts with provenance comments (#58)
 
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.1.4
 ## [1.1.3] - 2026-02-21
 
-### 🐛 Bug Fixes
+### Bug fixes
 
-- Fix CHANGELOG.md formatting for markdownlint compliance
+- strip ^{} suffix from dereferenced tags in sync-tooling.sh (#51)
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Merge main into release/1.1.3
-- Prepare release 1.1.3
+- bump version to 1.1.3 (#48)
+
 ## [1.1.2] - 2026-02-21
 
-### 🐛 Bug Fixes
+### Bug fixes
 
-- Fix CHANGELOG.md formatting for markdownlint compliance
+- handle empty docsite_files array with set -u
+- prevent --actions-compat from leaking during self-update re-exec
+- accept cross-repo issue references in PR linkage check (#36)
 
-### ⚙️ Miscellaneous Tasks
+### Chores
 
-- Merge main into release/1.1.2
-- Prepare release 1.1.2
-## [1.1.1] - 2026-02-20
+- add commit.sh and submit-pr.sh to managed files list (#18)
+- bump version to 1.1.1 (#37)
+- remove push trigger from CI workflow (#41)
 
-### 🐛 Bug Fixes
+### Documentation
 
-- Fix CHANGELOG.md formatting for markdownlint compliance
+- add canonical source comment to repo-profile.sh
+- document release-before-sync requirement (#20)
+- ban MEMORY.md usage in CLAUDE.md (#32)
+- ban heredocs in shell commands (#33)
 
-### ⚙️ Miscellaneous Tasks
+### Features
 
-- Merge main into release/1.1.1
-- Prepare release 1.1.1
-## [1.1.0] - 2026-02-20
-
-### 🐛 Bug Fixes
-
-- Fix CHANGELOG.md formatting for markdownlint compliance
-
-### ⚙️ Miscellaneous Tasks
-
-- Merge main into release/1.1.0
-- Prepare release 1.1.0
-## [develop-v1.1.3] - 2026-02-21
-
-### 🐛 Bug Fixes
-
-- Strip ^{} suffix from dereferenced tags in sync-tooling.sh (#51)
-
-### ⚙️ Miscellaneous Tasks
-
-- Bump version to 1.1.3 (#48)
-## [develop-v1.1.2] - 2026-02-21
-
-### 🚀 Features
-
-- Add add-to-project workflow for standards project
-- Add GitHub Project helper scripts for skill automation (#12)
-- Add ci and build to allowed conventional commit types (#13)
-- Add commit and PR submission wrapper scripts (#17)
-- *(submit-pr)* Support cross-repo issue references (#23)
-- *(release)* Add VERSION file detector to prepare_release.py (#27)
-- *(ci)* Add category prefixes to CI job names (#31)
-- *(validate)* Add validate_local.sh dispatch architecture (#34)
-- *(hooks)* Validate issue-linked branch names in pre-commit hook (#44)
-- *(ci)* Add publish workflow for automated tagging and version bumps (#46)
-
-### 🐛 Bug Fixes
-
-- *(lint)* Accept cross-repo issue references in PR linkage check (#36)
-
-### 📚 Documentation
-
-- Document release-before-sync requirement (#20)
-- Ban MEMORY.md usage in CLAUDE.md (#32)
-- Ban heredocs in shell commands (#33)
-
-### ⚙️ Miscellaneous Tasks
-
-- Add commit.sh and submit-pr.sh to managed files list (#18)
-- Bump version to 1.1.1 (#37)
-- *(ci)* Remove push trigger from CI workflow (#41)
-## [0.0.0-test] - 2026-02-17
-
-### 🚀 Features
-
-- Add CI workflow, CLAUDE.md, and repository infrastructure (#6)
-## [1.0.2] - 2026-02-17
-
-### 🐛 Bug Fixes
-
-- Prevent --actions-compat from leaking during self-update re-exec
-## [1.0.1] - 2026-02-17
-
-### 📚 Documentation
-
-- Add canonical source comment to repo-profile.sh
-## [1.0.0] - 2026-02-17
-
-### 🚀 Features
-
-- Initial scaffold with reconciled canonical scripts
-
-### 🐛 Bug Fixes
-
-- Handle empty docsite_files array with set -u
+- initial scaffold with reconciled canonical scripts
+- add CI workflow, CLAUDE.md, and repository infrastructure (#6)
+- add add-to-project workflow for standards project
+- add GitHub Project helper scripts for skill automation (#12)
+- add ci and build to allowed conventional commit types (#13)
+- add commit and PR submission wrapper scripts (#17)
+- support cross-repo issue references (#23)
+- add VERSION file detector to prepare_release.py (#27)
+- add category prefixes to CI job names (#31)
+- add validate_local.sh dispatch architecture (#34)
+- validate issue-linked branch names in pre-commit hook (#44)
+- add publish workflow for automated tagging and version bumps (#46)
