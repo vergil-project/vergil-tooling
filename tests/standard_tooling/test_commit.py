@@ -73,11 +73,13 @@ def _commit_environment(
 
 
 def test_parse_args_required() -> None:
-    args = parse_args(["--type", "feat", "--message", "add thing", "--agent", "claude"])
+    args = parse_args(
+        ["--type", "feat", "--scope", "core", "--message", "add thing", "--agent", "claude"]
+    )
     assert args.commit_type == "feat"
+    assert args.scope == "core"
     assert args.message == "add thing"
     assert args.agent == "claude"
-    assert args.scope == ""
     assert args.body == ""
 
 
@@ -103,16 +105,18 @@ def test_parse_args_with_scope_and_body() -> None:
 
 def test_parse_args_invalid_type() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["--type", "invalid", "--message", "x", "--agent", "claude"])
+        parse_args(["--type", "invalid", "--scope", "core", "--message", "x", "--agent", "claude"])
 
 
 def test_main_no_staged_changes(tmp_path: Path) -> None:
     with _commit_environment(tmp_path, has_staged=False):
-        result = main(["--type", "feat", "--message", "test", "--agent", "claude"])
+        result = main(
+            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "claude"]
+        )
     assert result == 1
 
 
-def test_main_with_staged_changes_no_scope(tmp_path: Path) -> None:
+def test_main_with_staged_changes(tmp_path: Path) -> None:
     commit_file_content = ""
 
     def capture_run(*args: str) -> None:
@@ -124,9 +128,11 @@ def test_main_with_staged_changes_no_scope(tmp_path: Path) -> None:
         _commit_environment(tmp_path),
         patch("standard_tooling.bin.commit.git.run", side_effect=capture_run),
     ):
-        result = main(["--type", "feat", "--message", "add feature", "--agent", "claude"])
+        result = main(
+            ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "claude"]
+        )
     assert result == 0
-    assert commit_file_content.startswith("feat: add feature\n")
+    assert commit_file_content.startswith("feat(core): add feature\n")
     assert "Co-Authored-By: test <test@test.com>" in commit_file_content
 
 
@@ -190,7 +196,9 @@ def test_main_missing_config(tmp_path: Path) -> None:
 
 def test_main_unknown_agent(tmp_path: Path) -> None:
     with _commit_environment(tmp_path):
-        result = main(["--type", "feat", "--message", "test", "--agent", "nonexistent"])
+        result = main(
+            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "nonexistent"]
+        )
     assert result == 1
 
 
@@ -203,7 +211,7 @@ def test_main_unknown_agent(tmp_path: Path) -> None:
 # Reference: docs/specs/host-level-tool.md "Migration / standard-tooling
 # itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
 
-_DEFAULT_ARGS = ["--type", "feat", "--message", "test", "--agent", "claude"]
+_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "claude"]
 
 
 # Check 1: detached HEAD
@@ -390,7 +398,20 @@ def test_validate_admits_main_worktree_feature_commit_without_worktrees_dir(
 )
 def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) -> None:
     with _commit_environment(tmp_path):
-        result = main(["--type", "feat", "--message", "test", "--body", body, "--agent", "claude"])
+        result = main(
+            [
+                "--type",
+                "feat",
+                "--scope",
+                "core",
+                "--message",
+                "test",
+                "--body",
+                body,
+                "--agent",
+                "claude",
+            ]
+        )
     assert result == 1
 
 
@@ -406,7 +427,20 @@ def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) 
 )
 def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
     with _commit_environment(tmp_path):
-        result = main(["--type", "feat", "--message", "test", "--body", body, "--agent", "claude"])
+        result = main(
+            [
+                "--type",
+                "feat",
+                "--scope",
+                "core",
+                "--message",
+                "test",
+                "--body",
+                body,
+                "--agent",
+                "claude",
+            ]
+        )
     assert result == 0
 
 

@@ -61,7 +61,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="commit_type",
         help="Conventional commit type",
     )
-    parser.add_argument("--scope", default="", help="Conventional commit scope")
+    parser.add_argument("--scope", required=True, help="Conventional commit scope")
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
     parser.add_argument("--agent", required=True, help="AI tool identity (e.g. claude, codex)")
@@ -191,10 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    subject = args.commit_type
-    if args.scope:
-        subject = f"{subject}({args.scope})"
-    subject = f"{subject}: {args.message}"
+    subject = f"{args.commit_type}({args.scope}): {args.message}"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(f"{subject}\n")
