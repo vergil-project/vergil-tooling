@@ -1,8 +1,8 @@
 # Markdown Validation
 
-Markdown validation is handled by `st-validate-local-common` as part
-of the standard validation pipeline. It runs `markdownlint` against
-published documentation using a canonical config bundled in
+Markdown validation is handled by `st-validate` (common checks) as
+part of the standard validation pipeline. It runs `markdownlint`
+against published documentation using a canonical config bundled in
 standard-tooling.
 
 ## Scope
@@ -47,7 +47,7 @@ Key rules:
 
 ## How it runs
 
-`st-validate-local` dispatches to `st-validate-local-common`, which:
+`st-validate` runs common checks, which:
 
 1. Discovers markdown files matching the scope above.
 2. Resolves the bundled `markdownlint.yaml` config.

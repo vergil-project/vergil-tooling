@@ -9,7 +9,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 
 **Python CLI tools** (`src/standard_tooling/`):
 `st-commit`, `st-submit-pr`, `st-prepare-release`,
-`st-finalize-repo`, `st-validate-local`
+`st-finalize-repo`, `st-validate`
 
 **Lint tools** (installed as `st-*`):
 `st-repo-profile`, `st-pr-issue-linkage`, validation drivers

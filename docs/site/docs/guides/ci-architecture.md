@@ -35,7 +35,7 @@ already be green.
 !!! note "Historical: three-tier CI"
     Earlier versions of this guide documented a third tier — push-CI — as
     a thin `workflow_call` wrapper that ran a subset of checks on every
-    push to a feature branch. That tier was removed once `st-validate-local`
+    push to a feature branch. That tier was removed once `st-validate`
     reached parity with PR-CI; the push-CI workflow added no coverage that
     PR-CI didn't already provide and created a concurrency-group deadlock
     with `ci.yml`. Integration-test coverage at push-time was deliberately
@@ -70,9 +70,9 @@ Environment overrides:
     Build the dev images locally before first use:
     `cd ../standard-tooling-docker && docker/build.sh`
 
-The `.githooks` pre-commit gate runs `st-docker-run -- uv run st-validate-local`
-on every commit, which dispatches to the per-language scripts above. Hook bypass
-(`--no-verify`) is disallowed by policy.
+The `.githooks` pre-commit gate runs `st-docker-run -- uv run st-validate`
+on every commit, which runs common checks and per-language validation. Hook
+bypass (`--no-verify`) is disallowed by policy.
 
 ## Tier 2: PR CI
 
