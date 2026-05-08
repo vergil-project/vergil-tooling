@@ -131,7 +131,4 @@ def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
     if not cmds:
         return []
     configs_dir = str(files("standard_tooling.configs"))
-    return [
-        [arg.replace("{configs}", configs_dir) for arg in cmd]
-        for cmd in cmds
-    ]
+    return [[arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in cmds]
