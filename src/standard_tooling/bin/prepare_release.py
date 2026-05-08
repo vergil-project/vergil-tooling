@@ -23,6 +23,7 @@ import re
 import subprocess
 import sys
 from collections.abc import Callable
+from importlib.resources import files
 from pathlib import Path
 
 from standard_tooling.lib import git, github
@@ -182,18 +183,21 @@ def _merge_main(version: str) -> None:
         "-X",
         "ours",
         "-m",
-        f"chore: merge main into release/{version}",
+        f"chore(release): merge main into release/{version}",
     )
 
 
-RELEASE_NOTES_CONFIG = "cliff-release-notes.toml"
 RELEASE_NOTES_DIR = "releases"
 
 
 def _generate_changelog(version: str) -> None:
     tag = f"develop-v{version}"
     print(f"Generating changelog with boundary tag: {tag}")
-    subprocess.run(("git-cliff", "--tag", tag, "-o", "CHANGELOG.md"), check=True)  # noqa: S603, S607
+    config = files("standard_tooling.configs") / "cliff.toml"
+    subprocess.run(  # noqa: S603
+        ("git-cliff", "--config", str(config), "--tag", tag, "-o", "CHANGELOG.md"),  # noqa: S607
+        check=True,
+    )
     _normalize_trailing_newline(Path("CHANGELOG.md"))
     git.run("add", "CHANGELOG.md")
     _generate_release_notes(version, tag)
@@ -204,23 +208,15 @@ def _generate_changelog(version: str) -> None:
             f"All commits after develop-v{version} are filtered by git-cliff.\n"
             f"Aborting release preparation."
         )
-    git.run("commit", "-m", f"chore: prepare release {version}")
+    git.run("commit", "-m", f"chore(release): prepare {version}")
 
 
 def _generate_release_notes(version: str, tag: str) -> None:
-    config = Path(RELEASE_NOTES_CONFIG)
-    if not config.is_file():
-        return
+    config = files("standard_tooling.configs") / "cliff-release-notes.toml"
     releases_dir = Path(RELEASE_NOTES_DIR)
     releases_dir.mkdir(exist_ok=True)
     output_file = releases_dir / f"v{version}.md"
     print(f"Generating release notes: {output_file}")
-    # `--unreleased` (not `--latest`) — at release-prep time the target
-    # boundary tag (`develop-v{version}`) does not yet exist in git, so
-    # `--latest` falls back to the previous existing tag and renders
-    # the wrong section into the file. `--unreleased` correctly scopes
-    # to commits that are not yet under any tag, which under
-    # `--tag <name>` get grouped under that label. Issue #298.
     subprocess.run(  # noqa: S603
         (  # noqa: S607
             "git-cliff",
