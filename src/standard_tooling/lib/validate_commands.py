@@ -127,8 +127,7 @@ def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
     lang_entry = _REGISTRY.get(language)
     if lang_entry is None:
         return []
-    cmds = lang_entry.get(kind, [])
-    if not cmds:
-        return []
     configs_dir = str(files("standard_tooling.configs"))
-    return [[arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in cmds]
+    return [
+        [arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in lang_entry.get(kind, [])
+    ]
