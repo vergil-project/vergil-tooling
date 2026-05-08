@@ -82,7 +82,7 @@ def test_go_test_commands() -> None:
 def test_go_audit_commands() -> None:
     joined = _joined(language_commands("go", CheckKind.AUDIT))
     assert any("govulncheck" in c for c in joined)
-    assert any("go-licenses" in c for c in joined)
+    assert any("go-licenses" in c and "--allowed_licenses=" in c for c in joined)
 
 
 def test_go_audit_go_licenses_allowlist_intact() -> None:
