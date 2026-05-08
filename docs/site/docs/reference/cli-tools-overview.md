@@ -202,16 +202,18 @@ placeholder values.
 
 ### st-pr-issue-linkage
 
-Check that a pull request body includes primary issue linkage.
-Reads the GitHub event payload from `GITHUB_EVENT_PATH`.
+Check that a pull request body uses `Ref` for issue linkage and
+does not contain auto-close keywords (`Fixes`, `Closes`, `Resolves`
+and variants). Reads the GitHub event payload from
+`GITHUB_EVENT_PATH`.
 
 | Attribute | Value |
 |---|---|
 | Source | `standard_tooling.bin.pr_issue_linkage` |
 | Args | None |
 | Preconditions | `GITHUB_EVENT_PATH` set and pointing to a valid JSON file |
-| Failure mode | Exit 2 for missing env var or file; exit 1 for missing linkage |
-| Exit codes | 0 valid, 1 missing linkage, 2 infrastructure error |
+| Failure mode | Exit 2 for missing env var or file; exit 1 for auto-close keyword or missing linkage |
+| Exit codes | 0 valid, 1 rejected linkage or missing linkage, 2 infrastructure error |
 | Status | Active |
 
 ## Removed in this audit

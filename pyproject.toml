@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "standard-tooling"
-version = "1.4.24"
+version = "1.4.25"
 description = "Shared development tooling for managed repositories"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -38,7 +38,7 @@ dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-standard_tooling = ["data/*.json", "configs/*.yaml"]
+standard_tooling = ["data/*.json", "configs/*.yaml", "configs/*.toml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

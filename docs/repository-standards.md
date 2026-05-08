@@ -42,7 +42,7 @@ st-commit \
   [--scope SCOPE] [--body BODY]
 ```
 
-- `--type` (required): `feat|fix|docs|style|refactor|test|chore|ci|build`
+- `--type` (required): `feat|fix|docs|style|refactor|test|chore|ci|build|revert`
 - `--message` (required): commit description
 - `--agent` (required): `claude` or `codex`
 - `--scope` (optional): conventional commit scope
@@ -62,7 +62,8 @@ st-submit-pr \
 
 - `--issue` (required): GitHub issue number (just the number)
 - `--summary` (required): one-line PR summary
-- `--linkage` (optional, default: `Fixes`): `Fixes|Closes|Resolves|Ref`
+- `--linkage` (optional, default: `Ref`): `Ref` (only `Ref` is accepted;
+  auto-close keywords are rejected)
 - `--title` (optional): PR title (default: most recent commit subject)
 - `--notes` (optional): additional notes
 - `--dry-run` (optional): print generated PR without executing

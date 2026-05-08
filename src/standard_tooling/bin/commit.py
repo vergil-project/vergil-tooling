@@ -18,7 +18,18 @@ from pathlib import Path
 
 from standard_tooling.lib import config, git
 
-ALLOWED_TYPES = ("feat", "fix", "docs", "style", "refactor", "test", "chore", "ci", "build")
+ALLOWED_TYPES = (
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "test",
+    "chore",
+    "ci",
+    "build",
+    "revert",
+)
 
 _PROTECTED_BRANCHES = {"develop", "release", "main"}
 
@@ -42,6 +53,12 @@ _ISSUE_FORMAT_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a
 _WORKTREE_SCOPED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
 _WORKTREES_DIRNAME = ".worktrees"
 
+_AUTOCLOSE_RE = re.compile(
+    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+    r":?\s+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
+    re.IGNORECASE,
+)
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -55,7 +72,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="commit_type",
         help="Conventional commit type",
     )
-    parser.add_argument("--scope", default="", help="Conventional commit scope")
+    parser.add_argument("--scope", required=True, help="Conventional commit scope")
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
     parser.add_argument("--agent", required=True, help="AI tool identity (e.g. claude, codex)")
@@ -163,6 +180,13 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0:
         return rc
 
+    if args.body and _AUTOCLOSE_RE.search(args.body):
+        return _reject(
+            "ERROR: commit body contains a GitHub auto-close keyword "
+            "(close/fix/resolve). Use 'Ref #N' instead.",
+            "Issues must remain open until post-merge workflows succeed.",
+        )
+
     if st_config is None or args.agent not in st_config.project.co_authors:
         print(
             f"ERROR: no co-author identity for agent '{args.agent}' in {config.CONFIG_FILE}.",
@@ -178,10 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    subject = args.commit_type
-    if args.scope:
-        subject = f"{subject}({args.scope})"
-    subject = f"{subject}: {args.message}"
+    subject = f"{args.commit_type}({args.scope}): {args.message}"
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
         f.write(f"{subject}\n")
