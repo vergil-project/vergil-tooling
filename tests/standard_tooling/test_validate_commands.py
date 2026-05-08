@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from standard_tooling.lib.validate_commands import (
     CheckKind,
     language_commands,
@@ -153,6 +155,18 @@ def test_ruby_test_commands() -> None:
 def test_ruby_audit_commands() -> None:
     joined = _joined(language_commands("ruby", CheckKind.AUDIT))
     assert any("bundle-audit" in c for c in joined)
+    assert any("license_finder" in c for c in joined)
+
+
+def test_ruby_audit_license_finder_decisions_file() -> None:
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
+    assert len(license_finder_cmds) == 1
+    decisions_arg = license_finder_cmds[0][1]
+    assert decisions_arg.startswith("--decisions-file=")
+    path = decisions_arg.split("=", 1)[1]
+    assert path.endswith("ruby/license_finder.yml")
+    assert "{configs}" not in decisions_arg
 
 
 # -- Rust ---------------------------------------------------------------------
@@ -205,3 +219,22 @@ def test_shell_install_commands() -> None:
 def test_none_language_returns_empty() -> None:
     cmds = language_commands("none", CheckKind.LINT)
     assert cmds == []
+
+
+def test_configs_placeholder_is_resolved() -> None:
+    """Commands containing {configs} must resolve to a real path."""
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    for cmd in cmds:
+        for arg in cmd:
+            assert "{configs}" not in arg, f"Unresolved placeholder in: {arg}"
+
+
+def test_configs_placeholder_resolves_to_existing_directory() -> None:
+    """The resolved {configs} path must point to a real file."""
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
+    if not license_finder_cmds:
+        return
+    decisions_arg = license_finder_cmds[0][1]
+    path = decisions_arg.split("=", 1)[1]
+    assert Path(path).exists(), f"Resolved path does not exist: {path}"
