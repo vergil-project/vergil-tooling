@@ -8,6 +8,7 @@ per-repo — the standard defines them centrally.
 from __future__ import annotations
 
 from enum import Enum
+from importlib.resources import files
 
 
 class CheckKind(Enum):
@@ -40,6 +41,32 @@ _PIP_LICENSES_ALLOWLIST = ";".join(
     ]
 )
 
+_GO_LICENSES_ALLOWLIST = ",".join(
+    [
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "GPL-3.0",
+        "ISC",
+        "MIT",
+        "MPL-2.0",
+    ]
+)
+
+_MAVEN_LICENSES_ALLOWLIST = "|".join(
+    [
+        "Apache 2.0",
+        "Apache-2.0",
+        "The Apache License, Version 2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "GPL-3.0-or-later",
+        "ISC",
+        "MIT License",
+        "MPL-2.0",
+    ]
+)
+
 _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
     "python": {
         CheckKind.INSTALL: [["uv", "sync", "--frozen", "--group", "dev"]],
@@ -64,7 +91,10 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
             ["go", "test", "-race", "-count=1", "-coverprofile=coverage.out", "./..."],
             ["go-test-coverage", "--config", ".testcoverage.yml"],
         ],
-        CheckKind.AUDIT: [["govulncheck", "./..."], ["go-licenses", "check", "./..."]],
+        CheckKind.AUDIT: [
+            ["govulncheck", "./..."],
+            ["go-licenses", "check", "./...", f"--allowed_licenses={_GO_LICENSES_ALLOWLIST}"],
+        ],
     },
     "java": {
         CheckKind.INSTALL: [["./mvnw", "dependency:resolve", "-B"]],
@@ -73,7 +103,14 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
         CheckKind.TEST: [["./mvnw", "verify", "-B"]],
         CheckKind.AUDIT: [
             ["./mvnw", "dependency:tree", "-B", "-q"],
-            ["./mvnw", "org.codehaus.mojo:license-maven-plugin:add-third-party", "-B"],
+            [
+                "./mvnw",
+                "org.codehaus.mojo:license-maven-plugin:add-third-party",
+                "-Dlicense.excludedScopes=test",
+                "-Dlicense.failIfWarning=true",
+                f"-Dlicense.includedLicenses={_MAVEN_LICENSES_ALLOWLIST}",
+                "-B",
+            ],
         ],
     },
     "ruby": {
@@ -81,7 +118,10 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
         CheckKind.LINT: [["bundle", "exec", "rubocop"]],
         CheckKind.TYPECHECK: [["bundle", "exec", "steep", "check"]],
         CheckKind.TEST: [["bundle", "exec", "rake"]],
-        CheckKind.AUDIT: [["bundle", "exec", "bundle-audit", "check", "--update"]],
+        CheckKind.AUDIT: [
+            ["bundle", "exec", "bundle-audit", "check", "--update"],
+            ["license_finder", "--decisions-file={configs}/ruby/license_finder.yml"],
+        ],
     },
     "rust": {
         CheckKind.INSTALL: [["cargo", "fetch"]],
@@ -101,8 +141,14 @@ def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
 
     Returns an empty list if the language is not in the registry or
     has no entry for the given check kind.
+
+    Any argument containing ``{configs}`` is expanded to the resolved
+    path of the ``standard_tooling.configs`` package directory.
     """
     lang_entry = _REGISTRY.get(language)
     if lang_entry is None:
         return []
-    return list(lang_entry.get(kind, []))
+    configs_dir = str(files("standard_tooling.configs"))
+    return [
+        [arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in lang_entry.get(kind, [])
+    ]

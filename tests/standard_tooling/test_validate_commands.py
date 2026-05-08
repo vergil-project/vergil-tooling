@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from standard_tooling.lib.validate_commands import (
     CheckKind,
     language_commands,
@@ -82,7 +84,19 @@ def test_go_test_commands() -> None:
 def test_go_audit_commands() -> None:
     joined = _joined(language_commands("go", CheckKind.AUDIT))
     assert any("govulncheck" in c for c in joined)
-    assert any("go-licenses" in c for c in joined)
+    assert any("go-licenses" in c and "--allowed_licenses=" in c for c in joined)
+
+
+def test_go_audit_go_licenses_allowlist_intact() -> None:
+    cmds = language_commands("go", CheckKind.AUDIT)
+    go_licenses_cmd = [c for c in cmds if c[0] == "go-licenses"]
+    assert len(go_licenses_cmd) == 1
+    flag = go_licenses_cmd[0][-1]
+    assert flag.startswith("--allowed_licenses=")
+    licenses = flag.split("=", 1)[1].split(",")
+    assert "MIT" in licenses
+    assert "Apache-2.0" in licenses
+    assert len(licenses) == 7
 
 
 # -- Java ---------------------------------------------------------------------
@@ -113,6 +127,21 @@ def test_java_audit_commands() -> None:
     joined = _joined(language_commands("java", CheckKind.AUDIT))
     assert any("dependency:tree" in c for c in joined)
     assert any("license-maven-plugin" in c for c in joined)
+    assert any("-Dlicense.failIfWarning=true" in c for c in joined)
+    assert any("-Dlicense.includedLicenses=" in c for c in joined)
+    assert any("-Dlicense.excludedScopes=test" in c for c in joined)
+
+
+def test_java_audit_maven_licenses_allowlist_intact() -> None:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    license_cmd = [c for c in cmds if any("license-maven-plugin" in arg for arg in c)]
+    assert len(license_cmd) == 1
+    flag = [arg for arg in license_cmd[0] if arg.startswith("-Dlicense.includedLicenses=")]
+    assert len(flag) == 1
+    licenses = flag[0].split("=", 1)[1].split("|")
+    assert "MIT License" in licenses
+    assert "Apache-2.0" in licenses
+    assert len(licenses) == 9
 
 
 # -- Ruby ---------------------------------------------------------------------
@@ -141,6 +170,18 @@ def test_ruby_test_commands() -> None:
 def test_ruby_audit_commands() -> None:
     joined = _joined(language_commands("ruby", CheckKind.AUDIT))
     assert any("bundle-audit" in c for c in joined)
+    assert any("license_finder" in c for c in joined)
+
+
+def test_ruby_audit_license_finder_decisions_file() -> None:
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
+    assert len(license_finder_cmds) == 1
+    decisions_arg = license_finder_cmds[0][1]
+    assert decisions_arg.startswith("--decisions-file=")
+    path = decisions_arg.split("=", 1)[1]
+    assert path.endswith("ruby/license_finder.yml")
+    assert "{configs}" not in decisions_arg
 
 
 # -- Rust ---------------------------------------------------------------------
@@ -193,3 +234,22 @@ def test_shell_install_commands() -> None:
 def test_none_language_returns_empty() -> None:
     cmds = language_commands("none", CheckKind.LINT)
     assert cmds == []
+
+
+def test_configs_placeholder_is_resolved() -> None:
+    """Commands containing {configs} must resolve to a real path."""
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    for cmd in cmds:
+        for arg in cmd:
+            assert "{configs}" not in arg, f"Unresolved placeholder in: {arg}"
+
+
+def test_configs_placeholder_resolves_to_existing_directory() -> None:
+    """The resolved {configs} path must point to a real file."""
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
+    if not license_finder_cmds:
+        return
+    decisions_arg = license_finder_cmds[0][1]
+    path = decisions_arg.split("=", 1)[1]
+    assert Path(path).exists(), f"Resolved path does not exist: {path}"
