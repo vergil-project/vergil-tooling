@@ -42,6 +42,12 @@ _ISSUE_FORMAT_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a
 _WORKTREE_SCOPED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
 _WORKTREES_DIRNAME = ".worktrees"
 
+_AUTOCLOSE_RE = re.compile(
+    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
+    r":?\s+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
+    re.IGNORECASE,
+)
+
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
@@ -162,6 +168,13 @@ def main(argv: list[str] | None = None) -> int:
     rc = _validate_commit_context(root, branching_model)
     if rc != 0:
         return rc
+
+    if args.body and _AUTOCLOSE_RE.search(args.body):
+        return _reject(
+            "ERROR: commit body contains a GitHub auto-close keyword "
+            "(close/fix/resolve). Use 'Ref #N' instead.",
+            "Issues must remain open until post-merge workflows succeed.",
+        )
 
     if st_config is None or args.agent not in st_config.project.co_authors:
         print(

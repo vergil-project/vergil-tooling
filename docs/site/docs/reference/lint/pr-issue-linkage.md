@@ -2,8 +2,9 @@
 
 **Installed as:** `st-pr-issue-linkage` (Python console script)
 
-Validates that a pull request body contains issue linkage. Runs in
-CI using the GitHub event payload.
+Validates that a pull request body uses `Ref` for issue linkage
+and rejects auto-close keywords. Runs in CI using the GitHub event
+payload.
 
 ## Usage
 
@@ -15,20 +16,18 @@ reads the PR body from `$GITHUB_EVENT_PATH`.
 The PR body must contain at least one line matching:
 
 ```text
-Fixes #123
-Closes #123
-Resolves #123
 Ref #123
-```
-
-Cross-repository references are also accepted:
-
-```text
-Fixes owner/repo#123
+Ref owner/repo#123
 ```
 
 The pattern allows optional leading whitespace, list markers
 (`-` or `*`), and an optional colon after the keyword.
+
+Auto-close keywords (`Fixes`, `Closes`, `Resolves` and all
+variants like `Fix`, `Fixed`, `Close`, `Closed`, `Resolve`,
+`Resolved`) are rejected. Issues must remain open until
+post-merge workflows succeed; premature closure loses tracking
+for multi-PR and multi-repo work.
 
 ## Environment
 
@@ -40,6 +39,6 @@ The pattern allows optional leading whitespace, list markers
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Valid issue linkage found |
-| 1 | No issue linkage or empty PR body |
+| 0 | Valid `Ref` linkage found |
+| 1 | Auto-close keyword used, no linkage, or empty PR body |
 | 2 | `GITHUB_EVENT_PATH` not set or file not found |
