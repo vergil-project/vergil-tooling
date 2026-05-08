@@ -16,6 +16,7 @@ from standard_tooling.lib.config import (
 )
 from standard_tooling.lib.github_config import (
     DesiredRuleset,
+    FetchResult,
     _apply_actions_permissions,
     _apply_repo_settings,
     _apply_rulesets,
@@ -675,6 +676,142 @@ def test_fetch_actual_state_selected_actions_non_list_patterns() -> None:
         actual = fetch_actual_state("o/r")
 
     assert actual.actions_permissions.patterns_allowed == []
+
+
+def test_fetch_actual_state_returns_fetch_result() -> None:
+    repo_json: dict[str, object] = {
+        "default_branch": "develop",
+        "visibility": "public",
+        "security_and_analysis": {},
+    }
+
+    def mock_read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1] if len(args) > 1 else ""
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {
+                "default_workflow_permissions": "read",
+                "can_approve_pull_request_reviews": False,
+            }
+        return {}
+
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            side_effect=mock_read_json,
+        ),
+        patch(
+            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=False,
+        ),
+    ):
+        result = fetch_actual_state("o/r")
+
+    assert isinstance(result, FetchResult)
+    assert result.visibility == "public"
+    assert result.state.repo_settings.default_branch == "develop"
+
+
+def test_fetch_actual_state_extracts_new_repo_fields() -> None:
+    repo_json: dict[str, object] = {
+        "default_branch": "develop",
+        "allow_auto_merge": False,
+        "delete_branch_on_merge": True,
+        "allow_merge_commit": True,
+        "allow_squash_merge": True,
+        "allow_rebase_merge": True,
+        "has_issues": True,
+        "has_projects": True,
+        "has_wiki": True,
+        "allow_forking": True,
+        "allow_update_branch": True,
+        "has_downloads": False,
+        "merge_commit_title": "MERGE_MESSAGE",
+        "merge_commit_message": "PR_TITLE",
+        "squash_merge_commit_title": "COMMIT_OR_PR_TITLE",
+        "squash_merge_commit_message": "COMMIT_MESSAGES",
+        "web_commit_signoff_required": True,
+        "visibility": "public",
+        "security_and_analysis": {},
+    }
+
+    def mock_read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1] if len(args) > 1 else ""
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {
+                "default_workflow_permissions": "read",
+                "can_approve_pull_request_reviews": False,
+            }
+        return {}
+
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            side_effect=mock_read_json,
+        ),
+        patch(
+            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=False,
+        ),
+    ):
+        result = fetch_actual_state("o/r")
+
+    s = result.state.repo_settings
+    assert s.allow_forking is True
+    assert s.allow_update_branch is True
+    assert s.has_downloads is False
+    assert s.merge_commit_title == "MERGE_MESSAGE"
+    assert s.merge_commit_message == "PR_TITLE"
+    assert s.squash_merge_commit_title == "COMMIT_OR_PR_TITLE"
+    assert s.squash_merge_commit_message == "COMMIT_MESSAGES"
+    assert s.web_commit_signoff_required is True
+
+
+def test_fetch_actual_state_defaults_visibility_to_private() -> None:
+    repo_json: dict[str, object] = {
+        "default_branch": "develop",
+        "security_and_analysis": {},
+    }
+
+    def mock_read_json(*args: str) -> dict[str, object] | list[object]:
+        endpoint = args[1] if len(args) > 1 else ""
+        if endpoint == "repos/o/r":
+            return repo_json
+        if endpoint == "repos/o/r/rulesets":
+            return []
+        if endpoint == "repos/o/r/actions/permissions":
+            return {"allowed_actions": "all"}
+        if endpoint == "repos/o/r/actions/permissions/workflow":
+            return {
+                "default_workflow_permissions": "read",
+                "can_approve_pull_request_reviews": False,
+            }
+        return {}
+
+    with (
+        patch(
+            "standard_tooling.lib.github_config.github.read_json",
+            side_effect=mock_read_json,
+        ),
+        patch(
+            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            return_value=False,
+        ),
+    ):
+        result = fetch_actual_state("o/r")
+
+    assert result.visibility == "private"
 
 
 def test_fetch_vulnerability_alerts_enabled() -> None:
