@@ -24,7 +24,7 @@ spec dictates the distribution contract they implement.
 ## Problem statement
 
 `standard-tooling` provides host-side CLI tools (`st-docker-run`,
-`st-commit`, `st-submit-pr`, `st-prepare-release`, `st-validate-local`,
+`st-commit`, `st-submit-pr`, `st-prepare-release`, `st-validate`,
 etc.) used across the entire fleet. It is **not** on PyPI and will not
 be (first-party tooling, not a public library).
 
@@ -230,7 +230,7 @@ dep in `[dependency-groups]` can remove it. The cache-first install
 ensures `st-*` commands are available on PATH regardless. Removing the
 dev dep eliminates version drift from stale `uv.lock` pins.
 
-The `uv run st-validate-local` invocation continues to work: `uv run`
+The `uv run st-validate` invocation continues to work: `uv run`
 falls back to PATH for commands not provided by the project's venv.
 
 ### Legacy: Non-Python consumers
@@ -514,9 +514,9 @@ consumer's migration has these steps:
    bootstrap scripts, and CI. (`.venv-host` is retained only in
    `standard-tooling` itself for the dev-tree-override case; it
    should not appear in any other consumer.)
-5. Verify: `st-docker-run -- uv run st-validate-local` works in a
-   fresh clone after `uv sync --group dev`; raw `git commit` is
-   refused with the gate's error.
+5. Verify: `st-docker-run -- uv run st-validate` works in a fresh
+   clone after `uv sync --group dev`; raw `git commit` is refused
+   with the gate's error.
 
 ### Non-Python consumers
 
