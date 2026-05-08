@@ -127,6 +127,21 @@ def test_java_audit_commands() -> None:
     joined = _joined(language_commands("java", CheckKind.AUDIT))
     assert any("dependency:tree" in c for c in joined)
     assert any("license-maven-plugin" in c for c in joined)
+    assert any("-Dlicense.failIfWarning=true" in c for c in joined)
+    assert any("-Dlicense.includedLicenses=" in c for c in joined)
+    assert any("-Dlicense.excludedScopes=test" in c for c in joined)
+
+
+def test_java_audit_maven_licenses_allowlist_intact() -> None:
+    cmds = language_commands("java", CheckKind.AUDIT)
+    license_cmd = [c for c in cmds if any("license-maven-plugin" in arg for arg in c)]
+    assert len(license_cmd) == 1
+    flag = [arg for arg in license_cmd[0] if arg.startswith("-Dlicense.includedLicenses=")]
+    assert len(flag) == 1
+    licenses = flag[0].split("=", 1)[1].split("|")
+    assert "MIT License" in licenses
+    assert "Apache-2.0" in licenses
+    assert len(licenses) == 9
 
 
 # -- Ruby ---------------------------------------------------------------------
