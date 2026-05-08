@@ -1053,3 +1053,30 @@ def test_normalize_rules_skips_non_dict_entries() -> None:
     result = _normalize_rules(rules)
     assert len(result) == 1
     assert result[0] == {"type": "deletion"}
+
+
+# ---------------------------------------------------------------------------
+# Publish config in desired state
+# ---------------------------------------------------------------------------
+
+
+def test_compute_desired_state_includes_publish() -> None:
+    config = _st_config()
+    state = compute_desired_state(config)
+    assert state.publish is not None
+    assert state.publish.release is False
+    assert state.publish.docs is True
+
+
+def test_compute_desired_state_publish_release_true() -> None:
+    config = StConfig(
+        project=_project(),
+        dependencies={"standard-tooling": "v1.4"},
+        markdownlint=MarkdownlintConfig(ignore=[]),
+        ci=_ci(),
+        github=GithubOverrides(skip_rulesets=False),
+        publish=PublishConfig(release=True, docs=True),
+    )
+    state = compute_desired_state(config)
+    assert state.publish.release is True
+    assert state.publish.docs is True
