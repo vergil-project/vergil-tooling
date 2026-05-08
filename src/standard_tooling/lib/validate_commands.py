@@ -8,6 +8,7 @@ per-repo — the standard defines them centrally.
 from __future__ import annotations
 
 from enum import Enum
+from importlib.resources import files
 
 
 class CheckKind(Enum):
@@ -116,8 +117,18 @@ def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
 
     Returns an empty list if the language is not in the registry or
     has no entry for the given check kind.
+
+    Any argument containing ``{configs}`` is expanded to the resolved
+    path of the ``standard_tooling.configs`` package directory.
     """
     lang_entry = _REGISTRY.get(language)
     if lang_entry is None:
         return []
-    return list(lang_entry.get(kind, []))
+    cmds = lang_entry.get(kind, [])
+    if not cmds:
+        return []
+    configs_dir = str(files("standard_tooling.configs"))
+    return [
+        [arg.replace("{configs}", configs_dir) for arg in cmd]
+        for cmd in cmds
+    ]
