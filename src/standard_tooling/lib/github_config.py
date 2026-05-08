@@ -30,6 +30,14 @@ class DesiredRepoSettings:
     has_issues: bool
     has_projects: bool
     has_wiki: bool
+    allow_forking: bool
+    allow_update_branch: bool
+    has_downloads: bool
+    merge_commit_title: str
+    merge_commit_message: str
+    squash_merge_commit_title: str
+    squash_merge_commit_message: str
+    web_commit_signoff_required: bool
 
 
 @dataclass
@@ -86,7 +94,7 @@ _ALLOWED_ACTION_PATTERNS = [
 ]
 
 
-def desired_repo_settings() -> DesiredRepoSettings:
+def desired_repo_settings(*, visibility: str) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         allow_auto_merge=False,
@@ -97,6 +105,14 @@ def desired_repo_settings() -> DesiredRepoSettings:
         has_issues=True,
         has_projects=True,
         has_wiki=True,
+        allow_forking=visibility == "public",
+        allow_update_branch=True,
+        has_downloads=False,
+        merge_commit_title="MERGE_MESSAGE",
+        merge_commit_message="PR_TITLE",
+        squash_merge_commit_title="COMMIT_OR_PR_TITLE",
+        squash_merge_commit_message="COMMIT_MESSAGES",
+        web_commit_signoff_required=True,
     )
 
 
@@ -276,7 +292,7 @@ def desired_ci_gates_ruleset(
     )
 
 
-def compute_desired_state(config: StConfig) -> DesiredState:
+def compute_desired_state(config: StConfig, *, visibility: str) -> DesiredState:
     """Compute the full desired GitHub configuration from a repo's StConfig."""
     rulesets: list[DesiredRuleset] = []
 
@@ -293,7 +309,7 @@ def compute_desired_state(config: StConfig) -> DesiredState:
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(),
+        repo_settings=desired_repo_settings(visibility=visibility),
         security=desired_security_settings(),
         actions_permissions=desired_actions_permissions(),
         rulesets=rulesets,

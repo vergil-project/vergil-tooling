@@ -51,6 +51,27 @@ def test_desired_repo_settings_are_fixed() -> None:
     assert s.has_wiki is True
 
 
+def test_desired_repo_settings_public_allows_forking() -> None:
+    s = desired_repo_settings(visibility="public")
+    assert s.allow_forking is True
+
+
+def test_desired_repo_settings_private_disallows_forking() -> None:
+    s = desired_repo_settings(visibility="private")
+    assert s.allow_forking is False
+
+
+def test_desired_repo_settings_new_hardcoded_values() -> None:
+    s = desired_repo_settings(visibility="public")
+    assert s.allow_update_branch is True
+    assert s.has_downloads is False
+    assert s.merge_commit_title == "MERGE_MESSAGE"
+    assert s.merge_commit_message == "PR_TITLE"
+    assert s.squash_merge_commit_title == "COMMIT_OR_PR_TITLE"
+    assert s.squash_merge_commit_message == "COMMIT_MESSAGES"
+    assert s.web_commit_signoff_required is True
+
+
 def test_desired_security_settings() -> None:
     s = desired_security_settings()
     assert s.secret_scanning == "enabled"  # noqa: S105
