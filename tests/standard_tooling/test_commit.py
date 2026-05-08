@@ -103,6 +103,22 @@ def test_parse_args_with_scope_and_body() -> None:
     assert args.body == "Fixed edge case"
 
 
+def test_parse_args_revert_type() -> None:
+    args = parse_args(
+        [
+            "--type",
+            "revert",
+            "--scope",
+            "auth",
+            "--message",
+            "undo token change",
+            "--agent",
+            "claude",
+        ]
+    )
+    assert args.commit_type == "revert"
+
+
 def test_parse_args_invalid_type() -> None:
     with pytest.raises(SystemExit):
         parse_args(["--type", "invalid", "--scope", "core", "--message", "x", "--agent", "claude"])

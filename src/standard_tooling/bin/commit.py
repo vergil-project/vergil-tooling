@@ -18,7 +18,18 @@ from pathlib import Path
 
 from standard_tooling.lib import config, git
 
-ALLOWED_TYPES = ("feat", "fix", "docs", "style", "refactor", "test", "chore", "ci", "build")
+ALLOWED_TYPES = (
+    "feat",
+    "fix",
+    "docs",
+    "style",
+    "refactor",
+    "test",
+    "chore",
+    "ci",
+    "build",
+    "revert",
+)
 
 _PROTECTED_BRANCHES = {"develop", "release", "main"}
 

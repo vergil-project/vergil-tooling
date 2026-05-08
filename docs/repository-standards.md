@@ -42,7 +42,7 @@ st-commit \
   [--scope SCOPE] [--body BODY]
 ```
 
-- `--type` (required): `feat|fix|docs|style|refactor|test|chore|ci|build`
+- `--type` (required): `feat|fix|docs|style|refactor|test|chore|ci|build|revert`
 - `--message` (required): commit description
 - `--agent` (required): `claude` or `codex`
 - `--scope` (optional): conventional commit scope
