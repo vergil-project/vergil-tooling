@@ -363,9 +363,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
     repo_data = github.read_json("api", f"repos/{repo}")
 
     visibility = (
-        str(repo_data.get("visibility", "private"))
-        if isinstance(repo_data, dict)
-        else "private"
+        str(repo_data.get("visibility", "private")) if isinstance(repo_data, dict) else "private"
     )
 
     sa_raw = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
