@@ -284,9 +284,12 @@ def test_audit_repo_calls_compute_and_diff() -> None:
         ) as mock_diff,
     ):
         result = _audit_repo("o/r", cfg)
-    mock_desired.assert_called_once_with(cfg)
     mock_fetch.assert_called_once_with("o/r")
-    mock_diff.assert_called_once()
+    mock_desired.assert_called_once_with(cfg, visibility=mock_fetch.return_value.visibility)
+    mock_diff.assert_called_once_with(
+        desired=mock_desired.return_value,
+        actual=mock_fetch.return_value.state,
+    )
     assert result.is_compliant()
 
 
@@ -296,11 +299,13 @@ def test_audit_repo_calls_compute_and_diff() -> None:
 def test_apply_repo_calls_apply_desired_state() -> None:
     cfg = _make_config()
     with (
+        patch("standard_tooling.bin.github_config.fetch_actual_state") as mock_fetch,
         patch("standard_tooling.bin.github_config.compute_desired_state") as mock_desired,
         patch("standard_tooling.bin.github_config.apply_desired_state") as mock_apply,
     ):
         _apply_repo("o/r", cfg)
-    mock_desired.assert_called_once_with(cfg)
+    mock_fetch.assert_called_once_with("o/r")
+    mock_desired.assert_called_once_with(cfg, visibility=mock_fetch.return_value.visibility)
     mock_apply.assert_called_once_with("o/r", mock_desired.return_value)
 
 
