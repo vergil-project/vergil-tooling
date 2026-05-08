@@ -40,6 +40,18 @@ _PIP_LICENSES_ALLOWLIST = ";".join(
     ]
 )
 
+_GO_LICENSES_ALLOWLIST = ",".join(
+    [
+        "Apache-2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "GPL-3.0",
+        "ISC",
+        "MIT",
+        "MPL-2.0",
+    ]
+)
+
 _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
     "python": {
         CheckKind.INSTALL: [["uv", "sync", "--frozen", "--group", "dev"]],
@@ -64,7 +76,10 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
             ["go", "test", "-race", "-count=1", "-coverprofile=coverage.out", "./..."],
             ["go-test-coverage", "--config", ".testcoverage.yml"],
         ],
-        CheckKind.AUDIT: [["govulncheck", "./..."], ["go-licenses", "check", "./..."]],
+        CheckKind.AUDIT: [
+            ["govulncheck", "./..."],
+            ["go-licenses", "check", "./...", f"--allowed_licenses={_GO_LICENSES_ALLOWLIST}"],
+        ],
     },
     "java": {
         CheckKind.INSTALL: [["./mvnw", "dependency:resolve", "-B"]],

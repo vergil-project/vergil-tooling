@@ -82,7 +82,19 @@ def test_go_test_commands() -> None:
 def test_go_audit_commands() -> None:
     joined = _joined(language_commands("go", CheckKind.AUDIT))
     assert any("govulncheck" in c for c in joined)
-    assert any("go-licenses" in c for c in joined)
+    assert any("go-licenses" in c and "--allowed_licenses=" in c for c in joined)
+
+
+def test_go_audit_go_licenses_allowlist_intact() -> None:
+    cmds = language_commands("go", CheckKind.AUDIT)
+    go_licenses_cmd = [c for c in cmds if c[0] == "go-licenses"]
+    assert len(go_licenses_cmd) == 1
+    flag = go_licenses_cmd[0][-1]
+    assert flag.startswith("--allowed_licenses=")
+    licenses = flag.split("=", 1)[1].split(",")
+    assert "MIT" in licenses
+    assert "Apache-2.0" in licenses
+    assert len(licenses) == 7
 
 
 # -- Java ---------------------------------------------------------------------
