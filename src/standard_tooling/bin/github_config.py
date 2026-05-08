@@ -83,9 +83,9 @@ def _fetch_remote_config(repo: str) -> StConfig:
 
 def _audit_repo(repo: str, config: StConfig) -> ConfigDiff:
     """Compute diff between desired and actual state for a repo."""
-    desired = compute_desired_state(config)
-    actual = fetch_actual_state(repo)
-    return compute_diff(desired=desired, actual=actual)
+    result = fetch_actual_state(repo)
+    desired = compute_desired_state(config, visibility=result.visibility)
+    return compute_diff(desired=desired, actual=result.state)
 
 
 def _print_diff(repo: str, diff: ConfigDiff) -> None:
@@ -100,7 +100,8 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
 
 def _apply_repo(repo: str, config: StConfig) -> list[str]:
     """Apply desired state to a repo. Returns branches with legacy protection removed."""
-    desired = compute_desired_state(config)
+    result = fetch_actual_state(repo)
+    desired = compute_desired_state(config, visibility=result.visibility)
     return apply_desired_state(repo, desired)
 
 
