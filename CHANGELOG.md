@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.27] - 2026-05-08
+
+### Chores
+
+- bump version to 1.4.27
+- sweep post-1.4.26 dependency updates (#621)
+- replace st-validate-local references with st-validate in active docs and specs
+- add publish.release and publish.docs to standard-tooling.toml
+
+### Features
+
+- add [publish] section to standard-tooling.toml schema
+- add [publish] section to desired state for naming validation
+
 ## [1.4.26] - 2026-05-08
 
 ### Bug fixes

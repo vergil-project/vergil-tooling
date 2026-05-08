@@ -21,6 +21,7 @@ from standard_tooling.lib.config import (
     GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
+    PublishConfig,
     StConfig,
 )
 from standard_tooling.lib.github_config import ConfigDiff, DiffItem
@@ -264,6 +265,7 @@ def _make_config() -> StConfig:
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=None,
         github=GithubOverrides(skip_rulesets=True),
+        publish=PublishConfig(release=False, docs=True),
     )
 
 
