@@ -9,7 +9,7 @@ and its exit codes.
 | ----- | ---- | -- | ------ |
 | Branch naming | Yes | -- | `pre-commit` |
 | Repository profile | -- | Yes | `st-repo-profile` |
-| Markdown standards | -- | Yes | `st-validate-local-common` |
+| Markdown standards | -- | Yes | `st-validate` (common checks) |
 | PR issue linkage | -- | Yes | `st-pr-issue-linkage` |
 | Shellcheck | -- | Yes | CI workflow step |
 
@@ -35,7 +35,7 @@ and its exit codes.
 Validates `docs/repository-standards.md` has all six required
 attributes.
 
-### Markdown validation (st-validate-local-common)
+### Markdown validation (st-validate)
 
 **Trigger:** PR opened or updated
 

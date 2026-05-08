@@ -59,11 +59,18 @@ class DesiredRuleset:
 
 
 @dataclass
+class DesiredPublishConfig:
+    release: bool
+    docs: bool
+
+
+@dataclass
 class DesiredState:
     repo_settings: DesiredRepoSettings
     security: DesiredSecuritySettings
     actions_permissions: DesiredActionsPermissions
     rulesets: list[DesiredRuleset]
+    publish: DesiredPublishConfig
 
 
 _ALLOWED_ACTION_PATTERNS = [
@@ -280,11 +287,17 @@ def compute_desired_state(config: StConfig) -> DesiredState:
         if config.ci is not None:
             rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
 
+    publish = DesiredPublishConfig(
+        release=config.publish.release,
+        docs=config.publish.docs,
+    )
+
     return DesiredState(
         repo_settings=desired_repo_settings(),
         security=desired_security_settings(),
         actions_permissions=desired_actions_permissions(),
         rulesets=rulesets,
+        publish=publish,
     )
 
 
@@ -449,6 +462,7 @@ def fetch_actual_state(repo: str) -> DesiredState:
         security=security,
         actions_permissions=actions_permissions,
         rulesets=rulesets,
+        publish=DesiredPublishConfig(release=False, docs=False),
     )
 
 

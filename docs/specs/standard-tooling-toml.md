@@ -82,7 +82,7 @@ prefix and the presence of angle-bracketed email.
 
 ### `[markdownlint]` table
 
-Optional. Controls markdownlint behavior for `st-validate-local-common`.
+Optional. Controls markdownlint behavior for `st-validate` (common checks).
 
 | Field | Type | Default | Description |
 |---|---|---|---|
@@ -174,7 +174,7 @@ constant continue to read from `st-config.toml` until
 - Update error messages referencing `PROFILE_FILENAME` to
   reference `standard-tooling.toml`.
 
-### `st-validate-local` (`src/standard_tooling/bin/validate_local.py`)
+### `st-validate` (`src/standard_tooling/bin/st_validate.py`)
 
 - Replace `repo_profile.read_profile(root)` with
   `config.read_config(root)` for `primary_language`.
@@ -244,10 +244,10 @@ switch.
 
 ### Integration
 
-`st-validate-local` runs `repo_profile_cli.main()` in the
-validation pipeline. Once the validator reads from
-`standard-tooling.toml`, tier-1 validation covers the new file
-automatically. No new integration test is needed.
+`st-validate` runs `repo_profile_cli.main()` in the validation
+pipeline. Once the validator reads from `standard-tooling.toml`,
+tier-1 validation covers the new file automatically. No new
+integration test is needed.
 
 Consumer-level tests for the migration are not needed. The
 consumers read a config value and use it the same way they always

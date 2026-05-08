@@ -275,3 +275,60 @@ def test_read_config_no_github_section(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
     cfg = read_config(tmp_path)
     assert cfg.github == GithubOverrides(skip_rulesets=False)
+
+
+# -- [publish] section --------------------------------------------------------
+
+_PUBLISH_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+standard-tooling = "v1.4"
+
+[publish]
+release = true
+docs = true
+"""
+
+
+def test_publish_section_parsed(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_PUBLISH_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish is not None
+    assert cfg.publish.release is True
+    assert cfg.publish.docs is True
+
+
+def test_publish_section_defaults_when_absent(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_INSTALL_TAG_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish is not None
+    assert cfg.publish.release is False
+    assert cfg.publish.docs is True
+
+
+_PUBLISH_RELEASE_ONLY_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+standard-tooling = "v1.4"
+
+[publish]
+release = true
+"""
+
+
+def test_publish_docs_defaults_true(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_PUBLISH_RELEASE_ONLY_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.docs is True
