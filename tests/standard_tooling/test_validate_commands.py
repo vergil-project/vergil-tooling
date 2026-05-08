@@ -155,6 +155,18 @@ def test_ruby_test_commands() -> None:
 def test_ruby_audit_commands() -> None:
     joined = _joined(language_commands("ruby", CheckKind.AUDIT))
     assert any("bundle-audit" in c for c in joined)
+    assert any("license_finder" in c for c in joined)
+
+
+def test_ruby_audit_license_finder_decisions_file() -> None:
+    cmds = language_commands("ruby", CheckKind.AUDIT)
+    license_finder_cmds = [c for c in cmds if c[0] == "license_finder"]
+    assert len(license_finder_cmds) == 1
+    decisions_arg = license_finder_cmds[0][1]
+    assert decisions_arg.startswith("--decisions-file=")
+    path = decisions_arg.split("=", 1)[1]
+    assert path.endswith("ruby/license_finder.yml")
+    assert "{configs}" not in decisions_arg
 
 
 # -- Rust ---------------------------------------------------------------------

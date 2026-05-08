@@ -97,7 +97,10 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
         CheckKind.LINT: [["bundle", "exec", "rubocop"]],
         CheckKind.TYPECHECK: [["bundle", "exec", "steep", "check"]],
         CheckKind.TEST: [["bundle", "exec", "rake"]],
-        CheckKind.AUDIT: [["bundle", "exec", "bundle-audit", "check", "--update"]],
+        CheckKind.AUDIT: [
+            ["bundle", "exec", "bundle-audit", "check", "--update"],
+            ["license_finder", "--decisions-file={configs}/ruby/license_finder.yml"],
+        ],
     },
     "rust": {
         CheckKind.INSTALL: [["cargo", "fetch"]],
