@@ -551,6 +551,8 @@
       
         
       
+        
+      
     
     
     
@@ -594,6 +596,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v1.4.27/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.27
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -2289,9 +2314,9 @@
 
 
 <h1 id="markdown-validation">Markdown Validation<a class="headerlink" href="#markdown-validation" title="Permanent link">&para;</a></h1>
-<p>Markdown validation is handled by <code>st-validate-local-common</code> as part
-of the standard validation pipeline. It runs <code>markdownlint</code> against
-published documentation using a canonical config bundled in
+<p>Markdown validation is handled by <code>st-validate</code> (common checks) as
+part of the standard validation pipeline. It runs <code>markdownlint</code>
+against published documentation using a canonical config bundled in
 standard-tooling.</p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>Validation targets published markdown only:</p>
@@ -2367,7 +2392,7 @@ local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.<
 </tbody>
 </table>
 <h2 id="how-it-runs">How it runs<a class="headerlink" href="#how-it-runs" title="Permanent link">&para;</a></h2>
-<p><code>st-validate-local</code> dispatches to <code>st-validate-local-common</code>, which:</p>
+<p><code>st-validate</code> runs common checks, which:</p>
 <ol>
 <li>Discovers markdown files matching the scope above.</li>
 <li>Resolves the bundled <code>markdownlint.yaml</code> config.</li>

@@ -551,6 +551,8 @@
       
         
       
+        
+      
     
     
     
@@ -594,6 +596,29 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v1.4.27/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    v1.4.27
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -2654,7 +2679,7 @@ already be green.</p>
 <p class="admonition-title">Historical: three-tier CI</p>
 <p>Earlier versions of this guide documented a third tier — push-CI — as
 a thin <code>workflow_call</code> wrapper that ran a subset of checks on every
-push to a feature branch. That tier was removed once <code>st-validate-local</code>
+push to a feature branch. That tier was removed once <code>st-validate</code>
 reached parity with PR-CI; the push-CI workflow added no coverage that
 PR-CI didn't already provide and created a concurrency-group deadlock
 with <code>ci.yml</code>. Integration-test coverage at push-time was deliberately
@@ -2686,9 +2711,9 @@ host prerequisite.</p>
 <p>Build the dev images locally before first use:
 <code>cd ../standard-tooling-docker &amp;&amp; docker/build.sh</code></p>
 </div>
-<p>The <code>.githooks</code> pre-commit gate runs <code>st-docker-run -- uv run st-validate-local</code>
-on every commit, which dispatches to the per-language scripts above. Hook bypass
-(<code>--no-verify</code>) is disallowed by policy.</p>
+<p>The <code>.githooks</code> pre-commit gate runs <code>st-docker-run -- uv run st-validate</code>
+on every commit, which runs common checks and per-language validation. Hook
+bypass (<code>--no-verify</code>) is disallowed by policy.</p>
 <h2 id="tier-2-pr-ci">Tier 2: PR CI<a class="headerlink" href="#tier-2-pr-ci" title="Permanent link">&para;</a></h2>
 <p>Triggers on <code>pull_request</code> events. Runs the full validation suite.</p>
 <p><strong>What runs:</strong></p>
