@@ -30,6 +30,14 @@ class DesiredRepoSettings:
     has_issues: bool
     has_projects: bool
     has_wiki: bool
+    allow_forking: bool
+    allow_update_branch: bool
+    has_downloads: bool
+    merge_commit_title: str
+    merge_commit_message: str
+    squash_merge_commit_title: str
+    squash_merge_commit_message: str
+    web_commit_signoff_required: bool
 
 
 @dataclass
@@ -73,6 +81,12 @@ class DesiredState:
     publish: DesiredPublishConfig
 
 
+@dataclass
+class FetchResult:
+    state: DesiredState
+    visibility: str
+
+
 _ALLOWED_ACTION_PATTERNS = [
     "actions-rust-lang/*",
     "actions/*",
@@ -86,7 +100,7 @@ _ALLOWED_ACTION_PATTERNS = [
 ]
 
 
-def desired_repo_settings() -> DesiredRepoSettings:
+def desired_repo_settings(*, visibility: str) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         allow_auto_merge=False,
@@ -97,6 +111,14 @@ def desired_repo_settings() -> DesiredRepoSettings:
         has_issues=True,
         has_projects=True,
         has_wiki=True,
+        allow_forking=visibility == "public",
+        allow_update_branch=True,
+        has_downloads=False,
+        merge_commit_title="MERGE_MESSAGE",
+        merge_commit_message="PR_TITLE",
+        squash_merge_commit_title="COMMIT_OR_PR_TITLE",
+        squash_merge_commit_message="COMMIT_MESSAGES",
+        web_commit_signoff_required=True,
     )
 
 
@@ -276,7 +298,7 @@ def desired_ci_gates_ruleset(
     )
 
 
-def compute_desired_state(config: StConfig) -> DesiredState:
+def compute_desired_state(config: StConfig, *, visibility: str) -> DesiredState:
     """Compute the full desired GitHub configuration from a repo's StConfig."""
     rulesets: list[DesiredRuleset] = []
 
@@ -293,7 +315,7 @@ def compute_desired_state(config: StConfig) -> DesiredState:
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(),
+        repo_settings=desired_repo_settings(visibility=visibility),
         security=desired_security_settings(),
         actions_permissions=desired_actions_permissions(),
         rulesets=rulesets,
@@ -336,9 +358,13 @@ def _normalize_rules(rules: Sequence[object]) -> list[dict[str, object]]:
     return normalized
 
 
-def fetch_actual_state(repo: str) -> DesiredState:
+def fetch_actual_state(repo: str) -> FetchResult:
     """Fetch the current GitHub configuration for a repo via gh api."""
     repo_data = github.read_json("api", f"repos/{repo}")
+
+    visibility = (
+        str(repo_data.get("visibility", "private")) if isinstance(repo_data, dict) else "private"
+    )
 
     sa_raw = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
     sa: dict[str, object] = cast("dict[str, object]", sa_raw) if isinstance(sa_raw, dict) else {}
@@ -369,6 +395,30 @@ def fetch_actual_state(repo: str) -> DesiredState:
         if isinstance(repo_data, dict)
         else False,
         has_wiki=bool(repo_data.get("has_wiki", False)) if isinstance(repo_data, dict) else False,
+        allow_forking=bool(repo_data.get("allow_forking", False))
+        if isinstance(repo_data, dict)
+        else False,
+        allow_update_branch=bool(repo_data.get("allow_update_branch", False))
+        if isinstance(repo_data, dict)
+        else False,
+        has_downloads=bool(repo_data.get("has_downloads", False))
+        if isinstance(repo_data, dict)
+        else False,
+        merge_commit_title=str(repo_data.get("merge_commit_title", ""))
+        if isinstance(repo_data, dict)
+        else "",
+        merge_commit_message=str(repo_data.get("merge_commit_message", ""))
+        if isinstance(repo_data, dict)
+        else "",
+        squash_merge_commit_title=str(repo_data.get("squash_merge_commit_title", ""))
+        if isinstance(repo_data, dict)
+        else "",
+        squash_merge_commit_message=str(repo_data.get("squash_merge_commit_message", ""))
+        if isinstance(repo_data, dict)
+        else "",
+        web_commit_signoff_required=bool(repo_data.get("web_commit_signoff_required", False))
+        if isinstance(repo_data, dict)
+        else False,
     )
 
     ss_raw = sa.get("secret_scanning")
@@ -457,12 +507,15 @@ def fetch_actual_state(repo: str) -> DesiredState:
                 )
             )
 
-    return DesiredState(
-        repo_settings=repo_settings,
-        security=security,
-        actions_permissions=actions_permissions,
-        rulesets=rulesets,
-        publish=DesiredPublishConfig(release=False, docs=False),
+    return FetchResult(
+        state=DesiredState(
+            repo_settings=repo_settings,
+            security=security,
+            actions_permissions=actions_permissions,
+            rulesets=rulesets,
+            publish=DesiredPublishConfig(release=False, docs=False),
+        ),
+        visibility=visibility,
     )
 
 
@@ -572,6 +625,14 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
             "has_issues": settings.has_issues,
             "has_projects": settings.has_projects,
             "has_wiki": settings.has_wiki,
+            "allow_forking": settings.allow_forking,
+            "allow_update_branch": settings.allow_update_branch,
+            "has_downloads": settings.has_downloads,
+            "merge_commit_title": settings.merge_commit_title,
+            "merge_commit_message": settings.merge_commit_message,
+            "squash_merge_commit_title": settings.squash_merge_commit_title,
+            "squash_merge_commit_message": settings.squash_merge_commit_message,
+            "web_commit_signoff_required": settings.web_commit_signoff_required,
         },
     )
 
