@@ -436,7 +436,7 @@ def test_find_yaml_files_sorted_and_deduped(tmp_path: Path) -> None:
 # -- main: yamllint path -----------------------------------------------------
 
 
-def test_main_yamllint_runs(tmp_path: Path) -> None:
+def test_main_yamllint_uses_bundled_config(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
@@ -459,6 +459,38 @@ def test_main_yamllint_runs(tmp_path: Path) -> None:
         assert main() == 0
     yamllint_call = mock_run.call_args_list[0][0][0]
     assert yamllint_call[0] == "yamllint"
+    assert yamllint_call[1] == "--config-file"
+    assert yamllint_call[2].endswith("yamllint.yaml")
+    assert "standard_tooling" in yamllint_call[2]
+
+
+def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    workflows = tmp_path / ".github" / "workflows"
+    workflows.mkdir(parents=True)
+    (workflows / "ci.yml").write_text("name: CI\n")
+    (tmp_path / ".yamllint").write_text("extends: default\n")
+
+    with (
+        patch(
+            "standard_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            return_value=0,
+        ),
+        patch(
+            "standard_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    yamllint_call = mock_run.call_args_list[0][0][0]
+    assert yamllint_call[0] == "yamllint"
+    assert yamllint_call[1] == "--config-file"
+    assert str(tmp_path) not in yamllint_call[2]
+    assert "standard_tooling" in yamllint_call[2]
 
 
 def test_main_yamllint_fails(tmp_path: Path) -> None:

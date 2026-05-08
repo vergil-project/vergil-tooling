@@ -5,7 +5,8 @@ Runs inside the dev container via ``st-docker-run``:
   2. markdownlint on published markdown (docs/site/, README.md) using
      the bundled canonical config
   3. shellcheck on all shell scripts under ``scripts/``
-  4. yamllint on YAML files under ``.github/`` and ``docs/`` (issue #302)
+  4. yamllint on YAML files under ``.github/`` and ``docs/`` using
+     the bundled canonical config (issue #302, #590)
   5. hadolint on Dockerfile* files at the repo root
   6. actionlint on ``.github/workflows/``
 """
@@ -74,8 +75,7 @@ _YAML_EXTS = frozenset({".yml", ".yaml"})
 def _find_yaml_files(repo_root: Path) -> list[str]:
     """Discover YAML files we care about: repo-root config
     (.markdownlint.yaml etc.), `.github/` tree (workflows, issue
-    templates), and `docs/site/mkdocs.yml`. The yamllint config lives
-    at the repo root (`.yamllint`).
+    templates), and `docs/site/mkdocs.yml`.
 
     Vendored paths (`.worktrees`, `.venv`, `.venv-host`,
     `node_modules`) are excluded by construction — discovery only
@@ -134,8 +134,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     yaml_files = _find_yaml_files(repo_root)
     if yaml_files:
         print(f"Running: yamllint ({len(yaml_files)} files)")
+        yaml_config = files("standard_tooling.configs") / "yamllint.yaml"
         result = subprocess.run(  # noqa: S603
-            ["yamllint", *yaml_files],  # noqa: S607
+            ["yamllint", "--config-file", str(yaml_config), *yaml_files],  # noqa: S607
             check=False,
         )
         if result.returncode != 0:
