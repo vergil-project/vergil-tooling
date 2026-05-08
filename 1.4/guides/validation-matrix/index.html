@@ -2441,8 +2441,10 @@ See the <a href="../../reference/lint/markdown-standards/">Markdown Validation</
 reference for config details and file scope.</p>
 <h3 id="st-pr-issue-linkage">st-pr-issue-linkage<a class="headerlink" href="#st-pr-issue-linkage" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
-<p>Validates the PR body contains <code>Fixes #N</code>, <code>Closes #N</code>,
-<code>Resolves #N</code>, or <code>Ref #N</code>.</p>
+<p>Validates the PR body uses <code>Ref #N</code> for issue linkage.
+Rejects auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>
+and variants) to keep issues open until post-merge workflows
+succeed.</p>
 <h2 id="exit-code-reference">Exit Code Reference<a class="headerlink" href="#exit-code-reference" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

@@ -3135,8 +3135,10 @@ placeholder values.</p>
 </table>
 <h2 id="ci-only-tools">CI-only tools<a class="headerlink" href="#ci-only-tools" title="Permanent link">&para;</a></h2>
 <h3 id="st-pr-issue-linkage">st-pr-issue-linkage<a class="headerlink" href="#st-pr-issue-linkage" title="Permanent link">&para;</a></h3>
-<p>Check that a pull request body includes primary issue linkage.
-Reads the GitHub event payload from <code>GITHUB_EVENT_PATH</code>.</p>
+<p>Check that a pull request body uses <code>Ref</code> for issue linkage and
+does not contain auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>
+and variants). Reads the GitHub event payload from
+<code>GITHUB_EVENT_PATH</code>.</p>
 <table>
 <thead>
 <tr>
@@ -3159,11 +3161,11 @@ Reads the GitHub event payload from <code>GITHUB_EVENT_PATH</code>.</p>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 2 for missing env var or file; exit 1 for missing linkage</td>
+<td>Exit 2 for missing env var or file; exit 1 for auto-close keyword or missing linkage</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 valid, 1 missing linkage, 2 infrastructure error</td>
+<td>0 valid, 1 rejected linkage or missing linkage, 2 infrastructure error</td>
 </tr>
 <tr>
 <td>Status</td>
