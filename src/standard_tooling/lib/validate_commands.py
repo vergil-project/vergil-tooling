@@ -53,6 +53,20 @@ _GO_LICENSES_ALLOWLIST = ",".join(
     ]
 )
 
+_MAVEN_LICENSES_ALLOWLIST = "|".join(
+    [
+        "Apache 2.0",
+        "Apache-2.0",
+        "The Apache License, Version 2.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "GPL-3.0-or-later",
+        "ISC",
+        "MIT License",
+        "MPL-2.0",
+    ]
+)
+
 _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
     "python": {
         CheckKind.INSTALL: [["uv", "sync", "--frozen", "--group", "dev"]],
@@ -89,7 +103,14 @@ _REGISTRY: dict[str, dict[CheckKind, list[list[str]]]] = {
         CheckKind.TEST: [["./mvnw", "verify", "-B"]],
         CheckKind.AUDIT: [
             ["./mvnw", "dependency:tree", "-B", "-q"],
-            ["./mvnw", "org.codehaus.mojo:license-maven-plugin:add-third-party", "-B"],
+            [
+                "./mvnw",
+                "org.codehaus.mojo:license-maven-plugin:add-third-party",
+                "-Dlicense.excludedScopes=test",
+                "-Dlicense.failIfWarning=true",
+                f"-Dlicense.includedLicenses={_MAVEN_LICENSES_ALLOWLIST}",
+                "-B",
+            ],
         ],
     },
     "ruby": {
