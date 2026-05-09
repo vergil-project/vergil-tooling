@@ -20,6 +20,7 @@ def test_parse_args() -> None:
 
 def test_main_happy_path_not_behind() -> None:
     with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks") as mock_wait,
         patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
     ):
@@ -31,6 +32,7 @@ def test_main_happy_path_not_behind() -> None:
 def test_main_surfaces_check_failure() -> None:
     err = subprocess.CalledProcessError(returncode=1, cmd=["gh", "pr", "checks"])
     with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks", side_effect=err),
         pytest.raises(subprocess.CalledProcessError),
     ):
@@ -39,6 +41,7 @@ def test_main_surfaces_check_failure() -> None:
 
 def test_main_updates_branch_when_behind() -> None:
     with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks") as mock_wait,
         patch(
             f"{_MOD}.github.merge_state_status",
@@ -54,6 +57,7 @@ def test_main_updates_branch_when_behind() -> None:
 
 def test_main_updates_branch_multiple_times() -> None:
     with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks") as mock_wait,
         patch(
             f"{_MOD}.github.merge_state_status",
@@ -70,6 +74,7 @@ def test_main_updates_branch_multiple_times() -> None:
 
 def test_main_gives_up_after_max_updates() -> None:
     with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks"),
         patch(f"{_MOD}.github.merge_state_status", return_value="BEHIND"),
         patch(f"{_MOD}.github.update_branch"),
@@ -81,6 +86,7 @@ def test_main_gives_up_after_max_updates() -> None:
 def test_main_succeeds_for_non_behind_states() -> None:
     for status in ("CLEAN", "DIRTY", "BLOCKED", "UNSTABLE", "UNKNOWN"):
         with (
+            patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
             patch(f"{_MOD}.github.wait_for_checks"),
             patch(f"{_MOD}.github.merge_state_status", return_value=status),
             patch(f"{_MOD}.github.update_branch") as mock_update,
@@ -88,3 +94,33 @@ def test_main_succeeds_for_non_behind_states() -> None:
             result = main([_PR])
         assert result == 0, f"Expected success for status {status}"
         mock_update.assert_not_called()
+
+
+def test_main_fails_fast_on_merge_conflicts(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="CONFLICTING"),
+        patch(f"{_MOD}.github.wait_for_checks") as mock_wait,
+    ):
+        result = main([_PR])
+    assert result == 1
+    mock_wait.assert_not_called()
+    assert "merge conflicts" in capsys.readouterr().err
+
+
+def test_main_detects_conflicts_after_branch_update(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            f"{_MOD}.github.mergeable",
+            side_effect=["MERGEABLE", "CONFLICTING"],
+        ),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="BEHIND"),
+        patch(f"{_MOD}.github.update_branch"),
+    ):
+        result = main([_PR])
+    assert result == 1
+    assert "merge conflicts" in capsys.readouterr().err

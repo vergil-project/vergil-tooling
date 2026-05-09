@@ -100,6 +100,11 @@ def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
     mock_sleep.assert_called_once_with(10)
 
 
+def test_mergeable_returns_conflicting() -> None:
+    with patch("standard_tooling.lib.github.read_output", return_value="CONFLICTING"):
+        assert github.mergeable("https://github.com/pr/1") == "CONFLICTING"
+
+
 def test_merge_state_status_returns_clean() -> None:
     with patch("standard_tooling.lib.github.read_output", return_value="CLEAN"):
         assert github.merge_state_status("https://github.com/pr/1") == "CLEAN"

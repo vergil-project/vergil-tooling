@@ -153,6 +153,19 @@ def wait_for_checks(
     run("pr", "checks", pr, "--watch", "--fail-fast")
 
 
+def mergeable(pr: str) -> str:
+    """Return the PR's mergeable status (e.g. ``MERGEABLE``, ``CONFLICTING``, ``UNKNOWN``)."""
+    return read_output(
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "mergeable",
+        "--jq",
+        ".mergeable",
+    )
+
+
 def merge_state_status(pr: str) -> str:
     """Return the PR's mergeStateStatus (e.g. ``CLEAN``, ``BEHIND``, ``DIRTY``)."""
     return read_output(

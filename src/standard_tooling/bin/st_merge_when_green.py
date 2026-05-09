@@ -54,6 +54,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    if github.mergeable(args.pr) == "CONFLICTING":
+        print(
+            "Error: PR has merge conflicts. Rebase or merge the base branch before continuing.",
+            file=sys.stderr,
+        )
+        return 1
+
     print(f"Waiting for checks to pass on {args.pr}...")
     github.wait_for_checks(args.pr)
     print(f"Checks passed. Merging with --{args.strategy}...")
