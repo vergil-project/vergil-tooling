@@ -44,6 +44,19 @@ def _run(args: list[str], *, dry_run: bool) -> None:
         git.run(*args)
 
 
+def _worktree_is_dirty(wt_path: Path) -> bool:
+    """Return True if *wt_path* has modified or untracked files."""
+    result = subprocess.run(  # noqa: S603
+        ("git", "-C", str(wt_path), "status", "--porcelain"),  # noqa: S607
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        return True
+    return bool(result.stdout.strip())
+
+
 def _worktree_for_branch(branch: str, repo_root: Path) -> Path | None:
     """Return the worktree path that has *branch* checked out, or None.
 
@@ -189,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
         # Issue #315.
         wt = _worktree_for_branch(branch, root)
         if wt is not None:
+            if _worktree_is_dirty(wt):
+                print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")
+                continue
             print(f"  Removing worktree: {wt}")
             _run(["worktree", "remove", str(wt)], dry_run=args.dry_run)
         # `git branch -D` (force) rather than `-d` because `--merged`
