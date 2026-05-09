@@ -87,17 +87,18 @@ class FetchResult:
     visibility: str
 
 
-_ALLOWED_ACTION_PATTERNS = [
-    "actions-rust-lang/*",
+_BASE_ACTION_PATTERNS = [
     "actions/*",
-    "astral-sh/*",
     "docker/*",
     "github/*",
-    "pypa/*",
-    "ruby/*",
-    "swatinem/*",
     "wphillipmoore/*",
 ]
+
+_LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
+    "python": ["astral-sh/*", "pypa/*"],
+    "ruby": ["ruby/*"],
+    "rust": ["actions-rust-lang/*", "swatinem/*"],
+}
 
 
 def desired_repo_settings(*, visibility: str) -> DesiredRepoSettings:
@@ -131,12 +132,15 @@ def desired_security_settings() -> DesiredSecuritySettings:
     )
 
 
-def desired_actions_permissions() -> DesiredActionsPermissions:
+def desired_actions_permissions(primary_language: str) -> DesiredActionsPermissions:
+    patterns = sorted(
+        set(_BASE_ACTION_PATTERNS) | set(_LANGUAGE_ACTION_PATTERNS.get(primary_language, []))
+    )
     return DesiredActionsPermissions(
         default_workflow_permissions="read",
         can_approve_pull_request_reviews=False,
         allowed_actions="selected",
-        patterns_allowed=list(_ALLOWED_ACTION_PATTERNS),
+        patterns_allowed=patterns,
     )
 
 
@@ -317,7 +321,7 @@ def compute_desired_state(config: StConfig, *, visibility: str) -> DesiredState:
     return DesiredState(
         repo_settings=desired_repo_settings(visibility=visibility),
         security=desired_security_settings(),
-        actions_permissions=desired_actions_permissions(),
+        actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
         publish=publish,
     )
