@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.finalize_repo."""
+"""Tests for standard_tooling.bin.st_finalize_repo."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ if TYPE_CHECKING:
 
 import pytest
 
-from standard_tooling.bin.finalize_repo import (
+from standard_tooling.bin.st_finalize_repo import (
     _check_docs_workflow_status,
     _worktree_for_branch,
     main,
     parse_args,
 )
 
-_MOD = "standard_tooling.bin.finalize_repo"
+_MOD = "standard_tooling.bin.st_finalize_repo"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -97,7 +97,7 @@ def test_main_library_release(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_run,
         patch(
-            "standard_tooling.bin.finalize_repo.git.merged_branches",
+            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["feature/x", "develop"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
@@ -132,7 +132,7 @@ def test_main_dry_run(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_git_run,
         patch(
-            "standard_tooling.bin.finalize_repo.git.merged_branches",
+            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["feature/x"],
         ),
     ):
@@ -170,7 +170,7 @@ def test_main_application_promotion(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(
-            "standard_tooling.bin.finalize_repo.git.merged_branches",
+            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["develop", "release", "main", "feature/y"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
@@ -218,7 +218,7 @@ def test_main_validation_fails(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
-            "standard_tooling.bin.finalize_repo.subprocess.run",
+            "standard_tooling.bin.st_finalize_repo.subprocess.run",
             return_value=CompletedProcess(args=("st-validate",), returncode=1),
         ),
         patch(_MOD + "._check_docs_workflow_status", return_value=None),

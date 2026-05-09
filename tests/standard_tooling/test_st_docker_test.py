@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.docker_test."""
+"""Tests for standard_tooling.bin.st_docker_test."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from standard_tooling.bin.docker_test import (
+from standard_tooling.bin.st_docker_test import (
     _detect_language,
     _docker_is_available,
     build_test_docker_args,
@@ -136,7 +136,7 @@ def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
 
 def test_main_no_language_no_env(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.docker_test.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_docker_test.git.repo_root", return_value=tmp_path),
         patch.dict("os.environ", {}, clear=True),
     ):
         assert main() == 1
@@ -145,9 +145,9 @@ def test_main_no_language_no_env(tmp_path: Path) -> None:
 def test_main_docker_not_available(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("standard_tooling.bin.docker_test.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.docker_test._docker_is_available", return_value=False),
-        patch("standard_tooling.bin.docker_test.os.execvp") as mock_exec,
+        patch("standard_tooling.bin.st_docker_test.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_docker_test._docker_is_available", return_value=False),
+        patch("standard_tooling.bin.st_docker_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         result = main()
@@ -158,9 +158,9 @@ def test_main_docker_not_available(tmp_path: Path) -> None:
 def test_main_calls_execvp(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("standard_tooling.bin.docker_test.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.docker_test._docker_is_available", return_value=True),
-        patch("standard_tooling.bin.docker_test.os.execvp") as mock_exec,
+        patch("standard_tooling.bin.st_docker_test.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_docker_test._docker_is_available", return_value=True),
+        patch("standard_tooling.bin.st_docker_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main()
@@ -175,24 +175,24 @@ def test_main_calls_execvp(tmp_path: Path) -> None:
 
 def test_docker_is_available_true() -> None:
     mock_result = MagicMock(returncode=0)
-    with patch("standard_tooling.bin.docker_test.subprocess.run", return_value=mock_result):
+    with patch("standard_tooling.bin.st_docker_test.subprocess.run", return_value=mock_result):
         assert _docker_is_available() is True
 
 
 def test_docker_is_available_false() -> None:
     mock_result = MagicMock(returncode=1)
-    with patch("standard_tooling.bin.docker_test.subprocess.run", return_value=mock_result):
+    with patch("standard_tooling.bin.st_docker_test.subprocess.run", return_value=mock_result):
         assert _docker_is_available() is False
 
 
 def test_docker_is_available_not_installed() -> None:
-    with patch("standard_tooling.bin.docker_test.subprocess.run", side_effect=FileNotFoundError):
+    with patch("standard_tooling.bin.st_docker_test.subprocess.run", side_effect=FileNotFoundError):
         assert _docker_is_available() is False
 
 
 def test_docker_is_available_timeout() -> None:
     with patch(
-        "standard_tooling.bin.docker_test.subprocess.run",
+        "standard_tooling.bin.st_docker_test.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="docker version", timeout=15),
     ):
         assert _docker_is_available() is False

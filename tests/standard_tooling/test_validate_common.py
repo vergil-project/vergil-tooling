@@ -187,7 +187,7 @@ def test_main_all_pass(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
     ):
@@ -201,7 +201,7 @@ def test_main_repo_profile_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=1,
         ),
     ):
@@ -220,7 +220,7 @@ def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -250,7 +250,7 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -276,7 +276,7 @@ def test_main_markdownlint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -302,7 +302,7 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -331,7 +331,7 @@ def test_main_shellcheck_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -357,7 +357,7 @@ def test_main_shellcheck_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -448,7 +448,7 @@ def test_main_yamllint_uses_bundled_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -477,7 +477,7 @@ def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -505,7 +505,7 @@ def test_main_yamllint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -563,7 +563,7 @@ def test_main_hadolint_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -586,7 +586,7 @@ def test_main_hadolint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -612,7 +612,7 @@ def test_main_actionlint_runs(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
@@ -645,7 +645,7 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.repo_profile_cli.main",
+            "standard_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(

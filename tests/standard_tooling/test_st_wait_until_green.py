@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.wait_until_green."""
+"""Tests for standard_tooling.bin.st_wait_until_green."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from unittest.mock import call, patch
 
 import pytest
 
-from standard_tooling.bin.wait_until_green import main, parse_args
+from standard_tooling.bin.st_wait_until_green import main, parse_args
 
-_MOD = "standard_tooling.bin.wait_until_green"
+_MOD = "standard_tooling.bin.st_wait_until_green"
 _PR = "https://github.com/pr/1"
 
 

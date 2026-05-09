@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.commit."""
+"""Tests for standard_tooling.bin.st_commit."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.commit import _validate_commit_context, main, parse_args
+from standard_tooling.bin.st_commit import _validate_commit_context, main, parse_args
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -57,17 +57,17 @@ def _commit_environment(
         )
 
     with (
-        patch("standard_tooling.bin.commit.git.current_branch", return_value=branch),
-        patch("standard_tooling.bin.commit.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_commit.git.current_branch", return_value=branch),
+        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
         patch(
-            "standard_tooling.bin.commit.git.is_main_worktree",
+            "standard_tooling.bin.st_commit.git.is_main_worktree",
             return_value=is_main_worktree,
         ),
         patch(
-            "standard_tooling.bin.commit.git.has_staged_changes",
+            "standard_tooling.bin.st_commit.git.has_staged_changes",
             return_value=has_staged,
         ),
-        patch("standard_tooling.bin.commit.git.run"),
+        patch("standard_tooling.bin.st_commit.git.run"),
     ):
         yield
 
@@ -142,7 +142,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("standard_tooling.bin.commit.git.run", side_effect=capture_run),
+        patch("standard_tooling.bin.st_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "claude"]
@@ -162,7 +162,7 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("standard_tooling.bin.commit.git.run", side_effect=capture_run),
+        patch("standard_tooling.bin.st_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             [
@@ -192,8 +192,8 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 def test_main_config_error(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text("[invalid\n")
     with (
-        patch("standard_tooling.bin.commit.git.current_branch", return_value="feature/42-test"),
-        patch("standard_tooling.bin.commit.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
+        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -201,10 +201,10 @@ def test_main_config_error(tmp_path: Path) -> None:
 
 def test_main_missing_config(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.commit.git.current_branch", return_value="feature/42-test"),
-        patch("standard_tooling.bin.commit.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.commit.git.is_main_worktree", return_value=False),
-        patch("standard_tooling.bin.commit.git.has_staged_changes", return_value=True),
+        patch("standard_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
+        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_commit.git.is_main_worktree", return_value=False),
+        patch("standard_tooling.bin.st_commit.git.has_staged_changes", return_value=True),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -283,17 +283,20 @@ def test_validate_admits_promotion_for_application_promotion(tmp_path: Path) -> 
 
 
 def test_validate_rejects_unknown_branching_model(tmp_path: Path) -> None:
-    with patch("standard_tooling.bin.commit.git.current_branch", return_value="feature/42-thing"):
+    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    with patch(mock, return_value="feature/42-thing"):
         assert _validate_commit_context(tmp_path, "bogus-model") == 1
 
 
 def test_validate_falls_back_when_no_config(tmp_path: Path) -> None:
-    with patch("standard_tooling.bin.commit.git.current_branch", return_value="feature/42-test"):
+    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    with patch(mock, return_value="feature/42-test"):
         assert _validate_commit_context(tmp_path, "") == 0
 
 
 def test_validate_fallback_rejects_hotfix(tmp_path: Path) -> None:
-    with patch("standard_tooling.bin.commit.git.current_branch", return_value="hotfix/42-urgent"):
+    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    with patch(mock, return_value="hotfix/42-urgent"):
         assert _validate_commit_context(tmp_path, "") == 1
 
 

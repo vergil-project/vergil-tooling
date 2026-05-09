@@ -8,7 +8,7 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     import pytest
 
-from standard_tooling.bin.version import main
+from standard_tooling.bin.st_version import main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -26,7 +26,7 @@ def test_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("standard_tooling.bin.version.Path.cwd", return_value=tmp_path),
+        patch("standard_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["st-version", "show"]),
     ):
         main()
@@ -37,7 +37,7 @@ def test_show_major_minor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("standard_tooling.bin.version.Path.cwd", return_value=tmp_path),
+        patch("standard_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["st-version", "show", "--major-minor"]),
     ):
         main()
@@ -48,7 +48,7 @@ def test_show_ref(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("standard_tooling.bin.version.Path.cwd", return_value=tmp_path),
+        patch("standard_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
         patch(
             "standard_tooling.lib.version._read_version_from_ref",
             return_value="1.1.0",
@@ -63,7 +63,7 @@ def test_bump(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("standard_tooling.bin.version.Path.cwd", return_value=tmp_path),
+        patch("standard_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["st-version", "bump"]),
     ):
         main()
