@@ -29,6 +29,9 @@ codex = "Co-Authored-By: test-codex <codex@test.com>"
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 """
 
 

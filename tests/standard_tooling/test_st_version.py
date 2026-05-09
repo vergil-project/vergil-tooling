@@ -19,6 +19,7 @@ def _write_toml(tmp_path: Path, language: str = "shell") -> None:
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
         f'primary-language = "{language}"\n\n[dependencies]\nstandard-tooling = "v1.4"\n'
+        f'\n[ci]\nversions = ["3.14"]\n'
     )
 
 

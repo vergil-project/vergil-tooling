@@ -25,6 +25,9 @@ claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 """
 
 

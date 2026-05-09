@@ -18,6 +18,7 @@ from standard_tooling.bin.st_github_config import (
     parse_args,
 )
 from standard_tooling.lib.config import (
+    CiConfig,
     GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
@@ -195,6 +196,9 @@ primary-language = "python"
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 """
 
 
@@ -263,7 +267,7 @@ def _make_config() -> StConfig:
         ),
         dependencies={"standard-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
-        ci=None,
+        ci=CiConfig(versions=["3.14"], integration_tests=False),
         github=GithubOverrides(skip_rulesets=True),
         publish=PublishConfig(release=False, docs=True),
     )
@@ -285,7 +289,10 @@ def test_audit_repo_calls_compute_and_diff() -> None:
     ):
         result = _audit_repo("o/r", cfg)
     mock_fetch.assert_called_once_with("o/r")
-    mock_desired.assert_called_once_with(cfg, visibility=mock_fetch.return_value.visibility)
+    is_org = mock_fetch.return_value.owner_type == "Organization"
+    mock_desired.assert_called_once_with(
+        cfg, visibility=mock_fetch.return_value.visibility, is_org=is_org
+    )
     mock_diff.assert_called_once_with(
         desired=mock_desired.return_value,
         actual=mock_fetch.return_value.state,
@@ -305,7 +312,10 @@ def test_apply_repo_calls_apply_desired_state() -> None:
     ):
         _apply_repo("o/r", cfg)
     mock_fetch.assert_called_once_with("o/r")
-    mock_desired.assert_called_once_with(cfg, visibility=mock_fetch.return_value.visibility)
+    is_org = mock_fetch.return_value.owner_type == "Organization"
+    mock_desired.assert_called_once_with(
+        cfg, visibility=mock_fetch.return_value.visibility, is_org=is_org
+    )
     mock_apply.assert_called_once_with("o/r", mock_desired.return_value)
 
 

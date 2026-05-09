@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.33] - 2026-05-09
+
+### Bug fixes
+
+- prevent allow_forking HTTP 422 on user-owned repos and require [ci] section
+
+### Chores
+
+- bump version to 1.4.33
+
+### Features
+
+- update workflow refs to new CI/CD filenames (#383)
+- add ops workflow for scheduled GitHub config audit (#174)
+
 ## [1.4.32] - 2026-05-09
 
 ### Bug fixes

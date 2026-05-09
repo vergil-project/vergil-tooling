@@ -1,0 +1,17 @@
+name: Ops
+
+on:
+  schedule:
+    - cron: '15 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  github-config:
+    uses: wphillipmoore/standard-actions/.github/workflows/ops-github-config.yml@v1.5
+    permissions:
+      contents: read
+      issues: write

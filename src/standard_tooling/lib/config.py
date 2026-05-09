@@ -73,7 +73,7 @@ class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
-    ci: CiConfig | None
+    ci: CiConfig
     github: GithubOverrides
     publish: PublishConfig
 
@@ -115,22 +115,23 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
     markdownlint = MarkdownlintConfig(ignore=ml_ignore)
 
     ci_raw = raw.get("ci")
-    ci: CiConfig | None = None
-    if ci_raw is not None:
-        versions = ci_raw.get("versions")
-        if versions is None:
-            msg = f"{CONFIG_FILE}: [ci] missing required field 'versions'"
-            raise ConfigError(msg)
-        if not isinstance(versions, list) or not versions:
-            msg = f"{CONFIG_FILE}: [ci].versions must be a list with at least one entry"
-            raise ConfigError(msg)
-        if not all(isinstance(v, str) for v in versions):
-            msg = f"{CONFIG_FILE}: [ci].versions entries must be strings"
-            raise ConfigError(msg)
-        ci = CiConfig(
-            versions=versions,
-            integration_tests=bool(ci_raw.get("integration-tests", False)),
-        )
+    if ci_raw is None:
+        msg = f"{CONFIG_FILE}: missing required section [ci]"
+        raise ConfigError(msg)
+    versions = ci_raw.get("versions")
+    if versions is None:
+        msg = f"{CONFIG_FILE}: [ci] missing required field 'versions'"
+        raise ConfigError(msg)
+    if not isinstance(versions, list) or not versions:
+        msg = f"{CONFIG_FILE}: [ci].versions must be a list with at least one entry"
+        raise ConfigError(msg)
+    if not all(isinstance(v, str) for v in versions):
+        msg = f"{CONFIG_FILE}: [ci].versions entries must be strings"
+        raise ConfigError(msg)
+    ci = CiConfig(
+        versions=versions,
+        integration_tests=bool(ci_raw.get("integration-tests", False)),
+    )
 
     github_raw = raw.get("github", {})
     github_overrides = GithubOverrides(
