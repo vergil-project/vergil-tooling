@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.4.31] - 2026-05-09
+## [1.4.32] - 2026-05-09
 
 ### Bug fixes
 
@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - use current standard-actions workflow filenames until rename releases (#383)
 - keep release job key until check name registry updates (#383)
 - restore string comparison for workflow_call boolean inputs (#383)
+- add missing container-tag to release job in cd.yml (#657)
 
 ### Chores
 
