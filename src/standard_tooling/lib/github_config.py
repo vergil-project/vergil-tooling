@@ -30,7 +30,7 @@ class DesiredRepoSettings:
     has_issues: bool
     has_projects: bool
     has_wiki: bool
-    allow_forking: bool
+    allow_forking: bool | None
     allow_update_branch: bool
     has_downloads: bool
     merge_commit_title: str
@@ -85,6 +85,7 @@ class DesiredState:
 class FetchResult:
     state: DesiredState
     visibility: str
+    owner_type: str
 
 
 _BASE_ACTION_PATTERNS = [
@@ -101,7 +102,7 @@ _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
 }
 
 
-def desired_repo_settings(*, visibility: str) -> DesiredRepoSettings:
+def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         allow_auto_merge=False,
@@ -112,7 +113,7 @@ def desired_repo_settings(*, visibility: str) -> DesiredRepoSettings:
         has_issues=True,
         has_projects=True,
         has_wiki=True,
-        allow_forking=visibility == "public",
+        allow_forking=(visibility == "public") if is_org else None,
         allow_update_branch=True,
         has_downloads=False,
         merge_commit_title="MERGE_MESSAGE",
@@ -302,16 +303,14 @@ def desired_ci_gates_ruleset(
     )
 
 
-def compute_desired_state(config: StConfig, *, visibility: str) -> DesiredState:
+def compute_desired_state(config: StConfig, *, visibility: str, is_org: bool) -> DesiredState:
     """Compute the full desired GitHub configuration from a repo's StConfig."""
     rulesets: list[DesiredRuleset] = []
 
     if not config.github.skip_rulesets:
         rulesets.append(desired_branch_protection_ruleset())
         rulesets.append(desired_tag_protection_ruleset())
-
-        if config.ci is not None:
-            rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
+        rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
 
     publish = DesiredPublishConfig(
         release=config.publish.release,
@@ -319,7 +318,7 @@ def compute_desired_state(config: StConfig, *, visibility: str) -> DesiredState:
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(visibility=visibility),
+        repo_settings=desired_repo_settings(visibility=visibility, is_org=is_org),
         security=desired_security_settings(),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
@@ -369,6 +368,12 @@ def fetch_actual_state(repo: str) -> FetchResult:
     visibility = (
         str(repo_data.get("visibility", "private")) if isinstance(repo_data, dict) else "private"
     )
+
+    owner_raw = repo_data.get("owner") if isinstance(repo_data, dict) else None
+    owner: dict[str, object] = (
+        cast("dict[str, object]", owner_raw) if isinstance(owner_raw, dict) else {}
+    )
+    owner_type = str(owner.get("type", "User"))
 
     sa_raw = repo_data.get("security_and_analysis") if isinstance(repo_data, dict) else None
     sa: dict[str, object] = cast("dict[str, object]", sa_raw) if isinstance(sa_raw, dict) else {}
@@ -520,6 +525,7 @@ def fetch_actual_state(repo: str) -> FetchResult:
             publish=DesiredPublishConfig(release=False, docs=False),
         ),
         visibility=visibility,
+        owner_type=owner_type,
     )
 
 
@@ -550,6 +556,8 @@ def _diff_dataclass(
     items: list[DiffItem],
 ) -> None:
     if not hasattr(desired, "__dataclass_fields__"):
+        if desired is None:
+            return
         if desired != actual:
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
         return
@@ -616,29 +624,27 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
 
 
 def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
-    github.write_json(
-        "PATCH",
-        f"repos/{repo}",
-        {
-            "default_branch": settings.default_branch,
-            "allow_auto_merge": settings.allow_auto_merge,
-            "delete_branch_on_merge": settings.delete_branch_on_merge,
-            "allow_merge_commit": settings.allow_merge_commit,
-            "allow_squash_merge": settings.allow_squash_merge,
-            "allow_rebase_merge": settings.allow_rebase_merge,
-            "has_issues": settings.has_issues,
-            "has_projects": settings.has_projects,
-            "has_wiki": settings.has_wiki,
-            "allow_forking": settings.allow_forking,
-            "allow_update_branch": settings.allow_update_branch,
-            "has_downloads": settings.has_downloads,
-            "merge_commit_title": settings.merge_commit_title,
-            "merge_commit_message": settings.merge_commit_message,
-            "squash_merge_commit_title": settings.squash_merge_commit_title,
-            "squash_merge_commit_message": settings.squash_merge_commit_message,
-            "web_commit_signoff_required": settings.web_commit_signoff_required,
-        },
-    )
+    body: dict[str, object] = {
+        "default_branch": settings.default_branch,
+        "allow_auto_merge": settings.allow_auto_merge,
+        "delete_branch_on_merge": settings.delete_branch_on_merge,
+        "allow_merge_commit": settings.allow_merge_commit,
+        "allow_squash_merge": settings.allow_squash_merge,
+        "allow_rebase_merge": settings.allow_rebase_merge,
+        "has_issues": settings.has_issues,
+        "has_projects": settings.has_projects,
+        "has_wiki": settings.has_wiki,
+        "allow_update_branch": settings.allow_update_branch,
+        "has_downloads": settings.has_downloads,
+        "merge_commit_title": settings.merge_commit_title,
+        "merge_commit_message": settings.merge_commit_message,
+        "squash_merge_commit_title": settings.squash_merge_commit_title,
+        "squash_merge_commit_message": settings.squash_merge_commit_message,
+        "web_commit_signoff_required": settings.web_commit_signoff_required,
+    }
+    if settings.allow_forking is not None:
+        body["allow_forking"] = settings.allow_forking
+    github.write_json("PATCH", f"repos/{repo}", body)
 
 
 def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:
