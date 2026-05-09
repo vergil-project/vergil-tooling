@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.34] - 2026-05-09
+
+### Bug fixes
+
+- skip worktrees with uncommitted changes instead of crashing
+
+### Chores
+
+- bump version to 1.4.34
+
+### Styling
+
+- format test file
+
 ## [1.4.33] - 2026-05-09
 
 ### Bug fixes
