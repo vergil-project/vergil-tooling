@@ -51,7 +51,7 @@ jobs:
       language: python
       versions: '["3.12", "3.13", "3.14"]'
 
-  version:
+  release:
     uses: wphillipmoore/standard-actions/.github/workflows/ci-release.yml@v1.5
     with:
       language: python
