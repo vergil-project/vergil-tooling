@@ -15,6 +15,7 @@ import pytest
 from standard_tooling.bin.st_finalize_repo import (
     _check_docs_workflow_status,
     _worktree_for_branch,
+    _worktree_is_dirty,
     main,
     parse_args,
 )
@@ -385,6 +386,33 @@ def test_main_skips_docs_check_on_dry_run(tmp_path: Path) -> None:
     mock_check.assert_not_called()
 
 
+# -- _worktree_is_dirty (issue #667) -------------------------------------------
+
+
+def test_worktree_is_dirty_returns_true_when_status_output(tmp_path: Path) -> None:
+    with patch(
+        _MOD + ".subprocess.run",
+        return_value=CompletedProcess(args=(), returncode=0, stdout="M  foo.py\n"),
+    ):
+        assert _worktree_is_dirty(tmp_path) is True
+
+
+def test_worktree_is_dirty_returns_false_when_clean(tmp_path: Path) -> None:
+    with patch(
+        _MOD + ".subprocess.run",
+        return_value=CompletedProcess(args=(), returncode=0, stdout=""),
+    ):
+        assert _worktree_is_dirty(tmp_path) is False
+
+
+def test_worktree_is_dirty_returns_true_on_git_failure(tmp_path: Path) -> None:
+    with patch(
+        _MOD + ".subprocess.run",
+        return_value=CompletedProcess(args=(), returncode=128, stdout=""),
+    ):
+        assert _worktree_is_dirty(tmp_path) is True
+
+
 # -- _worktree_for_branch (issue #315) ---------------------------------------
 
 
@@ -473,6 +501,7 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/99-x"]),
         patch(_MOD + ".git.read_output", return_value=porcelain),
+        patch(_MOD + "._worktree_is_dirty", return_value=False),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_docs_workflow_status", return_value=None),
@@ -515,6 +544,44 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
     assert result == 0
     assert ("branch", "-D", "feature/99-x") in git_run_calls
     assert not any(c[:1] == ("worktree",) for c in git_run_calls)
+
+
+def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #667: a worktree with uncommitted changes is skipped entirely
+    — neither the worktree nor the branch is removed, and finalize
+    continues with the remaining branches.
+    """
+    _make_profile(tmp_path, "library-release")
+    wt_dir = tmp_path / ".worktrees" / "issue-42-wip"
+    wt_dir.mkdir(parents=True)
+    porcelain = _porcelain(
+        (str(tmp_path), "develop"),
+        (str(wt_dir), "feature/42-wip"),
+    )
+
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/42-wip"]),
+        patch(_MOD + ".git.read_output", return_value=porcelain),
+        patch(_MOD + "._worktree_is_dirty", return_value=True),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+    ):
+        result = main([])
+
+    assert result == 0
+    assert not any(c[0] == "worktree" for c in git_run_calls)
+    assert not any(c == ("branch", "-D", "feature/42-wip") for c in git_run_calls)
+    out = capsys.readouterr().out
+    assert "Skipping feature/42-wip" in out
+    assert "uncommitted changes" in out
 
 
 def test_main_cleans_docker_cache_on_branch_delete(
