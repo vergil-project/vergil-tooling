@@ -5,13 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [1.4.29] - 2026-05-09
+## [1.4.30] - 2026-05-09
 
 ### Bug fixes
 
 - pass boolean to ci-security reusable workflow inputs
 - address formatting issue in fetch_actual_state
 - pass required language input to publish-release reusable workflow (#645)
+- replace Fixes with Ref in PR template to match CI linkage rules
+- specify container-tag in publish-release caller
+- specify container-tag in publish-release workflow
 
 ### Chores
 
@@ -27,6 +30,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - include new fields in repo settings PATCH body
 - thread visibility from fetch through CLI plumbing
 - make allowed action patterns language-specific (#613)
+- detect and fail fast on merge conflicts in PR-waiting scripts (#641)
+- auto-update branch when behind base before merging (#641)
 
 ### Testing
 
