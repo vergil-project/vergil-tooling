@@ -1,7 +1,9 @@
 """Poll a PR's checks, then merge it when they all pass.
 
-Intentionally dumb: surfaces any check failure to the caller with a non-zero
-exit code. The caller is responsible for deciding what to do with a failure.
+Wraps ``gh pr checks --watch --fail-fast`` with an outer loop that detects
+when the PR branch is behind its base or has merge conflicts. When behind,
+auto-updates the branch (fast-forward merge from base) and re-polls CI.
+Fails fast on merge conflicts.
 
 Designed for release-workflow PRs where the agent is both author and
 reviewer and there is no human to gate the merge. For normal PRs, leave
@@ -17,6 +19,7 @@ from standard_tooling.lib import github
 from standard_tooling.lib.release import is_release_branch
 
 _STRATEGIES = ("merge", "squash", "rebase")
+_MAX_BRANCH_UPDATES = 5
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,15 +57,27 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    if github.mergeable(args.pr) == "CONFLICTING":
-        print(
-            "Error: PR has merge conflicts. Rebase or merge the base branch before continuing.",
-            file=sys.stderr,
-        )
-        return 1
-
-    print(f"Waiting for checks to pass on {args.pr}...")
-    github.wait_for_checks(args.pr)
+    updates = 0
+    while True:
+        if github.mergeable(args.pr) == "CONFLICTING":
+            print(
+                "Error: PR has merge conflicts. Rebase or merge the base branch before continuing.",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"Waiting for checks to pass on {args.pr}...")
+        github.wait_for_checks(args.pr)
+        if github.merge_state_status(args.pr) != "BEHIND":
+            break
+        updates += 1
+        if updates > _MAX_BRANCH_UPDATES:
+            print(
+                "Branch still behind after multiple updates — giving up.",
+                file=sys.stderr,
+            )
+            return 1
+        print("Branch is behind base — updating and re-checking...")
+        github.update_branch(args.pr)
     print(f"Checks passed. Merging with --{args.strategy}...")
     github.merge(args.pr, strategy=args.strategy)
     print("Merged.")
