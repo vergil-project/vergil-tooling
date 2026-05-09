@@ -163,7 +163,7 @@ constant continue to read from `st-config.toml` until
 
 ## Consumer migration
 
-### `st-commit` (`src/standard_tooling/bin/commit.py`)
+### `st-commit` (`src/standard_tooling/bin/st_commit.py`)
 
 - Replace `repo_profile.read_profile(root)` with
   `config.read_config(root)` for `branching_model`.
@@ -181,14 +181,14 @@ constant continue to read from `st-config.toml` until
 - Handle `ConfigError` from validation failures (exit with
   diagnostic).
 
-### `st-finalize-repo` (`src/standard_tooling/bin/finalize_repo.py`)
+### `st-finalize-repo` (`src/standard_tooling/bin/st_finalize_repo.py`)
 
 - Replace `repo_profile.read_profile(root)` with
   `config.read_config(root)` for `branching_model`.
 - Handle `ConfigError` from validation failures (exit with
   diagnostic).
 
-### `repo_profile_cli.py` (`src/standard_tooling/bin/repo_profile_cli.py`)
+### `repo_profile_cli.py` (`src/standard_tooling/bin/st_repo_profile.py`)
 
 Rewrite to validate `standard-tooling.toml`:
 
@@ -203,7 +203,7 @@ Rewrite to validate `standard-tooling.toml`:
 Calls `repo_profile_cli.main()`. No change needed — the CLI's
 interface (returns exit code) is unchanged.
 
-### `st-docker-run` (`src/standard_tooling/bin/docker_run.py`) — deferred
+### `st-docker-run` (`src/standard_tooling/bin/st_docker_run.py`) — deferred
 
 Currently reads `st-config.toml` via `st_install_tag()`. Migrates
 to `config.read_config(root).dependencies["standard-tooling"]`

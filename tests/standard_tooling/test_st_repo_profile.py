@@ -1,10 +1,10 @@
-"""Tests for standard_tooling.bin.repo_profile_cli."""
+"""Tests for standard_tooling.bin.st_repo_profile."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from standard_tooling.bin.repo_profile_cli import _structural_check, main
+from standard_tooling.bin.st_repo_profile import _structural_check, main
 
 if TYPE_CHECKING:
     from pathlib import Path

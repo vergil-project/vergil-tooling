@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.submit_pr."""
+"""Tests for standard_tooling.bin.st_submit_pr."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.submit_pr import (
+from standard_tooling.bin.st_submit_pr import (
     _extract_testing_section,
     _resolve_issue_ref,
     main,
@@ -96,8 +96,8 @@ def test_extract_testing_section_testing_at_end(tmp_path: Path) -> None:
 
 def test_main_dry_run(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.submit_pr.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.submit_pr.git.current_branch", return_value="feature/x"),
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
     ):
         result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
     assert result == 0
@@ -105,8 +105,8 @@ def test_main_dry_run(tmp_path: Path) -> None:
 
 def test_main_dry_run_with_title(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.submit_pr.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.submit_pr.git.current_branch", return_value="feature/x"),
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
     ):
         result = main(
             [
@@ -124,9 +124,9 @@ def test_main_dry_run_with_title(tmp_path: Path) -> None:
 
 def test_main_dry_run_release_branch(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
         patch(
-            "standard_tooling.bin.submit_pr.git.current_branch",
+            "standard_tooling.bin.st_submit_pr.git.current_branch",
             return_value="release/1.0.0",
         ),
     ):
@@ -146,11 +146,11 @@ def test_main_dry_run_release_branch(tmp_path: Path) -> None:
 
 def test_main_submits_pr(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.submit_pr.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.submit_pr.git.current_branch", return_value="feature/x"),
-        patch("standard_tooling.bin.submit_pr.git.run") as mock_git_run,
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("standard_tooling.bin.st_submit_pr.git.run") as mock_git_run,
         patch(
-            "standard_tooling.bin.submit_pr.github.create_pr",
+            "standard_tooling.bin.st_submit_pr.github.create_pr",
             return_value="https://github.com/pr/1",
         ) as mock_create_pr,
     ):
@@ -162,11 +162,11 @@ def test_main_submits_pr(tmp_path: Path) -> None:
 
 def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.submit_pr.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.submit_pr.git.current_branch", return_value="feature/x"),
-        patch("standard_tooling.bin.submit_pr.git.run"),
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("standard_tooling.bin.st_submit_pr.git.run"),
         patch(
-            "standard_tooling.bin.submit_pr.github.create_pr",
+            "standard_tooling.bin.st_submit_pr.github.create_pr",
             return_value="https://github.com/pr/1",
         ),
     ):
