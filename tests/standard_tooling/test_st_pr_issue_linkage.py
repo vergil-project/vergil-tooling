@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.pr_issue_linkage."""
+"""Tests for standard_tooling.bin.st_pr_issue_linkage."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.pr_issue_linkage import main
+from standard_tooling.bin.st_pr_issue_linkage import main
 
 if TYPE_CHECKING:
     from pathlib import Path

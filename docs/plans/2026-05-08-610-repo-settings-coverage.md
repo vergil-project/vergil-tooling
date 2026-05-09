@@ -605,26 +605,26 @@ cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-
 ### Task 4: Update CLI plumbing
 
 **Files:**
-- Modify: `src/standard_tooling/bin/github_config.py:84-88` (_audit_repo)
-- Modify: `src/standard_tooling/bin/github_config.py:101-104` (_apply_repo)
-- Test: `tests/standard_tooling/test_github_config_cli.py`
+- Modify: `src/standard_tooling/bin/st_github_config.py:84-88` (_audit_repo)
+- Modify: `src/standard_tooling/bin/st_github_config.py:101-104` (_apply_repo)
+- Test: `tests/standard_tooling/test_st_github_config.py`
 
 - [ ] **Step 1: Write failing tests for CLI plumbing changes**
 
-In `tests/standard_tooling/test_github_config_cli.py`, replace `test_audit_repo_calls_compute_and_diff` (lines 270–288) and `test_apply_repo_calls_apply_desired_state` (lines 294–302):
+In `tests/standard_tooling/test_st_github_config.py`, replace `test_audit_repo_calls_compute_and_diff` (lines 270–288) and `test_apply_repo_calls_apply_desired_state` (lines 294–302):
 
 ```python
 def test_audit_repo_calls_compute_and_diff() -> None:
     cfg = _make_config()
     with (
         patch(
-            "standard_tooling.bin.github_config.fetch_actual_state",
+            "standard_tooling.bin.st_github_config.fetch_actual_state",
         ) as mock_fetch,
         patch(
-            "standard_tooling.bin.github_config.compute_desired_state",
+            "standard_tooling.bin.st_github_config.compute_desired_state",
         ) as mock_desired,
         patch(
-            "standard_tooling.bin.github_config.compute_diff",
+            "standard_tooling.bin.st_github_config.compute_diff",
             return_value=ConfigDiff(items=[]),
         ) as mock_diff,
     ):
@@ -641,9 +641,9 @@ def test_audit_repo_calls_compute_and_diff() -> None:
 def test_apply_repo_calls_apply_desired_state() -> None:
     cfg = _make_config()
     with (
-        patch("standard_tooling.bin.github_config.fetch_actual_state") as mock_fetch,
-        patch("standard_tooling.bin.github_config.compute_desired_state") as mock_desired,
-        patch("standard_tooling.bin.github_config.apply_desired_state") as mock_apply,
+        patch("standard_tooling.bin.st_github_config.fetch_actual_state") as mock_fetch,
+        patch("standard_tooling.bin.st_github_config.compute_desired_state") as mock_desired,
+        patch("standard_tooling.bin.st_github_config.apply_desired_state") as mock_apply,
     ):
         _apply_repo("o/r", cfg)
     mock_fetch.assert_called_once_with("o/r")
@@ -653,13 +653,13 @@ def test_apply_repo_calls_apply_desired_state() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_github_config_cli.py::test_audit_repo_calls_compute_and_diff tests/standard_tooling/test_github_config_cli.py::test_apply_repo_calls_apply_desired_state -v`
+Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_st_github_config.py::test_audit_repo_calls_compute_and_diff tests/standard_tooling/test_st_github_config.py::test_apply_repo_calls_apply_desired_state -v`
 
 Expected: FAIL — `_audit_repo` calls `compute_desired_state(cfg)` without visibility
 
 - [ ] **Step 3: Update _audit_repo to thread visibility via FetchResult**
 
-In `src/standard_tooling/bin/github_config.py`, replace `_audit_repo` (lines 84–88):
+In `src/standard_tooling/bin/st_github_config.py`, replace `_audit_repo` (lines 84–88):
 
 ```python
 def _audit_repo(repo: str, config: StConfig) -> ConfigDiff:
@@ -683,14 +683,14 @@ def _apply_repo(repo: str, config: StConfig) -> list[str]:
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_github_config_cli.py::test_audit_repo_calls_compute_and_diff tests/standard_tooling/test_github_config_cli.py::test_apply_repo_calls_apply_desired_state -v`
+Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_st_github_config.py::test_audit_repo_calls_compute_and_diff tests/standard_tooling/test_st_github_config.py::test_apply_repo_calls_apply_desired_state -v`
 
 Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && git add src/standard_tooling/bin/github_config.py tests/standard_tooling/test_github_config_cli.py && git commit -m "feat(github-config): thread visibility from fetch through CLI plumbing"
+cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && git add src/standard_tooling/bin/st_github_config.py tests/standard_tooling/test_st_github_config.py && git commit -m "feat(github-config): thread visibility from fetch through CLI plumbing"
 ```
 
 ---
@@ -891,11 +891,11 @@ cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-
 ### Task 6: Fix remaining broken CLI tests
 
 **Files:**
-- Modify: `tests/standard_tooling/test_github_config_cli.py`
+- Modify: `tests/standard_tooling/test_st_github_config.py`
 
 - [ ] **Step 1: Run CLI test file to identify remaining failures**
 
-Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_github_config_cli.py -v`
+Run: `cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && uv run pytest tests/standard_tooling/test_st_github_config.py -v`
 
 The CLI tests that mock `_audit_repo` and `_apply_repo` at the function boundary should still pass — they don't call the internals. But `test_audit_repo_calls_compute_and_diff` and `test_apply_repo_calls_apply_desired_state` were already fixed in Task 4. Verify all pass.
 
@@ -904,7 +904,7 @@ Expected: ALL PASS (if any fail, fix them following the same patterns from Task 
 - [ ] **Step 2: Commit if any changes were needed**
 
 ```bash
-cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && git add tests/standard_tooling/test_github_config_cli.py && git commit -m "test(github-config): update CLI tests for visibility threading"
+cd /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-610-repo-settings-coverage && git add tests/standard_tooling/test_st_github_config.py && git commit -m "test(github-config): update CLI tests for visibility threading"
 ```
 
 ---

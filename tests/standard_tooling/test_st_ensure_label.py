@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.ensure_label."""
+"""Tests for standard_tooling.bin.st_ensure_label."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.ensure_label import main, parse_args
+from standard_tooling.bin.st_ensure_label import main, parse_args
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -71,7 +71,7 @@ def test_parse_args_no_args_fails() -> None:
 
 
 def test_main_single_label() -> None:
-    with patch("standard_tooling.bin.ensure_label.github.run") as mock_run:
+    with patch("standard_tooling.bin.st_ensure_label.github.run") as mock_run:
         result = main(["--repo", "o/r", "--label", "bug"])
     assert result == 0
     mock_run.assert_called_once_with(
@@ -85,7 +85,7 @@ def test_main_single_label() -> None:
 
 
 def test_main_single_label_with_color_description() -> None:
-    with patch("standard_tooling.bin.ensure_label.github.run") as mock_run:
+    with patch("standard_tooling.bin.st_ensure_label.github.run") as mock_run:
         result = main(
             [
                 "--repo",
@@ -119,7 +119,7 @@ def test_main_single_label_with_color_description() -> None:
 
 
 def test_main_sync_provisions_all_labels() -> None:
-    with patch("standard_tooling.bin.ensure_label.github.run") as mock_run:
+    with patch("standard_tooling.bin.st_ensure_label.github.run") as mock_run:
         result = main(["--repo", "o/r", "--sync"])
     assert result == 0
     # Should have called once per label + once for the delete
@@ -128,7 +128,7 @@ def test_main_sync_provisions_all_labels() -> None:
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
-    with patch("standard_tooling.bin.ensure_label.github.run") as mock_run:
+    with patch("standard_tooling.bin.st_ensure_label.github.run") as mock_run:
         main(["--repo", "o/r", "--sync"])
     # Check one representative call has --force, --color, --description
     first_create = next(c for c in mock_run.call_args_list if c.args[1] == "create")
@@ -138,7 +138,7 @@ def test_main_sync_uses_force_with_color_description() -> None:
 
 
 def test_main_sync_deletes_deprecated_labels() -> None:
-    with patch("standard_tooling.bin.ensure_label.github.run") as mock_run:
+    with patch("standard_tooling.bin.st_ensure_label.github.run") as mock_run:
         main(["--repo", "o/r", "--sync"])
     delete_calls = [c for c in mock_run.call_args_list if c.args[1] == "delete"]
     assert len(delete_calls) == 1
@@ -152,7 +152,7 @@ def test_main_sync_delete_ignores_missing_label() -> None:
         if args[1] == "delete":
             raise RuntimeError("label not found")
 
-    with patch("standard_tooling.bin.ensure_label.github.run", side_effect=side_effect):
+    with patch("standard_tooling.bin.st_ensure_label.github.run", side_effect=side_effect):
         result = main(["--repo", "o/r", "--sync"])
     assert result == 0
 
@@ -165,10 +165,10 @@ def test_main_sync_delete_ignores_missing_label() -> None:
 def test_main_project_mode_discovers_and_syncs() -> None:
     with (
         patch(
-            "standard_tooling.bin.ensure_label.list_project_repos",
+            "standard_tooling.bin.st_ensure_label.list_project_repos",
             return_value=["owner/a", "owner/b"],
         ) as mock_discover,
-        patch("standard_tooling.bin.ensure_label.github.run"),
+        patch("standard_tooling.bin.st_ensure_label.github.run"),
     ):
         result = main(["--owner", "myorg", "--project", "3", "--sync"])
     assert result == 0

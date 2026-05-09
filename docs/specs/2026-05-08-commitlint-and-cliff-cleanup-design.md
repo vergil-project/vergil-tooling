@@ -73,7 +73,7 @@ list.
 |------|--------|
 | `src/standard_tooling/configs/cliff.toml` | Tighten all regexes, fix `doc`->`docs`, add `build`/`revert` |
 | `src/standard_tooling/configs/cliff-release-notes.toml` | Same as above |
-| `src/standard_tooling/bin/commit.py` | Add `revert` to `ALLOWED_TYPES` |
+| `src/standard_tooling/bin/st_commit.py` | Add `revert` to `ALLOWED_TYPES` |
 | `docs/repository-standards.md` | Add `revert` to type list |
 
 ## Backward compatibility

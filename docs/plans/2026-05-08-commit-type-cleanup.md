@@ -87,7 +87,7 @@ Expected: the `commit_parsers` block matches step 1 exactly, and the rest of the
 ### Task 3: Add `revert` to st-commit ALLOWED_TYPES
 
 **Files:**
-- Modify: `src/standard_tooling/bin/commit.py:21`
+- Modify: `src/standard_tooling/bin/st_commit.py:21`
 - Test: `tests/standard_tooling/test_commit.py`
 
 - [ ] **Step 1: Write a test that `revert` is accepted as a commit type**
@@ -110,7 +110,7 @@ Expected: FAIL — `argparse` rejects `revert` because it's not in the `choices`
 
 - [ ] **Step 3: Add `revert` to `ALLOWED_TYPES`**
 
-In `src/standard_tooling/bin/commit.py` line 21, change:
+In `src/standard_tooling/bin/st_commit.py` line 21, change:
 
 ```python
 ALLOWED_TYPES = ("feat", "fix", "docs", "style", "refactor", "test", "chore", "ci", "build")
@@ -171,7 +171,7 @@ Expected: all checks pass.
 git add \
   src/standard_tooling/configs/cliff.toml \
   src/standard_tooling/configs/cliff-release-notes.toml \
-  src/standard_tooling/bin/commit.py \
+  src/standard_tooling/bin/st_commit.py \
   tests/standard_tooling/test_commit.py \
   docs/repository-standards.md \
   docs/specs/2026-05-08-commitlint-and-cliff-cleanup-design.md \

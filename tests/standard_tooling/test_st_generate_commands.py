@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.generate_commands."""
+"""Tests for standard_tooling.bin.st_generate_commands."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 if TYPE_CHECKING:
     from pathlib import Path
 
-from standard_tooling.bin.generate_commands import (
+from standard_tooling.bin.st_generate_commands import (
     classify_command,
     generate,
     load_commands,
