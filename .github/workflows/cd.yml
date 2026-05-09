@@ -1,8 +1,9 @@
-name: Publish release
+name: CD
 
 on:
   push:
-    branches: [main]
+    branches: [develop, main]
+  workflow_dispatch:
 
 permissions:
   attestations: write
@@ -11,9 +12,14 @@ permissions:
   pull-requests: write
 
 jobs:
-  publish:
+  docs:
+    uses: wphillipmoore/standard-actions/.github/workflows/publish-docs.yml@v1.5
+    permissions:
+      contents: write
+
+  release:
+    if: github.ref == 'refs/heads/main'
     uses: wphillipmoore/standard-actions/.github/workflows/publish-release.yml@v1.5
     with:
       language: python
-      container-tag: "3.14"
     secrets: inherit

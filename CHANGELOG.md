@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.31] - 2026-05-09
+
+### Bug fixes
+
+- specify container-tag in publish-release workflow
+- use current standard-actions workflow filenames until rename releases (#383)
+- keep release job key until check name registry updates (#383)
+- restore string comparison for workflow_call boolean inputs (#383)
+
+### Chores
+
+- bump version to 1.4.31
+
+### Features
+
+- rename release/version-bump check to version/version-bump (#383)
+- rename publish workflows to cd convention, reformat ci.yml (#383)
+- include ci.yml reformat in workflow rename (#383)
+
 ## [1.4.30] - 2026-05-09
 
 ### Bug fixes
@@ -14,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - pass required language input to publish-release reusable workflow (#645)
 - replace Fixes with Ref in PR template to match CI linkage rules
 - specify container-tag in publish-release caller
-- specify container-tag in publish-release workflow
 
 ### Chores
 

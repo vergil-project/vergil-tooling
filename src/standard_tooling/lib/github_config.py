@@ -280,9 +280,9 @@ def desired_ci_gates_ruleset(
         for version in ci.versions:
             checks.append(_make_check(f"test / integration / {version}"))
 
-    # Release check
+    # Version check
     if project.release_model != "none":
-        checks.append(_make_check("release / version-bump"))
+        checks.append(_make_check("version / version-bump"))
 
     return DesiredRuleset(
         name="CI gates",

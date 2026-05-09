@@ -271,12 +271,12 @@ def test_ci_gates_no_integration_tests_when_disabled() -> None:
 
 def test_ci_gates_release_version_bump_present() -> None:
     r = desired_ci_gates_ruleset(_project(release_model="tagged-release"), _ci())
-    assert "release / version-bump" in _check_names(r)
+    assert "version / version-bump" in _check_names(r)
 
 
 def test_ci_gates_no_release_when_none() -> None:
     r = desired_ci_gates_ruleset(_project(release_model="none"), _ci())
-    assert "release / version-bump" not in _check_names(r)
+    assert "version / version-bump" not in _check_names(r)
 
 
 def test_ci_gates_shell_has_no_versioned_checks() -> None:
