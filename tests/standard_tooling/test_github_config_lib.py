@@ -81,13 +81,41 @@ def test_desired_security_settings() -> None:
     assert s.dependabot_security_updates == "disabled"
 
 
-def test_desired_actions_permissions() -> None:
-    a = desired_actions_permissions()
+def test_desired_actions_permissions_base_only() -> None:
+    a = desired_actions_permissions("go")
     assert a.default_workflow_permissions == "read"
     assert a.can_approve_pull_request_reviews is False
     assert a.allowed_actions == "selected"
-    assert "wphillipmoore/*" in a.patterns_allowed
-    assert "actions/*" in a.patterns_allowed
+    assert a.patterns_allowed == [
+        "actions/*",
+        "docker/*",
+        "github/*",
+        "wphillipmoore/*",
+    ]
+
+
+def test_desired_actions_permissions_with_language_patterns() -> None:
+    a = desired_actions_permissions("rust")
+    assert a.patterns_allowed == [
+        "actions-rust-lang/*",
+        "actions/*",
+        "docker/*",
+        "github/*",
+        "swatinem/*",
+        "wphillipmoore/*",
+    ]
+
+
+def test_desired_actions_permissions_python() -> None:
+    a = desired_actions_permissions("python")
+    assert a.patterns_allowed == [
+        "actions/*",
+        "astral-sh/*",
+        "docker/*",
+        "github/*",
+        "pypa/*",
+        "wphillipmoore/*",
+    ]
 
 
 def test_branch_protection_ruleset() -> None:
@@ -322,6 +350,7 @@ def test_compute_desired_state_includes_security() -> None:
 def test_compute_desired_state_includes_actions() -> None:
     state = compute_desired_state(_st_config(), visibility="public")
     assert state.actions_permissions.allowed_actions == "selected"
+    assert "pypa/*" in state.actions_permissions.patterns_allowed
 
 
 # ---------------------------------------------------------------------------
@@ -990,7 +1019,7 @@ def test_apply_security_settings_disables_vuln_alerts() -> None:
 
 
 def test_apply_actions_permissions_selected() -> None:
-    perms = desired_actions_permissions()
+    perms = desired_actions_permissions("python")
     with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_actions_permissions("o/r", perms)
     assert mock_write.call_count == 3
