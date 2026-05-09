@@ -546,9 +546,7 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
     assert not any(c[:1] == ("worktree",) for c in git_run_calls)
 
 
-def test_main_skips_dirty_worktree(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """Issue #667: a worktree with uncommitted changes is skipped entirely
     — neither the worktree nor the branch is removed, and finalize
     continues with the remaining branches.
