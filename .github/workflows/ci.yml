@@ -51,8 +51,8 @@ jobs:
       language: python
       versions: '["3.12", "3.13", "3.14"]'
 
-  release:
-    uses: wphillipmoore/standard-actions/.github/workflows/ci-release.yml@v1.5
+  version:
+    uses: wphillipmoore/standard-actions/.github/workflows/ci-version-bump.yml@v1.5
     with:
       language: python
       run-release: ${{ inputs.run-release != 'false' }}
