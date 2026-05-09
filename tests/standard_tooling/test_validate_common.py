@@ -27,6 +27,9 @@ primary-language = "python"
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 """
 
 

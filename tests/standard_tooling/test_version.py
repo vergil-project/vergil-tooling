@@ -21,6 +21,7 @@ def _write_toml(tmp_path: Path, language: str) -> None:
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
         f'primary-language = "{language}"\n\n[dependencies]\nstandard-tooling = "v1.4"\n'
+        f'\n[ci]\nversions = ["3.14"]\n'
     )
 
 
@@ -93,6 +94,7 @@ def test_show_with_version_file_override(tmp_path: Path) -> None:
         'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
         'primary-language = "shell"\nversion-file = "custom/VERSION"\n\n'
         '[dependencies]\nstandard-tooling = "v1.4"\n'
+        '\n[ci]\nversions = ["3.14"]\n'
     )
     custom_dir = tmp_path / "custom"
     custom_dir.mkdir()

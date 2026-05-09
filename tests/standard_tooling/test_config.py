@@ -32,6 +32,9 @@ primary-language = "python"
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 """
 
 
@@ -62,7 +65,7 @@ def test_env_override_skips_file_read(tmp_path: Path) -> None:
 
 # -- read_config (standard-tooling.toml) --------------------------------------
 
-_VALID_TOML = """\
+_BASE_TOML = """\
 [project]
 repository-type = "library"
 versioning-scheme = "semver"
@@ -76,6 +79,8 @@ claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>
 [dependencies]
 standard-tooling = "v1.4"
 """
+
+_VALID_TOML = _BASE_TOML + '\n[ci]\nversions = ["3.14"]\n'
 
 
 def test_read_config_valid(tmp_path: Path) -> None:
@@ -204,7 +209,7 @@ def test_read_config_markdownlint_ignore_not_a_list(tmp_path: Path) -> None:
 # -- [ci] section --------------------------------------------------------------
 
 _CI_TOML = (
-    _VALID_TOML
+    _BASE_TOML
     + """
 [ci]
 versions = ["3.12", "3.13", "3.14"]
@@ -220,7 +225,7 @@ def test_read_config_ci_section(tmp_path: Path) -> None:
 
 
 def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
-    toml = _VALID_TOML + '[ci]\nversions = ["3.14"]\n'
+    toml = _BASE_TOML + '[ci]\nversions = ["3.14"]\n'
     (tmp_path / "standard-tooling.toml").write_text(toml)
     cfg = read_config(tmp_path)
     assert cfg.ci is not None
@@ -228,30 +233,30 @@ def test_read_config_ci_no_integration_tests(tmp_path: Path) -> None:
 
 
 def test_read_config_ci_missing_versions(tmp_path: Path) -> None:
-    toml = _VALID_TOML + "[ci]\nintegration-tests = true\n"
+    toml = _BASE_TOML + "[ci]\nintegration-tests = true\n"
     (tmp_path / "standard-tooling.toml").write_text(toml)
     with pytest.raises(ConfigError, match="versions"):
         read_config(tmp_path)
 
 
 def test_read_config_ci_empty_versions(tmp_path: Path) -> None:
-    toml = _VALID_TOML + "[ci]\nversions = []\n"
+    toml = _BASE_TOML + "[ci]\nversions = []\n"
     (tmp_path / "standard-tooling.toml").write_text(toml)
     with pytest.raises(ConfigError, match="versions.*at least one"):
         read_config(tmp_path)
 
 
 def test_read_config_ci_versions_not_strings(tmp_path: Path) -> None:
-    toml = _VALID_TOML + "[ci]\nversions = [3.12, 3.13]\n"
+    toml = _BASE_TOML + "[ci]\nversions = [3.12, 3.13]\n"
     (tmp_path / "standard-tooling.toml").write_text(toml)
     with pytest.raises(ConfigError, match="versions.*strings"):
         read_config(tmp_path)
 
 
-def test_read_config_no_ci_section(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
-    cfg = read_config(tmp_path)
-    assert cfg.ci is None
+def test_read_config_no_ci_section_raises(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_BASE_TOML)
+    with pytest.raises(ConfigError, match=r"missing required section \[ci\]"):
+        read_config(tmp_path)
 
 
 # -- [github] section ---------------------------------------------------------
@@ -290,6 +295,9 @@ primary-language = "python"
 [dependencies]
 standard-tooling = "v1.4"
 
+[ci]
+versions = ["3.14"]
+
 [publish]
 release = true
 docs = true
@@ -322,6 +330,9 @@ primary-language = "python"
 
 [dependencies]
 standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
 
 [publish]
 release = true
