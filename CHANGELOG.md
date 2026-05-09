@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.29] - 2026-05-09
+
+### Bug fixes
+
+- pass boolean to ci-security reusable workflow inputs
+- address formatting issue in fetch_actual_state
+- pass required language input to publish-release reusable workflow (#645)
+
+### Chores
+
+- bump version to 1.4.28
+- migrate to reusable publish/docs workflows
+- trigger CI re-run
+- rename source files to match st-* script names
+
+### Features
+
+- add 8 new fields to DesiredRepoSettings and derivation
+- add FetchResult wrapper and extract new fields in fetch
+- include new fields in repo settings PATCH body
+- thread visibility from fetch through CLI plumbing
+- make allowed action patterns language-specific (#613)
+
+### Testing
+
+- update lib tests for new fields and FetchResult
+
 ## [1.4.27] - 2026-05-08
 
 ### Chores
@@ -13,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - sweep post-1.4.26 dependency updates (#621)
 - replace st-validate-local references with st-validate in active docs and specs
 - add publish.release and publish.docs to standard-tooling.toml
+
+### Documentation
+
+- add design spec and pushback review for repo settings coverage (#610)
+- add implementation plan and alignment review for repo settings coverage (#610)
 
 ### Features
 
