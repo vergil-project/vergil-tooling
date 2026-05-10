@@ -117,6 +117,10 @@ nav:
           - Database:
               - Overview: standards/development/database/overview.md
               - Conventions: standards/development/database/conventions.md
+      - AI Collaboration:
+          - Code Review Guidelines: standards/ai-code-review-guidelines.md
+          - Interaction Contract: standards/interaction-contract.md
+          - Interaction Contract (Brief): standards/interaction-contract-brief.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md
