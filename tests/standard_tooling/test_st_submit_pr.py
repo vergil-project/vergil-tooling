@@ -69,12 +69,13 @@ def test_parse_args_all_options() -> None:
     assert args.dry_run is True
 
 
-def test_dry_run_body_has_no_testing_section(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_dry_run_body_has_no_testing_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     gh = tmp_path / ".github"
     gh.mkdir()
     (gh / "pull_request_template.md").write_text(
-        "> **Do not create PRs manually.**\n"
-        "> Use `st-submit-pr`.\n"
+        "> **Do not create PRs manually.**\n> Use `st-submit-pr`.\n"
     )
     with (
         patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
