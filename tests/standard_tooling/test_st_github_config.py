@@ -19,6 +19,7 @@ from standard_tooling.bin.st_github_config import (
 )
 from standard_tooling.lib.config import (
     CiConfig,
+    DockerConfig,
     GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
@@ -44,12 +45,6 @@ def test_parse_diff_single_repo() -> None:
 def test_parse_apply_single_repo() -> None:
     args = parse_args(["apply", "--repo", "o/r"])
     assert args.command == "apply"
-    assert args.yes is False
-
-
-def test_parse_apply_with_yes() -> None:
-    args = parse_args(["apply", "--repo", "o/r", "--yes"])
-    assert args.yes is True
 
 
 def test_parse_project_mode() -> None:
@@ -58,9 +53,21 @@ def test_parse_project_mode() -> None:
     assert args.project == "3"
 
 
-def test_parse_no_target_fails() -> None:
+def test_parse_no_target_defaults() -> None:
+    args = parse_args(["audit"])
+    assert args.repo is None
+    assert args.owner is None
+    assert args.project is None
+
+
+def test_parse_owner_without_project_fails() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["audit"])
+        parse_args(["audit", "--owner", "acme"])
+
+
+def test_parse_project_without_owner_fails() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["audit", "--project", "3"])
 
 
 def test_parse_config_flag_audit() -> None:
@@ -184,6 +191,15 @@ def test_resolve_repos_project_mode() -> None:
         assert _resolve_repos(args) == ["acme/a", "acme/b"]
 
 
+def test_resolve_repos_defaults_to_current_repo() -> None:
+    args = argparse.Namespace(repo=None, owner=None, project=None)
+    with patch(
+        "standard_tooling.bin.st_github_config.github.current_repo",
+        return_value="acme/my-repo",
+    ):
+        assert _resolve_repos(args) == ["acme/my-repo"]
+
+
 # -- _fetch_remote_config -----------------------------------------------------
 
 _VALID_TOML = b"""\
@@ -270,6 +286,7 @@ def _make_config() -> StConfig:
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         github=GithubOverrides(skip_rulesets=True),
         publish=PublishConfig(release=False, docs=True),
+        docker=DockerConfig(image_prefix="prod"),
     )
 
 
@@ -335,66 +352,13 @@ def test_apply_all_compliant_does_nothing() -> None:
         patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
         patch("standard_tooling.bin.st_github_config._apply_repo") as mock_apply,
     ):
-        result = main(["apply", "--repo", "o/r", "--yes"])
-    assert result == 0
-    mock_apply.assert_not_called()
-
-
-def test_apply_with_yes_applies_noncompliant() -> None:
-    call_count = [0]
-
-    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
-        call_count[0] += 1
-        return _mock_noncompliant()
-
-    with (
-        patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
-            side_effect=audit_side_effect,
-        ),
-        patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
-            return_value=["o/r"],
-        ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
-        patch("standard_tooling.bin.st_github_config._apply_repo", return_value=[]) as mock_apply,
-    ):
-        result = main(["apply", "--repo", "o/r", "--yes"])
-    assert result == 0
-    mock_apply.assert_called_once()
-
-
-def test_apply_without_yes_prompts_and_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("builtins.input", lambda _: "n")
-    call_count = [0]
-
-    def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
-        call_count[0] += 1
-        return _mock_noncompliant()
-
-    with (
-        patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
-            side_effect=audit_side_effect,
-        ),
-        patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
-            return_value=["o/r"],
-        ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
-        patch("standard_tooling.bin.st_github_config._apply_repo") as mock_apply,
-    ):
         result = main(["apply", "--repo", "o/r"])
-    assert result == 1
+    assert result == 0
     mock_apply.assert_not_called()
 
 
-def test_apply_without_yes_prompts_and_proceeds(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("builtins.input", lambda _: "y")
-    call_count = [0]
-
+def test_apply_noncompliant() -> None:
     def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
-        call_count[0] += 1
         return _mock_noncompliant()
 
     with (
@@ -414,9 +378,7 @@ def test_apply_without_yes_prompts_and_proceeds(monkeypatch: pytest.MonkeyPatch)
     mock_apply.assert_called_once()
 
 
-def test_apply_reports_legacy_protection_removed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("builtins.input", lambda _: "y")
-
+def test_apply_reports_legacy_protection_removed() -> None:
     def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
         return _mock_noncompliant()
 
@@ -516,7 +478,7 @@ def test_config_flag_apply_uses_local_config(tmp_path: object) -> None:
             return_value=[],
         ) as mock_apply,
     ):
-        result = main(["apply", "--repo", "o/r", "--yes", "--config", str(p)])
+        result = main(["apply", "--repo", "o/r", "--config", str(p)])
     assert result == 0
     mock_remote.assert_not_called()
     mock_apply.assert_called_once()

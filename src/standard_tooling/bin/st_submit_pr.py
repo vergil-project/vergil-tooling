@@ -1,7 +1,4 @@
-"""PR submission wrapper that constructs standards-compliant PR bodies.
-
-Populates .github/pull_request_template.md programmatically.
-"""
+"""PR submission wrapper that constructs standards-compliant PR bodies."""
 
 from __future__ import annotations
 
@@ -44,35 +41,14 @@ def _resolve_issue_ref(issue: str) -> str:
     raise SystemExit(msg)
 
 
-def _extract_testing_section(root: Path) -> str:
-    """Extract the testing section from the PR template."""
-    template = root / ".github" / "pull_request_template.md"
-    if not template.is_file():
-        return ""
-    lines: list[str] = []
-    in_testing = False
-    for line in template.read_text(encoding="utf-8").splitlines():
-        if re.match(r"^##\s+Testing", line):
-            in_testing = True
-            continue
-        if in_testing and re.match(r"^##\s+", line):
-            break
-        if in_testing:
-            lines.append(line)
-    return "\n".join(lines).strip()
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     issue_ref = _resolve_issue_ref(args.issue)
-    root = git.repo_root()
     branch = git.current_branch()
 
     target_branch = "main" if branch.startswith("release/") else "develop"
 
     title = args.title
-
-    testing_section = _extract_testing_section(root)
 
     notes_section = args.notes or "-"
 
@@ -80,7 +56,6 @@ def main(argv: list[str] | None = None) -> int:
         f"# Pull Request\n\n"
         f"## Summary\n\n- {args.summary}\n\n"
         f"## Issue Linkage\n\n- {args.linkage} {issue_ref}\n\n"
-        f"## Testing\n\n{testing_section}\n\n"
         f"## Notes\n\n- {notes_section}"
     )
 

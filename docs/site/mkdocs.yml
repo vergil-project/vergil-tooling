@@ -74,6 +74,53 @@ nav:
           - st-submit-pr: reference/dev/submit-pr.md
           - st-prepare-release: reference/dev/prepare-release.md
           - st-finalize-repo: reference/dev/finalize-repo.md
+  - Standards:
+      - Authoring:
+          - Markdown Authoring: standards/markdown-authoring.md
+          - Architecture: standards/architecture.md
+      - Repository:
+          - Repository Structure: standards/repository-structure.md
+          - Dependency Anchor Records: standards/dependency-anchor-records.md
+      - Source Control:
+          - Source Control Guidelines: standards/source-control-guidelines.md
+          - GitHub Issues: standards/github-issues.md
+          - Application Branching: standards/branching-application.md
+          - Documentation Branching: standards/branching-documentation.md
+          - Hotfix Policy: standards/hotfix-policy.md
+          - Application Versioning: standards/versioning-application.md
+      - Development:
+          - Environment and Tooling: standards/development/environment-and-tooling.md
+          - Runtime Version Support: standards/development/runtime-version-support-policy.md
+          - Deprecation Warnings: standards/development/deprecation-warnings.md
+          - Python:
+              - Overview: standards/development/python/overview.md
+              - Naming Conventions: standards/development/python/naming-conventions.md
+              - Type Hints: standards/development/python/type-hints.md
+              - Import-Time Side Effects: standards/development/python/import-time-side-effects.md
+              - Testing and Coverage: standards/development/python/testing-and-coverage.md
+              - Dependency Management: standards/development/python/dependency-management.md
+              - Local Validation: standards/development/python/local-validation-scripts.md
+              - Version Management: standards/development/python/version-management.md
+              - ty Migration Plan: standards/development/python/ty-migration-plan.md
+          - Go:
+              - Overview: standards/development/go/overview.md
+              - Naming Conventions: standards/development/go/naming-conventions.md
+          - Java:
+              - Overview: standards/development/java/overview.md
+              - Naming Conventions: standards/development/java/naming-conventions.md
+          - Rust:
+              - Overview: standards/development/rust/overview.md
+              - Naming Conventions: standards/development/rust/naming-conventions.md
+          - Shell:
+              - Overview: standards/development/shell/overview.md
+              - Naming Conventions: standards/development/shell/naming-conventions.md
+          - Database:
+              - Overview: standards/development/database/overview.md
+              - Conventions: standards/development/database/conventions.md
+      - AI Collaboration:
+          - Code Review Guidelines: standards/ai-code-review-guidelines.md
+          - Interaction Contract: standards/interaction-contract.md
+          - Interaction Contract (Brief): standards/interaction-contract-brief.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md

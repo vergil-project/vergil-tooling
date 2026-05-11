@@ -10,13 +10,15 @@ from pathlib import Path
 
 _GHCR = "ghcr.io/wphillipmoore"
 
-_DEFAULT_IMAGES: dict[str, str] = {
-    "ruby": f"{_GHCR}/dev-ruby:3.4",
-    "python": f"{_GHCR}/dev-python:3.14",
-    "go": f"{_GHCR}/dev-go:1.26",
-    "rust": f"{_GHCR}/dev-rust:1.93",
-    "java": f"{_GHCR}/dev-java:21",
+_DEFAULT_VERSIONS: dict[str, str] = {
+    "ruby": "3.4",
+    "python": "3.14",
+    "go": "1.26",
+    "rust": "1.93",
+    "java": "21",
 }
+
+_DEFAULT_PREFIX = "prod"
 
 _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "ruby": "bundle install --jobs 4 && bundle exec rake",
@@ -26,7 +28,10 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "java": "./mvnw verify",
 }
 
-_FALLBACK_IMAGE = f"{_GHCR}/dev-base:latest"
+
+def _fallback_image(prefix: str) -> str:
+    return f"{_GHCR}/{prefix}-base:latest"
+
 
 _MACHINE_TO_PLATFORM: dict[str, str] = {
     "arm64": "linux/arm64",
@@ -56,16 +61,18 @@ def detect_language(repo_root: Path) -> str:
     return ""
 
 
-def default_image(lang: str, *, fallback: bool = False) -> str:
+def default_image(lang: str, *, fallback: bool = False, prefix: str = _DEFAULT_PREFIX) -> str:
     """Return the default Docker image for a language.
 
-    When *fallback* is True, return the dev-base image if no language
+    When *fallback* is True, return the base image if no language
     matches instead of returning an empty string.
     """
-    image = _DEFAULT_IMAGES.get(lang, "")
-    if not image and fallback:
-        return _FALLBACK_IMAGE
-    return image
+    version = _DEFAULT_VERSIONS.get(lang, "")
+    if not version and fallback:
+        return _fallback_image(prefix)
+    if not version:
+        return ""
+    return f"{_GHCR}/{prefix}-{lang}:{version}"
 
 
 def worktree_parent_gitdir(repo_root: Path) -> Path | None:

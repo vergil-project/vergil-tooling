@@ -736,7 +736,7 @@ wheels = [
 
 [[package]]
 name = "standard-tooling"
-version = "1.4.35"
+version = "1.4.36"
 source = { editable = "." }
 
 [package.dev-dependencies]

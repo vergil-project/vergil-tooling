@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.4.36] - 2026-05-11
+
+### Bug fixes
+
+- fix lint, type errors, and coverage gaps from prefix refactor
+
+### Chores
+
+- bump version to 1.4.36
+
+### Documentation
+
+- migrate standards and development docs from standards-and-conventions
+- migrate AI collaboration standards from standards-and-conventions
+- add design spec for PR and issue template redesign
+- move design spec to docs/specs/
+- add implementation plan for template redesign
+- fix stale documentation
+
+### Features
+
+- add [docker] image-prefix field to standard-tooling.toml schema
+- make image prefix configurable in docker.py, default to prod
+- read image prefix from config in st-docker-run and st-docker-docs
+- default --repo to current git remote, drop --yes flag
+
+### Refactoring
+
+- remove Testing section from PR body
+- replace PR template with redirect stub
+- redesign issue template as 3-field form
+
+### Styling
+
+- fix ruff format in test file
+
 ## [1.4.35] - 2026-05-10
 
 ### Chores
