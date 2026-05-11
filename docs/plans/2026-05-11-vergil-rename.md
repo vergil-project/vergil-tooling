@@ -121,7 +121,10 @@ Expected: No open PRs on any active consumer repo.
 - [ ] **Step 3: Create the vergil-project GitHub org**
 
 This must be done via the GitHub web UI (Settings → Organizations →
-New organization). Select the free plan.
+New organization). Select the free plan. All repos are public (open
+source), so Free provides the needed features (branch protection,
+required status checks, required reviewers, CODEOWNERS). Upgrade to
+Team ($4/user/month) later if private-repo features are needed.
 
 1. Go to <https://github.com/organizations/plan>
 2. Choose "Free"
