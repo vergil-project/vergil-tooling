@@ -27,24 +27,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     for name in ("audit", "diff", "apply"):
         sp = sub.add_parser(name)
-        sp.add_argument("--repo", help="Single repo (OWNER/REPO)")
+        sp.add_argument(
+            "--repo",
+            help="Single repo (OWNER/REPO); defaults to current git remote",
+        )
         sp.add_argument("--owner", help="GitHub owner (project mode)")
         sp.add_argument("--project", help="GitHub Project number")
         sp.add_argument(
             "--config",
             help="Local path to standard-tooling.toml (overrides remote fetch)",
         )
-        if name == "apply":
-            sp.add_argument(
-                "--yes",
-                action="store_true",
-                help="Skip confirmation prompt",
-            )
 
     args = parser.parse_args(argv)
 
-    if not args.repo and not (getattr(args, "owner", None) and getattr(args, "project", None)):
-        parser.error("--repo or --owner/--project required")
+    has_owner = getattr(args, "owner", None)
+    has_project = getattr(args, "project", None)
+    if bool(has_owner) != bool(has_project):
+        parser.error("--owner and --project must be specified together")
 
     return args
 
@@ -53,7 +52,9 @@ def _resolve_repos(args: argparse.Namespace) -> list[str]:
     """Return list of repos to operate on."""
     if args.repo:
         return [args.repo]
-    return github.list_project_repos(args.owner, args.project)
+    if args.owner and args.project:
+        return github.list_project_repos(args.owner, args.project)
+    return [github.current_repo()]
 
 
 def _load_local_config(path: str) -> StConfig:
@@ -133,15 +134,6 @@ def main(argv: list[str] | None = None) -> int:
     if not non_compliant:
         print("All repos compliant, nothing to apply.")
         return 0
-
-    if not args.yes:
-        print(f"\nAbout to apply changes to {len(non_compliant)} repo(s):")
-        for repo in non_compliant:
-            print(f"  - {repo}")
-        answer = input("\nProceed? [y/N] ")
-        if answer.lower() != "y":
-            print("Aborted.")
-            return 1
 
     for repo in non_compliant:
         config = get_config(repo)

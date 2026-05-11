@@ -179,6 +179,11 @@ def merge_state_status(pr: str) -> str:
     )
 
 
+def current_repo() -> str:
+    """Return ``OWNER/REPO`` for the current directory's git remote."""
+    return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+
+
 def update_branch(pr: str) -> None:
     """Fast-forward merge the base branch into the PR branch.
 
@@ -187,7 +192,7 @@ def update_branch(pr: str) -> None:
     merge conflicts.
     """
     number = read_output("pr", "view", pr, "--json", "number", "--jq", ".number")
-    repo = read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+    repo = current_repo()
     read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
 
 
