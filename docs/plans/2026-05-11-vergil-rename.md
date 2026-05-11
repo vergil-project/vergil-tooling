@@ -19,7 +19,7 @@ releases a minor version bump for each.
 Git, GHCR (container registry), GitHub Actions workflows
 
 **Spec:**
-[`docs/specs/2026-05-11-vergil-rename-design.md`](2026-05-11-vergil-rename-design.md)
+[`docs/specs/2026-05-11-vergil-rename-design.md`](../specs/2026-05-11-vergil-rename-design.md)
 
 ---
 

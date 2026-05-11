@@ -62,10 +62,45 @@ The config file represents the VERGIL system, not a specific repo. A
 single version pins all four core repos — they are released in lockstep
 and guaranteed consistent within a version.
 
+**Full field inventory** — every section/field containing an old name:
+
+| Section | Field | Change |
+|---|---|---|
+| `[dependencies]` | `standard-tooling = "v1.4"` | `vergil = "v2.0"` |
+| `[publish]` | `consumer-refresh` (contains `standard-tooling @ git+https://github.com/wphillipmoore/...`) | Update package name, GitHub org, and version tag |
+| `[docker]` | `image-prefix` | No rename needed, but GHCR prefix in code changes (see Container registry) |
+| `[project.co-authors]` | `wphillipmoore-claude`, `wphillipmoore-codex` | Decision point: bot accounts stay as-is unless renamed separately |
+
+### Container registry
+
+All dev container images move from `ghcr.io/wphillipmoore/*` to
+`ghcr.io/vergil-project/*`:
+
+| Image | Old | New |
+|---|---|---|
+| Prod base | `ghcr.io/wphillipmoore/prod-base` | `ghcr.io/vergil-project/prod-base` |
+| Dev base | `ghcr.io/wphillipmoore/dev-base` | `ghcr.io/vergil-project/dev-base` |
+
+The hardcoded GHCR prefix in `src/standard_tooling/lib/docker.py`
+(`_GHCR = "ghcr.io/wphillipmoore"`) changes to
+`ghcr.io/vergil-project`.
+
+GHCR packages are scoped to the owning user/org. Transferring a repo
+does not automatically move its container packages. After
+`vergil-docker` is transferred and renamed, all images must be
+re-published to `ghcr.io/vergil-project/*` before downstream repos
+can pull them. During the consumer sweep, images must be available at
+both the old and new GHCR paths — consumers not yet swept still
+reference the old prefix.
+
 ### Versioning
 
+v2.0 is scoped to the rename. The intent is minimum necessary breaking
+changes; execution-time fixes may introduce additional breaks as
+needed, but no unrelated breaking changes are bundled.
+
 - **Four core repos:** v1.x → v2.0.0 (may iterate to v2.0.x during
-  stabilization)
+  stabilization). The `v2.0` tag tracks the latest patch level.
 - **Consumer repos:** minor version bump (1.x → 1.x+1) to reflect the
   dependency rename; no consumer-side logic changes
 
@@ -75,7 +110,8 @@ and guaranteed consistent within a version.
 
 All repos frozen. No in-flight PRs, no active development across the
 fleet. Single engineer, single execution window (target: one
-morning/day).
+morning/day). Phase 1 (core repos) must complete before breaking.
+Phase 2 (consumer sweep) can resume in a separate window if needed.
 
 ### Phase 1 — Core repos
 
@@ -98,22 +134,33 @@ For each repo:
 2. Transfer to the `vergil-project` org
 3. Update all internal references (imports, URLs, config, workflow
    `uses:` lines)
-4. For vergil-tooling specifically: rename the Python module
+4. For vergil-docker specifically: re-publish all container images to
+   `ghcr.io/vergil-project/*` (GHCR packages don't move with repo
+   transfers)
+5. For vergil-tooling specifically: rename the Python module
    (`src/standard_tooling/` → `src/vergil_tooling/`), update
-   `pyproject.toml`, rename CLI entry points `st-*` → `vrg-*`
-5. Release v2.0.0 (may iterate to v2.0.x if issues surface)
-6. Verify the release before moving to the next repo
+   `pyproject.toml`, rename CLI entry points `st-*` → `vrg-*`,
+   update `_GHCR` prefix in `docker.py`
+6. Release v2.0.0 (may iterate to v2.0.x if issues surface)
+7. Verify the release before moving to the next repo
 
 GitHub redirects from the old `wphillipmoore/*` URLs remain active
 throughout, providing a safety net.
 
 ### Phase 2 — Consumer sweep
 
-Once all four core repos are stable at v2.0.x, sweep through each of
-the ~10-12 consumer repos:
+**Checkpoint:** Phase 1 must complete before breaking. Phase 2 can
+resume in a separate window if needed — core repos are the critical
+path, consumers can trail. During this gap, images remain available at
+both `ghcr.io/wphillipmoore/*` (old) and `ghcr.io/vergil-project/*`
+(new) so un-swept consumers continue to work.
+
+Once all four core repos are stable at v2.0.x, sweep through each
+consumer repo (see Appendix A for the full manifest):
 
 1. Rename `standard-tooling.toml` → `vergil.toml`
-2. Update config: `[dependencies] vergil = "v2.0"`
+2. Update all config fields (see Config file inventory above):
+   `[dependencies]`, `[publish] consumer-refresh`, etc.
 3. Update `.githooks/pre-commit` (`st-commit` → `vrg-commit`,
    `ST_COMMIT_CONTEXT` → `VRG_COMMIT_CONTEXT`)
 4. Update workflow files (`uses: wphillipmoore/standard-actions/...` →
@@ -182,6 +229,43 @@ the Diogenes rename of `ai-research-methodology`):
 
 1. Create a `<name>-project` GitHub org
 2. Rename and transfer repos in dependency order
-3. Update all internal references
-4. Release, verify
-5. Sweep consumer repos
+3. Re-publish container images to the new GHCR scope
+4. Update all internal references
+5. Release, verify
+6. Sweep consumer repos
+
+## Appendix A: Consumer Repo Manifest
+
+Repos under `wphillipmoore/` that consume standard-tooling (have a
+`standard-tooling.toml` or reference `st-*` tools). Verify each
+before execution day — repos may be archived or added between now
+and then.
+
+| Repository | Notes |
+|---|---|
+| `ai-research-methodology` | Also the future Diogenes rename candidate |
+| `career-strategy` | |
+| `cognition` | |
+| `home-equity-project` | |
+| `lunatick-racing` | |
+| `mempalace` | |
+| `mnemosys-core` | |
+| `mnemosys-ios` | |
+| `mnemosys-operations` | |
+| `mq-rest-admin-common` | |
+| `mq-rest-admin-dev-environment` | |
+| `mq-rest-admin-go` | |
+| `mq-rest-admin-java` | |
+| `mq-rest-admin-python` | |
+| `mq-rest-admin-ruby` | |
+| `mq-rest-admin-rust` | |
+| `paad` | Claude Code plugin — may have skill namespace references |
+| `the-infrastructure-mindset` | |
+| `renegade-dotfiles` | Verify: may not consume standard-tooling |
+
+**Not consumers** (no sweep needed):
+
+- `cpan-afs-command`, `cpan-netapp`, `perl5-MQSeries` — legacy Perl,
+  pre-dates standard-tooling
+- `standards-and-conventions` — historical reference, explicitly out
+  of scope
