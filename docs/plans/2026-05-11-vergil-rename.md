@@ -529,7 +529,7 @@ Note: test files without `st_` prefix (`test_config.py`,
 `test_release.py`, `test_validate_commands.py`,
 `test_validate_common.py`, `test_version.py`) stay as-is.
 
-- [ ] **Step 3: Update pyproject.toml — package name and metadata**
+- [ ] **Step 3: Update pyproject.toml — package name, metadata, and package-data**
 
 Change the `[project]` section:
 
@@ -538,6 +538,13 @@ Change the `[project]` section:
 name = "vergil-tooling"
 version = "2.0.0"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
+```
+
+Update `[tool.setuptools.package-data]`:
+
+```toml
+[tool.setuptools.package-data]
+vergil_tooling = ["data/*.json", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
 ```
 
 - [ ] **Step 4: Update pyproject.toml — console scripts**
@@ -730,7 +737,25 @@ Review these files manually to confirm string references are correct:
 - `src/vergil_tooling/bin/vrg_finalize_repo.py` — subprocess calls to
   `vrg-docker-run` and `vrg-validate`
 
-- [ ] **Step 4: Update string references in lib and test files**
+- [ ] **Step 4: Update dependency-key references in test fixtures**
+
+The TOML dependency key renames to `vergil` (not `vergil-tooling`).
+These targeted replacements must run **before** the blanket
+`standard-tooling` → `vergil-tooling` pattern in Step 5, or the
+wrong substitution wins.
+
+```bash
+find tests/vergil_tooling -name '*.py' -exec sed -i '' \
+  -e 's/standard-tooling = "v1\.4"/vergil = "v2.0"/g' \
+  -e 's/dependencies\["standard-tooling"\]/dependencies["vergil"]/g' \
+  -e 's/match="standard-tooling"/match="vergil"/g' \
+  {} +
+```
+
+Review `test_config.py` and `test_docker_cache.py` manually — both
+have TOML fixture strings where the dependency key appears.
+
+- [ ] **Step 5: Update string references in lib and test files**
 
 ```bash
 find src/vergil_tooling/lib tests/vergil_tooling -name '*.py' -exec sed -i '' \
@@ -740,20 +765,24 @@ find src/vergil_tooling/lib tests/vergil_tooling -name '*.py' -exec sed -i '' \
   -e 's/st-validate/vrg-validate/g' \
   -e 's/st-docker-run/vrg-docker-run/g' \
   -e 's/st-finalize-repo/vrg-finalize-repo/g' \
+  -e 's/ST_COMMIT_CONTEXT/VRG_COMMIT_CONTEXT/g' \
+  -e 's/ST_DOCKER_INSTALL_TAG/VRG_DOCKER_INSTALL_TAG/g' \
+  -e 's/st_install_tag/vrg_install_tag/g' \
   {} +
 ```
 
-- [ ] **Step 5: Verify no old string references remain**
+- [ ] **Step 6: Verify no old string references remain**
 
 ```bash
 grep -rn '"st-' src/ tests/ --include="*.py"
 grep -rn "standard-tooling" src/ tests/ --include="*.py"
+grep -rn "ST_COMMIT_CONTEXT\|ST_DOCKER_INSTALL_TAG\|st_install_tag" tests/ --include="*.py"
 ```
 
 Expected: Zero matches (excluding any that legitimately reference the
 old name in a historical context — these should be rare).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A
@@ -793,6 +822,10 @@ consumer-refresh = """\
 uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v<VERSION>'
 """
 ```
+
+Note: `[project.co-authors]` bot account names (`wphillipmoore-claude`,
+`wphillipmoore-codex`) stay as-is — they are GitHub usernames, not
+repo/org references. Rename separately if needed.
 
 - [ ] **Step 3: Update pre-commit hook**
 
@@ -1091,7 +1124,25 @@ grep -rn "standard-tooling\|standard_tooling\|wphillipmoore\|st-commit\|st-valid
 
 Expected: Zero matches.
 
-- [ ] **Step 9: Commit, push, PR, merge, release v2.0.0**
+- [ ] **Step 9: Verify plugin namespace resolution**
+
+Install the plugin from the new repo and confirm skills resolve under
+the new `vergil:*` namespace:
+
+```bash
+claude mcp add-plugin vergil-project/vergil-claude-plugin
+```
+
+Verify at least one skill is callable:
+
+```bash
+# In a Claude Code session, confirm /vergil:publish (or similar) loads
+```
+
+If the namespace doesn't resolve, check `plugin.json` `"name"` field
+and the plugin registration mechanism.
+
+- [ ] **Step 10: Commit, push, PR, merge, release v2.0.0**
 
 Commit message: `feat!: rename to vergil-claude-plugin under vergil-project org`
 
@@ -1187,6 +1238,15 @@ Also update version tags: `@v1.x` → `@v2.0`.
 Replace references to `standard-tooling`, `st-*` commands, and
 `wphillipmoore` org with the new names. Each repo's CLAUDE.md is
 different — review manually after sed.
+
+Also check for plugin skill namespace references:
+
+```bash
+grep -rn "standard-tooling:" --include="*.md" .
+```
+
+Replace `standard-tooling:` → `vergil:` (e.g.,
+`standard-tooling:publish` → `vergil:publish`).
 
 - [ ] **Step H: Update any other references**
 
