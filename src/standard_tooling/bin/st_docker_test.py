@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 from standard_tooling.lib import git
 from standard_tooling.lib.docker import (
-    _DEFAULT_IMAGES,
     _DEFAULT_TEST_COMMANDS,
     build_docker_args,
+    default_image,
     detect_language,
 )
 
@@ -28,7 +28,7 @@ _detect_language = detect_language
 
 def build_test_docker_args(repo_root: Path, lang: str) -> list[str]:
     """Build the docker run argument list for test execution."""
-    image = os.environ.get("DOCKER_DEV_IMAGE") or _DEFAULT_IMAGES.get(lang, "")
+    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(lang)
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
     network = os.environ.get("DOCKER_NETWORK", "")
 

@@ -114,6 +114,42 @@ def test_language_detected_image(tmp_path: Path) -> None:
     assert "ghcr.io/wphillipmoore/prod-python:3.14" in args
 
 
+_TOML_DEV_PREFIX = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
+
+[docker]
+image-prefix = "dev"
+"""
+
+
+def test_config_prefix_used(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    (tmp_path / "standard-tooling.toml").write_text(_TOML_DEV_PREFIX)
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("standard_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_docker_run.assert_docker_available"),
+        patch("standard_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
+        patch("standard_tooling.bin.st_docker_run.os.execvp"),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        mock_cache.return_value = "ghcr.io/wphillipmoore/dev-python:3.14"
+        main(["--", "echo", "hi"])
+    mock_cache.assert_called_once()
+    assert mock_cache.call_args[0][2] == "ghcr.io/wphillipmoore/dev-python:3.14"
+
+
 def test_env_image_override(tmp_path: Path) -> None:
     env = {"GH_TOKEN": "tok", "DOCKER_DEV_IMAGE": "custom:img"}
     with (

@@ -10,7 +10,6 @@ import pytest
 from standard_tooling.lib.config import (
     CiConfig,
     ConfigError,
-    DockerConfig,
     GithubOverrides,
     MarkdownlintConfig,
     read_config,

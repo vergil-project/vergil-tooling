@@ -28,8 +28,10 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "java": "./mvnw verify",
 }
 
+
 def _fallback_image(prefix: str) -> str:
     return f"{_GHCR}/{prefix}-base:latest"
+
 
 _MACHINE_TO_PLATFORM: dict[str, str] = {
     "arm64": "linux/arm64",

@@ -10,9 +10,12 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from standard_tooling.lib import git
+
+if TYPE_CHECKING:
+    from pathlib import Path
 from standard_tooling.lib.config import ConfigError, read_config
 from standard_tooling.lib.docker import (
     assert_docker_available,
