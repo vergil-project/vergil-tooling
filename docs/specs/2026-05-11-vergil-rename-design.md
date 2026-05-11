@@ -119,7 +119,33 @@ Phase 2 (consumer sweep) can resume in a separate window if needed.
 
 Create `vergil-project` GitHub org with the owner account.
 
-**Step 2: Rename, transfer, update, and release in dependency order**
+**Step 2: Configure org infrastructure**
+
+Before transferring any repos, the new org needs baseline
+configuration that the repos' CI/CD pipelines depend on:
+
+- **GitHub Actions** — enable Actions; set workflow permissions to
+  read/write for `GITHUB_TOKEN`; configure allowed actions policy
+  (allow `vergil-project/*`, `actions/*`, `astral-sh/*`, `docker/*`,
+  `github/*`, `pypa/*`)
+- **GitHub App** — install the automation app (used for
+  elevated-permission tokens in cross-repo workflows and releases) on
+  the org. Create org-level secrets `APP_ID` and `APP_PRIVATE_KEY`
+  so all transferred repos inherit them.
+- **Org-level secrets** — set up shared secrets so they don't need to
+  be recreated per-repo after transfer:
+  - `APP_ID` + `APP_PRIVATE_KEY` (GitHub App — all repos)
+  - `PROJECT_TOKEN` (GitHub Projects — repos that use it)
+  - `PR_BUMP_TOKEN` (version bump PRs — vergil-actions)
+- **GitHub Pages** — enable Pages at the org level (all repos publish
+  docs via GitHub Pages by default)
+- **Packages / GHCR** — verify that the org has GitHub Packages
+  enabled and that `GITHUB_TOKEN` has `packages:write` scope
+
+This step is directly reusable for future org setups (e.g.,
+diogenes-project).
+
+**Step 3: Rename, transfer, update, and release in dependency order**
 
 The four repos have a dependency chain that determines sequencing:
 

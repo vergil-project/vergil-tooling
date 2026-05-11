@@ -143,7 +143,118 @@ No files changed — this is an admin-only task. Proceed to Task 2.
 
 ---
 
-## Task 2: vergil-docker — Transfer, Rename, Update, and Republish
+## Task 2: Org Infrastructure Setup
+
+**Files:** None (GitHub admin operations)
+
+This task configures the org-level infrastructure that the repos'
+CI/CD pipelines depend on. Without this, transferred repos will fail
+to publish images, create releases, or run workflows. This setup is
+reusable for future org creations (e.g., diogenes-project).
+
+- [ ] **Step 1: Configure GitHub Actions permissions**
+
+Via GitHub UI: `vergil-project` → Settings → Actions → General
+
+1. Actions permissions: "Allow vergil-project, and select
+   non-vergil-project, actions and reusable workflows"
+2. Under "Allow specified actions and reusable workflows", add:
+   - `actions/*`
+   - `astral-sh/*`
+   - `docker/*`
+   - `github/*`
+   - `pypa/*`
+   - `vergil-project/*`
+3. Workflow permissions: "Read and write permissions"
+4. Check "Allow GitHub Actions to create and approve pull requests"
+
+Verify via API:
+
+```bash
+gh api orgs/vergil-project/actions/permissions --jq '.'
+```
+
+- [ ] **Step 2: Install the GitHub App on the org**
+
+The automation GitHub App (used for elevated-permission tokens in
+release workflows and cross-repo operations) must be installed on the
+`vergil-project` org.
+
+Via GitHub UI: go to the app's settings page → Install → select
+`vergil-project` → grant access to all repositories.
+
+Verify:
+
+```bash
+gh api orgs/vergil-project/installations --jq '.[].app_slug'
+```
+
+- [ ] **Step 3: Create org-level secrets**
+
+Set up secrets at the org level so transferred repos inherit them
+automatically:
+
+```bash
+gh secret set APP_ID --org vergil-project --body "<value>"
+gh secret set APP_PRIVATE_KEY --org vergil-project --body "<value>"
+gh secret set PROJECT_TOKEN --org vergil-project --body "<value>"
+```
+
+For the vergil-actions-specific secret:
+
+```bash
+gh secret set PR_BUMP_TOKEN --org vergil-project --body "<value>"
+```
+
+Note: retrieve the current secret values from the existing repos
+before transferring them. Secrets cannot be read via API — check
+your password manager or regenerate them.
+
+Verify secrets are set:
+
+```bash
+gh secret list --org vergil-project
+```
+
+Expected: `APP_ID`, `APP_PRIVATE_KEY`, `PROJECT_TOKEN`,
+`PR_BUMP_TOKEN` all listed.
+
+- [ ] **Step 4: Remove stale SONAR_TOKEN secrets**
+
+SonarCloud was dropped (not cost-effective at scale, and open-source
+tools provide equivalent coverage). Clean up the stale secrets from
+repos that still have them:
+
+```bash
+gh secret delete SONAR_TOKEN --repo wphillipmoore/standard-tooling 2>/dev/null
+gh secret delete SONAR_TOKEN --repo wphillipmoore/standard-actions 2>/dev/null
+```
+
+- [ ] **Step 5: Enable GitHub Pages at the org level**
+
+Via GitHub UI: `vergil-project` → Settings → Pages
+
+Enable Pages for the org. All repos publish docs via GitHub Pages by
+default.
+
+- [ ] **Step 6: Verify GitHub Packages / GHCR access**
+
+Ensure the org has Packages enabled and that workflows can publish
+container images:
+
+Via GitHub UI: `vergil-project` → Settings → Packages
+
+Verify that "Inherit access from source repository" is enabled for
+container images (this is the default).
+
+- [ ] **Step 7: Proceed to Task 3**
+
+Org infrastructure is ready. Repos transferred after this point will
+inherit Actions permissions, secrets, and Packages access.
+
+---
+
+## Task 3: vergil-docker — Transfer, Rename, Update, and Republish
 
 **Repo:** `wphillipmoore/standard-tooling-docker` →
 `vergil-project/vergil-docker`
@@ -263,7 +374,7 @@ GitHub release.
 
 ---
 
-## Task 3: vergil-actions — Transfer, Rename, Update, and Release
+## Task 4: vergil-actions — Transfer, Rename, Update, and Release
 
 **Repo:** `wphillipmoore/standard-actions` →
 `vergil-project/vergil-actions`
@@ -405,7 +516,7 @@ tag.
 
 ---
 
-## Task 4: vergil-tooling — Transfer, Rename, and Directory Renames
+## Task 5: vergil-tooling — Transfer, Rename, and Directory Renames
 
 **Repo:** `wphillipmoore/standard-tooling` →
 `vergil-project/vergil-tooling`
@@ -472,7 +583,7 @@ for the directories.
 
 ---
 
-## Task 5: vergil-tooling — Rename Bin and Test Files
+## Task 6: vergil-tooling — Rename Bin and Test Files
 
 **Files:**
 - Rename: `src/vergil_tooling/bin/st_*.py` (×18) → `vrg_*.py`
@@ -583,7 +694,7 @@ Commit message: `refactor!: rename st-* CLI entry points to vrg-*`
 
 ---
 
-## Task 6: vergil-tooling — Update Python Imports and Code Constants
+## Task 7: vergil-tooling — Update Python Imports and Code Constants
 
 **Files:**
 - Modify: All `.py` files under `src/vergil_tooling/` and
@@ -685,7 +796,7 @@ Commit message: `refactor!: update imports, constants, and env vars for vergil r
 
 ---
 
-## Task 7: vergil-tooling — Update String References in CLI Tools
+## Task 8: vergil-tooling — Update String References in CLI Tools
 
 **Files:**
 - Modify: All `src/vergil_tooling/bin/vrg_*.py` files
@@ -792,7 +903,7 @@ Commit message: `refactor!: update CLI command names and string references to vr
 
 ---
 
-## Task 8: vergil-tooling — Config, Hooks, Docs, and Workflows
+## Task 9: vergil-tooling — Config, Hooks, Docs, and Workflows
 
 **Files:**
 - Modify: `standard-tooling.toml` (rename), `.githooks/pre-commit`,
@@ -932,7 +1043,7 @@ Commit message: `refactor!: update config, hooks, docs, and workflows for vergil
 
 ---
 
-## Task 9: vergil-tooling — Validate and Release v2.0.0
+## Task 10: vergil-tooling — Validate and Release v2.0.0
 
 - [ ] **Step 1: Install dev dependencies**
 
@@ -1008,7 +1119,7 @@ the `v2.0.0` tag (or `v2.0.x` if patches were needed).
 
 ---
 
-## Task 10: vergil-claude-plugin — Transfer, Rename, Update, and Release
+## Task 11: vergil-claude-plugin — Transfer, Rename, Update, and Release
 
 **Repo:** `wphillipmoore/standard-tooling-plugin` →
 `vergil-project/vergil-claude-plugin`
@@ -1148,7 +1259,7 @@ Commit message: `feat!: rename to vergil-claude-plugin under vergil-project org`
 
 ---
 
-## Task 11: Consumer Sweep
+## Task 12: Consumer Sweep
 
 **Phase 2 checkpoint:** All four core repos must be stable and
 released at v2.0.x before starting this task.
@@ -1271,7 +1382,7 @@ After CI passes, merge. Create a minor version release (1.x → 1.x+1).
 
 ---
 
-## Task 12: Final Verification and Local Cleanup
+## Task 13: Final Verification and Local Cleanup
 
 - [ ] **Step 1: Verify all releases**
 
