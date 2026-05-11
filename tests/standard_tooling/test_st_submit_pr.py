@@ -8,7 +8,6 @@ from unittest.mock import patch
 import pytest
 
 from standard_tooling.bin.st_submit_pr import (
-    _extract_testing_section,
     _resolve_issue_ref,
     main,
     parse_args,
@@ -70,28 +69,24 @@ def test_parse_args_all_options() -> None:
     assert args.dry_run is True
 
 
-def test_extract_testing_section_no_template(tmp_path: Path) -> None:
-    assert _extract_testing_section(tmp_path) == ""
-
-
-def test_extract_testing_section_with_template(tmp_path: Path) -> None:
+def test_dry_run_body_has_no_testing_section(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     gh = tmp_path / ".github"
     gh.mkdir()
     (gh / "pull_request_template.md").write_text(
-        "## Summary\n\nStuff\n\n## Testing\n\nRun tests\nCheck coverage\n\n## Notes\n\nNone\n"
+        "> **Do not create PRs manually.**\n"
+        "> Use `st-submit-pr`.\n"
     )
-    result = _extract_testing_section(tmp_path)
-    assert "Run tests" in result
-    assert "Check coverage" in result
-    assert "Notes" not in result
-
-
-def test_extract_testing_section_testing_at_end(tmp_path: Path) -> None:
-    gh = tmp_path / ".github"
-    gh.mkdir()
-    (gh / "pull_request_template.md").write_text("## Testing\n\nFinal section\n")
-    result = _extract_testing_section(tmp_path)
-    assert "Final section" in result
+    with (
+        patch("standard_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+    ):
+        result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "## Summary" in output
+    assert "## Issue Linkage" in output
+    assert "## Notes" in output
+    assert "## Testing" not in output
 
 
 def test_main_dry_run(tmp_path: Path) -> None:
