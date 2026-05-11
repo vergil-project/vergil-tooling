@@ -9,8 +9,13 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import TYPE_CHECKING
 
 from standard_tooling.lib import git
+
+if TYPE_CHECKING:
+    from pathlib import Path
+from standard_tooling.lib.config import ConfigError, read_config
 from standard_tooling.lib.docker import docker_platform
 
 
@@ -22,15 +27,26 @@ def _usage(port: str) -> None:
     print("  build   Build the static documentation site")
     print()
     print("Environment variables:")
-    print("  DOCKER_DOCS_IMAGE  Docker image (default: ghcr.io/wphillipmoore/dev-base:latest)")
+    print("  DOCKER_DOCS_IMAGE  Docker image (default: ghcr.io/wphillipmoore/prod-base:latest)")
     print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
     print("  DOCS_PORT          Host port for serve (default: 8000)")
+
+
+def _docs_image(repo_root: Path) -> str:
+    env_image = os.environ.get("DOCKER_DOCS_IMAGE")
+    if env_image:
+        return env_image
+    try:
+        cfg = read_config(repo_root)
+        prefix = cfg.docker.image_prefix
+    except (FileNotFoundError, ConfigError):
+        prefix = "prod"
+    return f"ghcr.io/wphillipmoore/{prefix}-base:latest"
 
 
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
-    image = os.environ.get("DOCKER_DOCS_IMAGE", "ghcr.io/wphillipmoore/dev-base:latest")
     config = os.environ.get("MKDOCS_CONFIG", "docs/site/mkdocs.yml")
     port = os.environ.get("DOCS_PORT", "8000")
 
@@ -54,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         mkdocs_cmd += " " + " ".join(extra_args)
 
     repo_root = git.repo_root()
+    image = _docs_image(repo_root)
 
     container_cmd = mkdocs_cmd
     if (repo_root / "pyproject.toml").is_file():

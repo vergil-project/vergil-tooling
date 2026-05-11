@@ -343,3 +343,40 @@ def test_publish_docs_defaults_true(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_PUBLISH_RELEASE_ONLY_TOML)
     cfg = read_config(tmp_path)
     assert cfg.publish.docs is True
+
+
+# -- [docker] section ----------------------------------------------------------
+
+_DOCKER_PREFIX_TOML = (
+    _VALID_TOML
+    + """
+[docker]
+image-prefix = "dev"
+"""
+)
+
+
+def test_read_config_docker_prefix(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_DOCKER_PREFIX_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.docker.image_prefix == "dev"
+
+
+def test_read_config_docker_prefix_defaults_to_prod(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.docker.image_prefix == "prod"
+
+
+def test_read_config_docker_empty_section(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[docker]\n"
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.docker.image_prefix == "prod"
+
+
+def test_read_config_docker_invalid_prefix(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[docker]\nimage-prefix = "staging"\n'
+    (tmp_path / "standard-tooling.toml").write_text(toml)
+    with pytest.raises(ConfigError, match="image-prefix.*staging"):
+        read_config(tmp_path)

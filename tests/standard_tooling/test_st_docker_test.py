@@ -71,7 +71,7 @@ def test_detect_ruby_priority(tmp_path: Path) -> None:
 def test_build_docker_args_python(tmp_path: Path) -> None:
     with patch.dict("os.environ", {}, clear=True):
         args = build_test_docker_args(tmp_path, "python")
-    assert "ghcr.io/wphillipmoore/dev-python:3.14" in args
+    assert "ghcr.io/wphillipmoore/prod-python:3.14" in args
     assert "uv sync && uv run pytest tests/ -v" in args
     assert "-v" in args
 
@@ -167,7 +167,7 @@ def test_main_calls_execvp(tmp_path: Path) -> None:
     mock_exec.assert_called_once()
     call_args = mock_exec.call_args
     assert call_args[0][0] == "docker"
-    assert "ghcr.io/wphillipmoore/dev-python:3.14" in call_args[0][1]
+    assert "ghcr.io/wphillipmoore/prod-python:3.14" in call_args[0][1]
 
 
 # -- _docker_is_available ----------------------------------------------------

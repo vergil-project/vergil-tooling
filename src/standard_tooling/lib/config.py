@@ -21,6 +21,7 @@ _ENUMS: dict[str, set[str]] = {
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
     "primary-language": {"python", "go", "java", "ruby", "rust", "shell", "none", "claude-plugin"},
+    "image-prefix": {"dev", "prod"},
 }
 
 _PROJECT_FIELDS = (
@@ -69,6 +70,11 @@ class PublishConfig:
 
 
 @dataclass
+class DockerConfig:
+    image_prefix: str
+
+
+@dataclass
 class StConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
@@ -76,6 +82,7 @@ class StConfig:
     ci: CiConfig
     github: GithubOverrides
     publish: PublishConfig
+    docker: DockerConfig
 
 
 def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
@@ -144,6 +151,14 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         docs=bool(publish_raw.get("docs", True)),
     )
 
+    docker_raw = raw.get("docker", {})
+    docker_prefix = docker_raw.get("image-prefix", "prod")
+    if docker_prefix not in _ENUMS["image-prefix"]:
+        allowed = ", ".join(sorted(_ENUMS["image-prefix"]))
+        msg = f"{CONFIG_FILE}: invalid image-prefix '{docker_prefix}' (allowed: {allowed})"
+        raise ConfigError(msg)
+    docker = DockerConfig(image_prefix=docker_prefix)
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -159,6 +174,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         ci=ci,
         github=github_overrides,
         publish=publish,
+        docker=docker,
     )
 
 

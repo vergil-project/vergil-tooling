@@ -97,6 +97,37 @@ def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     assert "uv" not in container_cmd
 
 
+_TOML_DEV_PREFIX = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+standard-tooling = "v1.4"
+
+[ci]
+versions = ["3.14"]
+
+[docker]
+image-prefix = "dev"
+"""
+
+
+def test_config_prefix_used(tmp_path: Path) -> None:
+    (tmp_path / "standard-tooling.toml").write_text(_TOML_DEV_PREFIX)
+    with (
+        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main(["serve"])
+    args = mock_exec.call_args[0][1]
+    assert "ghcr.io/wphillipmoore/dev-base:latest" in args
+
+
 def test_common_sibling_mount(tmp_path: Path) -> None:
     common = tmp_path / ".." / "mq-rest-admin-common"
     common.mkdir(parents=True)
