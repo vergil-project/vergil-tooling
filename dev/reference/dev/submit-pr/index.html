@@ -4145,14 +4145,14 @@
 
 <h1 id="st-submit-pr">st-submit-pr<a class="headerlink" href="#st-submit-pr" title="Permanent link">&para;</a></h1>
 <p><strong>Installed as:</strong> <code>st-submit-pr</code> (Python console script)</p>
-<p><strong>Source:</strong> <code>src/standard_tooling/submit_pr.py</code></p>
+<p><strong>Source:</strong> <code>src/standard_tooling/bin/st_submit_pr.py</code></p>
 <p>Wrapper that creates standards-compliant pull requests with
-proper issue linkage, testing sections, and auto-merge configuration.</p>
+proper issue linkage.</p>
 <div class="admonition warning">
 <p class="admonition-title">Required for AI agents</p>
 <p>AI agents <strong>must</strong> use this tool instead of raw
-<code>gh pr create</code>. The tool populates the PR template and
-configures auto-merge automatically.</p>
+<code>gh pr create</code>. The tool constructs the PR body from
+CLI arguments.</p>
 </div>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>When running inside a dev container, <code>GH_TOKEN</code> must be set so <code>gh</code> can
@@ -4162,7 +4162,7 @@ cover <code>gh auth login</code> and how <code>GH_TOKEN</code> flows through to 
 container.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--issue<span class="w"> </span>NUMBER<span class="w"> </span>--summary<span class="w"> </span>TEXT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--issue<span class="w"> </span>NUMBER<span class="w"> </span>--summary<span class="w"> </span>TEXT<span class="w"> </span>--title<span class="w"> </span>TEXT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -4185,14 +4185,14 @@ container.</p>
 <td>One-line PR summary</td>
 </tr>
 <tr>
-<td><code>--linkage</code></td>
-<td>No</td>
-<td>Linkage keyword (default: <code>Fixes</code>)</td>
+<td><code>--title</code></td>
+<td>Yes</td>
+<td>PR title</td>
 </tr>
 <tr>
-<td><code>--title</code></td>
+<td><code>--linkage</code></td>
 <td>No</td>
-<td>PR title (default: last commit subject)</td>
+<td>Linkage keyword (default: <code>Ref</code>)</td>
 </tr>
 <tr>
 <td><code>--notes</code></td>
@@ -4207,35 +4207,31 @@ container.</p>
 </tbody>
 </table>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
-<p><code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>, <code>Ref</code></p>
+<p><code>Ref</code></p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Standard PR</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="c1"># PR with Ref linkage</span>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span>--linkage<span class="w"> </span>Ref<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Update docs&quot;</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="c1"># Dry run to preview</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span>--summary<span class="w"> </span><span class="s2">&quot;Fix regex bug&quot;</span><span class="w"> </span>--dry-run
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Dry run to preview</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Fix regex bug&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;fix(regex): handle edge case&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--dry-run
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
 <li>Validates arguments and issue reference format.</li>
-<li>Detects target branch and merge strategy from the current
-   branch:<ul>
-<li><code>release/*</code> branches target <code>main</code> with merge strategy</li>
-<li>All other branches target <code>develop</code> with squash strategy</li>
+<li>Detects target branch from the current branch:<ul>
+<li><code>release/*</code> branches target <code>main</code></li>
+<li>All other branches target <code>develop</code></li>
 </ul>
 </li>
-<li>Reads the testing section from
-   <code>.github/pull_request_template.md</code>.</li>
 <li>Pushes the branch to origin.</li>
 <li>Creates the PR via <code>gh pr create</code>.</li>
-<li>Enables auto-merge with the detected strategy.</li>
 </ol>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
@@ -4248,7 +4244,7 @@ container.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>PR created and auto-merge enabled</td>
+<td>PR created</td>
 </tr>
 <tr>
 <td>1</td>
