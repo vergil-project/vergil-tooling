@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from standard_tooling.lib.docker import (
-    _FALLBACK_IMAGE,
     assert_docker_available,
     build_docker_args,
     default_image,
@@ -69,7 +68,7 @@ def test_detect_ruby_priority(tmp_path: Path) -> None:
 
 
 def test_default_image_known_lang() -> None:
-    assert "dev-python" in default_image("python")
+    assert "prod-python" in default_image("python")
 
 
 def test_default_image_unknown_no_fallback() -> None:
@@ -77,11 +76,40 @@ def test_default_image_unknown_no_fallback() -> None:
 
 
 def test_default_image_unknown_with_fallback() -> None:
-    assert default_image("unknown", fallback=True) == _FALLBACK_IMAGE
+    assert default_image("unknown", fallback=True) == "ghcr.io/wphillipmoore/prod-base:latest"
 
 
 def test_default_image_empty_with_fallback() -> None:
-    assert default_image("", fallback=True) == _FALLBACK_IMAGE
+    assert default_image("", fallback=True) == "ghcr.io/wphillipmoore/prod-base:latest"
+
+
+# -- prefix-aware default_image -----------------------------------------------
+
+
+def test_default_image_prod_prefix() -> None:
+    img = default_image("python", prefix="prod")
+    assert "prod-python" in img
+    assert "dev-python" not in img
+
+
+def test_default_image_dev_prefix() -> None:
+    img = default_image("python", prefix="dev")
+    assert "dev-python" in img
+
+
+def test_default_image_default_prefix_is_prod() -> None:
+    img = default_image("python")
+    assert "prod-python" in img
+
+
+def test_default_image_fallback_respects_prefix() -> None:
+    img = default_image("unknown", fallback=True, prefix="prod")
+    assert "prod-base" in img
+
+
+def test_default_image_fallback_dev_prefix() -> None:
+    img = default_image("unknown", fallback=True, prefix="dev")
+    assert "dev-base" in img
 
 
 # -- docker_platform ----------------------------------------------------------
