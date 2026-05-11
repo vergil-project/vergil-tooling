@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 from standard_tooling.lib import git
+from standard_tooling.lib.config import ConfigError, read_config
 from standard_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
@@ -44,6 +46,14 @@ examples:
 """
 
 
+def _image_prefix(repo_root: Path) -> str:
+    try:
+        cfg = read_config(repo_root)
+        return cfg.docker.image_prefix
+    except (FileNotFoundError, ConfigError):
+        return "prod"
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
@@ -74,13 +84,14 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
+    prefix = _image_prefix(repo_root)
 
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:
         image = env_image
         image_source = "env"
     else:
-        base = default_image(lang, fallback=True)
+        base = default_image(lang, fallback=True, prefix=prefix)
         image = ensure_cached_image(repo_root, lang, base)
         image_source = "cached" if image != base else "default"
 
