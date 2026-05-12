@@ -24,7 +24,7 @@ codebase), macOS Keychain via `security` CLI, GitHub Apps (JWT/PyJWT)
 **Relationship to VERGIL rename plan:** This plan is Plan A (org setup).
 The existing rename plan (`docs/plans/2026-05-11-vergil-rename.md`) is
 Plan B (migration). Plan A must complete through Task 9 before Plan B
-begins. Tasks 10–14 execute after Plan B completes.
+begins. Tasks 10–15 execute after Plan B completes.
 
 **Task ordering within Phase 1:** Tasks 1 and 4 must complete before
 Task 2 (PATs require the org to exist and the agent account to be
@@ -907,9 +907,168 @@ paths will reflect the VERGIL rename.
     --agent claude
   ```
 
-### Task 14: End-to-End Verification
+### Task 14: Create Deferred Work Issues in New Org
+
+**Files:** None (`gh` CLI)
+
+Create issues in the `vergil-project` org for all deferred work items
+so they are tracked where the work will be done — not left behind in
+the pre-migration issue tracker.
+
+- [ ] **Step 1: Identify the target repo for governance issues**
+
+  Governance tooling issues belong in `vergil-tooling` (the renamed
+  standard-tooling). Verify it exists:
+
+  ```bash
+  gh repo view vergil-project/vergil-tooling --json name --jq '.name'
+  ```
+
+  Expected: `vergil-tooling`
+
+- [ ] **Step 2: Create issue for `vrg-org-config` tool**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: build vrg-org-config tool for automated org-level configuration" \
+    --body-file /tmp/issue-vrg-org-config.md
+  ```
+
+  Body content:
+  > Automate enforcement of org-level settings and rulesets. Currently,
+  > org configuration is manual (gh CLI commands in the governance
+  > setup plan). The tool should support audit, diff, and apply modes
+  > — matching the pattern of vrg-repo-config — for org security
+  > settings, org-level rulesets, outside collaborator management, and
+  > GitHub App installation verification.
+  >
+  > **Spec:** docs/specs/2026-05-11-org-governance-design.md, Section 7
+  >
+  > **Depends on:** VERGIL migration complete
+
+- [ ] **Step 3: Create issue for credential selection integration**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: integrate keyring-based credential selection into all vrg-* tools" \
+    --body-file /tmp/issue-credential-integration.md
+  ```
+
+  Body content:
+  > Build keyring-based credential retrieval into all Vergil tools so
+  > each tool automatically selects the correct PAT based on its role.
+  > Development tools retrieve the agent PAT, administrative tools
+  > retrieve the human PAT. No manual GH_TOKEN switching required.
+  >
+  > Includes a pluggable backend interface (macOS Keychain, Linux
+  > Secret Service, Windows Credential Manager) via the keyring Python
+  > library.
+  >
+  > **Spec:** docs/specs/2026-05-11-org-governance-design.md, Section 3
+  > (Credential Tooling subsection)
+
+- [ ] **Step 4: Create issue for `vrg-release` mechanized workflow**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: build vrg-release fully mechanized release workflow" \
+    --body-file /tmp/issue-vrg-release.md
+  ```
+
+  Body content:
+  > Build the fully automated release tool that orchestrates the
+  > entire release process: create release branch, update changelog,
+  > open PR to main (using GitHub App identity), wait for CI, approve
+  > and merge (using human PAT), back-merge to develop, tag release,
+  > clean up.
+  >
+  > This replaces the current st-prepare-release + st-merge-when-green
+  > workflow. The release tool uses two credentials: the GitHub App for
+  > PR authorship and the human PAT for approval and merge.
+  >
+  > **Prerequisite:** Credential selection integration must be complete.
+  >
+  > **Spec:** docs/specs/2026-05-11-org-governance-design.md, Section 4
+
+- [ ] **Step 5: Create issue for cross-human review CI check**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: cross-human review CI check for multi-contributor orgs" \
+    --body-file /tmp/issue-cross-human-review.md
+  ```
+
+  Body content:
+  > Implement a CI status check that enforces cross-human
+  > accountability for PR reviews. When a PR is opened by an AI agent
+  > account (e.g., alice-agent), the check ensures the approver is a
+  > different human than the agent's owner.
+  >
+  > Includes a scale-of-one safety valve: if the org has only one
+  > human member, the check short-circuits with exit 0.
+  >
+  > **Requirement:** Mandatory the moment a second human joins the org.
+  >
+  > **Spec:** docs/specs/2026-05-11-org-governance-design.md, Section 2
+  > (Cross-Human Review subsection)
+  >
+  > **Pre-migration issue:** wphillipmoore/standard-tooling#719
+
+- [ ] **Step 6: Create issue for `vrg-setup-credentials` utility**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: build vrg-setup-credentials guided contributor onboarding" \
+    --body-file /tmp/issue-vrg-setup-credentials.md
+  ```
+
+  Body content:
+  > Build a guided setup utility for new contributors to store their
+  > PATs and App key in the platform's secure credential store.
+  > Prompts for each token, validates format and scopes, and writes
+  > entries under the standard credential names (vergil/human-pat,
+  > vergil/agent-pat, etc.).
+  >
+  > **Spec:** docs/specs/2026-05-11-org-governance-design.md, Section 3
+  > (Credential Tooling subsection)
+
+- [ ] **Step 7: Create issue for `.github` profile repo and Claude Code permissions**
+
+  ```bash
+  gh issue create --repo vergil-project/vergil-tooling \
+    --title "feat: set up .github profile repo and Claude Code permission model" \
+    --body-file /tmp/issue-github-repo-sandbox.md
+  ```
+
+  Body content:
+  > Two related setup tasks for the org:
+  >
+  > 1. Create the vergil-project/.github repository for org-level
+  >    configuration (org README, default community health files,
+  >    CONTRIBUTING.md, issue/PR templates).
+  >
+  > 2. Design a proper Claude Code permission model to move away from
+  >    YOLO/bypass mode. Define the minimal set of allowed operations
+  >    for AI agent sessions.
+  >
+  > **Pre-migration issue:** wphillipmoore/standard-tooling#718
+
+- [ ] **Step 8: Verify all issues are created**
+
+  ```bash
+  gh issue list --repo vergil-project/vergil-tooling \
+    --json number,title \
+    --jq '.[] | "\(.number): \(.title)"'
+  ```
+
+  Expected: all six issues listed.
+
+### Task 15: End-to-End Verification
 
 **Files:** None (manual verification)
+
+This is the final gate. All deferred issues are created (Task 14),
+all governance is active, and the org is ready for production use.
 
 - [ ] **Step 1: Verify identity separation**
 
