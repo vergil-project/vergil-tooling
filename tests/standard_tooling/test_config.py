@@ -10,7 +10,6 @@ import pytest
 from standard_tooling.lib.config import (
     CiConfig,
     ConfigError,
-    GithubOverrides,
     MarkdownlintConfig,
     read_config,
     st_install_tag,
@@ -74,7 +73,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [project.co-authors]
-claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>"
+agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"
 
 [dependencies]
 standard-tooling = "v1.4"
@@ -91,8 +90,8 @@ def test_read_config_valid(tmp_path: Path) -> None:
     assert cfg.project.branching_model == "library-release"
     assert cfg.project.release_model == "tagged-release"
     assert cfg.project.primary_language == "python"
-    assert "claude" in cfg.project.co_authors
-    assert "user-claude" in cfg.project.co_authors["claude"]
+    assert "agent" in cfg.project.co_authors
+    assert "user-agent" in cfg.project.co_authors["agent"]
     assert cfg.dependencies["standard-tooling"] == "v1.4"
 
 
@@ -123,11 +122,11 @@ def test_read_config_invalid_enum(tmp_path: Path) -> None:
 
 def test_read_config_malformed_co_author(tmp_path: Path) -> None:
     toml = _VALID_TOML.replace(
-        'claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>"',
-        'claude = "not a valid trailer"',
+        'agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"',
+        'agent = "not a valid trailer"',
     )
     (tmp_path / "standard-tooling.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="co-author.*claude"):
+    with pytest.raises(ConfigError, match="co-author.*agent"):
         read_config(tmp_path)
 
 
@@ -142,7 +141,7 @@ def test_read_config_no_co_authors(tmp_path: Path) -> None:
     lines = [
         ln
         for ln in _VALID_TOML.splitlines(keepends=True)
-        if "co-authors" not in ln.lower() and "claude" not in ln
+        if "co-authors" not in ln.lower() and "agent" not in ln
     ]
     (tmp_path / "standard-tooling.toml").write_text("".join(lines))
     cfg = read_config(tmp_path)
@@ -257,29 +256,6 @@ def test_read_config_no_ci_section_raises(tmp_path: Path) -> None:
     (tmp_path / "standard-tooling.toml").write_text(_BASE_TOML)
     with pytest.raises(ConfigError, match=r"missing required section \[ci\]"):
         read_config(tmp_path)
-
-
-# -- [github] section ---------------------------------------------------------
-
-_GITHUB_OVERRIDE_TOML = (
-    _VALID_TOML
-    + """
-[github]
-skip-rulesets = true
-"""
-)
-
-
-def test_read_config_github_overrides(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_GITHUB_OVERRIDE_TOML)
-    cfg = read_config(tmp_path)
-    assert cfg.github == GithubOverrides(skip_rulesets=True)
-
-
-def test_read_config_no_github_section(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
-    cfg = read_config(tmp_path)
-    assert cfg.github == GithubOverrides(skip_rulesets=False)
 
 
 # -- [publish] section --------------------------------------------------------

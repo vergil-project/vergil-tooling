@@ -307,10 +307,9 @@ def compute_desired_state(config: StConfig, *, visibility: str, is_org: bool) ->
     """Compute the full desired GitHub configuration from a repo's StConfig."""
     rulesets: list[DesiredRuleset] = []
 
-    if not config.github.skip_rulesets:
-        rulesets.append(desired_branch_protection_ruleset())
-        rulesets.append(desired_tag_protection_ruleset())
-        rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
+    rulesets.append(desired_branch_protection_ruleset())
+    rulesets.append(desired_tag_protection_ruleset())
+    rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
 
     publish = DesiredPublishConfig(
         release=config.publish.release,

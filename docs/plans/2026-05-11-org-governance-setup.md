@@ -26,10 +26,12 @@ The existing rename plan (`docs/plans/2026-05-11-vergil-rename.md`) is
 Plan B (migration). Plan A must complete through Task 9 before Plan B
 begins. Tasks 10–15 execute after Plan B completes.
 
-**Task ordering within Phase 1:** Tasks 1 and 4 must complete before
-Task 2 (PATs require the org to exist and the agent account to be
-created). Task 2 must complete before Task 3 (Keychain storage needs
-the PAT values). Task 6 requires the org to exist (Task 4).
+**Task ordering within Phase 1:** Task 4 must complete before Task 2
+(human PAT requires the org to exist as resource owner). Task 2 must
+complete before Task 3 (Keychain storage needs the PAT value). Task 6
+requires the org to exist (Task 4). Task 1 (agent account creation)
+is independent of Phase 1 PAT work — the agent PAT is created in
+Phase 3 (Task 10) after the agent is invited to the org.
 
 ---
 
@@ -85,11 +87,14 @@ This replaces the per-harness accounts (`wphillipmoore-claude`,
 
   Record this — it is needed for the co-author trailer in Task 6.
 
-### Task 2: Generate Fine-Grained PATs
+### Task 2: Generate Human Fine-Grained PAT
 
 **Files:** None (GitHub web UI)
 
-Two PATs: one for the human identity, one for the agent identity.
+Only the human PAT is created in Phase 1. The agent PAT requires the
+agent account to be an org collaborator, which cannot happen until
+repos exist in the org (post-migration). The agent PAT is created in
+Phase 3, Task 10.
 
 - [ ] **Step 1: Generate the human PAT**
 
@@ -98,8 +103,8 @@ Two PATs: one for the human identity, one for the agent identity.
 
   - Token name: `vergil-human`
   - Expiration: 1 year (maximum for fine-grained)
-  - Resource owner: `vergil-project` (once the org exists — do this
-    step after Task 3)
+  - Resource owner: `vergil-project` (requires Task 4 — org must
+    exist first)
   - Repository access: All repositories
   - Permissions:
     - Administration: Read and write
@@ -111,43 +116,19 @@ Two PATs: one for the human identity, one for the agent identity.
 
   Copy the token value.
 
-- [ ] **Step 2: Generate the agent PAT**
-
-  Go to <https://github.com/settings/personal-access-tokens/new>
-  (logged in as `wphillipmoore-agent`).
-
-  - Token name: `vergil-agent`
-  - Expiration: 1 year
-  - Resource owner: `vergil-project` (once the org exists and the
-    agent account is invited — do this step after Task 4)
-  - Repository access: All repositories
-  - Permissions:
-    - Contents: Read and write
-    - Issues: Read and write
-    - Pull requests: Read and write
-    - Metadata: Read (auto-granted)
-  - **Not granted:** Administration, Actions, org settings, secrets,
-    deployments
-
-  Copy the token value.
-
-- [ ] **Step 3: Verify PAT scopes are correct**
-
-  For each token, verify it can only do what it should:
+- [ ] **Step 2: Verify PAT scope is correct**
 
   ```bash
-  # Human PAT — should succeed
   GH_TOKEN=<human-pat> gh api user --jq '.login'
   # Expected: wphillipmoore
-
-  # Agent PAT — should succeed
-  GH_TOKEN=<agent-pat> gh api user --jq '.login'
-  # Expected: wphillipmoore-agent
   ```
 
-### Task 3: Store Credentials in macOS Keychain
+### Task 3: Store Human PAT in macOS Keychain
 
 **Files:** None (macOS Keychain)
+
+Only the human PAT is stored now. The agent PAT is created and stored
+in Phase 3, Task 10.
 
 - [ ] **Step 1: Store the human PAT**
 
@@ -160,27 +141,15 @@ Two PATs: one for the human identity, one for the agent identity.
     -U
   ```
 
-- [ ] **Step 2: Store the agent PAT**
-
-  ```bash
-  security add-generic-password \
-    -a "vergil" \
-    -s "vergil/agent-pat" \
-    -w "<paste-agent-pat-here>" \
-    -T "" \
-    -U
-  ```
-
-- [ ] **Step 3: Verify retrieval**
+- [ ] **Step 2: Verify retrieval**
 
   ```bash
   security find-generic-password -s "vergil/human-pat" -w
-  security find-generic-password -s "vergil/agent-pat" -w
   ```
 
-  Each should print the stored token.
+  Should print the stored token.
 
-- [ ] **Step 4: Remove the global GH_TOKEN export**
+- [ ] **Step 3: Remove the global GH_TOKEN export**
 
   Remove any `export GH_TOKEN=...` from your shell profile
   (`~/.zshrc`, `~/.zprofile`, etc.). Verify:
@@ -606,21 +575,60 @@ complete and all repos are in the `vergil-project` org.
 
 - [ ] **Step 3: Accept the invitation**
 
-  Log in as `wphillipmoore-agent` and accept the collaboration
-  invitations, or use the API:
-
-  ```bash
-  GH_TOKEN=<agent-pat> gh api user/repository_invitations --jq '.[].id' | \
-    xargs -I{} gh api user/repository_invitations/{} -X PATCH
-  ```
+  Log in as `wphillipmoore-agent` in the GitHub web UI and accept
+  the collaboration invitations. (The agent PAT scoped to
+  `vergil-project` does not exist yet — it is created in Step 5
+  after the agent has org access.)
 
 - [ ] **Step 4: Verify access**
 
+  Log in as `wphillipmoore-agent` in the web UI and confirm the
+  org's repos are visible at
+  `https://github.com/orgs/vergil-project/repositories`.
+
+- [ ] **Step 5: Generate the agent PAT**
+
+  Now that the agent account is a collaborator in the org, create its
+  fine-grained PAT scoped to `vergil-project`.
+
+  Go to <https://github.com/settings/personal-access-tokens/new>
+  (logged in as `wphillipmoore-agent`).
+
+  - Token name: `vergil-agent`
+  - Expiration: 1 year
+  - Resource owner: `vergil-project`
+  - Repository access: All repositories
+  - Permissions:
+    - Contents: Read and write
+    - Issues: Read and write
+    - Pull requests: Read and write
+    - Metadata: Read (auto-granted)
+  - **Not granted:** Administration, Actions, org settings, secrets,
+    deployments
+
+  Copy the token value.
+
+- [ ] **Step 6: Store the agent PAT in macOS Keychain**
+
   ```bash
-  GH_TOKEN=<agent-pat> gh repo list vergil-project --json name --jq '.[].name'
+  security add-generic-password \
+    -a "vergil" \
+    -s "vergil/agent-pat" \
+    -w "<paste-agent-pat-here>" \
+    -T "" \
+    -U
   ```
 
-  Expected: all repos listed.
+- [ ] **Step 7: Verify agent PAT**
+
+  ```bash
+  # Verify identity
+  GH_TOKEN=<agent-pat> gh api user --jq '.login'
+  # Expected: wphillipmoore-agent
+
+  # Verify Keychain retrieval
+  security find-generic-password -s "vergil/agent-pat" -w
+  ```
 
 ### Task 11: Configure Org-Level Rulesets
 
