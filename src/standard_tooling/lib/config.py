@@ -59,11 +59,6 @@ class CiConfig:
 
 
 @dataclass
-class GithubOverrides:
-    skip_rulesets: bool
-
-
-@dataclass
 class PublishConfig:
     release: bool
     docs: bool
@@ -80,7 +75,6 @@ class StConfig:
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
     ci: CiConfig
-    github: GithubOverrides
     publish: PublishConfig
     docker: DockerConfig
 
@@ -140,11 +134,6 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         integration_tests=bool(ci_raw.get("integration-tests", False)),
     )
 
-    github_raw = raw.get("github", {})
-    github_overrides = GithubOverrides(
-        skip_rulesets=bool(github_raw.get("skip-rulesets", False)),
-    )
-
     publish_raw = raw.get("publish", {})
     publish = PublishConfig(
         release=bool(publish_raw.get("release", False)),
@@ -172,7 +161,6 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         dependencies=dict(deps),
         markdownlint=markdownlint,
         ci=ci,
-        github=github_overrides,
         publish=publish,
         docker=docker,
     )

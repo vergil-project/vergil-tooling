@@ -20,7 +20,6 @@ from standard_tooling.bin.st_github_config import (
 from standard_tooling.lib.config import (
     CiConfig,
     DockerConfig,
-    GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
@@ -284,7 +283,6 @@ def _make_config() -> StConfig:
         dependencies={"standard-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
-        github=GithubOverrides(skip_rulesets=True),
         publish=PublishConfig(release=False, docs=True),
         docker=DockerConfig(image_prefix="prod"),
     )

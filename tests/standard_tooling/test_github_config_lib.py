@@ -9,7 +9,6 @@ from unittest.mock import patch
 from standard_tooling.lib.config import (
     CiConfig,
     DockerConfig,
-    GithubOverrides,
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
@@ -303,14 +302,12 @@ def _st_config(
     release_model: str = "tagged-release",
     versions: list[str] | None = None,
     integration_tests: bool = False,
-    skip_rulesets: bool = False,
 ) -> StConfig:
     return StConfig(
         project=_project(language=language, release_model=release_model),
         dependencies={"standard-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
-        github=GithubOverrides(skip_rulesets=skip_rulesets),
         publish=PublishConfig(release=False, docs=True),
         docker=DockerConfig(image_prefix="prod"),
     )
@@ -323,11 +320,6 @@ def test_compute_desired_state_has_three_rulesets() -> None:
     assert "Branch protection" in names
     assert "Tag protection" in names
     assert "CI gates" in names
-
-
-def test_compute_desired_state_skip_rulesets() -> None:
-    state = compute_desired_state(_st_config(skip_rulesets=True), visibility="public", is_org=True)
-    assert state.rulesets == []
 
 
 def test_compute_desired_state_includes_repo_settings() -> None:
@@ -1288,7 +1280,6 @@ def test_compute_desired_state_publish_release_true() -> None:
         dependencies={"standard-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
-        github=GithubOverrides(skip_rulesets=False),
         publish=PublishConfig(release=True, docs=True),
         docker=DockerConfig(image_prefix="prod"),
     )
