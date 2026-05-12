@@ -624,6 +624,71 @@ authenticated actor and the expected role.
 - Repo-specific branch protections beyond org defaults (unlikely
   to be needed initially)
 
+## Section 7: Tooling Impact
+
+### Configuration Enforcement Tools
+
+The current `st-github-config` tool evolves into two separate tools
+with distinct operational cadences:
+
+**`vrg-org-config`** (new) — manages org-level settings:
+
+- Org security settings (2FA requirement, default permissions)
+- Org-level rulesets (branch protection, required reviews, no
+  standing bypass) that cascade to all repos
+- Outside collaborator defaults
+- GitHub App installation verification
+- Run rarely — org-level configuration changes infrequently
+
+**`vrg-repo-config`** (evolution of `st-github-config`) — manages
+per-repo settings:
+
+- Repository settings (merge strategies, wiki, projects, etc.)
+- Security settings (secret scanning, push protection)
+- Actions permissions (allowed actions patterns)
+- CI gate rulesets (language-specific required status checks)
+- Tag protection rulesets
+- For personal repos (not in an org): also manages branch protection
+  rulesets, since there is no org layer to cascade from
+
+The tool detects whether the repo is in an org at runtime by
+querying the GitHub API (`owner.type`), as it already does today.
+The `is_org` flag determines the scope of enforcement — org repos
+get a narrower per-repo scope because the governance enforcement
+is handled by the org layer above.
+
+### Naming Convention
+
+Tool names abstract away "GitHub" — `org-config` and `repo-config`
+rather than `github-config`. This keeps the door open for future
+forge portability (e.g., Gitea) without renaming the tools.
+
+### Uniform Rigor
+
+The same governance standard applies to all repos, personal or org.
+The `is_org` flag determines the *mechanism* of enforcement (org-level
+rulesets vs. per-repo branch protection), not the *standard*. A
+personal repo receives the same branch protection rules as an org
+repo — the tool simply manages them at the repo level instead of
+relying on org-level cascading.
+
+### Escape Hatch Removal
+
+The `skip-rulesets` override in `[github]` config is removed. There
+are no escape hatches. If a repo cannot comply with the standard
+rulesets, the correct response is to fix the repo or the tooling,
+not to bypass enforcement. The override was added for a repo that
+is being archived and is not used by any active repo.
+
+### Configuration File Changes
+
+No new fields are added to `vergil.toml` for org detection — the
+tool queries the GitHub API at runtime. The `[github]` section
+loses the `skip-rulesets` field and gains no replacements. The
+long-term direction is for `vergil.toml` to declare what the repo
+*is* (language, CI config, project metadata), not how the repo is
+*managed* — management policy is hardcoded and uniform.
+
 ## Dependencies
 
 - VERGIL rename (#717 context, separate plan) — org must exist before
