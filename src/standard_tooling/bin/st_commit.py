@@ -75,7 +75,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scope", required=True, help="Conventional commit scope")
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
-    parser.add_argument("--agent", required=True, help="AI tool identity (e.g. claude, codex)")
+    parser.add_argument(
+        "--agent", required=True, help="AI agent identity (key in [project.co-authors])"
+    )
     return parser.parse_args(argv)
 
 

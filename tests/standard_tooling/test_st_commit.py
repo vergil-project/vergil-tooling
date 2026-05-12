@@ -24,8 +24,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [project.co-authors]
-claude = "Co-Authored-By: test <test@test.com>"
-codex = "Co-Authored-By: test-codex <codex@test.com>"
+agent = "Co-Authored-By: test-agent <test-agent@test.com>"
 
 [dependencies]
 standard-tooling = "v1.4"
@@ -77,12 +76,12 @@ def _commit_environment(
 
 def test_parse_args_required() -> None:
     args = parse_args(
-        ["--type", "feat", "--scope", "core", "--message", "add thing", "--agent", "claude"]
+        ["--type", "feat", "--scope", "core", "--message", "add thing", "--agent", "agent"]
     )
     assert args.commit_type == "feat"
     assert args.scope == "core"
     assert args.message == "add thing"
-    assert args.agent == "claude"
+    assert args.agent == "agent"
     assert args.body == ""
 
 
@@ -98,7 +97,7 @@ def test_parse_args_with_scope_and_body() -> None:
             "--body",
             "Fixed edge case",
             "--agent",
-            "codex",
+            "agent",
         ]
     )
     assert args.commit_type == "fix"
@@ -116,7 +115,7 @@ def test_parse_args_revert_type() -> None:
             "--message",
             "undo token change",
             "--agent",
-            "claude",
+            "agent",
         ]
     )
     assert args.commit_type == "revert"
@@ -124,13 +123,13 @@ def test_parse_args_revert_type() -> None:
 
 def test_parse_args_invalid_type() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["--type", "invalid", "--scope", "core", "--message", "x", "--agent", "claude"])
+        parse_args(["--type", "invalid", "--scope", "core", "--message", "x", "--agent", "agent"])
 
 
 def test_main_no_staged_changes(tmp_path: Path) -> None:
     with _commit_environment(tmp_path, has_staged=False):
         result = main(
-            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "claude"]
+            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "agent"]
         )
     assert result == 1
 
@@ -148,11 +147,11 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
         patch("standard_tooling.bin.st_commit.git.run", side_effect=capture_run),
     ):
         result = main(
-            ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "claude"]
+            ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "agent"]
         )
     assert result == 0
     assert commit_file_content.startswith("feat(core): add feature\n")
-    assert "Co-Authored-By: test <test@test.com>" in commit_file_content
+    assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
 
 
 def test_main_with_scope_and_body(tmp_path: Path) -> None:
@@ -178,13 +177,13 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
                 "--body",
                 "Fixed edge case",
                 "--agent",
-                "claude",
+                "agent",
             ]
         )
     assert result == 0
     assert "fix(lint): correct regex" in commit_file_content
     assert "Fixed edge case" in commit_file_content
-    assert "Co-Authored-By: test <test@test.com>" in commit_file_content
+    assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
 
 
 # --------------------------------------------------------------------------
@@ -230,7 +229,7 @@ def test_main_unknown_agent(tmp_path: Path) -> None:
 # Reference: docs/specs/host-level-tool.md "Migration / standard-tooling
 # itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
 
-_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "claude"]
+_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "agent"]
 
 
 # Check 1: detached HEAD
@@ -431,7 +430,7 @@ def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) 
                 "--body",
                 body,
                 "--agent",
-                "claude",
+                "agent",
             ]
         )
     assert result == 1
@@ -460,7 +459,7 @@ def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
                 "--body",
                 body,
                 "--agent",
-                "claude",
+                "agent",
             ]
         )
     assert result == 0
