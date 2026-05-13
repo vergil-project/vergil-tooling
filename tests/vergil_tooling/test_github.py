@@ -263,6 +263,32 @@ def test_delete_if_exists_returns_true_on_empty_stdout() -> None:
         assert github.delete_if_exists("repos/o/r/branches/main/protection") is True
 
 
+# --- GitHubAPIError ---
+
+
+class TestGitHubAPIError:
+    def test_is_subclass_of_called_process_error(self) -> None:
+        assert issubclass(github.GitHubAPIError, subprocess.CalledProcessError)
+
+    def test_str_includes_stderr(self) -> None:
+        exc = github.GitHubAPIError(1, ["gh"], stderr="Validation Failed")
+        assert "Validation Failed" in str(exc)
+
+    def test_str_includes_stdout(self) -> None:
+        exc = github.GitHubAPIError(1, ["gh"], output='{"message": "Not Found"}')
+        assert "Not Found" in str(exc)
+
+    def test_str_includes_both(self) -> None:
+        exc = github.GitHubAPIError(1, ["gh"], output='{"message": "Bad"}', stderr="HTTP 422")
+        msg = str(exc)
+        assert "HTTP 422" in msg
+        assert "Bad" in msg
+
+    def test_str_falls_back_to_base_when_no_output(self) -> None:
+        exc = github.GitHubAPIError(1, ["gh"])
+        assert str(exc) == str(subprocess.CalledProcessError(1, ["gh"]))
+
+
 # --- Retry logic ---
 
 
@@ -332,7 +358,7 @@ class TestRunWithRetry:
             ),
             patch("vergil_tooling.lib.github.time.sleep"),
             patch("vergil_tooling.lib.github.random.random", return_value=0.5),
-            pytest.raises(subprocess.CalledProcessError),
+            pytest.raises(github.GitHubAPIError, match="Gateway Timeout"),
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
 
@@ -341,10 +367,21 @@ class TestRunWithRetry:
         with (
             patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
             patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-            pytest.raises(subprocess.CalledProcessError),
+            pytest.raises(github.GitHubAPIError, match="404 Not Found"),
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
         mock_sleep.assert_not_called()
+
+    def test_raises_plain_error_when_no_captured_output(self) -> None:
+        err = subprocess.CalledProcessError(returncode=1, cmd=["gh"])
+        err.stderr = ""
+        err.stdout = ""
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
+            pytest.raises(subprocess.CalledProcessError) as exc_info,
+        ):
+            github._run_with_retry(("gh", "pr", "view"), check=True)
+        assert type(exc_info.value) is subprocess.CalledProcessError
 
     def test_backoff_delay_increases(self) -> None:
         err = _api_error(stderr="HTTP 504 Gateway Timeout")

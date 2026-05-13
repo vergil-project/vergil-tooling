@@ -16,6 +16,22 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
+
+class GitHubAPIError(subprocess.CalledProcessError):
+    """``CalledProcessError`` that includes captured API output in its message."""
+
+    def __str__(self) -> str:
+        base = super().__str__()
+        parts: list[str] = []
+        if self.stderr:
+            parts.append(f"stderr: {self.stderr.strip()}")
+        if self.stdout:
+            parts.append(f"stdout: {self.stdout.strip()}")
+        if parts:
+            return f"{base}\n{'\n'.join(parts)}"
+        return base
+
+
 _NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 60
@@ -44,6 +60,9 @@ def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[st
             return subprocess.run(*args, **kwargs)  # noqa: S603
         except subprocess.CalledProcessError as exc:
             if attempt == _MAX_RETRIES or not _is_retryable(exc):
+                detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
+                if detail:
+                    raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
                 raise
             delay = min(_BASE_DELAY_SECS * (2**attempt), _MAX_DELAY_SECS)
             delay *= 0.5 + random.random()  # noqa: S311
