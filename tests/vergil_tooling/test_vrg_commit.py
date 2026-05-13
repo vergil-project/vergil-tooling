@@ -225,7 +225,7 @@ def test_main_unknown_agent(tmp_path: Path) -> None:
 # Task 1.1 — branch / context validation
 # --------------------------------------------------------------------------
 #
-# Five checks ported from src/standard_tooling/bin/pre_commit_hook.py into
+# Five checks ported from src/vergil_tooling/bin/pre_commit_hook.py into
 # vrg-commit. Each check has a rejection-path and a happy-path test.
 # Reference: docs/specs/host-level-tool.md "Migration / vergil-tooling
 # itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
@@ -469,5 +469,5 @@ def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
 # --------------------------------------------------------------------------
 # Task 1.2 — `git.run` is responsible for setting VRG_COMMIT_CONTEXT=1
 # (issue #295 moved the contract from commit.py to lib/git.py). The
-# pinning test for that contract lives in tests/standard_tooling/test_git.py;
+# pinning test for that contract lives in tests/vergil_tooling/test_git.py;
 # commit.py just calls `git.run("commit", ...)` and trusts the helper.

@@ -33,7 +33,7 @@ entry points that share a common set of validators:
   ensuring standards are enforced even when hooks are not
   installed.
 - **Claude Code plugin hooks** (delivered by
-  [`vergil-claude-plugin`](https://github.com/wphillipmoore/vergil-claude-plugin))
+  [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin))
   enforce a subset of the same rules at the agent-tool level —
   catching problems before they reach the `git commit` that the
   pre-commit hook would evaluate. Covered in detail in the plugin
@@ -63,7 +63,7 @@ raw `git commit`.
 ### pre-commit
 
 The pre-commit hook is an env-var gate: it admits commits
-driven by `vrg-commit` (which sets `ST_COMMIT_CONTEXT=1`) and
+driven by `vrg-commit` (which sets `VRG_COMMIT_CONTEXT=1`) and
 derived workflows (`amend`, `cherry-pick`, `revert`, `rebase`,
 `merge`), and rejects everything else. The five commit-context
 checks below live in `vrg-commit` itself and run before `git
@@ -173,7 +173,7 @@ The following table shows where each validation runs:
 
 - **pre-commit**: runs locally on every `git commit`
 - **plugin**: PreToolUse/PostToolUse hooks from
-  [`vergil-claude-plugin`](https://github.com/wphillipmoore/vergil-claude-plugin)
+  [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin)
   fire when Claude Code invokes Bash / Write / Edit tools. Catches
   patterns earlier than a `git commit` would — including ones that
   never reach git (e.g., raw `gh pr create`, heredoc escaping bugs).

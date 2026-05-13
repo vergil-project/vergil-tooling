@@ -1,6 +1,6 @@
 # CLI Tools Overview
 
-Every `st-*` command provided by this package, organized by runtime
+Every CLI command provided by this package, organized by runtime
 context. Each entry documents the tool's purpose, where it runs,
 what it assumes, and how it fails when those assumptions are violated.
 
@@ -14,7 +14,7 @@ They drive git, `gh`, SSH, and Docker operations. Installed via
 
 Construct standards-compliant conventional commits with co-author
 resolution. Performs five branch/context checks before committing
-and sets `ST_COMMIT_CONTEXT=1` so the `.githooks/pre-commit` gate
+and sets `VRG_COMMIT_CONTEXT=1` so the `.githooks/pre-commit` gate
 admits the commit.
 
 | Attribute | Value |

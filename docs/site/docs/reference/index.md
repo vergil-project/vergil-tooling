@@ -1,6 +1,6 @@
 # Script Reference
 
-Standard-tooling provides Python CLI tools installed as `st-*` console
+Vergil-tooling provides Python CLI tools installed as `st-*` console
 scripts, plus git hooks. For the full audit of every tool's runtime
 preconditions, host-vs-container classification, and failure modes,
 see the [CLI Tools Overview](cli-tools-overview.md).

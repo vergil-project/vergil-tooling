@@ -55,7 +55,7 @@ git config core.hooksPath .githooks
 Consumed via `git config core.hooksPath .githooks`:
 
 - `pre-commit` — env-var-plus-`GIT_REFLOG_ACTION` gate. Admits
-  `vrg-commit`-driven commits (`ST_COMMIT_CONTEXT=1`) and derived
+  `vrg-commit`-driven commits (`VRG_COMMIT_CONTEXT=1`) and derived
   workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
   Rejects raw `git commit`. Branch / context validation lives in
   `vrg-commit` itself.

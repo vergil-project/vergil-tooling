@@ -3,7 +3,7 @@
 **Path:** `.githooks/pre-commit`
 
 The pre-commit hook is an env-var gate that admits `vrg-commit`-driven
-commits (via `ST_COMMIT_CONTEXT=1`) and derived workflows (amend,
+commits (via `VRG_COMMIT_CONTEXT=1`) and derived workflows (amend,
 cherry-pick, revert, rebase, merge), and rejects raw `git commit`.
 
 The five branch/context checks below live in `vrg-commit` itself and

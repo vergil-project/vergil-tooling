@@ -111,7 +111,7 @@ patches within a minor.
    (and anywhere else the documentation pins a minor) to the new
    tag.
 
-[docker-frag]: https://github.com/wphillipmoore/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile
+[docker-frag]: https://github.com/vergil-project/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile
 
 ### Consumer steps
 
