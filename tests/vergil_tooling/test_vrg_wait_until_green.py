@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_wait_until_green."""
+"""Tests for vergil_tooling.bin.vrg_wait_until_green."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from unittest.mock import call, patch
 
 import pytest
 
-from vergil_tooling.bin.st_wait_until_green import main, parse_args
+from vergil_tooling.bin.vrg_wait_until_green import main, parse_args
 
-_MOD = "vergil_tooling.bin.st_wait_until_green"
+_MOD = "vergil_tooling.bin.vrg_wait_until_green"
 _PR = "https://github.com/pr/1"
 
 

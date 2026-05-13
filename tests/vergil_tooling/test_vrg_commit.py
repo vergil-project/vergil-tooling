@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_commit."""
+"""Tests for vergil_tooling.bin.vrg_commit."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.st_commit import _validate_commit_context, main, parse_args
+from vergil_tooling.bin.vrg_commit import _validate_commit_context, main, parse_args
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -28,6 +28,7 @@ agent = "Co-Authored-By: test-agent <test-agent@test.com>"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -59,17 +60,17 @@ def _commit_environment(
         )
 
     with (
-        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value=branch),
-        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.current_branch", return_value=branch),
+        patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
         patch(
-            "vergil_tooling.bin.st_commit.git.is_main_worktree",
+            "vergil_tooling.bin.vrg_commit.git.is_main_worktree",
             return_value=is_main_worktree,
         ),
         patch(
-            "vergil_tooling.bin.st_commit.git.has_staged_changes",
+            "vergil_tooling.bin.vrg_commit.git.has_staged_changes",
             return_value=has_staged,
         ),
-        patch("vergil_tooling.bin.st_commit.git.run"),
+        patch("vergil_tooling.bin.vrg_commit.git.run"),
     ):
         yield
 
@@ -144,7 +145,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("vergil_tooling.bin.st_commit.git.run", side_effect=capture_run),
+        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "agent"]
@@ -164,7 +165,7 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("vergil_tooling.bin.st_commit.git.run", side_effect=capture_run),
+        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             [
@@ -194,8 +195,8 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 def test_main_config_error(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text("[invalid\n")
     with (
-        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
-        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.current_branch", return_value="feature/42-test"),
+        patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -203,10 +204,10 @@ def test_main_config_error(tmp_path: Path) -> None:
 
 def test_main_missing_config(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
-        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_commit.git.is_main_worktree", return_value=False),
-        patch("vergil_tooling.bin.st_commit.git.has_staged_changes", return_value=True),
+        patch("vergil_tooling.bin.vrg_commit.git.current_branch", return_value="feature/42-test"),
+        patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
+        patch("vergil_tooling.bin.vrg_commit.git.has_staged_changes", return_value=True),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -285,19 +286,19 @@ def test_validate_admits_promotion_for_application_promotion(tmp_path: Path) -> 
 
 
 def test_validate_rejects_unknown_branching_model(tmp_path: Path) -> None:
-    mock = "vergil_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.vrg_commit.git.current_branch"
     with patch(mock, return_value="feature/42-thing"):
         assert _validate_commit_context(tmp_path, "bogus-model") == 1
 
 
 def test_validate_falls_back_when_no_config(tmp_path: Path) -> None:
-    mock = "vergil_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.vrg_commit.git.current_branch"
     with patch(mock, return_value="feature/42-test"):
         assert _validate_commit_context(tmp_path, "") == 0
 
 
 def test_validate_fallback_rejects_hotfix(tmp_path: Path) -> None:
-    mock = "vergil_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.vrg_commit.git.current_branch"
     with patch(mock, return_value="hotfix/42-urgent"):
         assert _validate_commit_context(tmp_path, "") == 1
 

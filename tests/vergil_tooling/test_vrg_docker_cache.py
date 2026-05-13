@@ -1,11 +1,11 @@
-"""Tests for vergil_tooling.bin.st_docker_cache CLI."""
+"""Tests for vergil_tooling.bin.vrg_docker_cache CLI."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from vergil_tooling.bin.st_docker_cache import main
+from vergil_tooling.bin.vrg_docker_cache import main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -22,6 +22,7 @@ primary-language = "go"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -40,10 +41,10 @@ def test_no_subcommand() -> None:
 
 def test_build_calls_ensure(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.assert_docker_available"),
         patch(
-            "vergil_tooling.bin.st_docker_cache.ensure_cached_image",
+            "vergil_tooling.bin.vrg_docker_cache.ensure_cached_image",
             return_value="img:cached",
         ),
     ):
@@ -55,9 +56,9 @@ def test_build_calls_ensure(tmp_path: Path) -> None:
 
 def test_status_no_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=None),
     ):
         assert main(["status"]) == 0
     assert "No cached image" in capsys.readouterr().out
@@ -66,9 +67,9 @@ def test_status_no_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
 def test_status_with_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     cached = ("img:1.26--feature-42--abcd1234", "abcd1234")
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=cached),
     ):
         assert main(["status"]) == 0
     out = capsys.readouterr().out
@@ -80,9 +81,9 @@ def test_status_with_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -
 
 def test_clean_no_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=None),
     ):
         assert main(["clean"]) == 0
     assert "No cached image" in capsys.readouterr().out
@@ -94,10 +95,10 @@ def test_clean_no_cache(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
 def test_clean_removes_existing(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     cached = ("img:1.26--feature-42--abcd1234", "abcd1234")
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_cache.subprocess.run"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_cache.subprocess.run"),
     ):
         assert main(["clean"]) == 0
     assert "Removed:" in capsys.readouterr().out
@@ -105,14 +106,14 @@ def test_clean_removes_existing(tmp_path: Path, capsys: pytest.CaptureFixture[st
 
 def test_build_no_caching(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.assert_docker_available"),
         patch(
-            "vergil_tooling.bin.st_docker_cache.ensure_cached_image",
+            "vergil_tooling.bin.vrg_docker_cache.ensure_cached_image",
             return_value="ghcr.io/r/dev-base:latest",
         ),
         patch(
-            "vergil_tooling.bin.st_docker_cache.default_image",
+            "vergil_tooling.bin.vrg_docker_cache.default_image",
             return_value="ghcr.io/r/dev-base:latest",
         ),
     ):
@@ -128,12 +129,12 @@ def test_status_no_cache_with_expected_tag(
 ) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=None),
-        patch("vergil_tooling.bin.st_docker_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.bin.vrg_docker_cache.detect_language", return_value="go"),
         patch(
-            "vergil_tooling.bin.st_docker_cache.default_image",
+            "vergil_tooling.bin.vrg_docker_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
         ),
     ):
@@ -150,12 +151,12 @@ def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     h = compute_cache_hash(files)
     cached = (f"ghcr.io/r/dev-go:1.26--feature-42--{h}", h)
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_cache.detect_language", return_value="go"),
         patch(
-            "vergil_tooling.bin.st_docker_cache.default_image",
+            "vergil_tooling.bin.vrg_docker_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
         ),
     ):
@@ -167,12 +168,12 @@ def test_status_stale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached = ("ghcr.io/r/dev-go:1.26--feature-42--oldold00", "oldold00")
     with (
-        patch("vergil_tooling.bin.st_docker_cache.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_cache.git.current_branch", return_value="feature/42"),
-        patch("vergil_tooling.bin.st_docker_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_cache.git.current_branch", return_value="feature/42"),
+        patch("vergil_tooling.bin.vrg_docker_cache.find_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_cache.detect_language", return_value="go"),
         patch(
-            "vergil_tooling.bin.st_docker_cache.default_image",
+            "vergil_tooling.bin.vrg_docker_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
         ),
     ):
@@ -188,12 +189,12 @@ def test_clean_all(capsys: pytest.CaptureFixture[str]) -> None:
         returncode=0,
         stdout="ghcr.io/r/dev-go:1.26--feat-42--abc\nghcr.io/r/dev-python:3.14\n",
     )
-    with patch("vergil_tooling.bin.st_docker_cache.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.bin.vrg_docker_cache.subprocess.run", return_value=mock_result):
         assert main(["clean-all"]) == 0
     assert "1 cached image" in capsys.readouterr().out
 
 
 def test_clean_all_docker_error(capsys: pytest.CaptureFixture[str]) -> None:
     mock_result = MagicMock(returncode=1, stdout="")
-    with patch("vergil_tooling.bin.st_docker_cache.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.bin.vrg_docker_cache.subprocess.run", return_value=mock_result):
         assert main(["clean-all"]) == 1

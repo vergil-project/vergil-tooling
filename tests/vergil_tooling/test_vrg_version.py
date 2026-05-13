@@ -8,7 +8,7 @@ from unittest.mock import patch
 if TYPE_CHECKING:
     import pytest
 
-from vergil_tooling.bin.st_version import main
+from vergil_tooling.bin.vrg_version import main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -19,6 +19,7 @@ def _write_toml(tmp_path: Path, language: str = "shell") -> None:
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
         f'primary-language = "{language}"\n\n[dependencies]\nvergil = "v2.0"\n'
+        f'vergil-tooling = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 
@@ -27,7 +28,7 @@ def test_show(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("vergil_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["vrg-version", "show"]),
     ):
         main()
@@ -38,7 +39,7 @@ def test_show_major_minor(tmp_path: Path, capsys: pytest.CaptureFixture[str]) ->
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("vergil_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["vrg-version", "show", "--major-minor"]),
     ):
         main()
@@ -49,7 +50,7 @@ def test_show_ref(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("vergil_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_version.Path.cwd", return_value=tmp_path),
         patch(
             "vergil_tooling.lib.version._read_version_from_ref",
             return_value="1.1.0",
@@ -64,7 +65,7 @@ def test_bump(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     with (
-        patch("vergil_tooling.bin.st_version.Path.cwd", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_version.Path.cwd", return_value=tmp_path),
         patch("sys.argv", ["vrg-version", "bump"]),
     ):
         main()
