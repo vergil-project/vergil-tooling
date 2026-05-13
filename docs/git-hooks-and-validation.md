@@ -33,14 +33,14 @@ entry points that share a common set of validators:
   ensuring standards are enforced even when hooks are not
   installed.
 - **Claude Code plugin hooks** (delivered by
-  [`standard-tooling-plugin`](https://github.com/wphillipmoore/standard-tooling-plugin))
+  [`vergil-claude-plugin`](https://github.com/wphillipmoore/vergil-claude-plugin))
   enforce a subset of the same rules at the agent-tool level —
   catching problems before they reach the `git commit` that the
   pre-commit hook would evaluate. Covered in detail in the plugin
   repo; summarized under
   [Validation Matrix](#validation-matrix) below.
 
-All hooks and validators are managed by standard-tooling.
+All hooks and validators are managed by vergil-tooling.
 Consuming repositories resolve host-side `st-*` tools via
 `uv tool install` and in-container validators via the dev
 container image's pre-bake or a Python dev-dep declaration.
@@ -57,16 +57,16 @@ git config core.hooksPath .githooks
 
 This must be run once per clone. It is not persisted across
 fresh clones. Every managed repo checks in a `.githooks/pre-commit`
-env-var gate that admits `st-commit`-driven commits and rejects
+env-var gate that admits `vrg-commit`-driven commits and rejects
 raw `git commit`.
 
 ### pre-commit
 
 The pre-commit hook is an env-var gate: it admits commits
-driven by `st-commit` (which sets `ST_COMMIT_CONTEXT=1`) and
+driven by `vrg-commit` (which sets `ST_COMMIT_CONTEXT=1`) and
 derived workflows (`amend`, `cherry-pick`, `revert`, `rebase`,
 `merge`), and rejects everything else. The five commit-context
-checks below live in `st-commit` itself and run before `git
+checks below live in `vrg-commit` itself and run before `git
 commit` is invoked.
 
 **1. Detached HEAD check** — Commits on a detached HEAD are
@@ -76,7 +76,7 @@ blocked unconditionally. Create a named branch first.
 `release`, and `main` are forbidden. These branches accept
 changes only through pull requests.
 
-**3. Branching model lookup** — `st-commit` reads
+**3. Branching model lookup** — `vrg-commit` reads
 `branching_model` from `docs/repository-standards.md` to
 determine which branch prefixes are allowed.
 
@@ -173,7 +173,7 @@ The following table shows where each validation runs:
 
 - **pre-commit**: runs locally on every `git commit`
 - **plugin**: PreToolUse/PostToolUse hooks from
-  [`standard-tooling-plugin`](https://github.com/wphillipmoore/standard-tooling-plugin)
+  [`vergil-claude-plugin`](https://github.com/wphillipmoore/vergil-claude-plugin)
   fire when Claude Code invokes Bash / Write / Edit tools. Catches
   patterns earlier than a `git commit` would — including ones that
   never reach git (e.g., raw `gh pr create`, heredoc escaping bugs).
@@ -196,7 +196,7 @@ The following table shows where each validation runs:
 
 The pre-commit hook and plugin hook for protected-branch commits
 overlap deliberately: the plugin catches the case where Claude Code
-tries to invoke `git commit`/`st-commit` at all, and the pre-commit
+tries to invoke `git commit`/`vrg-commit` at all, and the pre-commit
 hook catches everything else (direct human `git commit`, scripts,
 etc.). Their rules are similar but not identical — see
 [Git Workflow → Two enforcement layers](site/docs/guides/git-workflow.md#two-enforcement-layers)

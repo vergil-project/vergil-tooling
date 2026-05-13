@@ -1,8 +1,8 @@
-# st-commit
+# vrg-commit
 
-**Installed as:** `st-commit` (Python console script)
+**Installed as:** `vrg-commit` (Python console script)
 
-**Source:** `src/standard_tooling/commit.py`
+**Source:** `src/vergil_tooling/commit.py`
 
 Wrapper that constructs standards-compliant commit messages
 with correct Conventional Commits format and Co-Authored-By trailers.
@@ -14,7 +14,7 @@ with correct Conventional Commits format and Co-Authored-By trailers.
 ## Usage
 
 ```bash
-st-commit \
+vrg-commit \
   --type TYPE --message MESSAGE --agent AGENT [options]
 ```
 
@@ -37,17 +37,17 @@ st-commit \
 
 ```bash
 # Feature with scope
-st-commit \
+vrg-commit \
   --type feat --scope lint \
   --message "add new check" --agent claude
 
 # Bug fix
-st-commit \
+vrg-commit \
   --type fix \
   --message "correct regex pattern" --agent claude
 
 # Documentation with body
-st-commit \
+vrg-commit \
   --type docs --message "update README" \
   --body "Expanded usage section" --agent claude
 ```

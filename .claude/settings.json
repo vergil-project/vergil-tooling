@@ -3,7 +3,7 @@
     "standard-tooling-marketplace": {
       "source": {
         "source": "github",
-        "repo": "wphillipmoore/standard-tooling-plugin"
+        "repo": "vergil-project/vergil-claude-plugin"
       }
     }
   },

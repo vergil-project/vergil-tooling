@@ -26,7 +26,7 @@ Hard gates (required status checks on `develop`):
 
 Local hard gates (pre-commit hooks):
 
-- Branch naming enforcement (`.githooks/pre-commit` gate + `st-commit`):
+- Branch naming enforcement (`.githooks/pre-commit` gate + `vrg-commit`):
   branching-model-aware prefix validation.
 
 ## Commit and PR scripts
@@ -37,7 +37,7 @@ Do not construct commit messages or PR bodies manually.
 ### Committing
 
 ```bash
-st-commit \
+vrg-commit \
   --type TYPE --message MESSAGE --agent AGENT \
   [--scope SCOPE] [--body BODY]
 ```
@@ -49,12 +49,12 @@ st-commit \
 - `--body` (optional): detailed commit body
 
 The script resolves the correct `Co-Authored-By` identity from
-`standard-tooling.toml` and the git hooks validate the result.
+`vergil.toml` and the git hooks validate the result.
 
 ### Submitting PRs
 
 ```bash
-st-submit-pr \
+vrg-submit-pr \
   --issue NUMBER --summary TEXT \
   [--linkage KEYWORD] [--title TEXT] \
   [--notes TEXT] [--dry-run]

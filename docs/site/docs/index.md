@@ -7,15 +7,15 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 
 ## Components
 
-**Python CLI tools** (`src/standard_tooling/`):
-`st-commit`, `st-submit-pr`, `st-prepare-release`,
-`st-finalize-repo`, `st-validate`
+**Python CLI tools** (`src/vergil_tooling/`):
+`vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`,
+`vrg-finalize-repo`, `vrg-validate`
 
 **Lint tools** (installed as `st-*`):
-`st-repo-profile`, `st-pr-issue-linkage`, validation drivers
+`vrg-repo-profile`, `vrg-pr-issue-linkage`, validation drivers
 
 **Git hooks** (`.githooks/`):
-Env-var gate that admits `st-commit` and blocks raw `git commit`
+Env-var gate that admits `vrg-commit` and blocks raw `git commit`
 
 ## Design Principles
 
@@ -28,11 +28,11 @@ Env-var gate that admits `st-commit` and blocks raw `git commit`
 
 ## How It Works
 
-1. `standard-tooling` is installed on the developer's host via
+1. `vergil-tooling` is installed on the developer's host via
    `uv tool install`, placing `st-*` scripts in `~/.local/bin/`.
-2. `st-docker-run` bridges host commands into dev container images
+2. `vrg-docker-run` bridges host commands into dev container images
    where language runtimes and validators live.
-3. Python consumers also declare `standard-tooling` as a dev dep
+3. Python consumers also declare `vergil-tooling` as a dev dep
    via `[tool.uv.sources]` so `uv run st-*` inside the container
    resolves the pinned version.
 4. Each repo checks in a `.githooks/pre-commit` env-var gate,

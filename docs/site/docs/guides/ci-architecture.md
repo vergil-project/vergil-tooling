@@ -1,7 +1,7 @@
 # CI Architecture
 
 This guide explains the continuous integration model used across all
-`mq-rest-admin-*` repositories and the standard-tooling ecosystem, and
+`mq-rest-admin-*` repositories and the vergil-tooling ecosystem, and
 how to implement it in new projects.
 
 ## Table of Contents
@@ -35,12 +35,12 @@ already be green.
 !!! note "Historical: three-tier CI"
     Earlier versions of this guide documented a third tier — push-CI — as
     a thin `workflow_call` wrapper that ran a subset of checks on every
-    push to a feature branch. That tier was removed once `st-validate`
+    push to a feature branch. That tier was removed once `vrg-validate`
     reached parity with PR-CI; the push-CI workflow added no coverage that
     PR-CI didn't already provide and created a concurrency-group deadlock
     with `ci.yml`. Integration-test coverage at push-time was deliberately
     dropped and is tracked separately as future work on local integration
-    testing. See wphillipmoore/standard-actions#176 for the parity audit
+    testing. See vergil-project/vergil-actions#176 for the parity audit
     and removal rationale.
 
 ## Tier 1: Local pre-commit
@@ -56,9 +56,9 @@ host prerequisite.
 
 Each script follows the same pattern:
 
-1. Set `DOCKER_DEV_IMAGE` (default: `dev-<language>:<latest-version>`)
+1. Set `DOCKER_DEV_IMAGE` (default: `dev-<language>:<latevrg-version>`)
 2. Set `DOCKER_TEST_CMD` (language-specific command)
-3. Delegate to `st-docker-test` if available, otherwise run `docker run`
+3. Delegate to `vrg-docker-test` if available, otherwise run `docker run`
    directly
 
 Environment overrides:
@@ -68,9 +68,9 @@ Environment overrides:
 
 !!! tip
     Build the dev images locally before first use:
-    `cd ../standard-tooling-docker && docker/build.sh`
+    `cd ../vergil-docker && docker/build.sh`
 
-The `.githooks` pre-commit gate runs `st-docker-run -- uv run st-validate`
+The `.githooks` pre-commit gate runs `vrg-docker-run -- uv run vrg-validate`
 on every commit, which runs common checks and per-language validation. Hook
 bypass (`--no-verify`) is disallowed by policy.
 
@@ -124,7 +124,7 @@ needed.
 
 Security scanners and standards compliance are factored into a shared
 reusable workflow at
-`wphillipmoore/standard-actions/.github/workflows/ci-security.yml`.
+`vergil-project/vergil-actions/.github/workflows/ci-security.yml`.
 
 This provides four jobs:
 
@@ -138,7 +138,7 @@ Call it from `ci.yml`:
 ```yaml
 security-and-standards:
   if: ${{ inputs.run-security != 'false' }}
-  uses: wphillipmoore/standard-actions/.github/workflows/ci-security.yml@develop
+  uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@develop
   with:
     language: ruby
     # For Go, also set: semgrep-language: golang
@@ -230,8 +230,8 @@ Jobs that remain inline keep their names unchanged:
 
 ## Dev container images
 
-Published to `ghcr.io/wphillipmoore/dev-<language>:<version>` from the
-[standard-tooling-docker](https://github.com/wphillipmoore/standard-tooling-docker)
+Published to `ghcr.io/vergil-project/dev-<language>:<version>` from the
+[vergil-docker](https://github.com/wphillipmoore/vergil-docker)
 repository.
 
 ### Available images
@@ -253,7 +253,7 @@ repository.
 ### Building locally
 
 ```bash
-cd ../standard-tooling-docker
+cd ../vergil-docker
 docker/build.sh
 ```
 
@@ -266,7 +266,7 @@ docker build --build-arg RUBY_VERSION=3.4 -t dev-ruby:3.4 docker/ruby/
 ### Publishing
 
 Images are published automatically on push to `develop` or `main` in
-the `standard-tooling-docker` repository via its
+the `vergil-docker` repository via its
 `.github/workflows/docker-publish.yml` workflow.
 
 ### Design principles

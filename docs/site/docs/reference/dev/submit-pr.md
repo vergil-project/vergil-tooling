@@ -1,8 +1,8 @@
-# st-submit-pr
+# vrg-submit-pr
 
-**Installed as:** `st-submit-pr` (Python console script)
+**Installed as:** `vrg-submit-pr` (Python console script)
 
-**Source:** `src/standard_tooling/bin/st_submit_pr.py`
+**Source:** `src/vergil_tooling/bin/st_submit_pr.py`
 
 Wrapper that creates standards-compliant pull requests with
 proper issue linkage.
@@ -23,7 +23,7 @@ container.
 ## Usage
 
 ```bash
-st-submit-pr \
+vrg-submit-pr \
   --issue NUMBER --summary TEXT --title TEXT [options]
 ```
 
@@ -46,13 +46,13 @@ st-submit-pr \
 
 ```bash
 # Standard PR
-st-submit-pr \
+vrg-submit-pr \
   --issue 42 \
   --summary "Add new lint check for X" \
   --title "feat(lint): add new check for X"
 
 # Dry run to preview
-st-submit-pr \
+vrg-submit-pr \
   --issue 42 \
   --summary "Fix regex bug" \
   --title "fix(regex): handle edge case" \

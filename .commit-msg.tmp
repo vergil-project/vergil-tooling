@@ -1,0 +1,8 @@
+docs: move rename plan to docs/plans/
+
+Spec stays in docs/specs/, plan moves to docs/plans/ to match
+the project convention.
+
+Issue: #551
+
+Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>

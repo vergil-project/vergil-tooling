@@ -1,0 +1,23 @@
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[project.co-authors]
+agent = "Co-Authored-By: wphillipmoore-agent <284101533+wphillipmoore-agent@users.noreply.github.com>"
+
+[publish]
+release = true
+docs = true
+consumer-refresh = """\
+uv tool install --python 3.14 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v<VERSION>'
+"""
+
+[ci]
+versions = ["3.12", "3.13", "3.14"]
+integration-tests = false
+
+[dependencies]
+vergil = "v2.0"
