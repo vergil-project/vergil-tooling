@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_prepare_release."""
+"""Tests for vergil_tooling.bin.vrg_prepare_release."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.st_prepare_release import (
+from vergil_tooling.bin.vrg_prepare_release import (
     RELEASE_NOTES_DIR,
     _detect_cargo,
     _detect_claude_plugin,
@@ -240,7 +240,7 @@ def test_detect_ecosystem_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_ensure_on_develop_ok() -> None:
-    mock = "vergil_tooling.bin.st_prepare_release.git.current_branch"
+    mock = "vergil_tooling.bin.vrg_prepare_release.git.current_branch"
     with patch(mock, return_value="develop"):
         _ensure_on_develop()
 
@@ -248,7 +248,7 @@ def test_ensure_on_develop_ok() -> None:
 def test_ensure_on_develop_wrong_branch() -> None:
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.current_branch",
+            "vergil_tooling.bin.vrg_prepare_release.git.current_branch",
             return_value="feature/x",
         ),
         pytest.raises(SystemExit, match="Must be on develop"),
@@ -257,13 +257,13 @@ def test_ensure_on_develop_wrong_branch() -> None:
 
 
 def test_ensure_clean_tree_ok() -> None:
-    with patch("vergil_tooling.bin.st_prepare_release.git.read_output", return_value=""):
+    with patch("vergil_tooling.bin.vrg_prepare_release.git.read_output", return_value=""):
         _ensure_clean_tree()
 
 
 def test_ensure_clean_tree_dirty() -> None:
     with (
-        patch("vergil_tooling.bin.st_prepare_release.git.read_output", return_value="M file.py"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.read_output", return_value="M file.py"),
         pytest.raises(SystemExit, match="Working tree is not clean"),
     ):
         _ensure_clean_tree()
@@ -271,8 +271,8 @@ def test_ensure_clean_tree_dirty() -> None:
 
 def test_ensure_develop_up_to_date_ok() -> None:
     with (
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
-        patch("vergil_tooling.bin.st_prepare_release.git.read_output", return_value="abc123"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.read_output", return_value="abc123"),
     ):
         _ensure_develop_up_to_date()
 
@@ -288,9 +288,9 @@ def test_ensure_develop_up_to_date_diverged() -> None:
         return "def456"
 
     with (
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.read_output",
+            "vergil_tooling.bin.vrg_prepare_release.git.read_output",
             side_effect=mock_read_output,
         ),
         pytest.raises(SystemExit, match="does not match"),
@@ -345,21 +345,21 @@ def test_main_full_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.current_branch",
+            "vergil_tooling.bin.vrg_prepare_release.git.current_branch",
             return_value="develop",
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.read_output",
+            "vergil_tooling.bin.vrg_prepare_release.git.read_output",
             side_effect=mock_read_output,
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.ref_exists", return_value=False),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.ref_exists", return_value=False),
         patch(
-            "vergil_tooling.bin.st_prepare_release.subprocess.run",
+            "vergil_tooling.bin.vrg_prepare_release.subprocess.run",
             side_effect=mock_subprocess_run,
         ),
         patch(
-            "vergil_tooling.bin.st_prepare_release.github.create_pr",
+            "vergil_tooling.bin.vrg_prepare_release.github.create_pr",
             return_value="https://github.com/pr/1",
         ),
     ):
@@ -382,15 +382,15 @@ def test_main_release_branch_already_exists(
 
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.current_branch",
+            "vergil_tooling.bin.vrg_prepare_release.git.current_branch",
             return_value="develop",
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.read_output",
+            "vergil_tooling.bin.vrg_prepare_release.git.read_output",
             side_effect=mock_read_output,
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.ref_exists", return_value=True),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.ref_exists", return_value=True),
         pytest.raises(SystemExit, match="already exists"),
     ):
         main(["--issue", "42"])
@@ -419,17 +419,17 @@ def test_main_no_publishable_changes(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.current_branch",
+            "vergil_tooling.bin.vrg_prepare_release.git.current_branch",
             return_value="develop",
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.read_output",
+            "vergil_tooling.bin.vrg_prepare_release.git.read_output",
             side_effect=mock_read_output,
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.ref_exists", return_value=False),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.ref_exists", return_value=False),
         patch(
-            "vergil_tooling.bin.st_prepare_release.subprocess.run",
+            "vergil_tooling.bin.vrg_prepare_release.subprocess.run",
             side_effect=mock_subprocess_run,
         ),
         pytest.raises(SystemExit, match="No publishable changes"),
@@ -475,10 +475,10 @@ def test_generate_release_notes_creates_file(
 
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.subprocess.run",
+            "vergil_tooling.bin.vrg_prepare_release.subprocess.run",
             side_effect=mock_subprocess_run,
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
     ):
         _generate_release_notes("1.0.0", "develop-v1.0.0")
 
@@ -520,21 +520,21 @@ def test_main_full_flow_with_release_notes(tmp_path: Path, monkeypatch: pytest.M
 
     with (
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.current_branch",
+            "vergil_tooling.bin.vrg_prepare_release.git.current_branch",
             return_value="develop",
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.run"),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.run"),
         patch(
-            "vergil_tooling.bin.st_prepare_release.git.read_output",
+            "vergil_tooling.bin.vrg_prepare_release.git.read_output",
             side_effect=mock_read_output,
         ),
-        patch("vergil_tooling.bin.st_prepare_release.git.ref_exists", return_value=False),
+        patch("vergil_tooling.bin.vrg_prepare_release.git.ref_exists", return_value=False),
         patch(
-            "vergil_tooling.bin.st_prepare_release.subprocess.run",
+            "vergil_tooling.bin.vrg_prepare_release.subprocess.run",
             side_effect=mock_subprocess_run,
         ),
         patch(
-            "vergil_tooling.bin.st_prepare_release.github.create_pr",
+            "vergil_tooling.bin.vrg_prepare_release.github.create_pr",
             return_value="https://github.com/pr/1",
         ),
     ):

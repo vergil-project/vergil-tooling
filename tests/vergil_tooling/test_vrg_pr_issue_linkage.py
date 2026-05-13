@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_pr_issue_linkage."""
+"""Tests for vergil_tooling.bin.vrg_pr_issue_linkage."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.st_pr_issue_linkage import main
+from vergil_tooling.bin.vrg_pr_issue_linkage import main
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_check_pr_merge."""
+"""Tests for vergil_tooling.bin.vrg_check_pr_merge."""
 
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.st_check_pr_merge import extract_pr_ref, main
+from vergil_tooling.bin.vrg_check_pr_merge import extract_pr_ref, main
 
-_MOD = "vergil_tooling.bin.st_check_pr_merge"
+_MOD = "vergil_tooling.bin.vrg_check_pr_merge"
 
 
 class TestExtractPrRef:
