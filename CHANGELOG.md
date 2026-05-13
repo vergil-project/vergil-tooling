@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.2] - 2026-05-13
+
+### Bug fixes
+
+- rename stale st_repo_profile import to vrg_repo_profile
+
+### CI
+
+- update vergil-actions refs from v1.5 to v2.0
+
+### Chores
+
+- bump version to 1.4.37
+- update plugin identity to vergil-marketplace
+
+### Documentation
+
+- add VERGIL rename design spec
+- add VERGIL rename implementation plan
+- move rename plan to docs/plans/
+- apply alignment review fixes to VERGIL rename plan
+- add VERGIL org governance design spec
+- apply pushback review fixes to org governance design
+- add tooling impact section to org governance design spec
+- add VERGIL org governance setup implementation plan
+- add Task 14 to create deferred work issues in new org
+- fix agent PAT sequencing in org governance plan
+
+### Features
+
+- rename to vergil-tooling under vergil-project org (#723)
+
+### Refactoring
+
+- remove skip-rulesets escape hatch
+- consolidate co-author config to single agent identity
+- update st-commit and tests for agent identity convention
+
 ## [1.4.36] - 2026-05-11
 
 ### Bug fixes
