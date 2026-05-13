@@ -8,9 +8,9 @@ and its exit codes.
 | Check | Hook | CI | Script |
 | ----- | ---- | -- | ------ |
 | Branch naming | Yes | -- | `pre-commit` |
-| Repository profile | -- | Yes | `st-repo-profile` |
-| Markdown standards | -- | Yes | `st-validate` (common checks) |
-| PR issue linkage | -- | Yes | `st-pr-issue-linkage` |
+| Repository profile | -- | Yes | `vrg-repo-profile` |
+| Markdown standards | -- | Yes | `vrg-validate` (common checks) |
+| PR issue linkage | -- | Yes | `vrg-pr-issue-linkage` |
 | Shellcheck | -- | Yes | CI workflow step |
 
 ## Local Hooks
@@ -28,23 +28,23 @@ and its exit codes.
 
 ## CI Checks
 
-### st-repo-profile
+### vrg-repo-profile
 
 **Trigger:** PR opened or updated
 
 Validates `docs/repository-standards.md` has all six required
 attributes.
 
-### Markdown validation (st-validate)
+### Markdown validation (vrg-validate)
 
 **Trigger:** PR opened or updated
 
 Runs markdownlint on published markdown (`docs/site/**/*.md` and
-`README.md`) using the canonical config bundled in standard-tooling.
+`README.md`) using the canonical config bundled in vergil-tooling.
 See the [Markdown Validation](../reference/lint/markdown-standards.md)
 reference for config details and file scope.
 
-### st-pr-issue-linkage
+### vrg-pr-issue-linkage
 
 **Trigger:** PR opened or updated
 

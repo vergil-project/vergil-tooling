@@ -1,6 +1,6 @@
-# st-pr-issue-linkage
+# vrg-pr-issue-linkage
 
-**Installed as:** `st-pr-issue-linkage` (Python console script)
+**Installed as:** `vrg-pr-issue-linkage` (Python console script)
 
 Validates that a pull request body uses `Ref` for issue linkage
 and rejects auto-close keywords. Runs in CI using the GitHub event

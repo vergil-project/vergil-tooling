@@ -1,7 +1,7 @@
 # Getting Started
 
 A five-to-ten minute quickstart for wiring up a new repository to
-use standard-tooling. For the detailed walkthrough with rationale,
+use vergil-tooling. For the detailed walkthrough with rationale,
 CI config, and troubleshooting, see
 [Consuming Repo Setup](guides/consuming-repo-setup.md).
 
@@ -18,21 +18,21 @@ Install these on your host:
 
 Everything else — language runtimes, linters, test frameworks, and
 most `st-*` tools — lives inside the dev container. The host-side
-`st-*` tools (`st-docker-run`, `st-commit`, `st-submit-pr`, etc.)
+`st-*` tools (`vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
 are installed via `uv tool install`.
 
-## 1. Install standard-tooling on the host
+## 1. Install vergil-tooling on the host
 
 ```bash
-uv tool install 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v1.4'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
 ```
 
 This installs all `st-*` console scripts into `~/.local/bin/`,
 which `uv`'s installer already puts on `PATH`.
 
 ```bash
-which st-docker-run    # should resolve to ~/.local/bin/st-docker-run
-st-docker-run --help   # should print usage
+which vrg-docker-run    # should resolve to ~/.local/bin/vrg-docker-run
+vrg-docker-run --help   # should print usage
 ```
 
 ## 2. Configure git hooks in your consuming repo
@@ -52,15 +52,15 @@ Create `.claude/settings.json` in your repo:
 ```json
 {
   "extraKnownMarketplaces": {
-    "standard-tooling-marketplace": {
+    "vergil-tooling-marketplace": {
       "source": {
         "source": "github",
-        "repo": "wphillipmoore/standard-tooling-plugin"
+        "repo": "wphillipmoore/vergil-claude-plugin"
       }
     }
   },
   "enabledPlugins": {
-    "standard-tooling@standard-tooling-marketplace": true
+    "vergil-tooling@vergil-tooling-marketplace": true
   }
 }
 ```
@@ -69,7 +69,7 @@ Commit this file — it's part of the repo's reproducible setup.
 
 !!! note "Plugin install is a known rough edge"
     The install/update flow for the plugin itself is tracked in
-    [standard-tooling-plugin#46](https://github.com/wphillipmoore/standard-tooling-plugin/issues/46).
+    [vergil-claude-plugin#46](https://github.com/wphillipmoore/vergil-claude-plugin/issues/46).
     For now, this settings.json entry is enough for Claude Code to
     discover and enable the plugin on the next session restart.
 
@@ -121,10 +121,10 @@ can copy from; the canonical source is
 
 ```bash
 # Host tooling reachable
-st-docker-run --help
+vrg-docker-run --help
 
 # Repo profile validates (runs inside the container)
-st-docker-run -- uv run st-repo-profile
+vrg-docker-run -- uv run vrg-repo-profile
 
 # Git hook blocks raw git commit
 git commit --allow-empty -m "test"    # should be blocked by the gate
@@ -143,4 +143,4 @@ If all three behave as expected, you're wired up correctly.
   — full rationale for the parallel-agent convention, failure
   modes, memory-path implications.
 
-[worktree-spec]: https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md
+[worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md

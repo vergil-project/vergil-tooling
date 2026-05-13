@@ -27,7 +27,7 @@ See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
 for hard gate and soft gate definitions.
 
 Required checks for Go repositories are maintained in the
-[standard-actions CI gates documentation](https://wphillipmoore.github.io/standard-actions/ci-gates/required-checks/).
+[standard-actions CI gates documentation](https://vergil-project.github.io/standard-actions/ci-gates/required-checks/).
 
 ## Document Map
 

@@ -1,19 +1,19 @@
 # Releasing
 
-This guide covers the release workflow for `standard-tooling`,
+This guide covers the release workflow for `vergil-tooling`,
 including how patch, minor, and major versions affect both the
 release author (producer) and downstream consumers.
 
-The model: `standard-tooling` is distributed as a host-level
+The model: `vergil-tooling` is distributed as a host-level
 developer tool plus a dev-container pre-bake (see
 [host-level-tool spec][hlt]). Three deployment targets — developer
 host, Python project `.venv`, and dev container image — each track
 the **rolling minor tag** (e.g. `v1.3`), which is force-updated by
 `tag-and-release` on every patch release. The dev container images
-rebuild automatically on each `standard-tooling` release via a
+rebuild automatically on each `vergil-tooling` release via a
 `repository_dispatch` trigger.
 
-[hlt]: https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/host-level-tool.md
+[hlt]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/host-level-tool.md
 
 ## Tag scheme — what's user-facing, what isn't
 
@@ -41,7 +41,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
 2. Cut the release:
 
    ```bash
-   st-prepare-release --issue <release-tracking-issue>
+   vrg-prepare-release --issue <release-tracking-issue>
    ```
 
    This creates `release/{version}`, merges `main` to pick up prior
@@ -50,7 +50,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
 3. Wait for CI green, then merge:
 
    ```bash
-   st-merge-when-green https://github.com/wphillipmoore/standard-tooling/pull/<release-pr>
+   vrg-merge-when-green https://github.com/vergil-project/vergil-tooling/pull/<release-pr>
    ```
 
 4. Post-merge automation runs:
@@ -58,14 +58,14 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
    - The rolling minor tag (`v1.3`) is **force-updated** to point at
      the new release.
    - The boundary tag (`develop-v1.3.1`) is created on `develop`.
-   - `repository_dispatch` fires a `standard-tooling-released`
-     event at `standard-tooling-docker`, which rebuilds the dev
+   - `repository_dispatch` fires a `vergil-tooling-released`
+     event at `vergil-docker`, which rebuilds the dev
      images against the now-current `v1.3` tag.
    - `version-bump-pr` opens an auto-bump PR on `develop`
      (e.g., `1.3.1` → `1.3.2`). Merge it.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
-5. Run `st-finalize-repo` to clean up local state.
+5. Run `vrg-finalize-repo` to clean up local state.
 
 ### Consumer steps
 
@@ -75,8 +75,8 @@ get the fix on the next normal action:
 
 | Consumer | When the patch lands |
 |---|---|
-| Developer host | Manual `uv tool upgrade standard-tooling` |
-| Python repo `.venv` | `uv lock --upgrade-package standard-tooling` (typically batched with other dep bumps) |
+| Developer host | Manual `uv tool upgrade vergil-tooling` |
+| Python repo `.venv` | `uv lock --upgrade-package vergil-tooling` (typically batched with other dep bumps) |
 | Dev container image | Already rebuilt by `repository_dispatch`; new pulls of `dev-base` etc. carry the patch within the rebuild window (minutes) |
 
 ## Minor release — opt-in for new features
@@ -88,19 +88,19 @@ A minor release adds backwards-compatible new features. Versions:
 
 Same five steps as patch, with one important addition: the rolling
 minor tag changes from `v1.3` to `v1.4`. The image's pin in
-`standard-tooling-docker` and any per-repo dev-dep declarations
+`vergil-docker` and any per-repo dev-dep declarations
 **must be bumped manually** — the rolling-tag mechanism only handles
 patches within a minor.
 
 1. Cut and merge `release/v1.4.0` exactly like a patch release.
-2. **Bump `standard-tooling-docker`'s pin** in
-   [`docker/common/standard-tooling-uv.dockerfile`][docker-frag]:
+2. **Bump `vergil-docker`'s pin** in
+   [`docker/common/vergil-tooling-uv.dockerfile`][docker-frag]:
 
    ```dockerfile
    ARG ST_TOOLING_TAG=v1.4   # was v1.3
    ```
 
-   Open a small PR in `standard-tooling-docker`, merge it, and the
+   Open a small PR in `vergil-docker`, merge it, and the
    next image rebuild (whether triggered by your release or a
    subsequent push there) carries the new minor.
 3. **Coordinate consumer bumps.** Each Python repo that has
@@ -111,7 +111,7 @@ patches within a minor.
    (and anywhere else the documentation pins a minor) to the new
    tag.
 
-[docker-frag]: https://github.com/wphillipmoore/standard-tooling-docker/blob/develop/docker/common/standard-tooling-uv.dockerfile
+[docker-frag]: https://github.com/wphillipmoore/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile
 
 ### Consumer steps
 
@@ -119,9 +119,9 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 
 | Consumer | What changes |
 |---|---|
-| Developer host | `uv tool install --reinstall 'standard-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
-| Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package standard-tooling` |
-| Dev container image | Wait for `standard-tooling-docker` to land the `ARG` bump, then pull the rebuilt image |
+| Developer host | `uv tool install --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
+| Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
+| Dev container image | Wait for `vergil-docker` to land the `ARG` bump, then pull the rebuilt image |
 
 The release author should announce the minor bump in the GitHub
 Release notes, calling out any new features and the `v1.4` pin
@@ -143,10 +143,10 @@ communication and migration window:
 2. Cut and merge `release/v2.0.0` like a minor release. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.
-3. Bump `standard-tooling-docker`'s `ARG ST_TOOLING_TAG=` to `v2`
+3. Bump `vergil-docker`'s `ARG ST_TOOLING_TAG=` to `v2`
    in a separate PR — coordinate so consumers can opt in on their
    own schedule.
-4. Notify consumer maintainers (e.g., update `standard-tooling`'s
+4. Notify consumer maintainers (e.g., update `vergil-tooling`'s
    release tracking issue / project board with a callout). The
    release notes alone are not sufficient for major bumps;
    consumers should be primed.
@@ -168,11 +168,11 @@ The Documentation workflow (`.github/workflows/docs.yml`) deploys
 the MkDocs site to GitHub Pages on every push to `develop` and
 `main`. It's container-based: the workflow runs inside
 `dev-base:latest` and uses
-`wphillipmoore/standard-actions/actions/docs-deploy`.
+`vergil-project/vergil-actions/actions/docs-deploy`.
 
 **Sanity-check the docs publication.** Docs publication is async
 relative to the merge — a failure on this workflow doesn't block
-the PR. To catch silent failures, `st-finalize-repo` checks the
+the PR. To catch silent failures, `vrg-finalize-repo` checks the
 status of the most recent Documentation workflow run on `develop`
 after pulling the merge. If it failed, finalize prints a warning
 with a direct link to the failure log, so you can investigate
@@ -181,14 +181,14 @@ before moving on to the next PR.
 For deeper investigation, view recent runs directly:
 
 ```bash
-gh run list --repo wphillipmoore/standard-tooling \
+gh run list --repo vergil-project/vergil-tooling \
   --workflow="Documentation" --limit 5
 ```
 
 ## Release tracking artifacts
 
 Each release has a tracking issue (referenced as `--issue N` to
-`st-prepare-release`). Use it to:
+`vrg-prepare-release`). Use it to:
 
 - Capture the rationale for the release (what's in it, what's not).
 - Document any consumer coordination required (especially for

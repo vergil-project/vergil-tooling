@@ -17,7 +17,7 @@ full rationale, trust model, failure modes, and memory-path implications.
 ### Structure
 
 ```text
-~/dev/github/standard-tooling/           ← sessions ALWAYS start here
+~/dev/projects/vergil-project/vergil-tooling/           ← sessions ALWAYS start here
   .git/
   CLAUDE.md, src/, docs/, …              ← main worktree (usually `develop`)
   .worktrees/                            ← container for parallel worktrees
@@ -28,7 +28,7 @@ full rationale, trust model, failure modes, and memory-path implications.
 ### Rules
 
 1. **Sessions always start at the project root.**
-   `cd ~/dev/github/standard-tooling && claude` — never from inside
+   `cd ~/dev/projects/vergil-project/vergil-tooling && claude` — never from inside
    `.worktrees/<name>/`. This keeps the memory-path slug stable and shared.
 2. **Each parallel agent is assigned exactly one worktree.** The session
    prompt names the worktree (see Agent prompt contract below).
@@ -37,11 +37,11 @@ full rationale, trust model, failure modes, and memory-path implications.
      or use absolute paths.
 3. **The main worktree is read-only.** All edits flow through a worktree
    on a feature branch — the logical endpoint of the standing
-   "no direct commits to develop" policy. `st-commit` itself enforces
+   "no direct commits to develop" policy. `vrg-commit` itself enforces
    this: when a `.worktrees/` directory is present, it refuses commits
    on `feature/**`, `bugfix/**`, `hotfix/**`, or `chore/**` branches
    that originate from the main worktree. The `.githooks/pre-commit`
-   gate then refuses any raw `git commit` that bypasses `st-commit`.
+   gate then refuses any raw `git commit` that bypasses `vrg-commit`.
 4. **One worktree per issue.** Don't stack in-flight issues. When a
    branch lands, remove the worktree before starting the next.
 5. **Naming: `issue-<N>-<short-slug>`.** `<N>` is the GitHub issue
@@ -55,7 +55,7 @@ placeholders):
 ```text
 You are working on issue #<N>: <issue title>.
 
-Your worktree is: /Users/pmoore/dev/github/standard-tooling/.worktrees/issue-<N>-<slug>/
+Your worktree is: /Users/pmoore/dev/github/vergil-tooling/.worktrees/issue-<N>-<slug>/
 Your branch is:   feature/<N>-<slug>
 
 Rules for this session:
@@ -68,7 +68,7 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (st-docker-run mounts the current directory).
+  (vrg-docker-run mounts the current directory).
 ```
 
 All fields are required.
@@ -80,7 +80,7 @@ repositories: CLI tools for commits, PRs, releases, and validation; bash
 validators and git hooks consumed via PATH from a sibling checkout (local) or
 CI checkout (GitHub Actions).
 
-**Project name**: standard-tooling
+**Project name**: vergil-tooling
 
 **Status**: Stable (v1.x)
 
@@ -97,9 +97,9 @@ plugin/skill issue) before writing. See that file for the full
 workflow.
 
 Available skills:
-- `/standard-tooling:memory-init` — set up or update the policy header
+- `/vergil-tooling:memory-init` — set up or update the policy header
   in a project's `MEMORY.md`.
-- `/standard-tooling:memory-audit` — structured collaborative review
+- `/vergil-tooling:memory-audit` — structured collaborative review
   of memory files.
 
 ## Development Commands
@@ -108,7 +108,7 @@ Available skills:
 
 Host-side `st-*` tools are installed via `uv tool install` (see
 [Consumption Model](#consumption-model)). For developing
-standard-tooling itself, there is also a **dev-tree override** using
+vergil-tooling itself, there is also a **dev-tree override** using
 a local `.venv-host`:
 
 - **`.venv`** — Created inside dev containers. Shebang paths reference
@@ -117,34 +117,34 @@ a local `.venv-host`:
   code on the host. Not the normal install mechanism.
 
 ```bash
-# Dev-tree override (standard-tooling development only)
+# Dev-tree override (vergil-tooling development only)
 UV_PROJECT_ENVIRONMENT=.venv-host uv sync --group dev
 export PATH="$(pwd)/.venv-host/bin:$PATH"
 
-# Enable the pre-commit gate (refuses raw `git commit`; admits st-commit)
+# Enable the pre-commit gate (refuses raw `git commit`; admits vrg-commit)
 git config core.hooksPath .githooks
 ```
 
-After host tools are available, use `st-docker-run` to run all
+After host tools are available, use `vrg-docker-run` to run all
 commands inside the dev container. See [Validation](#validation)
 below.
 
 ### Validation
 
 ```bash
-st-docker-run -- uv run st-validate              # Runs all checks
+vrg-docker-run -- uv run vrg-validate              # Runs all checks
 ```
 
 This is the **only** validation command. Do not run individual linters,
-formatters, or other tools outside of `st-validate`. If a tool is not
-invoked by `st-validate`, it is not part of the validation pipeline.
+formatters, or other tools outside of `vrg-validate`. If a tool is not
+invoked by `vrg-validate`, it is not part of the validation pipeline.
 
 ### Two-Tier CI Model
 
 Testing is split across two tiers with increasing scope and cost:
 
 **Tier 1 — Local pre-commit (seconds):** The single entry point
-`st-docker-run -- uv run st-validate` runs everything
+`vrg-docker-run -- uv run vrg-validate` runs everything
 (lint, typecheck, tests, audit, common checks) inside one dev
 container. Enforced via the `.githooks` pre-commit gate on every commit.
 
@@ -153,65 +153,65 @@ all quality checks, security scanners (CodeQL, Trivy, Semgrep), standards
 compliance, and release gates.
 Workflow: `.github/workflows/ci.yml`.
 
-Push-CI was retired once `st-validate` reached parity with PR-CI.
+Push-CI was retired once `vrg-validate` reached parity with PR-CI.
 See `docs/site/docs/guides/ci-architecture.md` for the full rationale and
-wphillipmoore/standard-actions#176 for the parity audit.
+vergil-project/vergil-actions#176 for the parity audit.
 
 ### Docker-First Testing
 
 Docker is the only host prerequisite. The validation stack uses
 exactly one container per run:
 
-- **Outer layer**: `st-docker-run` launches the dev container once
-  and runs `st-validate` inside.
-- **Inner layer**: `st-validate` reads `primary_language` from
-  `standard-tooling.toml` and runs common checks (markdownlint,
+- **Outer layer**: `vrg-docker-run` launches the dev container once
+  and runs `vrg-validate` inside.
+- **Inner layer**: `vrg-validate` reads `primary_language` from
+  `vergil.toml` and runs common checks (markdownlint,
   shellcheck, yamllint, hadolint, actionlint), then language-specific
   checks (lint, typecheck, test, audit) from the built-in command
   registry.
 
 Dev container images are maintained in
-[standard-tooling-docker](https://github.com/wphillipmoore/standard-tooling-docker).
+[vergil-docker](https://github.com/wphillipmoore/vergil-docker).
 
 ```bash
 # Build the dev image (one-time)
-cd ../standard-tooling-docker && docker/build.sh
+cd ../vergil-docker && docker/build.sh
 
 # Run the full validation pipeline in one container
-st-docker-run -- uv run st-validate
+vrg-docker-run -- uv run vrg-validate
 ```
 
 ## Architecture
 
-### Python Package (`src/standard_tooling/`)
+### Python Package (`src/vergil_tooling/`)
 
 CLI tools installed as `st-*` console scripts:
 
-- **`st-commit`** — Construct standards-compliant conventional
+- **`vrg-commit`** — Construct standards-compliant conventional
   commits with co-author resolution
-- **`st-submit-pr`** — Create standards-compliant PRs (manual merge)
-- **`st-merge-when-green`** — Wait for a PR's checks, then merge it
+- **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge)
+- **`vrg-merge-when-green`** — Wait for a PR's checks, then merge it
   (release-workflow use only; normal PRs stay on the honor-system
   manual-merge policy)
-- **`st-prepare-release`** — Automate release preparation (branch, changelog, PR)
-- **`st-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
-- **`st-validate`** — Unified validation driver (runs inside dev container)
-- **`st-ensure-label`** — Idempotent GitHub label creation
-- **`st-docker-run`** — Run arbitrary commands inside a dev container
-- **`st-docker-test`** — Run repo test suite inside a dev container
+- **`vrg-prepare-release`** — Automate release preparation (branch, changelog, PR)
+- **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
+- **`vrg-validate`** — Unified validation driver (runs inside dev container)
+- **`vrg-ensure-label`** — Idempotent GitHub label creation
+- **`vrg-docker-run`** — Run arbitrary commands inside a dev container
+- **`vrg-docker-test`** — Run repo test suite inside a dev container
 
-Shared libraries under `src/standard_tooling/lib/`:
+Shared libraries under `src/vergil_tooling/lib/`:
 
 - **`git.py`** — Git subprocess wrappers
 - **`github.py`** — gh CLI subprocess wrappers
-- **`config.py`** — Parse `standard-tooling.toml`
+- **`config.py`** — Parse `vergil.toml`
 
 ### Docker Dev Images
 
 Dev container images (Dockerfiles, build script, publish workflow) are
-maintained in [standard-tooling-docker](https://github.com/wphillipmoore/standard-tooling-docker).
+maintained in [vergil-docker](https://github.com/wphillipmoore/vergil-docker).
 
-The `st-docker-test` entry point auto-detects the project
+The `vrg-docker-test` entry point auto-detects the project
 language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
 suite inside the appropriate container. Consuming repos call it directly or wrap
 it in a thin `scripts/dev/test.sh`. Environment overrides:
@@ -226,30 +226,30 @@ it in a thin `scripts/dev/test.sh`. Environment overrides:
 Consumed via `git config core.hooksPath .githooks`:
 
 - `pre-commit` — Env-var-plus-`GIT_REFLOG_ACTION` gate. Admits commits
-  with `ST_COMMIT_CONTEXT=1` (set by `st-commit`) and admits derived
+  with `ST_COMMIT_CONTEXT=1` (set by `vrg-commit`) and admits derived
   workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
   Rejects raw `git commit -m "..."`. The five branch / context checks
   (detached HEAD, protected branches, branch prefix, issue number,
-  worktree convention) live in `st-commit` itself, not the hook.
+  worktree convention) live in `vrg-commit` itself, not the hook.
 
 ### Consumption Model
 
-`standard-tooling` has two coordinated deployment targets (see
+`vergil-tooling` has two coordinated deployment targets (see
 `docs/specs/host-level-tool.md` for the full spec):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** | `uv tool install` from git URL | Host-side commands: `st-docker-run`, `st-commit`, `st-submit-pr`, `st-prepare-release`, `st-finalize-repo` |
-| **Container runtime** (all languages) | `st-docker-run` cache-first install per `standard-tooling.toml` | `st-*` inside the container for all consumers |
+| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-repo` |
+| **Container runtime** (all languages) | `vrg-docker-run` cache-first install per `vergil.toml` | `st-*` inside the container for all consumers |
 
 **Host install** (canonical):
 
 ```bash
-uv tool install --python 3.14 'standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v1.4'
+uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
 ```
 
 **Git hooks** (any consuming repo): each repo checks in its own
-`.githooks/pre-commit` (an env-var gate that admits `st-commit` and
+`.githooks/pre-commit` (an env-var gate that admits `vrg-commit` and
 rejects raw `git commit`) and enables it once per clone:
 
 ```bash
@@ -257,9 +257,9 @@ git config core.hooksPath .githooks
 ```
 
 **CI (GitHub Actions)**: All repos use the cache-first runtime path
-via `st-docker-run`, which reads `standard-tooling.toml` for the
+via `vrg-docker-run`, which reads `vergil.toml` for the
 version tag and builds a per-branch cached image with
-standard-tooling pre-installed.
+vergil-tooling pre-installed.
 
 ### Key Constraints
 

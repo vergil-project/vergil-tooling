@@ -20,7 +20,7 @@ host-level developer tool per
 ### Local development
 
 ```bash
-cd standard-tooling
+cd vergil-tooling
 uv sync --group dev
 export PATH="$(pwd)/.venv/bin:$PATH"
 git config core.hooksPath .githooks
@@ -31,34 +31,34 @@ git config core.hooksPath .githooks
 ```yaml
 - uses: actions/checkout@v4
   with:
-    repository: wphillipmoore/standard-tooling
+    repository: vergil-project/vergil-tooling
     ref: v1.2
-    path: .standard-tooling
+    path: .vergil-tooling
 
-- name: Set up standard-tooling
+- name: Set up vergil-tooling
   run: |
-    cd .standard-tooling && uv sync --frozen
-    echo "$GITHUB_WORKSPACE/.standard-tooling/.venv/bin" >> "$GITHUB_PATH"
+    cd .vergil-tooling && uv sync --frozen
+    echo "$GITHUB_WORKSPACE/.vergil-tooling/.venv/bin" >> "$GITHUB_PATH"
 ```
 
 ## CLI tools
 
-- `st-commit` — Standards-compliant conventional commits
-- `st-submit-pr` — Standards-compliant PR creation with auto-merge
-- `st-prepare-release` — Automated release preparation
-- `st-finalize-repo` — Post-merge cleanup
-- `st-validate` — Unified validation driver (via st-docker-run)
-- `st-ensure-label` — Idempotent GitHub label creation
+- `vrg-commit` — Standards-compliant conventional commits
+- `vrg-submit-pr` — Standards-compliant PR creation with auto-merge
+- `vrg-prepare-release` — Automated release preparation
+- `vrg-finalize-repo` — Post-merge cleanup
+- `vrg-validate` — Unified validation driver (via vrg-docker-run)
+- `vrg-ensure-label` — Idempotent GitHub label creation
 
 ## Git hooks
 
 Consumed via `git config core.hooksPath .githooks`:
 
 - `pre-commit` — env-var-plus-`GIT_REFLOG_ACTION` gate. Admits
-  `st-commit`-driven commits (`ST_COMMIT_CONTEXT=1`) and derived
+  `vrg-commit`-driven commits (`ST_COMMIT_CONTEXT=1`) and derived
   workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
   Rejects raw `git commit`. Branch / context validation lives in
-  `st-commit` itself.
+  `vrg-commit` itself.
 
 ## Releasing
 

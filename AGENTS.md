@@ -33,7 +33,7 @@ MUST:
 - Keep scripts portable across macOS and Linux.
 - Do not add repo-specific logic; scripts must work in any consuming repo.
 - **Release before consuming**: consuming repos' CI checks out
-  standard-tooling at a pinned tag. You must merge to `main` and tag a
+  vergil-tooling at a pinned tag. You must merge to `main` and tag a
   new version **before** updating consuming repos.
 
 ## Shell command policy
