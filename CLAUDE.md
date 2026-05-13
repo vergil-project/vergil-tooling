@@ -171,7 +171,7 @@ exactly one container per run:
   registry.
 
 Dev container images are maintained in
-[vergil-docker](https://github.com/wphillipmoore/vergil-docker).
+[vergil-docker](https://github.com/vergil-project/vergil-docker).
 
 ```bash
 # Build the dev image (one-time)
@@ -209,7 +209,7 @@ Shared libraries under `src/vergil_tooling/lib/`:
 ### Docker Dev Images
 
 Dev container images (Dockerfiles, build script, publish workflow) are
-maintained in [vergil-docker](https://github.com/wphillipmoore/vergil-docker).
+maintained in [vergil-docker](https://github.com/vergil-project/vergil-docker).
 
 The `vrg-docker-test` entry point auto-detects the project
 language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
@@ -226,7 +226,7 @@ it in a thin `scripts/dev/test.sh`. Environment overrides:
 Consumed via `git config core.hooksPath .githooks`:
 
 - `pre-commit` — Env-var-plus-`GIT_REFLOG_ACTION` gate. Admits commits
-  with `ST_COMMIT_CONTEXT=1` (set by `vrg-commit`) and admits derived
+  with `VRG_COMMIT_CONTEXT=1` (set by `vrg-commit`) and admits derived
   workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
   Rejects raw `git commit -m "..."`. The five branch / context checks
   (detached HEAD, protected branches, branch prefix, issue number,

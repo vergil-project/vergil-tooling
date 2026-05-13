@@ -70,7 +70,7 @@ mechanisms. Both exist; they complement each other.
 | Layer | Where it runs | Catches |
 |---|---|---|
 | **Pre-commit git hook** | `.githooks/pre-commit` checked into each repo; enabled via `git config core.hooksPath .githooks`. The hook is an env-var gate that admits `vrg-commit`-driven commits and rejects raw `git commit`. The five branch/context checks live in `vrg-commit` itself. | Detached HEAD • direct commits to protected branches • wrong branch prefix • missing issue number in branch name |
-| **Plugin PreToolUse hooks** | Delivered by the [`vergil-claude-plugin`](https://github.com/wphillipmoore/vergil-claude-plugin). Fires on Claude Code's `Bash`/`Write`/`Edit` tool invocations. | Raw `git commit` (forces `vrg-commit`) • Raw `gh pr create` (forces `vrg-submit-pr`) • commits originating from outside `.worktrees/*` on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms |
+| **Plugin PreToolUse hooks** | Delivered by the [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin). Fires on Claude Code's `Bash`/`Write`/`Edit` tool invocations. | Raw `git commit` (forces `vrg-commit`) • Raw `gh pr create` (forces `vrg-submit-pr`) • commits originating from outside `.worktrees/*` on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms |
 
 **Why both?** The pre-commit hook catches anyone (human or agent)
 running git directly. The plugin catches patterns at the
@@ -81,7 +81,7 @@ close the loop.
 For the pre-commit-hook detail, see
 [Git Hooks and Validation][hooks-doc].
 For the plugin hook detail, see
-[vergil-claude-plugin/docs → Hooks](https://github.com/wphillipmoore/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md).
+[vergil-claude-plugin/docs → Hooks](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md).
 
 ## Developing a change
 
@@ -205,7 +205,7 @@ This section is the user-level "how to."
 - Any feature branch, even for solo sequential work. The convention
   keeps the main tree clean; once the plugin-level CWD check is
   active (release tracked in
-  [vergil-claude-plugin#46](https://github.com/wphillipmoore/vergil-claude-plugin/issues/46))
+  [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46))
   committing from the main tree will be blocked.
 
 ### Creating a worktree for an issue
@@ -331,7 +331,7 @@ The hook that fired will print a reason. Common signals:
 ### My plugin cache is stale
 
 Until plugin release automation is fully stood up
-([vergil-claude-plugin#46](https://github.com/wphillipmoore/vergil-claude-plugin/issues/46)),
+([vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46)),
 the plugin is consumed from a local checkout and its cache under
 `~/.claude/plugins/cache/vergil-tooling-marketplace/`. If you're
 running an old version of a hook:
@@ -369,4 +369,4 @@ confirm the file is clean; then proceed.
 
 [hooks-doc]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md
 [worktree-spec]: https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md
-[plugin-hooks]: https://github.com/wphillipmoore/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md
+[plugin-hooks]: https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md

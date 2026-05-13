@@ -55,7 +55,7 @@ Create `.claude/settings.json` in your repo:
     "vergil-tooling-marketplace": {
       "source": {
         "source": "github",
-        "repo": "wphillipmoore/vergil-claude-plugin"
+        "repo": "vergil-project/vergil-claude-plugin"
       }
     }
   },
@@ -69,7 +69,7 @@ Commit this file — it's part of the repo's reproducible setup.
 
 !!! note "Plugin install is a known rough edge"
     The install/update flow for the plugin itself is tracked in
-    [vergil-claude-plugin#46](https://github.com/wphillipmoore/vergil-claude-plugin/issues/46).
+    [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46).
     For now, this settings.json entry is enough for Claude Code to
     discover and enable the plugin on the next session restart.
 
