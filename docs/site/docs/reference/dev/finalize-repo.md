@@ -1,8 +1,8 @@
-# st-finalize-repo
+# vrg-finalize-repo
 
-**Installed as:** `st-finalize-repo` (Python console script)
+**Installed as:** `vrg-finalize-repo` (Python console script)
 
-**Source:** `src/standard_tooling/finalize_repo.py`
+**Source:** `src/vergil_tooling/finalize_repo.py`
 
 Cleans up a repository after a PR merge: switches to the target
 branch, fast-forward pulls, deletes merged local branches, and
@@ -11,7 +11,7 @@ prunes remote tracking references.
 ## Usage
 
 ```bash
-st-finalize-repo [--target-branch BRANCH] [--dry-run]
+vrg-finalize-repo [--target-branch BRANCH] [--dry-run]
 ```
 
 ## Arguments

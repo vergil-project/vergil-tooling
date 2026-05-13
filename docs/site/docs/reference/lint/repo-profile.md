@@ -1,6 +1,6 @@
-# st-repo-profile
+# vrg-repo-profile
 
-**Installed as:** `st-repo-profile` (Python console script)
+**Installed as:** `vrg-repo-profile` (Python console script)
 
 Validates that `docs/repository-standards.md` contains all required
 repository profile attributes with non-placeholder values.
@@ -8,7 +8,7 @@ repository profile attributes with non-placeholder values.
 ## Usage
 
 ```bash
-st-repo-profile
+vrg-repo-profile
 ```
 
 Run from the repository root. The script reads

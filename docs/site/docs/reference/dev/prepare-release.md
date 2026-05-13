@@ -1,8 +1,8 @@
-# st-prepare-release
+# vrg-prepare-release
 
-**Installed as:** `st-prepare-release` (Python console script)
+**Installed as:** `vrg-prepare-release` (Python console script)
 
-**Source:** `src/standard_tooling/prepare_release.py`
+**Source:** `src/vergil_tooling/prepare_release.py`
 
 Automates release preparation for library repositories: creates a
 release branch, generates the changelog, creates a PR to main, and
@@ -11,7 +11,7 @@ enables auto-merge.
 ## Usage
 
 ```bash
-st-prepare-release --issue 42
+vrg-prepare-release --issue 42
 ```
 
 ## Arguments

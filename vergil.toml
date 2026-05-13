@@ -20,4 +20,4 @@ versions = ["3.12", "3.13", "3.14"]
 integration-tests = false
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"

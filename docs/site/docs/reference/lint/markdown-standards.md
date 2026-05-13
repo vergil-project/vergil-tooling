@@ -1,9 +1,9 @@
 # Markdown Validation
 
-Markdown validation is handled by `st-validate` (common checks) as
+Markdown validation is handled by `vrg-validate` (common checks) as
 part of the standard validation pipeline. It runs `markdownlint`
 against published documentation using a canonical config bundled in
-standard-tooling.
+vergil-tooling.
 
 ## Scope
 
@@ -20,7 +20,7 @@ not validated by this check.
 ## Configuration
 
 The canonical config is bundled at
-`src/standard_tooling/configs/markdownlint.yaml` and resolved at
+`src/vergil_tooling/configs/markdownlint.yaml` and resolved at
 runtime via `importlib.resources`. Consuming repos do not need a
 local `.markdownlint.yaml` -- the bundled config applies everywhere.
 
@@ -47,7 +47,7 @@ Key rules:
 
 ## How it runs
 
-`st-validate` runs common checks, which:
+`vrg-validate` runs common checks, which:
 
 1. Discovers markdown files matching the scope above.
 2. Resolves the bundled `markdownlint.yaml` config.

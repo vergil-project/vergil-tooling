@@ -68,8 +68,8 @@ full markdownlint configuration.
 
 - All repositories must run markdownlint for documentation validation.
 - Markdownlint is the minimum baseline. Repositories may add additional checks.
-- The canonical markdownlint config is bundled in standard-tooling and applied
-  automatically by `st-validate`. Consuming repos do not need a local config.
+- The canonical markdownlint config is bundled in vergil-tooling and applied
+  automatically by `vrg-validate`. Consuming repos do not need a local config.
 - Markdownlint must be installed locally by humans; agents must not download or
   install it on demand. CI workflows may provision it explicitly.
 
