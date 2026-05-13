@@ -3,33 +3,33 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "standard-tooling"
-version = "1.4.37"
-description = "Shared development tooling for managed repositories"
+name = "vergil-tooling"
+version = "2.0.0"
+description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
-st-check-pr-merge = "standard_tooling.bin.st_check_pr_merge:main"
-st-commit = "standard_tooling.bin.st_commit:main"
-st-docker-cache = "standard_tooling.bin.st_docker_cache:main"
-st-docker-docs = "standard_tooling.bin.st_docker_docs:main"
-st-docker-run = "standard_tooling.bin.st_docker_run:main"
-st-docker-test = "standard_tooling.bin.st_docker_test:main"
-st-ensure-label = "standard_tooling.bin.st_ensure_label:main"
-st-finalize-repo = "standard_tooling.bin.st_finalize_repo:main"
-st-generate-commands = "standard_tooling.bin.st_generate_commands:main"
-st-github-config = "standard_tooling.bin.st_github_config:main"
-st-merge-when-green = "standard_tooling.bin.st_merge_when_green:main"
-st-pr-issue-linkage = "standard_tooling.bin.st_pr_issue_linkage:main"
-st-prepare-release = "standard_tooling.bin.st_prepare_release:main"
-st-repo-profile = "standard_tooling.bin.st_repo_profile:main"
-st-submit-pr = "standard_tooling.bin.st_submit_pr:main"
-st-validate = "standard_tooling.bin.st_validate:main"
-st-version = "standard_tooling.bin.st_version:main"
-st-wait-until-green = "standard_tooling.bin.st_wait_until_green:main"
+vrg-check-pr-merge = "vergil_tooling.bin.vrg_check_pr_merge:main"
+vrg-commit = "vergil_tooling.bin.vrg_commit:main"
+vrg-docker-cache = "vergil_tooling.bin.vrg_docker_cache:main"
+vrg-docker-docs = "vergil_tooling.bin.vrg_docker_docs:main"
+vrg-docker-run = "vergil_tooling.bin.vrg_docker_run:main"
+vrg-docker-test = "vergil_tooling.bin.vrg_docker_test:main"
+vrg-ensure-label = "vergil_tooling.bin.vrg_ensure_label:main"
+vrg-finalize-repo = "vergil_tooling.bin.vrg_finalize_repo:main"
+vrg-generate-commands = "vergil_tooling.bin.vrg_generate_commands:main"
+vrg-github-config = "vergil_tooling.bin.vrg_github_config:main"
+vrg-merge-when-green = "vergil_tooling.bin.vrg_merge_when_green:main"
+vrg-pr-issue-linkage = "vergil_tooling.bin.vrg_pr_issue_linkage:main"
+vrg-prepare-release = "vergil_tooling.bin.vrg_prepare_release:main"
+vrg-repo-profile = "vergil_tooling.bin.vrg_repo_profile:main"
+vrg-submit-pr = "vergil_tooling.bin.vrg_submit_pr:main"
+vrg-validate = "vergil_tooling.bin.vrg_validate:main"
+vrg-version = "vergil_tooling.bin.vrg_version:main"
+vrg-wait-until-green = "vergil_tooling.bin.vrg_wait_until_green:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
@@ -38,7 +38,7 @@ dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-standard_tooling = ["data/*.json", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
+vergil_tooling = ["data/*.json", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
