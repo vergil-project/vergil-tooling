@@ -1,6 +1,6 @@
-# Standard Tooling
+# Vergil Tooling
 
-Standard-tooling is a Python package and script collection providing shared
+Vergil-tooling is a Python package and script collection providing shared
 development tooling for all managed repositories. It delivers CLI tools for
 commits, PRs, releases, and validation alongside bash validators and git hooks
 -- all consumed via PATH.
