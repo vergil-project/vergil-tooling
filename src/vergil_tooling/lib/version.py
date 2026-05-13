@@ -1,7 +1,7 @@
-"""Version management for standard-tooling managed repositories.
+"""Version management for vergil-tooling managed repositories.
 
 Discovers, reads, and bumps version strings based on the
-``primary-language`` field in ``standard-tooling.toml``.
+``primary-language`` field in ``vergil.toml``.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import subprocess
 import tomllib
 from typing import TYPE_CHECKING
 
-from standard_tooling.lib.config import read_config
+from vergil_tooling.lib.config import read_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -104,7 +104,7 @@ def _get_version_file(repo_root: Path) -> tuple[Path, str]:
     cfg = read_config(repo_root)
     language = cfg.project.primary_language
 
-    raw_toml = (repo_root / "standard-tooling.toml").read_text()
+    raw_toml = (repo_root / "vergil.toml").read_text()
     raw = tomllib.loads(raw_toml)
     override = raw.get("project", {}).get("version-file")
     if override:

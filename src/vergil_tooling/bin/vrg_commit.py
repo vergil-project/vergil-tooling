@@ -1,9 +1,9 @@
 """Commit wrapper that constructs standards-compliant commit messages.
 
-Resolves Co-Authored-By identities from standard-tooling.toml.
+Resolves Co-Authored-By identities from vergil.toml.
 Performs branch / context validation (formerly in
-`standard_tooling.bin.pre_commit_hook`, removed under the host-level-tool
-spec — see docs/specs/host-level-tool.md). Sets ST_COMMIT_CONTEXT=1
+`vergil_tooling.bin.pre_commit_hook`, removed under the host-level-tool
+spec — see docs/specs/host-level-tool.md). Sets VRG_COMMIT_CONTEXT=1
 before invoking `git commit` so the `.githooks/pre-commit` env-var gate
 admits the resulting commit.
 """
@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from standard_tooling.lib import config, git
+from vergil_tooling.lib import config, git
 
 ALLOWED_TYPES = (
     "feat",

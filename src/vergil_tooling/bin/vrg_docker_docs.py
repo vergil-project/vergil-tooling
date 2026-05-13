@@ -11,12 +11,12 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from standard_tooling.lib import git
+from vergil_tooling.lib import git
 
 if TYPE_CHECKING:
     from pathlib import Path
-from standard_tooling.lib.config import ConfigError, read_config
-from standard_tooling.lib.docker import docker_platform
+from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib.docker import docker_platform
 
 
 def _usage(port: str) -> None:
@@ -27,7 +27,7 @@ def _usage(port: str) -> None:
     print("  build   Build the static documentation site")
     print()
     print("Environment variables:")
-    print("  DOCKER_DOCS_IMAGE  Docker image (default: ghcr.io/wphillipmoore/prod-base:latest)")
+    print("  DOCKER_DOCS_IMAGE  Docker image (default: ghcr.io/vergil-project/prod-base:latest)")
     print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
     print("  DOCS_PORT          Host port for serve (default: 8000)")
 
@@ -41,7 +41,7 @@ def _docs_image(repo_root: Path) -> str:
         prefix = cfg.docker.image_prefix
     except (FileNotFoundError, ConfigError):
         prefix = "prod"
-    return f"ghcr.io/wphillipmoore/{prefix}-base:latest"
+    return f"ghcr.io/vergil-project/{prefix}-base:latest"
 
 
 def main(argv: list[str] | None = None) -> int:

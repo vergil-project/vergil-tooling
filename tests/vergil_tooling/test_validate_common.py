@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.validate_common."""
+"""Tests for vergil_tooling.bin.validate_common."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from standard_tooling.bin.validate_common import (
+from vergil_tooling.bin.validate_common import (
     _find_dockerfiles,
     _find_markdown_files,
     _find_shell_files,
@@ -26,7 +26,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -183,14 +183,14 @@ def test_find_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
 
 
 def test_main_all_pass(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
     ):
@@ -200,11 +200,11 @@ def test_main_all_pass(tmp_path: Path) -> None:
 def test_main_repo_profile_fails(tmp_path: Path) -> None:
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=1,
         ),
     ):
@@ -212,22 +212,22 @@ def test_main_repo_profile_fails(tmp_path: Path) -> None:
 
 
 def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -237,11 +237,11 @@ def test_main_markdownlint_uses_bundled_config(tmp_path: Path) -> None:
     assert call_args[0] == "markdownlint"
     assert call_args[1] == "--config"
     assert call_args[2].endswith("markdownlint.yaml")
-    assert "standard_tooling" in call_args[2]
+    assert "vergil_tooling" in call_args[2]
 
 
 def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     site = tmp_path / "docs" / "site"
     site.mkdir(parents=True)
     (site / "index.md").write_text("# Hello\n")
@@ -249,15 +249,15 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -266,24 +266,24 @@ def test_main_markdownlint_ignores_repo_local_config(tmp_path: Path) -> None:
     assert ml_call[0] == "markdownlint"
     assert ml_call[1] == "--config"
     assert str(tmp_path) not in ml_call[2]
-    assert "standard_tooling" in ml_call[2]
+    assert "vergil_tooling" in ml_call[2]
 
 
 def test_main_markdownlint_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     (tmp_path / "README.md").write_text("# Hello\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -292,7 +292,7 @@ def test_main_markdownlint_fails(tmp_path: Path) -> None:
 
 def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
     toml = _MINIMAL_TOML + '\n[markdownlint]\nignore = ["docs/site/docs/research"]\n'
-    (tmp_path / "standard-tooling.toml").write_text(toml)
+    (tmp_path / "vergil.toml").write_text(toml)
     site = tmp_path / "docs" / "site"
     research = site / "docs" / "research"
     research.mkdir(parents=True)
@@ -301,15 +301,15 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -323,22 +323,22 @@ def test_main_markdownlint_honors_ignore(tmp_path: Path) -> None:
 
 
 def test_main_shellcheck_runs(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     scripts = tmp_path / "scripts" / "dev"
     scripts.mkdir(parents=True)
     (scripts / "lint.sh").write_text("#!/bin/bash\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -349,22 +349,22 @@ def test_main_shellcheck_runs(tmp_path: Path) -> None:
 
 
 def test_main_shellcheck_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     scripts = tmp_path / "scripts" / "dev"
     scripts.mkdir(parents=True)
     (scripts / "lint.sh").write_text("#!/bin/bash\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -440,22 +440,22 @@ def test_find_yaml_files_sorted_and_deduped(tmp_path: Path) -> None:
 
 
 def test_main_yamllint_uses_bundled_config(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -464,11 +464,11 @@ def test_main_yamllint_uses_bundled_config(tmp_path: Path) -> None:
     assert yamllint_call[0] == "yamllint"
     assert yamllint_call[1] == "--config-file"
     assert yamllint_call[2].endswith("yamllint.yaml")
-    assert "standard_tooling" in yamllint_call[2]
+    assert "vergil_tooling" in yamllint_call[2]
 
 
 def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
@@ -476,15 +476,15 @@ def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -493,26 +493,26 @@ def test_main_yamllint_ignores_repo_local_config(tmp_path: Path) -> None:
     assert yamllint_call[0] == "yamllint"
     assert yamllint_call[1] == "--config-file"
     assert str(tmp_path) not in yamllint_call[2]
-    assert "standard_tooling" in yamllint_call[2]
+    assert "vergil_tooling" in yamllint_call[2]
 
 
 def test_main_yamllint_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -557,20 +557,20 @@ def test_find_dockerfiles_ignores_non_dockerfile(tmp_path: Path) -> None:
 
 
 def test_main_hadolint_runs(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -580,20 +580,20 @@ def test_main_hadolint_runs(tmp_path: Path) -> None:
 
 
 def test_main_hadolint_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     (tmp_path / "Dockerfile").write_text("FROM python:3.12\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
@@ -604,22 +604,22 @@ def test_main_hadolint_fails(tmp_path: Path) -> None:
 
 
 def test_main_actionlint_runs(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             return_value=subprocess.CompletedProcess(args=[], returncode=0),
         ) as mock_run,
     ):
@@ -629,7 +629,7 @@ def test_main_actionlint_runs(tmp_path: Path) -> None:
 
 
 def test_main_actionlint_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
     workflows = tmp_path / ".github" / "workflows"
     workflows.mkdir(parents=True)
     (workflows / "ci.yml").write_text("name: CI\n")
@@ -644,15 +644,15 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.validate_common.git.repo_root",
+            "vergil_tooling.bin.validate_common.git.repo_root",
             return_value=tmp_path,
         ),
         patch(
-            "standard_tooling.bin.validate_common.st_repo_profile.main",
+            "vergil_tooling.bin.validate_common.st_repo_profile.main",
             return_value=0,
         ),
         patch(
-            "standard_tooling.bin.validate_common.subprocess.run",
+            "vergil_tooling.bin.validate_common.subprocess.run",
             side_effect=mock_run,
         ),
     ):

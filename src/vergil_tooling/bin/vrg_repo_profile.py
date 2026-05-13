@@ -1,6 +1,6 @@
 """Validate the repository configuration and README structure.
 
-Checks that ``standard-tooling.toml`` is valid (required fields,
+Checks that ``vergil.toml`` is valid (required fields,
 enum values, co-author format, dependencies), then validates
 README.md structural conventions (exactly one H1, a Table of
 Contents heading, no heading-level skips).
@@ -12,7 +12,7 @@ import re
 import sys
 from pathlib import Path
 
-from standard_tooling.lib.config import CONFIG_FILE, ConfigError, read_config
+from vergil_tooling.lib.config import CONFIG_FILE, ConfigError, read_config
 
 _CODE_FENCE_RE = re.compile(r"^(```|~~~)")
 _TOC_RE = re.compile(r"^## Table of Contents\s*$")

@@ -1,6 +1,6 @@
 """Common validation checks.
 
-Runs inside the dev container via ``st-docker-run``:
+Runs inside the dev container via ``vrg-docker-run``:
   1. Repository profile validation (includes README structural checks)
   2. markdownlint on published markdown (docs/site/, README.md) using
      the bundled canonical config
@@ -18,9 +18,9 @@ import sys
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
-from standard_tooling.bin import st_repo_profile
-from standard_tooling.lib import git
-from standard_tooling.lib.config import read_config
+from vergil_tooling.bin import st_repo_profile
+from vergil_tooling.lib import git
+from vergil_tooling.lib.config import read_config
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -115,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     md_files = _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
     if md_files:
         print(f"Running: markdownlint ({len(md_files)} files)")
-        config = files("standard_tooling.configs") / "markdownlint.yaml"
+        config = files("vergil_tooling.configs") / "markdownlint.yaml"
         cmd: list[str] = ["markdownlint", "--config", str(config), *md_files]
         result = subprocess.run(cmd, check=False)  # noqa: S603, S607
         if result.returncode != 0:
@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     yaml_files = _find_yaml_files(repo_root)
     if yaml_files:
         print(f"Running: yamllint ({len(yaml_files)} files)")
-        yaml_config = files("standard_tooling.configs") / "yamllint.yaml"
+        yaml_config = files("vergil_tooling.configs") / "yamllint.yaml"
         result = subprocess.run(  # noqa: S603
             ["yamllint", "--config-file", str(yaml_config), *yaml_files],  # noqa: S607
             check=False,

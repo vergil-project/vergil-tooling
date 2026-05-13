@@ -11,7 +11,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from standard_tooling.lib import github
+from vergil_tooling.lib import github
 
 _MAX_BRANCH_UPDATES = 5
 

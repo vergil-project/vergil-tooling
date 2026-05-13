@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-_GHCR = "ghcr.io/wphillipmoore"
+_GHCR = "ghcr.io/vergil-project"
 
 _DEFAULT_VERSIONS: dict[str, str] = {
     "ruby": "3.4",

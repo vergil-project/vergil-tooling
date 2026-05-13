@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.st_commit."""
+"""Tests for vergil_tooling.bin.st_commit."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.st_commit import _validate_commit_context, main, parse_args
+from vergil_tooling.bin.st_commit import _validate_commit_context, main, parse_args
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -27,7 +27,7 @@ primary-language = "python"
 agent = "Co-Authored-By: test-agent <test-agent@test.com>"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -49,27 +49,27 @@ def _commit_environment(
     Defaults represent a happy path: secondary worktree, library-release
     config, valid feature/42-test branch, staged changes present.
 
-    When *write_config* is True (default), a ``standard-tooling.toml``
+    When *write_config* is True (default), a ``vergil.toml``
     is written with the given *branching_model*.  Set *write_config*
     to False to test the no-config fallback path.
     """
     if write_config:
-        (tmp_path / "standard-tooling.toml").write_text(
+        (tmp_path / "vergil.toml").write_text(
             _TEST_TOML_TEMPLATE.format(branching_model=branching_model)
         )
 
     with (
-        patch("standard_tooling.bin.st_commit.git.current_branch", return_value=branch),
-        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value=branch),
+        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
         patch(
-            "standard_tooling.bin.st_commit.git.is_main_worktree",
+            "vergil_tooling.bin.st_commit.git.is_main_worktree",
             return_value=is_main_worktree,
         ),
         patch(
-            "standard_tooling.bin.st_commit.git.has_staged_changes",
+            "vergil_tooling.bin.st_commit.git.has_staged_changes",
             return_value=has_staged,
         ),
-        patch("standard_tooling.bin.st_commit.git.run"),
+        patch("vergil_tooling.bin.st_commit.git.run"),
     ):
         yield
 
@@ -144,7 +144,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("standard_tooling.bin.st_commit.git.run", side_effect=capture_run),
+        patch("vergil_tooling.bin.st_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "agent"]
@@ -164,7 +164,7 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 
     with (
         _commit_environment(tmp_path),
-        patch("standard_tooling.bin.st_commit.git.run", side_effect=capture_run),
+        patch("vergil_tooling.bin.st_commit.git.run", side_effect=capture_run),
     ):
         result = main(
             [
@@ -192,10 +192,10 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 
 
 def test_main_config_error(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text("[invalid\n")
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
     with (
-        patch("standard_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
-        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
+        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -203,10 +203,10 @@ def test_main_config_error(tmp_path: Path) -> None:
 
 def test_main_missing_config(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
-        patch("standard_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_commit.git.is_main_worktree", return_value=False),
-        patch("standard_tooling.bin.st_commit.git.has_staged_changes", return_value=True),
+        patch("vergil_tooling.bin.st_commit.git.current_branch", return_value="feature/42-test"),
+        patch("vergil_tooling.bin.st_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_commit.git.is_main_worktree", return_value=False),
+        patch("vergil_tooling.bin.st_commit.git.has_staged_changes", return_value=True),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 1
@@ -225,8 +225,8 @@ def test_main_unknown_agent(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 #
 # Five checks ported from src/standard_tooling/bin/pre_commit_hook.py into
-# st-commit. Each check has a rejection-path and a happy-path test.
-# Reference: docs/specs/host-level-tool.md "Migration / standard-tooling
+# vrg-commit. Each check has a rejection-path and a happy-path test.
+# Reference: docs/specs/host-level-tool.md "Migration / vergil-tooling
 # itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
 
 _DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "agent"]
@@ -285,19 +285,19 @@ def test_validate_admits_promotion_for_application_promotion(tmp_path: Path) -> 
 
 
 def test_validate_rejects_unknown_branching_model(tmp_path: Path) -> None:
-    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.st_commit.git.current_branch"
     with patch(mock, return_value="feature/42-thing"):
         assert _validate_commit_context(tmp_path, "bogus-model") == 1
 
 
 def test_validate_falls_back_when_no_config(tmp_path: Path) -> None:
-    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.st_commit.git.current_branch"
     with patch(mock, return_value="feature/42-test"):
         assert _validate_commit_context(tmp_path, "") == 0
 
 
 def test_validate_fallback_rejects_hotfix(tmp_path: Path) -> None:
-    mock = "standard_tooling.bin.st_commit.git.current_branch"
+    mock = "vergil_tooling.bin.st_commit.git.current_branch"
     with patch(mock, return_value="hotfix/42-urgent"):
         assert _validate_commit_context(tmp_path, "") == 1
 
@@ -466,7 +466,7 @@ def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
 
 
 # --------------------------------------------------------------------------
-# Task 1.2 — `git.run` is responsible for setting ST_COMMIT_CONTEXT=1
+# Task 1.2 — `git.run` is responsible for setting VRG_COMMIT_CONTEXT=1
 # (issue #295 moved the contract from commit.py to lib/git.py). The
 # pinning test for that contract lives in tests/standard_tooling/test_git.py;
 # commit.py just calls `git.run("commit", ...)` and trusts the helper.

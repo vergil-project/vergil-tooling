@@ -1,8 +1,8 @@
-"""Tests for standard_tooling.lib.labels."""
+"""Tests for vergil_tooling.lib.labels."""
 
 from __future__ import annotations
 
-from standard_tooling.lib.labels import load_labels
+from vergil_tooling.lib.labels import load_labels
 
 # GitHub default labels that must not collide with the registry.
 _GITHUB_DEFAULTS = frozenset(

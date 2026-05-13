@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.lib.docker_cache."""
+"""Tests for vergil_tooling.lib.docker_cache."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from standard_tooling.lib.docker_cache import (
+from vergil_tooling.lib.docker_cache import (
     _build_cached_image,
     _is_self_repo,
     _sanitize_branch,
@@ -31,7 +31,7 @@ release-model = "tagged-release"
 primary-language = "go"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -43,34 +43,34 @@ versions = ["3.14"]
 
 def test_cache_files_python(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text("lock\n")
-    (tmp_path / "standard-tooling.toml").write_text("[standard-tooling]\n")
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
     files = cache_sensitive_files(tmp_path, "python")
     names = [f.name for f in files]
     assert "uv.lock" in names
-    assert "standard-tooling.toml" in names
+    assert "vergil.toml" in names
 
 
 def test_cache_files_go(tmp_path: Path) -> None:
     (tmp_path / "go.sum").write_text("sum\n")
-    (tmp_path / "standard-tooling.toml").write_text("[standard-tooling]\n")
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
     files = cache_sensitive_files(tmp_path, "go")
     names = [f.name for f in files]
     assert "go.sum" in names
-    assert "standard-tooling.toml" in names
+    assert "vergil.toml" in names
 
 
 def test_cache_files_unknown_language(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text("[standard-tooling]\n")
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
     files = cache_sensitive_files(tmp_path, "")
     assert len(files) == 1
-    assert files[0].name == "standard-tooling.toml"
+    assert files[0].name == "vergil.toml"
 
 
 def test_cache_files_missing_lockfile(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text("[standard-tooling]\n")
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
     files = cache_sensitive_files(tmp_path, "go")
     assert len(files) == 1
-    assert files[0].name == "standard-tooling.toml"
+    assert files[0].name == "vergil.toml"
 
 
 # -- compute_cache_hash -------------------------------------------------------
@@ -114,11 +114,11 @@ def test_sanitize_branch_special_chars() -> None:
 
 def test_cache_image_tag_format() -> None:
     tag = cache_image_tag(
-        "ghcr.io/wphillipmoore/dev-go:1.26",
+        "ghcr.io/vergil-project/dev-go:1.26",
         "feature/42-thing",
         "abcd1234",
     )
-    assert tag == "ghcr.io/wphillipmoore/dev-go:1.26--feature-42-thing--abcd1234"
+    assert tag == "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234"
 
 
 # -- find_cached_image --------------------------------------------------------
@@ -126,28 +126,28 @@ def test_cache_image_tag_format() -> None:
 
 def test_find_cached_image_hit() -> None:
     docker_output = (
-        "ghcr.io/wphillipmoore/dev-go:1.26--feature-42-thing--abcd1234\n"
-        "ghcr.io/wphillipmoore/dev-python:3.14\n"
+        "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234\n"
+        "ghcr.io/vergil-project/dev-python:3.14\n"
     )
     mock_result = MagicMock(returncode=0, stdout=docker_output)
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
-        result = find_cached_image("ghcr.io/wphillipmoore/dev-go:1.26", "feature/42-thing")
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
+        result = find_cached_image("ghcr.io/vergil-project/dev-go:1.26", "feature/42-thing")
     assert result is not None
-    assert result[0] == "ghcr.io/wphillipmoore/dev-go:1.26--feature-42-thing--abcd1234"
+    assert result[0] == "ghcr.io/vergil-project/dev-go:1.26--feature-42-thing--abcd1234"
     assert result[1] == "abcd1234"
 
 
 def test_find_cached_image_miss() -> None:
-    docker_output = "ghcr.io/wphillipmoore/dev-python:3.14\n"
+    docker_output = "ghcr.io/vergil-project/dev-python:3.14\n"
     mock_result = MagicMock(returncode=0, stdout=docker_output)
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
-        result = find_cached_image("ghcr.io/wphillipmoore/dev-go:1.26", "feature/42-thing")
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
+        result = find_cached_image("ghcr.io/vergil-project/dev-go:1.26", "feature/42-thing")
     assert result is None
 
 
 def test_find_cached_image_docker_error() -> None:
     mock_result = MagicMock(returncode=1, stdout="")
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
         assert find_cached_image("img:1", "branch") is None
 
 
@@ -159,21 +159,21 @@ def test_ensure_returns_base_for_python(tmp_path: Path) -> None:
 
 
 def test_ensure_returns_base_when_no_files(tmp_path: Path) -> None:
-    with patch("standard_tooling.lib.git.current_branch", return_value="feature/42"):
+    with patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"):
         assert ensure_cached_image(tmp_path, "go", "img:1") == "img:1"
 
 
 def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
     files = cache_sensitive_files(tmp_path, "go")
     expected_hash = compute_cache_hash(files, salt=tmp_path.name)
     full_tag = cached_tag + expected_hash
 
     with (
-        patch("standard_tooling.lib.git.current_branch") as mock_branch,
+        patch("vergil_tooling.lib.git.current_branch") as mock_branch,
         patch(
-            "standard_tooling.lib.docker_cache.find_cached_image",
+            "vergil_tooling.lib.docker_cache.find_cached_image",
             return_value=(full_tag, expected_hash),
         ),
     ):
@@ -183,19 +183,19 @@ def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
 
 
 def test_ensure_rebuilds_on_hash_mismatch(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     stale_tag = "ghcr.io/r/dev-go:1.26--feature-42--oldold00"
     new_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
 
     with (
-        patch("standard_tooling.lib.git.current_branch") as mock_branch,
+        patch("vergil_tooling.lib.git.current_branch") as mock_branch,
         patch(
-            "standard_tooling.lib.docker_cache.find_cached_image",
+            "vergil_tooling.lib.docker_cache.find_cached_image",
             return_value=(stale_tag, "oldold00"),
         ),
-        patch("standard_tooling.lib.docker_cache.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.docker_cache.subprocess.run") as mock_run,
         patch(
-            "standard_tooling.lib.docker_cache._build_cached_image",
+            "vergil_tooling.lib.docker_cache._build_cached_image",
         ) as mock_build,
     ):
         mock_branch.return_value = "feature/42"
@@ -212,16 +212,16 @@ def test_ensure_rebuilds_on_hash_mismatch(tmp_path: Path) -> None:
 
 
 def test_ensure_builds_on_cache_miss(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
 
     with (
-        patch("standard_tooling.lib.git.current_branch") as mock_branch,
+        patch("vergil_tooling.lib.git.current_branch") as mock_branch,
         patch(
-            "standard_tooling.lib.docker_cache.find_cached_image",
+            "vergil_tooling.lib.docker_cache.find_cached_image",
             return_value=None,
         ),
         patch(
-            "standard_tooling.lib.docker_cache._build_cached_image",
+            "vergil_tooling.lib.docker_cache._build_cached_image",
             return_value="new:tag",
         ) as mock_build,
     ):
@@ -247,20 +247,20 @@ def test_clean_branch_images_removes_matching() -> None:
         calls.append(cmd)
         return mock_result
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=capture_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=capture_run):
         removed = clean_branch_images("feature/42-thing")
     assert removed == 2
 
 
 def test_clean_branch_images_none_found() -> None:
     mock_result = MagicMock(returncode=0, stdout="ghcr.io/r/dev-python:3.14\n")
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
         assert clean_branch_images("feature/99-other") == 0
 
 
 def test_clean_branch_images_docker_error() -> None:
     mock_result = MagicMock(returncode=1, stdout="")
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=mock_result):
         assert clean_branch_images("feature/42") == 0
 
 
@@ -268,7 +268,7 @@ def test_clean_branch_images_docker_error() -> None:
 
 
 def test_build_cached_image_success(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     start_result = MagicMock(returncode=0)
     commit_result = MagicMock(returncode=0)
@@ -288,13 +288,13 @@ def test_build_cached_image_success(tmp_path: Path) -> None:
             return rm_result
         return MagicMock(returncode=0)
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         result = _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
     assert result == "img:1--branch--hash"
 
 
 def test_build_cached_image_includes_platform(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -305,23 +305,23 @@ def test_build_cached_image_includes_platform(tmp_path: Path) -> None:
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
     assert any(a.startswith("--platform=linux/") for a in create_cmd)
 
 
 def test_build_cached_image_create_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=1, stderr="no space")
     with (
-        patch("standard_tooling.lib.docker_cache.subprocess.run", return_value=create_result),
+        patch("vergil_tooling.lib.docker_cache.subprocess.run", return_value=create_result),
         pytest.raises(RuntimeError, match="Failed to create container"),
     ):
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
 
 
 def test_build_cached_image_start_fails(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     start_result = MagicMock(returncode=1)
     rm_result = MagicMock(returncode=0)
@@ -334,7 +334,7 @@ def test_build_cached_image_start_fails(tmp_path: Path) -> None:
         return rm_result
 
     with (
-        patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run),
+        patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run),
         pytest.raises(RuntimeError, match="Cache build failed"),
     ):
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
@@ -343,7 +343,7 @@ def test_build_cached_image_start_fails(tmp_path: Path) -> None:
 def test_build_cached_image_warmup_printed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
 
@@ -352,7 +352,7 @@ def test_build_cached_image_warmup_printed(
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
     out = capsys.readouterr().out
     assert "Warmup:" in out
@@ -361,7 +361,7 @@ def test_build_cached_image_warmup_printed(
 def test_build_cached_image_no_warmup_for_unknown_lang(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
 
@@ -370,14 +370,14 @@ def test_build_cached_image_no_warmup_for_unknown_lang(
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "unknown", "img:1", "img:1--branch--hash")
     out = capsys.readouterr().out
     assert "Warmup:" not in out
 
 
 def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -388,7 +388,7 @@ def test_build_cached_image_uses_uv_tool_install(tmp_path: Path) -> None:
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
     assert "uv tool install" in setup_cmd
@@ -424,13 +424,13 @@ def test_compute_cache_hash_no_salt_matches_empty_salt(tmp_path: Path) -> None:
 
 def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text("lock\n")
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
 
     with (
-        patch("standard_tooling.lib.git.current_branch", return_value="develop"),
-        patch("standard_tooling.lib.docker_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
+        patch("vergil_tooling.lib.docker_cache.find_cached_image", return_value=None),
         patch(
-            "standard_tooling.lib.docker_cache._build_cached_image",
+            "vergil_tooling.lib.docker_cache._build_cached_image",
             return_value="img:1--develop--hash",
         ) as mock_build,
     ):
@@ -440,7 +440,7 @@ def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
 
 
 def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -451,7 +451,7 @@ def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
     assert "uv tool install" in setup_cmd
@@ -463,8 +463,8 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
     repo_b = tmp_path / "repo-beta"
     repo_a.mkdir()
     repo_b.mkdir()
-    (repo_a / "standard-tooling.toml").write_text(_VALID_TOML)
-    (repo_b / "standard-tooling.toml").write_text(_VALID_TOML)
+    (repo_a / "vergil.toml").write_text(_VALID_TOML)
+    (repo_b / "vergil.toml").write_text(_VALID_TOML)
 
     built_tags: list[str] = []
 
@@ -473,9 +473,9 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
         return target_tag
 
     with (
-        patch("standard_tooling.lib.git.current_branch", return_value="develop"),
-        patch("standard_tooling.lib.docker_cache.find_cached_image", return_value=None),
-        patch("standard_tooling.lib.docker_cache._build_cached_image", side_effect=capture_build),
+        patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
+        patch("vergil_tooling.lib.docker_cache.find_cached_image", return_value=None),
+        patch("vergil_tooling.lib.docker_cache._build_cached_image", side_effect=capture_build),
     ):
         ensure_cached_image(repo_a, "go", "img:1")
         ensure_cached_image(repo_b, "go", "img:1")
@@ -489,7 +489,7 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
 
 def test_is_self_repo_true(tmp_path: Path) -> None:
     pyproject = tmp_path / "pyproject.toml"
-    pyproject.write_text('[project]\nname = "standard-tooling"\n')
+    pyproject.write_text('[project]\nname = "vergil-tooling"\n')
     assert _is_self_repo(tmp_path) is True
 
 
@@ -519,8 +519,8 @@ def test_is_self_repo_false_invalid_toml(tmp_path: Path) -> None:
 
 
 def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_VALID_TOML)
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "standard-tooling"\n')
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -531,7 +531,7 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
             return create_result
         return ok
 
-    with patch("standard_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
+    with patch("vergil_tooling.lib.docker_cache.subprocess.run", side_effect=mock_run):
         _build_cached_image(tmp_path, "python", "img:1", "img:1--branch--hash")
     setup_cmd = create_cmd[-1]
     assert "uv tool install" not in setup_cmd

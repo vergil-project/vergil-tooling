@@ -1,7 +1,7 @@
 """GitHub configuration derivation engine.
 
 Computes the desired GitHub configuration for a repository from its
-``standard-tooling.toml`` identity.  The desired state can be compared
+``vergil.toml`` identity.  The desired state can be compared
 against the actual GitHub API state to produce audit diffs.
 """
 
@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from standard_tooling.lib.config import CiConfig, ProjectConfig, StConfig
+    from vergil_tooling.lib.config import CiConfig, ProjectConfig, StConfig
 
-from standard_tooling.lib import github
+from vergil_tooling.lib import github
 
 
 @dataclass
@@ -226,7 +226,7 @@ def _make_ghas_check(context: str) -> dict[str, object]:
 
 def _lang_has_check(language: str, check: str) -> bool:
     """Consult the per-language command registry."""
-    from standard_tooling.lib.validate_commands import CheckKind, language_commands
+    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
 
     kind_map = {
         "lint": CheckKind.LINT,

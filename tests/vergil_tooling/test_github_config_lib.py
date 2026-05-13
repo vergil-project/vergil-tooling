@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.lib.github_config."""
+"""Tests for vergil_tooling.lib.github_config."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import subprocess
 from typing import cast
 from unittest.mock import patch
 
-from standard_tooling.lib.config import (
+from vergil_tooling.lib.config import (
     CiConfig,
     DockerConfig,
     MarkdownlintConfig,
@@ -14,7 +14,7 @@ from standard_tooling.lib.config import (
     PublishConfig,
     StConfig,
 )
-from standard_tooling.lib.github_config import (
+from vergil_tooling.lib.github_config import (
     DesiredRuleset,
     FetchResult,
     _apply_actions_permissions,
@@ -305,7 +305,7 @@ def _st_config(
 ) -> StConfig:
     return StConfig(
         project=_project(language=language, release_model=release_model),
-        dependencies={"standard-tooling": "v1.4"},
+        dependencies={"vergil-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
         publish=PublishConfig(release=False, docs=True),
@@ -380,11 +380,11 @@ def test_fetch_actual_state_repo_settings() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -437,11 +437,11 @@ def test_fetch_actual_state_with_rulesets() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -478,11 +478,11 @@ def test_fetch_actual_state_no_selected_actions_skips_patterns() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -517,11 +517,11 @@ def test_fetch_actual_state_missing_security_and_analysis() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -566,11 +566,11 @@ def test_fetch_actual_state_rulesets_edge_cases() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -605,11 +605,11 @@ def test_fetch_actual_state_rulesets_not_a_list() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -646,11 +646,11 @@ def test_fetch_actual_state_selected_actions_non_dict_response() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -686,11 +686,11 @@ def test_fetch_actual_state_selected_actions_non_list_patterns() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -724,11 +724,11 @@ def test_fetch_actual_state_returns_fetch_result() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -779,11 +779,11 @@ def test_fetch_actual_state_extracts_new_repo_fields() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -823,11 +823,11 @@ def test_fetch_actual_state_defaults_visibility_to_private() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -840,7 +840,7 @@ def test_fetch_vulnerability_alerts_enabled() -> None:
     cp = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="HTTP/2.0 204 No Content\n", stderr=""
     )
-    with patch("standard_tooling.lib.github_config.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.github_config.subprocess.run", return_value=cp):
         assert _fetch_vulnerability_alerts("o/r") is True
 
 
@@ -848,7 +848,7 @@ def test_fetch_vulnerability_alerts_disabled() -> None:
     cp = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="HTTP/2.0 404 Not Found\n", stderr=""
     )
-    with patch("standard_tooling.lib.github_config.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.github_config.subprocess.run", return_value=cp):
         assert _fetch_vulnerability_alerts("o/r") is False
 
 
@@ -936,7 +936,7 @@ def test_diff_detects_new_repo_setting_drift() -> None:
 
 def test_apply_repo_settings_calls_write_json() -> None:
     settings = desired_repo_settings(visibility="public", is_org=True)
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     mock_write.assert_called_once()
     call_args = mock_write.call_args
@@ -949,7 +949,7 @@ def test_apply_repo_settings_calls_write_json() -> None:
 
 def test_apply_repo_settings_includes_new_fields() -> None:
     settings = desired_repo_settings(visibility="public", is_org=True)
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
     assert body["allow_forking"] is True
@@ -963,7 +963,7 @@ def test_apply_repo_settings_includes_new_fields() -> None:
 
 
 def test_apply_security_settings_enables_vuln_alerts() -> None:
-    from standard_tooling.lib.github_config import DesiredSecuritySettings
+    from vergil_tooling.lib.github_config import DesiredSecuritySettings
 
     sec = DesiredSecuritySettings(
         secret_scanning="enabled",  # noqa: S106
@@ -972,8 +972,8 @@ def test_apply_security_settings_enables_vuln_alerts() -> None:
         dependabot_security_updates="disabled",
     )
     with (
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_security_settings("o/r", sec)
     assert mock_write.call_count == 2
@@ -986,7 +986,7 @@ def test_apply_security_settings_enables_vuln_alerts() -> None:
 
 
 def test_apply_security_settings_disables_vuln_alerts() -> None:
-    from standard_tooling.lib.github_config import DesiredSecuritySettings
+    from vergil_tooling.lib.github_config import DesiredSecuritySettings
 
     sec = DesiredSecuritySettings(
         secret_scanning="enabled",  # noqa: S106
@@ -995,8 +995,8 @@ def test_apply_security_settings_disables_vuln_alerts() -> None:
         dependabot_security_updates="disabled",
     )
     with (
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_security_settings("o/r", sec)
     assert mock_write.call_count == 1
@@ -1005,7 +1005,7 @@ def test_apply_security_settings_disables_vuln_alerts() -> None:
 
 def test_apply_actions_permissions_selected() -> None:
     perms = desired_actions_permissions("python")
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_actions_permissions("o/r", perms)
     assert mock_write.call_count == 3
     endpoints = [c[0][1] for c in mock_write.call_args_list]
@@ -1015,7 +1015,7 @@ def test_apply_actions_permissions_selected() -> None:
 
 
 def test_apply_actions_permissions_not_selected_skips_patterns() -> None:
-    from standard_tooling.lib.github_config import DesiredActionsPermissions
+    from vergil_tooling.lib.github_config import DesiredActionsPermissions
 
     perms = DesiredActionsPermissions(
         default_workflow_permissions="read",
@@ -1023,7 +1023,7 @@ def test_apply_actions_permissions_not_selected_skips_patterns() -> None:
         allowed_actions="all",
         patterns_allowed=[],
     )
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_actions_permissions("o/r", perms)
     assert mock_write.call_count == 2
     endpoints = [c[0][1] for c in mock_write.call_args_list]
@@ -1034,11 +1034,11 @@ def test_apply_rulesets_creates_new() -> None:
     ruleset = desired_branch_protection_ruleset()
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             return_value=[],
         ),
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_rulesets("o/r", [ruleset])
     mock_write.assert_called_once()
@@ -1051,11 +1051,11 @@ def test_apply_rulesets_updates_existing() -> None:
     ruleset = desired_branch_protection_ruleset()
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             return_value=[{"name": "Branch protection", "id": 42}],
         ),
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_rulesets("o/r", [ruleset])
     mock_write.assert_called_once()
@@ -1067,11 +1067,11 @@ def test_apply_rulesets_updates_existing() -> None:
 def test_apply_rulesets_deletes_extra() -> None:
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             return_value=[{"name": "Old rule", "id": 99}],
         ),
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_rulesets("o/r", [])
     mock_write.assert_not_called()
@@ -1089,11 +1089,11 @@ def test_apply_rulesets_skips_invalid_entries() -> None:
     ]
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             return_value=existing,
         ),
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete"),
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete"),
     ):
         _apply_rulesets("o/r", [ruleset])
     assert mock_write.call_args[0][0] == "PUT"
@@ -1104,11 +1104,11 @@ def test_apply_rulesets_non_list_response_creates_all() -> None:
     ruleset = desired_branch_protection_ruleset()
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             return_value={"error": "unexpected"},
         ),
-        patch("standard_tooling.lib.github_config.github.write_json") as mock_write,
-        patch("standard_tooling.lib.github_config.github.delete") as mock_del,
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
     ):
         _apply_rulesets("o/r", [ruleset])
     mock_write.assert_called_once()
@@ -1132,12 +1132,12 @@ def test_ruleset_body_structure() -> None:
 def test_apply_desired_state_orchestrates_all() -> None:
     state = compute_desired_state(_st_config(), visibility="public", is_org=True)
     with (
-        patch("standard_tooling.lib.github_config._apply_repo_settings") as mock_repo,
-        patch("standard_tooling.lib.github_config._apply_security_settings") as mock_sec,
-        patch("standard_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
-        patch("standard_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
+        patch("vergil_tooling.lib.github_config._apply_repo_settings") as mock_repo,
+        patch("vergil_tooling.lib.github_config._apply_security_settings") as mock_sec,
+        patch("vergil_tooling.lib.github_config._apply_actions_permissions") as mock_actions,
+        patch("vergil_tooling.lib.github_config._apply_rulesets") as mock_rulesets,
         patch(
-            "standard_tooling.lib.github_config._cleanup_classic_branch_protection",
+            "vergil_tooling.lib.github_config._cleanup_classic_branch_protection",
             return_value=[],
         ) as mock_cleanup,
     ):
@@ -1158,7 +1158,7 @@ def test_apply_desired_state_orchestrates_all() -> None:
 def test_cleanup_removes_legacy_protection_for_covered_branches() -> None:
     rulesets = [desired_branch_protection_ruleset()]
     with patch(
-        "standard_tooling.lib.github_config.github.delete_if_exists",
+        "vergil_tooling.lib.github_config.github.delete_if_exists",
         return_value=True,
     ) as mock_del:
         removed = _cleanup_classic_branch_protection("o/r", rulesets)
@@ -1174,7 +1174,7 @@ def test_cleanup_removes_legacy_protection_for_covered_branches() -> None:
 def test_cleanup_returns_empty_when_no_legacy_protection() -> None:
     rulesets = [desired_branch_protection_ruleset()]
     with patch(
-        "standard_tooling.lib.github_config.github.delete_if_exists",
+        "vergil_tooling.lib.github_config.github.delete_if_exists",
         return_value=False,
     ):
         removed = _cleanup_classic_branch_protection("o/r", rulesets)
@@ -1184,7 +1184,7 @@ def test_cleanup_returns_empty_when_no_legacy_protection() -> None:
 def test_cleanup_skips_tag_rulesets() -> None:
     rulesets = [desired_tag_protection_ruleset()]
     with patch(
-        "standard_tooling.lib.github_config.github.delete_if_exists",
+        "vergil_tooling.lib.github_config.github.delete_if_exists",
     ) as mock_del:
         removed = _cleanup_classic_branch_protection("o/r", rulesets)
     mock_del.assert_not_called()
@@ -1203,7 +1203,7 @@ def test_cleanup_ignores_non_heads_refs() -> None:
         ),
     ]
     with patch(
-        "standard_tooling.lib.github_config.github.delete_if_exists",
+        "vergil_tooling.lib.github_config.github.delete_if_exists",
         return_value=True,
     ) as mock_del:
         removed = _cleanup_classic_branch_protection("o/r", rulesets)
@@ -1224,7 +1224,7 @@ def test_cleanup_deduplicates_branches_across_rulesets() -> None:
         ),
     ]
     with patch(
-        "standard_tooling.lib.github_config.github.delete_if_exists",
+        "vergil_tooling.lib.github_config.github.delete_if_exists",
         return_value=True,
     ) as mock_del:
         removed = _cleanup_classic_branch_protection("o/r", rulesets)
@@ -1277,7 +1277,7 @@ def test_compute_desired_state_includes_publish() -> None:
 def test_compute_desired_state_publish_release_true() -> None:
     config = StConfig(
         project=_project(),
-        dependencies={"standard-tooling": "v1.4"},
+        dependencies={"vergil-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
         publish=PublishConfig(release=True, docs=True),
@@ -1307,7 +1307,7 @@ def test_desired_repo_settings_org_repo_allow_forking_set() -> None:
 
 def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
     settings = desired_repo_settings(visibility="public", is_org=False)
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
     assert "allow_forking" not in body
@@ -1315,7 +1315,7 @@ def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
 
 def test_apply_repo_settings_includes_allow_forking_for_org() -> None:
     settings = desired_repo_settings(visibility="public", is_org=True)
-    with patch("standard_tooling.lib.github_config.github.write_json") as mock_write:
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
     assert body["allow_forking"] is True
@@ -1353,11 +1353,11 @@ def test_fetch_actual_state_extracts_owner_type_organization() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):
@@ -1389,11 +1389,11 @@ def test_fetch_actual_state_defaults_owner_type_to_user() -> None:
 
     with (
         patch(
-            "standard_tooling.lib.github_config.github.read_json",
+            "vergil_tooling.lib.github_config.github.read_json",
             side_effect=mock_read_json,
         ),
         patch(
-            "standard_tooling.lib.github_config._fetch_vulnerability_alerts",
+            "vergil_tooling.lib.github_config._fetch_vulnerability_alerts",
             return_value=False,
         ),
     ):

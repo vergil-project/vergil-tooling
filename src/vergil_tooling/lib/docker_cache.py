@@ -1,4 +1,4 @@
-"""Per-branch Docker image caching with standard-tooling pre-installed."""
+"""Per-branch Docker image caching with vergil-tooling pre-installed."""
 
 from __future__ import annotations
 
@@ -7,25 +7,25 @@ import re
 import subprocess
 from typing import TYPE_CHECKING
 
-from standard_tooling.lib.config import st_install_tag
-from standard_tooling.lib.docker import docker_platform
-from standard_tooling.lib.validate_commands import CheckKind, language_commands
+from vergil_tooling.lib.config import vrg_install_tag
+from vergil_tooling.lib.docker import docker_platform
+from vergil_tooling.lib.validate_commands import CheckKind, language_commands
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_SELF_PROJECT_NAME = "standard-tooling"
+_SELF_PROJECT_NAME = "vergil-tooling"
 
-_ST_GIT_URL = "https://github.com/wphillipmoore/standard-tooling"
+_ST_GIT_URL = "https://github.com/wphillipmoore/vergil-tooling"
 
 _CACHE_FILES: dict[str, list[str]] = {
-    "python": ["uv.lock", "standard-tooling.toml"],
-    "ruby": ["Gemfile.lock", "standard-tooling.toml"],
-    "rust": ["Cargo.lock", "standard-tooling.toml"],
-    "go": ["go.sum", "standard-tooling.toml"],
-    "java": ["pom.xml", "standard-tooling.toml"],
+    "python": ["uv.lock", "vergil.toml"],
+    "ruby": ["Gemfile.lock", "vergil.toml"],
+    "rust": ["Cargo.lock", "vergil.toml"],
+    "go": ["go.sum", "vergil.toml"],
+    "java": ["pom.xml", "vergil.toml"],
 }
-_DEFAULT_CACHE_FILES = ["standard-tooling.toml"]
+_DEFAULT_CACHE_FILES = ["vergil.toml"]
 
 
 def _warmup_command(lang: str) -> str:
@@ -34,7 +34,7 @@ def _warmup_command(lang: str) -> str:
 
 
 def _is_self_repo(repo_root: Path) -> bool:
-    """Return True when *repo_root* is the standard-tooling project itself."""
+    """Return True when *repo_root* is the vergil-tooling project itself."""
     pyproject = repo_root / "pyproject.toml"
     if not pyproject.is_file():
         return False
@@ -108,15 +108,15 @@ def _build_cached_image(
     base_image: str,
     target_tag: str,
 ) -> str:
-    """Build a cached image with standard-tooling installed."""
+    """Build a cached image with vergil-tooling installed."""
     self_repo = _is_self_repo(repo_root)
     warmup = _warmup_command(lang)
 
     if self_repo:
         setup = warmup or "true"
     else:
-        tag = st_install_tag(repo_root)
-        uv_install = f"uv tool install --quiet 'standard-tooling @ git+{_ST_GIT_URL}@{tag}'"
+        tag = vrg_install_tag(repo_root)
+        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_ST_GIT_URL}@{tag}'"
         setup = f"{uv_install} && {warmup}" if warmup else uv_install
 
     print(f"Building cached image: {target_tag}")
@@ -124,7 +124,7 @@ def _build_cached_image(
     if self_repo:
         print("  Install: skipped (self-repo uses local dev version)")
     else:
-        print(f"  Install: standard-tooling@{tag}")
+        print(f"  Install: vergil-tooling@{tag}")
     if warmup:
         print(f"  Warmup:  {warmup}")
 
@@ -187,7 +187,7 @@ def ensure_cached_image(
     if not files:
         return base_image
 
-    from standard_tooling.lib import git as _git
+    from vergil_tooling.lib import git as _git
 
     branch = _git.current_branch()
     current_hash = compute_cache_hash(files, salt=repo_root.name)

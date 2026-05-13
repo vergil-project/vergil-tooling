@@ -3,7 +3,7 @@
 The gate is bash; we drive it via subprocess and assert exit codes /
 stderr. Three branches:
 
-1. ST_COMMIT_CONTEXT=1 → exit 0 (st-commit-driven commit, admitted).
+1. VRG_COMMIT_CONTEXT=1 → exit 0 (vrg-commit-driven commit, admitted).
 2. GIT_REFLOG_ACTION matches an admitted pattern (amend, cherry-pick,
    revert, rebase*, merge*) → exit 0 (legitimate derived-commit
    workflow).
@@ -44,13 +44,13 @@ def _run_gate(env: dict[str, str]) -> subprocess.CompletedProcess[str]:
 
 
 def test_gate_admits_st_commit_context() -> None:
-    result = _run_gate({"ST_COMMIT_CONTEXT": "1"})
+    result = _run_gate({"VRG_COMMIT_CONTEXT": "1"})
     assert result.returncode == 0, result.stderr
     # Admits print a diagnostic so the admission is visible in commit
     # output — this branch is also the documented escape hatch and a
     # silent admit would hide manual workarounds.
     assert "admitted" in result.stderr
-    assert "ST_COMMIT_CONTEXT" in result.stderr
+    assert "VRG_COMMIT_CONTEXT" in result.stderr
 
 
 @pytest.mark.parametrize(
@@ -78,7 +78,7 @@ def test_gate_rejects_raw_git_commit() -> None:
     result = _run_gate({})
     assert result.returncode == 1
     assert "raw 'git commit' is blocked" in result.stderr
-    assert "st-commit" in result.stderr
+    assert "vrg-commit" in result.stderr
 
 
 def test_gate_rejects_unrelated_reflog_action() -> None:
@@ -90,17 +90,17 @@ def test_gate_rejects_unrelated_reflog_action() -> None:
 
 
 def test_gate_admits_when_st_commit_context_set_even_with_unrelated_reflog() -> None:
-    # ST_COMMIT_CONTEXT takes precedence: if st-commit set the env var,
+    # VRG_COMMIT_CONTEXT takes precedence: if vrg-commit set the env var,
     # the gate admits regardless of GIT_REFLOG_ACTION value. The
-    # diagnostic identifies the path taken (ST_COMMIT_CONTEXT, not
+    # diagnostic identifies the path taken (VRG_COMMIT_CONTEXT, not
     # GIT_REFLOG_ACTION).
-    result = _run_gate({"ST_COMMIT_CONTEXT": "1", "GIT_REFLOG_ACTION": "commit"})
+    result = _run_gate({"VRG_COMMIT_CONTEXT": "1", "GIT_REFLOG_ACTION": "commit"})
     assert result.returncode == 0, result.stderr
-    assert "ST_COMMIT_CONTEXT" in result.stderr
+    assert "VRG_COMMIT_CONTEXT" in result.stderr
 
 
 def test_gate_st_commit_context_other_value_does_not_admit() -> None:
     # The gate uses == "1" exactly. Other truthy-looking values must not
     # admit, to keep the contract narrow.
-    result = _run_gate({"ST_COMMIT_CONTEXT": "true"})
+    result = _run_gate({"VRG_COMMIT_CONTEXT": "true"})
     assert result.returncode == 1

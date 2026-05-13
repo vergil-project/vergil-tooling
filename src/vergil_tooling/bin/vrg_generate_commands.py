@@ -799,7 +799,7 @@ def _check_target(target: Path, language: str, generated: str) -> int:
         print(f"{target}: up to date")
         return 0
 
-    print(f"{target}: out of date (run st-generate-commands to update)", file=sys.stderr)
+    print(f"{target}: out of date (run vrg-generate-commands to update)", file=sys.stderr)
     return 1
 
 

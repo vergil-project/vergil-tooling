@@ -1,4 +1,4 @@
-"""Read per-repo configuration from ``standard-tooling.toml``."""
+"""Read per-repo configuration from ``vergil.toml``."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
-CONFIG_FILE = "standard-tooling.toml"
+CONFIG_FILE = "vergil.toml"
 
 _COAUTHOR_RE = re.compile(r"^Co-Authored-By:\s+.+\s+<.+>$")
 
@@ -34,7 +34,7 @@ _PROJECT_FIELDS = (
 
 
 class ConfigError(Exception):
-    """Raised when standard-tooling.toml has invalid content."""
+    """Raised when vergil.toml has invalid content."""
 
 
 @dataclass
@@ -104,8 +104,8 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         co_authors[name] = trailer
 
     deps = raw.get("dependencies", {})
-    if "standard-tooling" not in deps:
-        msg = f"{CONFIG_FILE}: [dependencies] must contain 'standard-tooling'"
+    if "vergil-tooling" not in deps:
+        msg = f"{CONFIG_FILE}: [dependencies] must contain 'vergil-tooling'"
         raise ConfigError(msg)
 
     ml_raw = raw.get("markdownlint", {})
@@ -167,7 +167,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
 
 
 def read_config(repo_root: Path) -> StConfig:
-    """Parse, validate, and return ``standard-tooling.toml``."""
+    """Parse, validate, and return ``vergil.toml``."""
     config_path = repo_root / CONFIG_FILE
     if not config_path.is_file():
         msg = f"{CONFIG_FILE} not found at {repo_root}"
@@ -183,13 +183,13 @@ def read_config(repo_root: Path) -> StConfig:
     return _parse_raw_config(raw)
 
 
-def st_install_tag(repo_root: Path) -> str:
-    """Return the ``[dependencies].standard-tooling`` value for runtime install.
+def vrg_install_tag(repo_root: Path) -> str:
+    """Return the ``[dependencies].vergil-tooling`` value for runtime install.
 
-    Checks ``ST_DOCKER_INSTALL_TAG`` env var first (override).
+    Checks ``VRG_DOCKER_INSTALL_TAG`` env var first (override).
     """
-    override = os.environ.get("ST_DOCKER_INSTALL_TAG")
+    override = os.environ.get("VRG_DOCKER_INSTALL_TAG")
     if override:
         return override
     cfg = read_config(repo_root)
-    return cfg.dependencies["standard-tooling"]
+    return cfg.dependencies["vergil-tooling"]

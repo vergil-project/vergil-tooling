@@ -1,10 +1,10 @@
 """Check whether a gh pr merge / gh pr review --approve targets a release-workflow PR.
 
-Called by the block-agent-merge hook in standard-tooling-plugin.
+Called by the block-agent-merge hook in vergil-tooling-plugin.
 Takes the raw Bash command string, extracts the PR reference,
 resolves the branch via the GitHub API, and checks the allow-list.
 
-Exit codes follow the three-state convention (standard-tooling#373):
+Exit codes follow the three-state convention (vergil-tooling#373):
   0 — allowed (release-workflow branch)
   1 — denied (tool ran, branch not on allow-list)
   2 — unknown (tool could not determine the answer)
@@ -18,8 +18,8 @@ import shlex
 import subprocess
 import sys
 
-from standard_tooling.lib import github
-from standard_tooling.lib.release import is_release_branch
+from vergil_tooling.lib import github
+from vergil_tooling.lib.release import is_release_branch
 
 _CHAIN_RE = re.compile(r"\s*(?:&&|\|\||[;|])\s*")
 
@@ -29,7 +29,7 @@ _DENY_MESSAGE = (
     "Hand off the PR URL to the user and stop the work cycle.\n"
     "\n"
     "Only release-workflow PRs (release/*) may be agent-merged,\n"
-    "and only via st-merge-when-green from the publish skill.\n"
+    "and only via vrg-merge-when-green from the publish skill.\n"
     "See issue #162."
 )
 

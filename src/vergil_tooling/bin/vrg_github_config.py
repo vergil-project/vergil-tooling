@@ -8,9 +8,9 @@ import sys
 import tomllib
 from pathlib import Path
 
-from standard_tooling.lib import github
-from standard_tooling.lib.config import StConfig, _parse_raw_config
-from standard_tooling.lib.github_config import (
+from vergil_tooling.lib import github
+from vergil_tooling.lib.config import StConfig, _parse_raw_config
+from vergil_tooling.lib.github_config import (
     ConfigDiff,
     apply_desired_state,
     compute_desired_state,
@@ -35,7 +35,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         sp.add_argument("--project", help="GitHub Project number")
         sp.add_argument(
             "--config",
-            help="Local path to standard-tooling.toml (overrides remote fetch)",
+            help="Local path to vergil.toml (overrides remote fetch)",
         )
 
     args = parser.parse_args(argv)
@@ -58,17 +58,17 @@ def _resolve_repos(args: argparse.Namespace) -> list[str]:
 
 
 def _load_local_config(path: str) -> StConfig:
-    """Load and parse standard-tooling.toml from a local file path."""
+    """Load and parse vergil.toml from a local file path."""
     with Path(path).open("rb") as f:
         raw = tomllib.load(f)
     return _parse_raw_config(raw)
 
 
 def _fetch_remote_config(repo: str) -> StConfig:
-    """Fetch and parse standard-tooling.toml from a remote repo."""
+    """Fetch and parse vergil.toml from a remote repo."""
     content_data = github.read_json(
         "api",
-        f"repos/{repo}/contents/standard-tooling.toml",
+        f"repos/{repo}/contents/vergil.toml",
     )
     if not isinstance(content_data, dict):
         msg = f"Unexpected response fetching config from {repo}"

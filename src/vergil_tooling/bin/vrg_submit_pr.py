@@ -8,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from standard_tooling.lib import git, github
+from vergil_tooling.lib import git, github
 
 ALLOWED_LINKAGES = ("Ref",)
 _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")

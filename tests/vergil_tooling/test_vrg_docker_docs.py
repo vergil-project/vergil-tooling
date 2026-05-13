@@ -1,11 +1,11 @@
-"""Tests for standard_tooling.bin.st_docker_docs."""
+"""Tests for vergil_tooling.bin.st_docker_docs."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-from standard_tooling.bin.st_docker_docs import main
+from vergil_tooling.bin.st_docker_docs import main
 
 
 def test_no_args() -> None:
@@ -13,14 +13,14 @@ def test_no_args() -> None:
 
 
 def test_unknown_command() -> None:
-    with patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=Path("/repo")):
+    with patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=Path("/repo")):
         assert main(["unknown"]) == 1
 
 
 def test_serve_execvp(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["serve"])
@@ -34,8 +34,8 @@ def test_serve_execvp(tmp_path: Path) -> None:
 
 def test_build_execvp(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -47,8 +47,8 @@ def test_build_execvp(tmp_path: Path) -> None:
 
 def test_serve_with_extra_args(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["serve", "--strict"])
@@ -63,8 +63,8 @@ def test_custom_env_vars(tmp_path: Path) -> None:
         "DOCS_PORT": "9000",
     }
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["serve"])
@@ -77,8 +77,8 @@ def test_custom_env_vars(tmp_path: Path) -> None:
 def test_python_repo_uv_sync(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -88,8 +88,8 @@ def test_python_repo_uv_sync(tmp_path: Path) -> None:
 
 def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -106,7 +106,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -117,23 +117,23 @@ image-prefix = "dev"
 
 
 def test_config_prefix_used(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(_TOML_DEV_PREFIX)
+    (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["serve"])
     args = mock_exec.call_args[0][1]
-    assert "ghcr.io/wphillipmoore/dev-base:latest" in args
+    assert "ghcr.io/vergil-project/dev-base:latest" in args
 
 
 def test_common_sibling_mount(tmp_path: Path) -> None:
     common = tmp_path / ".." / "mq-rest-admin-common"
     common.mkdir(parents=True)
     with (
-        patch("standard_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("standard_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.st_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.st_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])

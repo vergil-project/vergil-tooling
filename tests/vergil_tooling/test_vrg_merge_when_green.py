@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.st_merge_when_green."""
+"""Tests for vergil_tooling.bin.st_merge_when_green."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from standard_tooling.bin.st_merge_when_green import main, parse_args
+from vergil_tooling.bin.st_merge_when_green import main, parse_args
 
 
 def test_parse_args_defaults() -> None:
@@ -30,7 +30,7 @@ def test_parse_args_rejects_unknown_strategy() -> None:
         parse_args(["42", "--strategy", "ff-only"])
 
 
-_MOD = "standard_tooling.bin.st_merge_when_green"
+_MOD = "vergil_tooling.bin.st_merge_when_green"
 
 
 def _mock_branch(branch: str = "release/1.0.0") -> AbstractContextManager[object]:

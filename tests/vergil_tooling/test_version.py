@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.lib.version."""
+"""Tests for vergil_tooling.lib.version."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.lib.version import bump, show, show_major_minor
+from vergil_tooling.lib.version import bump, show, show_major_minor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -17,10 +17,10 @@ if TYPE_CHECKING:
 
 
 def _write_toml(tmp_path: Path, language: str) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(
+    (tmp_path / "vergil.toml").write_text(
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        f'primary-language = "{language}"\n\n[dependencies]\nstandard-tooling = "v1.4"\n'
+        f'primary-language = "{language}"\n\n[dependencies]\nvergil = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 
@@ -89,11 +89,11 @@ def test_show_major_minor(tmp_path: Path) -> None:
 
 
 def test_show_with_version_file_override(tmp_path: Path) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(
+    (tmp_path / "vergil.toml").write_text(
         '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
         'primary-language = "shell"\nversion-file = "custom/VERSION"\n\n'
-        '[dependencies]\nstandard-tooling = "v1.4"\n'
+        '[dependencies]\nvergil = "v2.0"\n'
         '\n[ci]\nversions = ["3.14"]\n'
     )
     custom_dir = tmp_path / "custom"
@@ -118,7 +118,7 @@ def test_show_ref_reads_via_git(tmp_path: Path) -> None:
     _write_toml(tmp_path, "shell")
     (tmp_path / "VERSION").write_text("3.0.0\n")
 
-    with patch("standard_tooling.lib.version._read_version_from_ref") as mock:
+    with patch("vergil_tooling.lib.version._read_version_from_ref") as mock:
         mock.return_value = "2.9.0"
         result = show(tmp_path, ref="origin/main")
     assert result == "2.9.0"
@@ -139,7 +139,7 @@ def test_bump_generic(tmp_path: Path) -> None:
 def test_bump_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.0.0"\n')
-    with patch("standard_tooling.lib.version.subprocess.run"):
+    with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "2.0.1"
     text = (tmp_path / "pyproject.toml").read_text()
@@ -149,7 +149,7 @@ def test_bump_python(tmp_path: Path) -> None:
 def test_bump_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
-    with patch("standard_tooling.lib.version.subprocess.run"):
+    with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "0.3.8"
     text = (tmp_path / "Cargo.toml").read_text()
@@ -161,7 +161,7 @@ def test_bump_ruby(tmp_path: Path) -> None:
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
-    with patch("standard_tooling.lib.version.subprocess.run"):
+    with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "1.0.1"
     text = (version_dir / "version.rb").read_text()
@@ -206,7 +206,7 @@ def test_bump_claude_plugin(tmp_path: Path) -> None:
 def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
-    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
             ["uv", "lock"],
@@ -218,7 +218,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
 def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
-    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
             ["cargo", "update", "--workspace"],
@@ -232,7 +232,7 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
-    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
             ["bundle", "install"],
@@ -244,7 +244,7 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
 def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path, "shell")
     (tmp_path / "VERSION").write_text("1.0.0\n")
-    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_not_called()
 
@@ -254,7 +254,7 @@ def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.0.0"\n}\n')
-    with patch("standard_tooling.lib.version.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
         mock_run.assert_not_called()
 
@@ -263,21 +263,21 @@ def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
 
 
 def test_discover_ruby_no_match(tmp_path: Path) -> None:
-    from standard_tooling.lib.version import _discover_version_file
+    from vergil_tooling.lib.version import _discover_version_file
 
     with pytest.raises(FileNotFoundError, match="No lib"):
         _discover_version_file(tmp_path, "ruby")
 
 
 def test_discover_go_no_match(tmp_path: Path) -> None:
-    from standard_tooling.lib.version import _discover_version_file
+    from vergil_tooling.lib.version import _discover_version_file
 
     with pytest.raises(FileNotFoundError, match="No .*/version.go"):
         _discover_version_file(tmp_path, "go")
 
 
 def test_discover_unsupported_language(tmp_path: Path) -> None:
-    from standard_tooling.lib.version import _discover_version_file
+    from vergil_tooling.lib.version import _discover_version_file
 
     with pytest.raises(ValueError, match="Unsupported language"):
         _discover_version_file(tmp_path, "fortran")
@@ -287,28 +287,28 @@ def test_discover_unsupported_language(tmp_path: Path) -> None:
 
 
 def test_read_version_ruby_bad_format() -> None:
-    from standard_tooling.lib.version import _read_version
+    from vergil_tooling.lib.version import _read_version
 
     with pytest.raises(ValueError, match="No VERSION"):
         _read_version("no version here", "ruby")
 
 
 def test_read_version_go_bad_format() -> None:
-    from standard_tooling.lib.version import _read_version
+    from vergil_tooling.lib.version import _read_version
 
     with pytest.raises(ValueError, match="No Version"):
         _read_version("no version here", "go")
 
 
 def test_read_version_java_bad_format() -> None:
-    from standard_tooling.lib.version import _read_version
+    from vergil_tooling.lib.version import _read_version
 
     with pytest.raises(ValueError, match="No <version>"):
         _read_version("no version here", "java")
 
 
 def test_read_version_claude_plugin_missing_key() -> None:
-    from standard_tooling.lib.version import _read_version
+    from vergil_tooling.lib.version import _read_version
 
     with pytest.raises(ValueError, match="No 'version' key"):
         _read_version('{"name": "example"}', "claude-plugin")
@@ -318,10 +318,10 @@ def test_read_version_claude_plugin_missing_key() -> None:
 
 
 def test_read_version_from_ref_body(tmp_path: Path) -> None:
-    from standard_tooling.lib.version import _read_version_from_ref
+    from vergil_tooling.lib.version import _read_version_from_ref
 
     with patch(
-        "standard_tooling.lib.version.subprocess.run",
+        "vergil_tooling.lib.version.subprocess.run",
         return_value=__import__("subprocess").CompletedProcess(
             args=[], returncode=0, stdout="1.2.3\n"
         ),

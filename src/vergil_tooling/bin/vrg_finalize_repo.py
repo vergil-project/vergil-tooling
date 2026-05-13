@@ -15,8 +15,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from standard_tooling.lib import config, git
-from standard_tooling.lib.docker_cache import clean_branch_images
+from vergil_tooling.lib import config, git
+from vergil_tooling.lib.docker_cache import clean_branch_images
 
 _DOCS_WORKFLOW_NAME = "Documentation"
 
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     if not git.is_main_worktree():
         main_root = git.main_worktree_root()
         print(
-            f"ERROR: st-finalize-repo must be run from the main worktree at {main_root},\n"
+            f"ERROR: vrg-finalize-repo must be run from the main worktree at {main_root},\n"
             "  not from a secondary worktree. The script removes worktrees during cleanup\n"
             "  and cannot safely do so when the calling shell's CWD is inside one.",
             file=sys.stderr,
@@ -252,18 +252,18 @@ def main(argv: list[str] | None = None) -> int:
     validation_failed = False
     if not args.dry_run:
         print()
-        print("Running post-finalization validation via st-docker-run...")
+        print("Running post-finalization validation via vrg-docker-run...")
         repo_root = Path(git.repo_root())
         if (repo_root / "pyproject.toml").is_file():
-            cmd: tuple[str, ...] = ("st-docker-run", "--", "uv", "run", "st-validate")
+            cmd: tuple[str, ...] = ("vrg-docker-run", "--", "uv", "run", "vrg-validate")
         else:
-            cmd = ("st-docker-run", "--", "st-validate")
+            cmd = ("vrg-docker-run", "--", "vrg-validate")
 
         result = subprocess.run(cmd, check=False)  # noqa: S603
         if result.returncode != 0:
             validation_failed = True
     else:
-        print("  [dry-run] st-docker-run -- [uv run] st-validate")
+        print("  [dry-run] vrg-docker-run -- [uv run] vrg-validate")
 
     # Docs-publish sanity check (issue #303). Runs after validation
     # so a real validation failure stays the headline; a docs failure

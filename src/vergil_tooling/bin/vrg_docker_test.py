@@ -12,8 +12,8 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from standard_tooling.lib import git
-from standard_tooling.lib.docker import (
+from vergil_tooling.lib import git
+from vergil_tooling.lib.docker import (
     _DEFAULT_TEST_COMMANDS,
     build_docker_args,
     default_image,

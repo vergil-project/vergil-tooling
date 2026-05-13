@@ -12,9 +12,9 @@ from __future__ import annotations
 import argparse
 import sys
 
-from standard_tooling.lib import github
-from standard_tooling.lib.github import list_project_repos
-from standard_tooling.lib.labels import load_labels
+from vergil_tooling.lib import github
+from vergil_tooling.lib.github import list_project_repos
+from vergil_tooling.lib.labels import load_labels
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

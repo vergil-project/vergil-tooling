@@ -1,11 +1,11 @@
-"""Manage per-branch cached Docker images with standard-tooling pre-installed.
+"""Manage per-branch cached Docker images with vergil-tooling pre-installed.
 
 Subcommands:
 
     build      Build (or refresh) the cached image for the current branch
     clean      Remove the cached image for the current branch
     status     Show cache state for the current branch
-    clean-all  Remove all cached images managed by st-docker-cache
+    clean-all  Remove all cached images managed by vrg-docker-cache
 """
 
 from __future__ import annotations
@@ -14,13 +14,13 @@ import argparse
 import subprocess
 import sys
 
-from standard_tooling.lib import git
-from standard_tooling.lib.docker import (
+from vergil_tooling.lib import git
+from vergil_tooling.lib.docker import (
     assert_docker_available,
     default_image,
     detect_language,
 )
-from standard_tooling.lib.docker_cache import (
+from vergil_tooling.lib.docker_cache import (
     cache_image_tag,
     cache_sensitive_files,
     compute_cache_hash,
@@ -108,7 +108,7 @@ def _cmd_clean_all(_args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="st-docker-cache",
+        prog="vrg-docker-cache",
         description="Manage per-branch cached Docker images.",
     )
     sub = parser.add_subparsers(dest="command")

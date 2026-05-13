@@ -1,17 +1,17 @@
-"""CLI entry point for st-version."""
+"""CLI entry point for vrg-version."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-from standard_tooling.lib.version import bump, show, show_major_minor
+from vergil_tooling.lib.version import bump, show, show_major_minor
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="st-version",
-        description="Version management for standard-tooling repos",
+        prog="vrg-version",
+        description="Version management for vergil-tooling repos",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 

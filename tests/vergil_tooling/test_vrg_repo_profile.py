@@ -1,10 +1,10 @@
-"""Tests for standard_tooling.bin.st_repo_profile."""
+"""Tests for vergil_tooling.bin.st_repo_profile."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from standard_tooling.bin.st_repo_profile import _structural_check, main
+from vergil_tooling.bin.st_repo_profile import _structural_check, main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -24,7 +24,7 @@ primary-language = "python"
 claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -32,7 +32,7 @@ versions = ["3.14"]
 
 
 def _write_toml(tmp_path: Path, content: str) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(content)
+    (tmp_path / "vergil.toml").write_text(content)
 
 
 # -- TOML validation ----------------------------------------------------------
@@ -75,7 +75,7 @@ def test_malformed_co_author(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 def test_missing_dependencies_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    toml = _VALID_TOML.replace('standard-tooling = "v1.4"', 'other = "v1.0"')
+    toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
     _write_toml(tmp_path, toml)
     assert main() == 1
 

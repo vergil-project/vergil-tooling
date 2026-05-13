@@ -10,7 +10,7 @@ from pathlib import Path
 # that runs `git commit` via this helper is by definition an
 # st-* tool invocation — admit it via the gate. See
 # docs/specs/host-level-tool.md "Git hooks".
-_GATE_ENV_VAR = "ST_COMMIT_CONTEXT"
+_GATE_ENV_VAR = "VRG_COMMIT_CONTEXT"
 _GATE_ENABLED_VALUE = "1"
 
 
@@ -18,7 +18,7 @@ def run(*args: str) -> None:
     """Run a git command and raise on failure.
 
     When the first positional arg is ``"commit"``, automatically sets
-    ``ST_COMMIT_CONTEXT=1`` in the subprocess environment so the
+    ``VRG_COMMIT_CONTEXT=1`` in the subprocess environment so the
     repository's pre-commit gate admits the commit. This makes the
     env-var contract a property of the helper rather than something
     every internal caller has to remember (issue #295).

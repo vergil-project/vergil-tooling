@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.st_finalize_repo."""
+"""Tests for vergil_tooling.bin.st_finalize_repo."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
 import pytest
 
-from standard_tooling.bin.st_finalize_repo import (
+from vergil_tooling.bin.st_finalize_repo import (
     _check_docs_workflow_status,
     _worktree_for_branch,
     _worktree_is_dirty,
@@ -20,7 +20,7 @@ from standard_tooling.bin.st_finalize_repo import (
     parse_args,
 )
 
-_MOD = "standard_tooling.bin.st_finalize_repo"
+_MOD = "vergil_tooling.bin.st_finalize_repo"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -80,16 +80,16 @@ def test_main_rejects_secondary_worktree(
 
 
 def _make_profile(tmp_path: Path, model: str) -> None:
-    (tmp_path / "standard-tooling.toml").write_text(
+    (tmp_path / "vergil.toml").write_text(
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "{model}"\nrelease-model = "tagged-release"\n'
-        f'primary-language = "python"\n\n[dependencies]\nstandard-tooling = "v1.4"\n'
+        f'primary-language = "python"\n\n[dependencies]\nvergil = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 
 
 def _validation_ok() -> CompletedProcess[bytes]:
-    return CompletedProcess(args=("st-validate",), returncode=0)
+    return CompletedProcess(args=("vrg-validate",), returncode=0)
 
 
 def test_main_library_release(tmp_path: Path) -> None:
@@ -99,7 +99,7 @@ def test_main_library_release(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_run,
         patch(
-            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
+            "vergil_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["feature/x", "develop"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
@@ -134,7 +134,7 @@ def test_main_dry_run(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_git_run,
         patch(
-            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
+            "vergil_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["feature/x"],
         ),
     ):
@@ -172,7 +172,7 @@ def test_main_application_promotion(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(
-            "standard_tooling.bin.st_finalize_repo.git.merged_branches",
+            "vergil_tooling.bin.st_finalize_repo.git.merged_branches",
             return_value=["develop", "release", "main", "feature/y"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
@@ -220,8 +220,8 @@ def test_main_validation_fails(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
-            "standard_tooling.bin.st_finalize_repo.subprocess.run",
-            return_value=CompletedProcess(args=("st-validate",), returncode=1),
+            "vergil_tooling.bin.st_finalize_repo.subprocess.run",
+            return_value=CompletedProcess(args=("vrg-validate",), returncode=1),
         ),
         patch(_MOD + "._check_docs_workflow_status", return_value=None),
     ):
@@ -242,8 +242,8 @@ def test_main_calls_docker_run(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     cmd = mock_sub.call_args[0][0]
-    assert cmd[0] == "st-docker-run"
-    assert cmd[1:] == ("--", "st-validate")
+    assert cmd[0] == "vrg-docker-run"
+    assert cmd[1:] == ("--", "vrg-validate")
 
 
 def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
@@ -260,7 +260,7 @@ def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     cmd = mock_sub.call_args[0][0]
-    assert cmd == ("st-docker-run", "--", "uv", "run", "st-validate")
+    assert cmd == ("vrg-docker-run", "--", "uv", "run", "vrg-validate")
 
 
 # -- _check_docs_workflow_status (issue #303) --------------------------------

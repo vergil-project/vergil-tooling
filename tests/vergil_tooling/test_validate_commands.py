@@ -1,10 +1,10 @@
-"""Tests for standard_tooling.lib.validate_commands."""
+"""Tests for vergil_tooling.lib.validate_commands."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from standard_tooling.lib.validate_commands import (
+from vergil_tooling.lib.validate_commands import (
     CheckKind,
     language_commands,
 )

@@ -1,6 +1,6 @@
 """Unified validation command.
 
-Reads primary_language from standard-tooling.toml, then either runs a
+Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
   common -> install -> lint -> typecheck -> test -> audit -> custom
 """
@@ -14,8 +14,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from standard_tooling.lib import config, git
-from standard_tooling.lib.validate_commands import CheckKind, language_commands
+from vergil_tooling.lib import config, git
+from vergil_tooling.lib.validate_commands import CheckKind, language_commands
 
 _CHECK_KINDS = {
     "common": None,
@@ -50,14 +50,14 @@ def _run_commands(cmds: list[list[str]], label: str, *, fail_fast: bool = False)
 
 
 def _run_common_checks(repo_root: Path) -> int:  # noqa: ARG001
-    from standard_tooling.bin.validate_common import main as common_main
+    from vergil_tooling.bin.validate_common import main as common_main
 
     return common_main()
 
 
 def _find_custom_validator(repo_root: Path) -> str | None:
     scripts_bin = repo_root / "scripts" / "bin"
-    entry_point = shutil.which("st-validate-custom")
+    entry_point = shutil.which("vrg-validate-custom")
     if entry_point is not None:
         return entry_point
     local = scripts_bin / "validate-custom"
@@ -74,7 +74,7 @@ def _run_custom_validator(path: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="st-validate",
+        prog="vrg-validate",
         description="Run validation checks from the command registry.",
     )
     parser.add_argument(
@@ -87,8 +87,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if not _in_dev_container():
         print(
-            "ERROR: st-validate must run inside a dev container.\n"
-            "       Run: st-docker-run -- st-validate",
+            "ERROR: vrg-validate must run inside a dev container.\n"
+            "       Run: vrg-docker-run -- vrg-validate",
             file=sys.stderr,
         )
         return 1
@@ -135,7 +135,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
 
 def _run_all_checks(language: str, repo_root: Path) -> int:
     print("=" * 40)
-    print("st-validate")
+    print("vrg-validate")
     print(f"primary_language: {language or '<not set>'}")
     print("=" * 40)
     print()
@@ -169,7 +169,7 @@ def _run_all_checks(language: str, repo_root: Path) -> int:
 
     print()
     print("=" * 40)
-    print("st-validate: all checks passed")
+    print("vrg-validate: all checks passed")
     print("=" * 40)
     return 0
 

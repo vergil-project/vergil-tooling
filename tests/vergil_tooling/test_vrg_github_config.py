@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.bin.st_github_config."""
+"""Tests for vergil_tooling.bin.st_github_config."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from standard_tooling.bin.st_github_config import (
+from vergil_tooling.bin.st_github_config import (
     _apply_repo,
     _audit_repo,
     _fetch_remote_config,
@@ -17,7 +17,7 @@ from standard_tooling.bin.st_github_config import (
     main,
     parse_args,
 )
-from standard_tooling.lib.config import (
+from vergil_tooling.lib.config import (
     CiConfig,
     DockerConfig,
     MarkdownlintConfig,
@@ -25,7 +25,7 @@ from standard_tooling.lib.config import (
     PublishConfig,
     StConfig,
 )
-from standard_tooling.lib.github_config import ConfigDiff, DiffItem
+from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
 # -- Argument parsing ---------------------------------------------------------
 
@@ -116,14 +116,14 @@ def _mock_noncompliant() -> ConfigDiff:
 def test_audit_compliant_returns_zero() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_compliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
     ):
         assert main(["audit", "--repo", "o/r"]) == 0
 
@@ -131,14 +131,14 @@ def test_audit_compliant_returns_zero() -> None:
 def test_audit_noncompliant_returns_one() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_noncompliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
     ):
         assert main(["audit", "--repo", "o/r"]) == 1
 
@@ -146,14 +146,14 @@ def test_audit_noncompliant_returns_one() -> None:
 def test_diff_always_returns_zero() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_noncompliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
     ):
         assert main(["diff", "--repo", "o/r"]) == 0
 
@@ -161,14 +161,14 @@ def test_diff_always_returns_zero() -> None:
 def test_apply_returns_zero() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_compliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
     ):
         assert main(["apply", "--repo", "o/r"]) == 0
 
@@ -184,7 +184,7 @@ def test_resolve_repos_single_repo() -> None:
 def test_resolve_repos_project_mode() -> None:
     args = argparse.Namespace(repo=None, owner="acme", project="3")
     with patch(
-        "standard_tooling.bin.st_github_config.github.list_project_repos",
+        "vergil_tooling.bin.st_github_config.github.list_project_repos",
         return_value=["acme/a", "acme/b"],
     ):
         assert _resolve_repos(args) == ["acme/a", "acme/b"]
@@ -193,7 +193,7 @@ def test_resolve_repos_project_mode() -> None:
 def test_resolve_repos_defaults_to_current_repo() -> None:
     args = argparse.Namespace(repo=None, owner=None, project=None)
     with patch(
-        "standard_tooling.bin.st_github_config.github.current_repo",
+        "vergil_tooling.bin.st_github_config.github.current_repo",
         return_value="acme/my-repo",
     ):
         assert _resolve_repos(args) == ["acme/my-repo"]
@@ -210,7 +210,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [dependencies]
-standard-tooling = "v1.4"
+vergil = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -220,7 +220,7 @@ versions = ["3.14"]
 def test_fetch_remote_config_success() -> None:
     encoded = base64.b64encode(_VALID_TOML).decode()
     with patch(
-        "standard_tooling.bin.st_github_config.github.read_json",
+        "vergil_tooling.bin.st_github_config.github.read_json",
         return_value={"content": encoded},
     ):
         cfg = _fetch_remote_config("o/r")
@@ -230,7 +230,7 @@ def test_fetch_remote_config_success() -> None:
 def test_fetch_remote_config_non_dict_response() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config.github.read_json",
+            "vergil_tooling.bin.st_github_config.github.read_json",
             return_value=[],
         ),
         pytest.raises(RuntimeError, match="Unexpected response"),
@@ -241,7 +241,7 @@ def test_fetch_remote_config_non_dict_response() -> None:
 def test_fetch_remote_config_no_content_field() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config.github.read_json",
+            "vergil_tooling.bin.st_github_config.github.read_json",
             return_value={"encoding": "base64"},
         ),
         pytest.raises(RuntimeError, match="No content field"),
@@ -255,7 +255,7 @@ def test_fetch_remote_config_no_content_field() -> None:
 def test_load_local_config_success(tmp_path: object) -> None:
     from pathlib import Path
 
-    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p = Path(str(tmp_path)) / "vergil.toml"
     p.write_bytes(_VALID_TOML)
     cfg = _load_local_config(str(p))
     assert cfg.project.primary_language == "python"
@@ -264,7 +264,7 @@ def test_load_local_config_success(tmp_path: object) -> None:
 
 def test_load_local_config_file_not_found() -> None:
     with pytest.raises(FileNotFoundError):
-        _load_local_config("/nonexistent/path/standard-tooling.toml")
+        _load_local_config("/nonexistent/path/vergil.toml")
 
 
 # -- _audit_repo ---------------------------------------------------------------
@@ -280,7 +280,7 @@ def _make_config() -> StConfig:
             primary_language="python",
             co_authors={},
         ),
-        dependencies={"standard-tooling": "v1.4"},
+        dependencies={"vergil-tooling": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         publish=PublishConfig(release=False, docs=True),
@@ -292,13 +292,13 @@ def test_audit_repo_calls_compute_and_diff() -> None:
     cfg = _make_config()
     with (
         patch(
-            "standard_tooling.bin.st_github_config.fetch_actual_state",
+            "vergil_tooling.bin.st_github_config.fetch_actual_state",
         ) as mock_fetch,
         patch(
-            "standard_tooling.bin.st_github_config.compute_desired_state",
+            "vergil_tooling.bin.st_github_config.compute_desired_state",
         ) as mock_desired,
         patch(
-            "standard_tooling.bin.st_github_config.compute_diff",
+            "vergil_tooling.bin.st_github_config.compute_diff",
             return_value=ConfigDiff(items=[]),
         ) as mock_diff,
     ):
@@ -321,9 +321,9 @@ def test_audit_repo_calls_compute_and_diff() -> None:
 def test_apply_repo_calls_apply_desired_state() -> None:
     cfg = _make_config()
     with (
-        patch("standard_tooling.bin.st_github_config.fetch_actual_state") as mock_fetch,
-        patch("standard_tooling.bin.st_github_config.compute_desired_state") as mock_desired,
-        patch("standard_tooling.bin.st_github_config.apply_desired_state") as mock_apply,
+        patch("vergil_tooling.bin.st_github_config.fetch_actual_state") as mock_fetch,
+        patch("vergil_tooling.bin.st_github_config.compute_desired_state") as mock_desired,
+        patch("vergil_tooling.bin.st_github_config.apply_desired_state") as mock_apply,
     ):
         _apply_repo("o/r", cfg)
     mock_fetch.assert_called_once_with("o/r")
@@ -340,15 +340,15 @@ def test_apply_repo_calls_apply_desired_state() -> None:
 def test_apply_all_compliant_does_nothing() -> None:
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_compliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
-        patch("standard_tooling.bin.st_github_config._apply_repo") as mock_apply,
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._apply_repo") as mock_apply,
     ):
         result = main(["apply", "--repo", "o/r"])
     assert result == 0
@@ -361,15 +361,15 @@ def test_apply_noncompliant() -> None:
 
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             side_effect=audit_side_effect,
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
-        patch("standard_tooling.bin.st_github_config._apply_repo", return_value=[]) as mock_apply,
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._apply_repo", return_value=[]) as mock_apply,
     ):
         result = main(["apply", "--repo", "o/r"])
     assert result == 0
@@ -382,16 +382,16 @@ def test_apply_reports_legacy_protection_removed() -> None:
 
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             side_effect=audit_side_effect,
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
-        patch("standard_tooling.bin.st_github_config._fetch_remote_config"),
+        patch("vergil_tooling.bin.st_github_config._fetch_remote_config"),
         patch(
-            "standard_tooling.bin.st_github_config._apply_repo",
+            "vergil_tooling.bin.st_github_config._apply_repo",
             return_value=["main", "develop"],
         ),
         patch("builtins.print") as mock_print,
@@ -408,20 +408,20 @@ def test_apply_reports_legacy_protection_removed() -> None:
 def test_config_flag_bypasses_remote_fetch(tmp_path: object) -> None:
     from pathlib import Path
 
-    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p = Path(str(tmp_path)) / "vergil.toml"
     p.write_bytes(_VALID_TOML)
 
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_compliant(),
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
         patch(
-            "standard_tooling.bin.st_github_config._fetch_remote_config",
+            "vergil_tooling.bin.st_github_config._fetch_remote_config",
         ) as mock_remote,
     ):
         result = main(["audit", "--repo", "o/r", "--config", str(p)])
@@ -432,16 +432,16 @@ def test_config_flag_bypasses_remote_fetch(tmp_path: object) -> None:
 def test_config_flag_passes_parsed_config_to_audit(tmp_path: object) -> None:
     from pathlib import Path
 
-    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p = Path(str(tmp_path)) / "vergil.toml"
     p.write_bytes(_VALID_TOML)
 
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             return_value=_mock_compliant(),
         ) as mock_audit,
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
     ):
@@ -453,7 +453,7 @@ def test_config_flag_passes_parsed_config_to_audit(tmp_path: object) -> None:
 def test_config_flag_apply_uses_local_config(tmp_path: object) -> None:
     from pathlib import Path
 
-    p = Path(str(tmp_path)) / "standard-tooling.toml"
+    p = Path(str(tmp_path)) / "vergil.toml"
     p.write_bytes(_VALID_TOML)
 
     def audit_side_effect(*_args: object, **_kwargs: object) -> ConfigDiff:
@@ -461,18 +461,18 @@ def test_config_flag_apply_uses_local_config(tmp_path: object) -> None:
 
     with (
         patch(
-            "standard_tooling.bin.st_github_config._audit_repo",
+            "vergil_tooling.bin.st_github_config._audit_repo",
             side_effect=audit_side_effect,
         ),
         patch(
-            "standard_tooling.bin.st_github_config._resolve_repos",
+            "vergil_tooling.bin.st_github_config._resolve_repos",
             return_value=["o/r"],
         ),
         patch(
-            "standard_tooling.bin.st_github_config._fetch_remote_config",
+            "vergil_tooling.bin.st_github_config._fetch_remote_config",
         ) as mock_remote,
         patch(
-            "standard_tooling.bin.st_github_config._apply_repo",
+            "vergil_tooling.bin.st_github_config._apply_repo",
             return_value=[],
         ) as mock_apply,
     ):

@@ -1,4 +1,4 @@
-"""Tests for standard_tooling.lib.docker."""
+"""Tests for vergil_tooling.lib.docker."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from standard_tooling.lib.docker import (
+from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
     default_image,
@@ -76,11 +76,11 @@ def test_default_image_unknown_no_fallback() -> None:
 
 
 def test_default_image_unknown_with_fallback() -> None:
-    assert default_image("unknown", fallback=True) == "ghcr.io/wphillipmoore/prod-base:latest"
+    assert default_image("unknown", fallback=True) == "ghcr.io/vergil-project/prod-base:latest"
 
 
 def test_default_image_empty_with_fallback() -> None:
-    assert default_image("", fallback=True) == "ghcr.io/wphillipmoore/prod-base:latest"
+    assert default_image("", fallback=True) == "ghcr.io/vergil-project/prod-base:latest"
 
 
 # -- prefix-aware default_image -----------------------------------------------
@@ -125,12 +125,12 @@ def test_default_image_fallback_dev_prefix() -> None:
     ],
 )
 def test_docker_platform_known(machine: str, expected: str) -> None:
-    with patch("standard_tooling.lib.docker.platform.machine", return_value=machine):
+    with patch("vergil_tooling.lib.docker.platform.machine", return_value=machine):
         assert docker_platform() == expected
 
 
 def test_docker_platform_unknown_defaults_to_amd64() -> None:
-    with patch("standard_tooling.lib.docker.platform.machine", return_value="riscv64"):
+    with patch("vergil_tooling.lib.docker.platform.machine", return_value="riscv64"):
         assert docker_platform() == "linux/amd64"
 
 
@@ -167,7 +167,7 @@ def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {"DOCKER_EXTRA_VOLUMES": ";"}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
     v_indices = [i for i, a in enumerate(args) if a == "-v"]
@@ -196,7 +196,7 @@ def test_build_docker_args_mounts_gitconfig(tmp_path: Path) -> None:
     gitconfig.write_text("[user]\n\tname = Test\n")
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
     assert f"{gitconfig}:/root/.gitconfig:ro" in args
@@ -210,7 +210,7 @@ def test_build_docker_args_mounts_ssh_dir(tmp_path: Path) -> None:
     (ssh_dir / "id_rsa").write_text("key\n")
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
     assert f"{ssh_dir}:/root/.ssh:ro" in args
@@ -221,7 +221,7 @@ def test_build_docker_args_no_ssh_dir(tmp_path: Path) -> None:
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
     assert all("/root/.ssh" not in a for a in args)
@@ -232,7 +232,7 @@ def test_build_docker_args_no_gitconfig(tmp_path: Path) -> None:
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
     assert all("/root/.gitconfig" not in a for a in args)
@@ -243,14 +243,14 @@ def test_build_docker_args_no_gitconfig(tmp_path: Path) -> None:
 
 def test_assert_docker_available_success() -> None:
     mock_result = MagicMock(returncode=0)
-    with patch("standard_tooling.lib.docker.subprocess.run", return_value=mock_result):
+    with patch("vergil_tooling.lib.docker.subprocess.run", return_value=mock_result):
         assert_docker_available()  # should not raise
 
 
 def test_assert_docker_available_failure() -> None:
     mock_result = MagicMock(returncode=1)
     with (
-        patch("standard_tooling.lib.docker.subprocess.run", return_value=mock_result),
+        patch("vergil_tooling.lib.docker.subprocess.run", return_value=mock_result),
         pytest.raises(SystemExit),
     ):
         assert_docker_available()
@@ -258,7 +258,7 @@ def test_assert_docker_available_failure() -> None:
 
 def test_assert_docker_available_not_installed() -> None:
     with (
-        patch("standard_tooling.lib.docker.subprocess.run", side_effect=FileNotFoundError),
+        patch("vergil_tooling.lib.docker.subprocess.run", side_effect=FileNotFoundError),
         pytest.raises(SystemExit),
     ):
         assert_docker_available()
@@ -267,7 +267,7 @@ def test_assert_docker_available_not_installed() -> None:
 def test_assert_docker_available_timeout() -> None:
     with (
         patch(
-            "standard_tooling.lib.docker.subprocess.run",
+            "vergil_tooling.lib.docker.subprocess.run",
             side_effect=subprocess.TimeoutExpired(cmd="docker version", timeout=15),
         ),
         pytest.raises(SystemExit),
@@ -320,7 +320,7 @@ def test_worktree_parent_gitdir_oserror_on_read(tmp_path: Path) -> None:
     """Unreadable `.git` file (permissions, race, etc.) returns None safely."""
     (tmp_path / ".git").write_text("gitdir: /irrelevant\n", encoding="utf-8")
     with patch(
-        "standard_tooling.lib.docker.Path.read_text",
+        "vergil_tooling.lib.docker.Path.read_text",
         side_effect=OSError("permission denied"),
     ):
         assert worktree_parent_gitdir(tmp_path) is None
@@ -342,7 +342,7 @@ def test_build_docker_args_mounts_parent_git_when_worktree(tmp_path: Path) -> No
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(worktree, "img:1", ["cmd"])
 
@@ -356,7 +356,7 @@ def test_build_docker_args_no_extra_mount_for_main_worktree(tmp_path: Path) -> N
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {}, clear=True),
-        patch("standard_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
     ):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
 

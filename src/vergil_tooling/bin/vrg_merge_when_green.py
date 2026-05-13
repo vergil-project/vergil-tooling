@@ -15,8 +15,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from standard_tooling.lib import github
-from standard_tooling.lib.release import is_release_branch
+from vergil_tooling.lib import github
+from vergil_tooling.lib.release import is_release_branch
 
 _STRATEGIES = ("merge", "squash", "rebase")
 _MAX_BRANCH_UPDATES = 5
@@ -51,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     if not is_release_branch(branch):
         print(
-            f"Error: st-merge-when-green is only for release-workflow PRs. "
+            f"Error: vrg-merge-when-green is only for release-workflow PRs. "
             f"Branch '{branch}' does not start with release/*.",
             file=sys.stderr,
         )

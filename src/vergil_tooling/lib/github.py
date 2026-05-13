@@ -203,7 +203,7 @@ def merge(pr: str, *, strategy: str) -> None:
     through as ``--merge``, ``--squash``, ``--rebase``.
 
     Does not pass ``--delete-branch`` — branch cleanup is handled by
-    ``st-finalize-repo`` after the merge completes.
+    ``vrg-finalize-repo`` after the merge completes.
     """
     run("pr", "merge", f"--{strategy}", pr)
 

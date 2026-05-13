@@ -1,10 +1,10 @@
-"""Tests for standard_tooling.lib.release."""
+"""Tests for vergil_tooling.lib.release."""
 
 from __future__ import annotations
 
 import pytest
 
-from standard_tooling.lib.release import is_release_branch
+from vergil_tooling.lib.release import is_release_branch
 
 
 @pytest.mark.parametrize(

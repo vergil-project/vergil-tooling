@@ -4,7 +4,7 @@ Shared script for library repositories using the library-release branching
 model. Auto-detects the ecosystem to find the version source of truth.
 
 The release PR is created but not merged — callers (typically the publish
-skill) drive the merge via ``st-merge-when-green`` once CI passes.
+skill) drive the merge via ``vrg-merge-when-green`` once CI passes.
 
 Supported ecosystems:
   - Python: reads version from pyproject.toml
@@ -26,7 +26,7 @@ from collections.abc import Callable
 from importlib.resources import files
 from pathlib import Path
 
-from standard_tooling.lib import git, github
+from vergil_tooling.lib import git, github
 
 # -- ecosystem detection -----------------------------------------------------
 
@@ -193,7 +193,7 @@ RELEASE_NOTES_DIR = "releases"
 def _generate_changelog(version: str) -> None:
     tag = f"develop-v{version}"
     print(f"Generating changelog with boundary tag: {tag}")
-    config = files("standard_tooling.configs") / "cliff.toml"
+    config = files("vergil_tooling.configs") / "cliff.toml"
     subprocess.run(  # noqa: S603
         ("git-cliff", "--config", str(config), "--tag", tag, "-o", "CHANGELOG.md"),  # noqa: S607
         check=True,
@@ -212,7 +212,7 @@ def _generate_changelog(version: str) -> None:
 
 
 def _generate_release_notes(version: str, tag: str) -> None:
-    config = files("standard_tooling.configs") / "cliff-release-notes.toml"
+    config = files("vergil_tooling.configs") / "cliff-release-notes.toml"
     releases_dir = Path(RELEASE_NOTES_DIR)
     releases_dir.mkdir(exist_ok=True)
     output_file = releases_dir / f"v{version}.md"
@@ -244,7 +244,7 @@ def _create_pr(version: str, issue: int) -> str:
     print("Creating pull request to main...")
     title = f"release: {version}"
     body = (
-        f"## Summary\n\nRelease {version}\n\nRef #{issue}\n\nGenerated with `st-prepare-release`\n"
+        f"## Summary\n\nRelease {version}\n\nRef #{issue}\n\nGenerated with `vrg-prepare-release`\n"
     )
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
@@ -294,7 +294,7 @@ def main(argv: list[str] | None = None) -> int:
     git.run("checkout", "develop")
 
     print(f"Release {version} preparation complete.")
-    print(f"Merge when green: st-merge-when-green {url}")
+    print(f"Merge when green: vrg-merge-when-green {url}")
     return 0
 
 

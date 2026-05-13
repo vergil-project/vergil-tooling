@@ -12,21 +12,21 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from standard_tooling.lib import git
+from vergil_tooling.lib import git
 
 if TYPE_CHECKING:
     from pathlib import Path
-from standard_tooling.lib.config import ConfigError, read_config
-from standard_tooling.lib.docker import (
+from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
     default_image,
     detect_language,
 )
-from standard_tooling.lib.docker_cache import ensure_cached_image
+from vergil_tooling.lib.docker_cache import ensure_cached_image
 
 _USAGE = """\
-usage: st-docker-run [--] <command> [args...]
+usage: vrg-docker-run [--] <command> [args...]
 
 Run a command inside the project's dev container.
 
@@ -40,12 +40,12 @@ environment variables:
   GH_TOKEN                (required) GitHub token passed into the container
   DOCKER_DEV_IMAGE        override the auto-detected container image
   DOCKER_NETWORK          join a Docker network (e.g. for integration tests)
-  ST_DOCKER_INSTALL_TAG   override the standard-tooling version tag from standard-tooling.toml
+  VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
 
 examples:
-  st-docker-run -- uv run st-validate
-  st-docker-run -- uv run pytest tests/
-  DOCKER_DEV_IMAGE=custom:img st-docker-run -- make build
+  vrg-docker-run -- uv run vrg-validate
+  vrg-docker-run -- uv run pytest tests/
+  DOCKER_DEV_IMAGE=custom:img vrg-docker-run -- make build
 """
 
 
@@ -74,13 +74,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not command:
-        print("Usage: st-docker-run [--] <command> [args...]", file=sys.stderr)
+        print("Usage: vrg-docker-run [--] <command> [args...]", file=sys.stderr)
         return 1
 
     if not os.environ.get("GH_TOKEN"):
         print(
             "ERROR: GH_TOKEN is not set. Set GH_TOKEN in your environment before\n"
-            "running st-docker-run. See docs/development/environment-setup.md.",
+            "running vrg-docker-run. See docs/development/environment-setup.md.",
             file=sys.stderr,
         )
         return 1
