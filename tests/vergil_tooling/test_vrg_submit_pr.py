@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.st_submit_pr."""
+"""Tests for vergil_tooling.bin.vrg_submit_pr."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.st_submit_pr import (
+from vergil_tooling.bin.vrg_submit_pr import (
     _resolve_issue_ref,
     main,
     parse_args,
@@ -78,8 +78,8 @@ def test_dry_run_body_has_no_testing_section(
         "> **Do not create PRs manually.**\n> Use `vrg-submit-pr`.\n"
     )
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
     ):
         result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
     assert result == 0
@@ -92,8 +92,8 @@ def test_dry_run_body_has_no_testing_section(
 
 def test_main_dry_run(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
     ):
         result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
     assert result == 0
@@ -101,8 +101,8 @@ def test_main_dry_run(tmp_path: Path) -> None:
 
 def test_main_dry_run_with_title(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
     ):
         result = main(
             [
@@ -120,9 +120,9 @@ def test_main_dry_run_with_title(tmp_path: Path) -> None:
 
 def test_main_dry_run_release_branch(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
         patch(
-            "vergil_tooling.bin.st_submit_pr.git.current_branch",
+            "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
             return_value="release/1.0.0",
         ),
     ):
@@ -142,11 +142,11 @@ def test_main_dry_run_release_branch(tmp_path: Path) -> None:
 
 def test_main_submits_pr(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
-        patch("vergil_tooling.bin.st_submit_pr.git.run") as mock_git_run,
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.run") as mock_git_run,
         patch(
-            "vergil_tooling.bin.st_submit_pr.github.create_pr",
+            "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
             return_value="https://github.com/pr/1",
         ) as mock_create_pr,
     ):
@@ -158,11 +158,11 @@ def test_main_submits_pr(tmp_path: Path) -> None:
 
 def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_submit_pr.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_submit_pr.git.current_branch", return_value="feature/x"),
-        patch("vergil_tooling.bin.st_submit_pr.git.run"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
         patch(
-            "vergil_tooling.bin.st_submit_pr.github.create_pr",
+            "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
             return_value="https://github.com/pr/1",
         ),
     ):

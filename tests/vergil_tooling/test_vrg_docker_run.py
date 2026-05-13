@@ -1,11 +1,11 @@
-"""Tests for vergil_tooling.bin.st_docker_run."""
+"""Tests for vergil_tooling.bin.vrg_docker_run."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.st_docker_run import main
+from vergil_tooling.bin.vrg_docker_run import main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -32,10 +32,10 @@ def test_help_after_separator_not_intercepted(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "img:1"
@@ -48,10 +48,10 @@ def test_help_alone_after_separator_not_intercepted(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "img:1"
@@ -76,7 +76,7 @@ def test_no_command_after_separator() -> None:
 
 def test_missing_gh_token(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
         patch.dict("os.environ", {}, clear=True),
     ):
         assert main(["--", "echo", "hi"]) == 1
@@ -88,10 +88,10 @@ def test_missing_gh_token(tmp_path: Path) -> None:
 def test_fallback_image_no_language(tmp_path: Path) -> None:
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "ghcr.io/vergil-project/prod-base:latest"
@@ -104,9 +104,9 @@ def test_language_detected_image(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "echo", "hi"])
@@ -124,6 +124,7 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -138,10 +139,10 @@ def test_config_prefix_used(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
-        patch("vergil_tooling.bin.st_docker_run.os.execvp"),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp"),
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "ghcr.io/vergil-project/dev-python:3.14"
@@ -153,9 +154,9 @@ def test_config_prefix_used(tmp_path: Path) -> None:
 def test_env_image_override(tmp_path: Path) -> None:
     env = {"GH_TOKEN": "tok", "DOCKER_DEV_IMAGE": "custom:img"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "echo", "hi"])
@@ -170,9 +171,9 @@ def test_command_after_separator(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "vrg-prepare-release", "--issue", "42"])
@@ -184,9 +185,9 @@ def test_command_without_separator(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["echo", "hi"])
@@ -201,9 +202,9 @@ def test_network_printed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok", "DOCKER_NETWORK": "mynet"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp"),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp"),
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "cmd"])
@@ -217,10 +218,10 @@ def test_argv_none_uses_sys_argv(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
-        patch("vergil_tooling.bin.st_docker_run.sys.argv", ["vrg-docker-run", "--", "echo"]),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.sys.argv", ["vrg-docker-run", "--", "echo"]),
         patch.dict("os.environ", env, clear=True),
     ):
         main()
@@ -235,9 +236,9 @@ def test_calls_execvp(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "cmd"])
@@ -253,10 +254,10 @@ def test_non_python_uses_cached_image(tmp_path: Path) -> None:
     cached = "ghcr.io/vergil-project/dev-go:1.26--feature-42--abcd1234"
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "vrg-validate"])
@@ -269,13 +270,13 @@ def test_non_python_command_not_wrapped(tmp_path: Path) -> None:
     (tmp_path / "go.mod").write_text("module example\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
         patch(
-            "vergil_tooling.bin.st_docker_run.ensure_cached_image",
+            "vergil_tooling.bin.vrg_docker_run.ensure_cached_image",
             return_value="ghcr.io/vergil-project/dev-go:1.26",
         ),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "echo", "hi"])
@@ -288,10 +289,10 @@ def test_cached_image_diagnostic(tmp_path: Path, capsys: pytest.CaptureFixture[s
     cached = "ghcr.io/vergil-project/dev-go:1.26--feature-42--abcd1234"
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp"),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp"),
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "cmd"])
@@ -307,10 +308,10 @@ def test_cached_image_uses_pull_never(tmp_path: Path) -> None:
     cached = "ghcr.io/vergil-project/dev-go:1.26--feature-42--abcd1234"
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "cmd"])
@@ -323,10 +324,10 @@ def test_registry_image_uses_pull_always(tmp_path: Path) -> None:
     base = "ghcr.io/vergil-project/prod-go:1.26"
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image", return_value=base),
-        patch("vergil_tooling.bin.st_docker_run.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image", return_value=base),
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["--", "cmd"])
@@ -338,10 +339,10 @@ def test_python_routes_through_cache(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
     with (
-        patch("vergil_tooling.bin.st_docker_run.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.st_docker_run.assert_docker_available"),
-        patch("vergil_tooling.bin.st_docker_run.ensure_cached_image") as mock_cache,
-        patch("vergil_tooling.bin.st_docker_run.os.execvp"),
+        patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp"),
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "ghcr.io/vergil-project/dev-python:3.14--develop--aabbccdd"

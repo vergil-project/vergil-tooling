@@ -31,6 +31,7 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -40,7 +41,7 @@ versions = ["3.14"]
 def test_tag_from_config(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_INSTALL_TAG_TOML)
     with patch.dict("os.environ", {}, clear=True):
-        assert vrg_install_tag(tmp_path) == "v1.4"
+        assert vrg_install_tag(tmp_path) == "v2.0"
 
 
 def test_tag_missing_file(tmp_path: Path) -> None:
@@ -77,6 +78,7 @@ agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 """
 
 _VALID_TOML = _BASE_TOML + '\n[ci]\nversions = ["3.14"]\n'
@@ -92,7 +94,7 @@ def test_read_config_valid(tmp_path: Path) -> None:
     assert cfg.project.primary_language == "python"
     assert "agent" in cfg.project.co_authors
     assert "user-agent" in cfg.project.co_authors["agent"]
-    assert cfg.dependencies["vergil"] == "v1.4"
+    assert cfg.dependencies["vergil"] == "v2.0"
 
 
 def test_read_config_missing_file(tmp_path: Path) -> None:
@@ -131,9 +133,9 @@ def test_read_config_malformed_co_author(tmp_path: Path) -> None:
 
 
 def test_read_config_missing_dependencies_key(tmp_path: Path) -> None:
-    toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
+    toml = _VALID_TOML.replace('vergil = "v2.0"\nvergil-tooling = "v2.0"', 'other = "v1.0"')
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="vergil"):
+    with pytest.raises(ConfigError, match="vergil-tooling"):
         read_config(tmp_path)
 
 
@@ -270,6 +272,7 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -306,6 +309,7 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
+vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
