@@ -1,6 +1,6 @@
 # CLI Tools Overview
 
-Every `st-*` command provided by this package, organized by runtime
+Every CLI command provided by this package, organized by runtime
 context. Each entry documents the tool's purpose, where it runs,
 what it assumes, and how it fails when those assumptions are violated.
 

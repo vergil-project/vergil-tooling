@@ -7,7 +7,7 @@ unfolds once you're set up, see [Git Workflow](git-workflow.md).
 
 ## Mental model — what you're installing
 
-Standard-tooling is delivered through three coordinated surfaces.
+Vergil-tooling is delivered through three coordinated surfaces.
 The setup steps below wire up each one:
 
 | Surface | What it is | How you consume it |
