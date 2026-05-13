@@ -52,9 +52,9 @@ def test_desired_repo_settings_are_fixed() -> None:
     assert s.has_wiki is True
 
 
-def test_desired_repo_settings_public_allows_forking() -> None:
+def test_desired_repo_settings_public_org_omits_forking() -> None:
     s = desired_repo_settings(visibility="public", is_org=True)
-    assert s.allow_forking is True
+    assert s.allow_forking is None
 
 
 def test_desired_repo_settings_private_disallows_forking() -> None:
@@ -952,7 +952,7 @@ def test_apply_repo_settings_includes_new_fields() -> None:
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
-    assert body["allow_forking"] is True
+    assert "allow_forking" not in body
     assert body["allow_update_branch"] is True
     assert body["has_downloads"] is False
     assert body["merge_commit_title"] == "MERGE_MESSAGE"
@@ -1300,7 +1300,7 @@ def test_desired_repo_settings_user_repo_allow_forking_is_none() -> None:
 
 def test_desired_repo_settings_org_repo_allow_forking_set() -> None:
     s = desired_repo_settings(visibility="public", is_org=True)
-    assert s.allow_forking is True
+    assert s.allow_forking is None
     s2 = desired_repo_settings(visibility="private", is_org=True)
     assert s2.allow_forking is False
 
@@ -1313,12 +1313,12 @@ def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
     assert "allow_forking" not in body
 
 
-def test_apply_repo_settings_includes_allow_forking_for_org() -> None:
-    settings = desired_repo_settings(visibility="public", is_org=True)
+def test_apply_repo_settings_includes_allow_forking_for_private_org() -> None:
+    settings = desired_repo_settings(visibility="private", is_org=True)
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
-    assert body["allow_forking"] is True
+    assert body["allow_forking"] is False
 
 
 def test_diff_skips_allow_forking_when_desired_is_none() -> None:

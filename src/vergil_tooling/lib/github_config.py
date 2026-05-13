@@ -113,7 +113,7 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
         has_issues=True,
         has_projects=True,
         has_wiki=True,
-        allow_forking=(visibility == "public") if is_org else None,
+        allow_forking=False if (is_org and visibility == "private") else None,
         allow_update_branch=True,
         has_downloads=False,
         merge_commit_title="MERGE_MESSAGE",
