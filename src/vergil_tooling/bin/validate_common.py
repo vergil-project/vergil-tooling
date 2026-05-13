@@ -18,7 +18,7 @@ import sys
 from importlib.resources import files
 from typing import TYPE_CHECKING
 
-from vergil_tooling.bin import st_repo_profile
+from vergil_tooling.bin import vrg_repo_profile
 from vergil_tooling.lib import git
 from vergil_tooling.lib.config import read_config
 
@@ -107,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     repo_root = git.repo_root()
 
     print("Running: repo-profile")
-    rc = st_repo_profile.main()
+    rc = vrg_repo_profile.main()
     if rc != 0:
         return rc
 
