@@ -4270,16 +4270,16 @@
 
 
 <h1 id="releasing">Releasing<a class="headerlink" href="#releasing" title="Permanent link">&para;</a></h1>
-<p>This guide covers the release workflow for <code>standard-tooling</code>,
+<p>This guide covers the release workflow for <code>vergil-tooling</code>,
 including how patch, minor, and major versions affect both the
 release author (producer) and downstream consumers.</p>
-<p>The model: <code>standard-tooling</code> is distributed as a host-level
+<p>The model: <code>vergil-tooling</code> is distributed as a host-level
 developer tool plus a dev-container pre-bake (see
-<a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/host-level-tool.md">host-level-tool spec</a>). Three deployment targets — developer
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/host-level-tool.md">host-level-tool spec</a>). Three deployment targets — developer
 host, Python project <code>.venv</code>, and dev container image — each track
 the <strong>rolling minor tag</strong> (e.g. <code>v1.3</code>), which is force-updated by
 <code>tag-and-release</code> on every patch release. The dev container images
-rebuild automatically on each <code>standard-tooling</code> release via a
+rebuild automatically on each <code>vergil-tooling</code> release via a
 <code>repository_dispatch</code> trigger.</p>
 <h2 id="tag-scheme-whats-user-facing-what-isnt">Tag scheme — what's user-facing, what isn't<a class="headerlink" href="#tag-scheme-whats-user-facing-what-isnt" title="Permanent link">&para;</a></h2>
 <p>Two parallel tag families exist in the repo. Consumers only see and
@@ -4325,13 +4325,13 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 <li>Land all the patch's changes via normal feature PRs to <code>develop</code>.</li>
 <li>Cut the release:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>st-prepare-release<span class="w"> </span>--issue<span class="w"> </span>&lt;release-tracking-issue&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-prepare-release<span class="w"> </span>--issue<span class="w"> </span>&lt;release-tracking-issue&gt;
 </code></pre></div>
 <p>This creates <code>release/{version}</code>, merges <code>main</code> to pick up prior
    tags, generates <code>CHANGELOG.md</code> and <code>releases/v{version}.md</code>,
    commits, pushes, opens a PR to <code>main</code>.
 3. Wait for CI green, then merge:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>st-merge-when-green<span class="w"> </span>https://github.com/wphillipmoore/standard-tooling/pull/&lt;release-pr&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-merge-when-green<span class="w"> </span>https://github.com/vergil-project/vergil-tooling/pull/&lt;release-pr&gt;
 </code></pre></div>
 <ol>
 <li>Post-merge automation runs:</li>
@@ -4339,14 +4339,14 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
 <li>The rolling minor tag (<code>v1.3</code>) is <strong>force-updated</strong> to point at
      the new release.</li>
 <li>The boundary tag (<code>develop-v1.3.1</code>) is created on <code>develop</code>.</li>
-<li><code>repository_dispatch</code> fires a <code>standard-tooling-released</code>
-     event at <code>standard-tooling-docker</code>, which rebuilds the dev
+<li><code>repository_dispatch</code> fires a <code>vergil-tooling-released</code>
+     event at <code>vergil-docker</code>, which rebuilds the dev
      images against the now-current <code>v1.3</code> tag.</li>
 <li><code>version-bump-pr</code> opens an auto-bump PR on <code>develop</code>
      (e.g., <code>1.3.1</code> → <code>1.3.2</code>). Merge it.</li>
 <li>The Documentation workflow publishes the new release notes to
      the docs site under <code>releases/v1.3.1</code>.</li>
-<li>Run <code>st-finalize-repo</code> to clean up local state.</li>
+<li>Run <code>vrg-finalize-repo</code> to clean up local state.</li>
 </ol>
 <h3 id="consumer-steps">Consumer steps<a class="headerlink" href="#consumer-steps" title="Permanent link">&para;</a></h3>
 <p>For most consumers, <strong>no action is required</strong>: the rolling <code>v1.3</code>
@@ -4362,11 +4362,11 @@ get the fix on the next normal action:</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td>Manual <code>uv tool upgrade standard-tooling</code></td>
+<td>Manual <code>uv tool upgrade vergil-tooling</code></td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
-<td><code>uv lock --upgrade-package standard-tooling</code> (typically batched with other dep bumps)</td>
+<td><code>uv lock --upgrade-package vergil-tooling</code> (typically batched with other dep bumps)</td>
 </tr>
 <tr>
 <td>Dev container image</td>
@@ -4380,17 +4380,17 @@ get the fix on the next normal action:</p>
 <h3 id="producer-steps_1">Producer steps<a class="headerlink" href="#producer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Same five steps as patch, with one important addition: the rolling
 minor tag changes from <code>v1.3</code> to <code>v1.4</code>. The image's pin in
-<code>standard-tooling-docker</code> and any per-repo dev-dep declarations
+<code>vergil-docker</code> and any per-repo dev-dep declarations
 <strong>must be bumped manually</strong> — the rolling-tag mechanism only handles
 patches within a minor.</p>
 <ol>
 <li>Cut and merge <code>release/v1.4.0</code> exactly like a patch release.</li>
-<li><strong>Bump <code>standard-tooling-docker</code>'s pin</strong> in
-   <a href="https://github.com/wphillipmoore/standard-tooling-docker/blob/develop/docker/common/standard-tooling-uv.dockerfile"><code>docker/common/standard-tooling-uv.dockerfile</code></a>:</li>
+<li><strong>Bump <code>vergil-docker</code>'s pin</strong> in
+   <a href="https://github.com/wphillipmoore/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile"><code>docker/common/vergil-tooling-uv.dockerfile</code></a>:</li>
 </ol>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">ARG</span><span class="w"> </span><span class="nv">ST_TOOLING_TAG</span><span class="o">=</span>v1.4<span class="w">   </span>#<span class="w"> </span>was<span class="w"> </span>v1.3
 </code></pre></div>
-<p>Open a small PR in <code>standard-tooling-docker</code>, merge it, and the
+<p>Open a small PR in <code>vergil-docker</code>, merge it, and the
    next image rebuild (whether triggered by your release or a
    subsequent push there) carries the new minor.
 3. <strong>Coordinate consumer bumps.</strong> Each Python repo that has
@@ -4412,15 +4412,15 @@ patches within a minor.</p>
 <tbody>
 <tr>
 <td>Developer host</td>
-<td><code>uv tool install --reinstall 'standard-tooling @ git+...@v1.4'</code> (or update the pinned tag in their notes / shell history)</td>
+<td><code>uv tool install --reinstall 'vergil-tooling @ git+...@v1.4'</code> (or update the pinned tag in their notes / shell history)</td>
 </tr>
 <tr>
 <td>Python repo <code>.venv</code></td>
-<td>Edit <code>pyproject.toml</code> <code>[tool.uv.sources]</code> to <code>tag = "v1.4"</code>, then <code>uv lock --upgrade-package standard-tooling</code></td>
+<td>Edit <code>pyproject.toml</code> <code>[tool.uv.sources]</code> to <code>tag = "v1.4"</code>, then <code>uv lock --upgrade-package vergil-tooling</code></td>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Wait for <code>standard-tooling-docker</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
+<td>Wait for <code>vergil-docker</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
 </tr>
 </tbody>
 </table>
@@ -4440,10 +4440,10 @@ communication and migration window:</p>
 <li>Cut and merge <code>release/v2.0.0</code> like a minor release. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.</li>
-<li>Bump <code>standard-tooling-docker</code>'s <code>ARG ST_TOOLING_TAG=</code> to <code>v2</code>
+<li>Bump <code>vergil-docker</code>'s <code>ARG ST_TOOLING_TAG=</code> to <code>v2</code>
    in a separate PR — coordinate so consumers can opt in on their
    own schedule.</li>
-<li>Notify consumer maintainers (e.g., update <code>standard-tooling</code>'s
+<li>Notify consumer maintainers (e.g., update <code>vergil-tooling</code>'s
    release tracking issue / project board with a callout). The
    release notes alone are not sufficient for major bumps;
    consumers should be primed.</li>
@@ -4463,21 +4463,21 @@ edits its <code>v1.x</code> pin to <code>v2</code> deliberately. The difference 
 the MkDocs site to GitHub Pages on every push to <code>develop</code> and
 <code>main</code>. It's container-based: the workflow runs inside
 <code>dev-base:latest</code> and uses
-<code>wphillipmoore/standard-actions/actions/docs-deploy</code>.</p>
+<code>vergil-project/vergil-actions/actions/docs-deploy</code>.</p>
 <p><strong>Sanity-check the docs publication.</strong> Docs publication is async
 relative to the merge — a failure on this workflow doesn't block
-the PR. To catch silent failures, <code>st-finalize-repo</code> checks the
+the PR. To catch silent failures, <code>vrg-finalize-repo</code> checks the
 status of the most recent Documentation workflow run on <code>develop</code>
 after pulling the merge. If it failed, finalize prints a warning
 with a direct link to the failure log, so you can investigate
 before moving on to the next PR.</p>
 <p>For deeper investigation, view recent runs directly:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>wphillipmoore/standard-tooling<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gh<span class="w"> </span>run<span class="w"> </span>list<span class="w"> </span>--repo<span class="w"> </span>vergil-project/vergil-tooling<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--workflow<span class="o">=</span><span class="s2">&quot;Documentation&quot;</span><span class="w"> </span>--limit<span class="w"> </span><span class="m">5</span>
 </code></pre></div>
 <h2 id="release-tracking-artifacts">Release tracking artifacts<a class="headerlink" href="#release-tracking-artifacts" title="Permanent link">&para;</a></h2>
 <p>Each release has a tracking issue (referenced as <code>--issue N</code> to
-<code>st-prepare-release</code>). Use it to:</p>
+<code>vrg-prepare-release</code>). Use it to:</p>
 <ul>
 <li>Capture the rationale for the release (what's in it, what's not).</li>
 <li>Document any consumer coordination required (especially for

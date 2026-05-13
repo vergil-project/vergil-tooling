@@ -3916,18 +3916,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-commit-with-st-commit" class="md-nav__link">
+  <a href="#2-commit-with-vrg-commit" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Commit with st-commit
+      2. Commit with vrg-commit
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-submit-the-pr-with-st-submit-pr" class="md-nav__link">
+  <a href="#3-submit-the-pr-with-vrg-submit-pr" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Submit the PR with st-submit-pr
+      3. Submit the PR with vrg-submit-pr
     </span>
   </a>
   
@@ -3943,9 +3943,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-finalize-with-st-finalize-repo" class="md-nav__link">
+  <a href="#5-finalize-with-vrg-finalize-repo" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Finalize with st-finalize-repo
+      5. Finalize with vrg-finalize-repo
     </span>
   </a>
   
@@ -4063,9 +4063,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
+  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
     <span class="md-ellipsis">
-      st-submit-pr threw a CalledProcessError on auto-merge
+      vrg-submit-pr threw a CalledProcessError on auto-merge
     </span>
   </a>
   
@@ -4275,18 +4275,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-commit-with-st-commit" class="md-nav__link">
+  <a href="#2-commit-with-vrg-commit" class="md-nav__link">
     <span class="md-ellipsis">
-      2. Commit with st-commit
+      2. Commit with vrg-commit
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-submit-the-pr-with-st-submit-pr" class="md-nav__link">
+  <a href="#3-submit-the-pr-with-vrg-submit-pr" class="md-nav__link">
     <span class="md-ellipsis">
-      3. Submit the PR with st-submit-pr
+      3. Submit the PR with vrg-submit-pr
     </span>
   </a>
   
@@ -4302,9 +4302,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-finalize-with-st-finalize-repo" class="md-nav__link">
+  <a href="#5-finalize-with-vrg-finalize-repo" class="md-nav__link">
     <span class="md-ellipsis">
-      5. Finalize with st-finalize-repo
+      5. Finalize with vrg-finalize-repo
     </span>
   </a>
   
@@ -4422,9 +4422,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
+  <a href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" class="md-nav__link">
     <span class="md-ellipsis">
-      st-submit-pr threw a CalledProcessError on auto-merge
+      vrg-submit-pr threw a CalledProcessError on auto-merge
     </span>
   </a>
   
@@ -4476,22 +4476,22 @@ enforcement layers that back it up, and the per-change cycle you walk
 through from branching to finalization.</p>
 <p>For per-tool detail, each <code>st-*</code> command has its own reference page.
 For the rationale behind the worktree convention,
-see <a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
+see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
 <h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  →  finalize
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  │         │        │                                      │
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  ▼         ▼        ▼                                      ▼
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  st-commit  st-submit-pr                    st-finalize-repo
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  vrg-commit  vrg-submit-pr                    vrg-finalize-repo
 </code></pre></div>
 <ul>
 <li>One issue per branch. Branch name encodes the issue number.</li>
-<li><code>st-commit</code> builds standards-compliant commit messages. <strong>Raw
+<li><code>vrg-commit</code> builds standards-compliant commit messages. <strong>Raw
   <code>git commit</code> is blocked.</strong></li>
-<li><code>st-submit-pr</code> creates the PR with issue linkage. <strong>Raw
+<li><code>vrg-submit-pr</code> creates the PR with issue linkage. <strong>Raw
   <code>gh pr create</code> is blocked.</strong></li>
 <li>Merging is <strong>manual</strong>. Auto-merge is disabled org-wide as of
   2026-04-22.</li>
-<li>After merge, <code>st-finalize-repo</code> pulls develop, deletes the merged
+<li>After merge, <code>vrg-finalize-repo</code> pulls develop, deletes the merged
   branch, and prunes remote refs.</li>
 </ul>
 <p>For parallel work on multiple issues, use the worktree convention
@@ -4553,13 +4553,13 @@ mechanisms. Both exist; they complement each other.</p>
 <tbody>
 <tr>
 <td><strong>Pre-commit git hook</strong></td>
-<td><code>.githooks/pre-commit</code> checked into each repo; enabled via <code>git config core.hooksPath .githooks</code>. The hook is an env-var gate that admits <code>st-commit</code>-driven commits and rejects raw <code>git commit</code>. The five branch/context checks live in <code>st-commit</code> itself.</td>
+<td><code>.githooks/pre-commit</code> checked into each repo; enabled via <code>git config core.hooksPath .githooks</code>. The hook is an env-var gate that admits <code>vrg-commit</code>-driven commits and rejects raw <code>git commit</code>. The five branch/context checks live in <code>vrg-commit</code> itself.</td>
 <td>Detached HEAD • direct commits to protected branches • wrong branch prefix • missing issue number in branch name</td>
 </tr>
 <tr>
 <td><strong>Plugin PreToolUse hooks</strong></td>
-<td>Delivered by the <a href="https://github.com/wphillipmoore/standard-tooling-plugin"><code>standard-tooling-plugin</code></a>. Fires on Claude Code's <code>Bash</code>/<code>Write</code>/<code>Edit</code> tool invocations.</td>
-<td>Raw <code>git commit</code> (forces <code>st-commit</code>) • Raw <code>gh pr create</code> (forces <code>st-submit-pr</code>) • commits originating from outside <code>.worktrees/*</code> on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms</td>
+<td>Delivered by the <a href="https://github.com/wphillipmoore/vergil-claude-plugin"><code>vergil-claude-plugin</code></a>. Fires on Claude Code's <code>Bash</code>/<code>Write</code>/<code>Edit</code> tool invocations.</td>
+<td>Raw <code>git commit</code> (forces <code>vrg-commit</code>) • Raw <code>gh pr create</code> (forces <code>vrg-submit-pr</code>) • commits originating from outside <code>.worktrees/*</code> on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms</td>
 </tr>
 </tbody>
 </table>
@@ -4569,9 +4569,9 @@ Claude-Code-tool level — some of which never reach a <code>git commit</code>
 (like <code>gh pr create</code>, or heredocs in gh commands). Together they
 close the loop.</p>
 <p>For the pre-commit-hook detail, see
-<a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>.
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>.
 For the plugin hook detail, see
-<a href="https://github.com/wphillipmoore/standard-tooling-plugin/blob/develop/docs/site/docs/hooks/index.md">standard-tooling-plugin/docs → Hooks</a>.</p>
+<a href="https://github.com/wphillipmoore/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">vergil-claude-plugin/docs → Hooks</a>.</p>
 <h2 id="developing-a-change">Developing a change<a class="headerlink" href="#developing-a-change" title="Permanent link">&para;</a></h2>
 <p>The common path, for work that isn't running in parallel:</p>
 <h3 id="1-branch-from-the-integration-branch">1. Branch from the integration branch<a class="headerlink" href="#1-branch-from-the-integration-branch" title="Permanent link">&para;</a></h3>
@@ -4580,15 +4580,15 @@ For the plugin hook detail, see
 </code></pre></div>
 <p>The pre-commit hook enforces the prefix and issue-number rule when
 you try to commit, so name the branch correctly now.</p>
-<h3 id="2-commit-with-st-commit">2. Commit with <code>st-commit</code><a class="headerlink" href="#2-commit-with-st-commit" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>st-commit<span class="w"> </span><span class="se">\</span>
+<h3 id="2-commit-with-vrg-commit">2. Commit with <code>vrg-commit</code><a class="headerlink" href="#2-commit-with-vrg-commit" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--scope<span class="w"> </span>cache<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">&quot;cache computed results&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">&quot;Adds an LRU cache to the computation pipeline...&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--agent<span class="w"> </span>claude
 </code></pre></div>
-<p><code>st-commit</code>:</p>
+<p><code>vrg-commit</code>:</p>
 <ul>
 <li>Validates the commit type against conventional-commit standards
   (<code>feat</code>, <code>fix</code>, <code>docs</code>, <code>style</code>, <code>refactor</code>, <code>test</code>, <code>chore</code>, <code>ci</code>,
@@ -4600,18 +4600,18 @@ you try to commit, so name the branch correctly now.</p>
 </ul>
 <p><strong>Multi-line bodies go in a file</strong>, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>st-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">&quot;…&quot;</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">&quot;…&quot;</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
 </code></pre></div>
-<p>See the <a href="../../reference/dev/commit/">st-commit reference</a> for the
+<p>See the <a href="../../reference/dev/commit/">vrg-commit reference</a> for the
 full flag list.</p>
-<h3 id="3-submit-the-pr-with-st-submit-pr">3. Submit the PR with <code>st-submit-pr</code><a class="headerlink" href="#3-submit-the-pr-with-st-submit-pr" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>st-submit-pr<span class="w"> </span><span class="se">\</span>
+<h3 id="3-submit-the-pr-with-vrg-submit-pr">3. Submit the PR with <code>vrg-submit-pr</code><a class="headerlink" href="#3-submit-the-pr-with-vrg-submit-pr" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add LRU cache to pipeline&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--linkage<span class="w"> </span>Fixes<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--notes<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/pr-notes.txt<span class="k">)</span><span class="s2">&quot;</span>
 </code></pre></div>
-<p><code>st-submit-pr</code>:</p>
+<p><code>vrg-submit-pr</code>:</p>
 <ul>
 <li>Pushes the current branch to <code>origin</code>.</li>
 <li>Constructs a standards-compliant PR body with issue linkage
@@ -4622,18 +4622,18 @@ full flag list.</p>
 <div class="admonition note">
 <p class="admonition-title">Auto-merge is disabled</p>
 <p>As of 2026-04-22 all managed repos have <code>allow_auto_merge=false</code>.
-<code>st-submit-pr</code> still tries to enable auto-merge after PR creation
+<code>vrg-submit-pr</code> still tries to enable auto-merge after PR creation
 and will print a non-fatal <code>CalledProcessError</code> traceback — the
 PR itself is created successfully and simply waits for a human
 merge. Removing that call is tracked in
-<a href="https://github.com/wphillipmoore/standard-tooling/issues/268">standard-tooling#268</a>.</p>
+<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>.</p>
 </div>
-<p>See the <a href="../../reference/dev/submit-pr/">st-submit-pr reference</a>.</p>
+<p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
 <h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
 <p>Once CI is green and a reviewer approves, merge through the GitHub
 UI (squash merge for feature PRs). No automated merge will happen.</p>
-<h3 id="5-finalize-with-st-finalize-repo">5. Finalize with <code>st-finalize-repo</code><a class="headerlink" href="#5-finalize-with-st-finalize-repo" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>st-finalize-repo
+<h3 id="5-finalize-with-vrg-finalize-repo">5. Finalize with <code>vrg-finalize-repo</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-repo" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-repo
 </code></pre></div>
 <p>This:</p>
 <ul>
@@ -4641,20 +4641,20 @@ UI (squash merge for feature PRs). No automated merge will happen.</p>
 <li>Pulls the latest.</li>
 <li>Deletes the merged local feature branch.</li>
 <li>Prunes stale remote-tracking refs.</li>
-<li>Runs post-merge validation via <code>st-docker-run</code> to catch any
+<li>Runs post-merge validation via <code>vrg-docker-run</code> to catch any
   regression introduced by the merge.</li>
 </ul>
 <p>Run this immediately after the PR merges. A Stop hook in the plugin
 will remind you if you try to end the session with an unsubmitted
 or unfinalized PR still dangling.</p>
-<p>See the <a href="../../reference/dev/finalize-repo/">st-finalize-repo reference</a>.</p>
+<p>See the <a href="../../reference/dev/finalize-repo/">vrg-finalize-repo reference</a>.</p>
 <h2 id="parallel-work-with-worktrees">Parallel work with worktrees<a class="headerlink" href="#parallel-work-with-worktrees" title="Permanent link">&para;</a></h2>
 <p>Use the worktree convention when running <strong>more than one agent in
 the same repo at the same time</strong>, or when you want to start a second
 issue before the first is merged.</p>
 <p>For the full spec (rationale, trust model, failure modes, memory-path
 implications), see
-<a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention</a>.
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention</a>.
 This section is the user-level "how to."</p>
 <h3 id="when-a-worktree-is-required">When a worktree is required<a class="headerlink" href="#when-a-worktree-is-required" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4668,7 +4668,7 @@ This section is the user-level "how to."</p>
 <li>Any feature branch, even for solo sequential work. The convention
   keeps the main tree clean; once the plugin-level CWD check is
   active (release tracked in
-  <a href="https://github.com/wphillipmoore/standard-tooling-plugin/issues/46">standard-tooling-plugin#46</a>)
+  <a href="https://github.com/wphillipmoore/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>)
   committing from the main tree will be blocked.</li>
 </ul>
 <h3 id="creating-a-worktree-for-an-issue">Creating a worktree for an issue<a class="headerlink" href="#creating-a-worktree-for-an-issue" title="Permanent link">&para;</a></h3>
@@ -4710,11 +4710,11 @@ contract"):</p>
 <a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>  read-only — all changes flow through your worktree on your
 <a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  feature branch.
 <a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>- When you need to run validation, run it from inside your worktree
-<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (st-docker-run mounts the current directory).
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-docker-run mounts the current directory).
 </code></pre></div>
 <h3 id="cleanup-after-merge">Cleanup after merge<a class="headerlink" href="#cleanup-after-merge" title="Permanent link">&para;</a></h3>
-<p><code>st-finalize-repo</code> will handle worktree removal once
-<a href="https://github.com/wphillipmoore/standard-tooling/issues/260">standard-tooling#260</a>
+<p><code>vrg-finalize-repo</code> will handle worktree removal once
+<a href="https://github.com/vergil-project/vergil-tooling/issues/260">vergil-tooling#260</a>
 lands. Until then, do it by hand alongside the usual finalization:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">cd</span><span class="w"> </span>~/dev/github/&lt;repo&gt;
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>git<span class="w"> </span>worktree<span class="w"> </span>remove<span class="w"> </span>.worktrees/issue-42-add-caching
@@ -4727,12 +4727,12 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 <p>High-level summary:</p>
 <ol>
 <li>Accumulate feature PRs on <code>develop</code>.</li>
-<li>Run <code>st-prepare-release --issue &lt;N&gt;</code> to cut a <code>release/&lt;version&gt;</code>
+<li>Run <code>vrg-prepare-release --issue &lt;N&gt;</code> to cut a <code>release/&lt;version&gt;</code>
    branch, generate the changelog, and open a PR to <code>main</code>.</li>
 <li>Merge the release PR manually. CI auto-tags, creates the GitHub
    Release, publishes the package artifact, and opens a
    version-bump PR back to <code>develop</code>.</li>
-<li><code>st-finalize-repo</code> as usual.</li>
+<li><code>vrg-finalize-repo</code> as usual.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
 <p>Onboarding a brand-new repository has two entry points:</p>
@@ -4749,7 +4749,7 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
    (see the existing setup guide).</li>
 <li>A <code>.githooks/pre-commit</code> env-var gate checked into the repo, plus
    <code>git config core.hooksPath .githooks</code> (once per clone).</li>
-<li><code>.claude/settings.json</code> enabling the <code>standard-tooling</code> plugin
+<li><code>.claude/settings.json</code> enabling the <code>vergil-tooling</code> plugin
    so the plugin hooks fire in Claude Code sessions.</li>
 <li><code>.worktrees/</code> in <code>.gitignore</code> and a Parallel-AI-agent-development
    section in CLAUDE.md so the worktree convention applies.</li>
@@ -4767,14 +4767,14 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>"Raw git commit is blocked. Use st-commit"</code></td>
+<td><code>"Raw git commit is blocked. Use vrg-commit"</code></td>
 <td>plugin</td>
-<td>Use <code>st-commit</code> with the appropriate flags</td>
+<td>Use <code>vrg-commit</code> with the appropriate flags</td>
 </tr>
 <tr>
-<td><code>"Raw gh pr create is blocked. Use st-submit-pr"</code></td>
+<td><code>"Raw gh pr create is blocked. Use vrg-submit-pr"</code></td>
 <td>plugin</td>
-<td>Use <code>st-submit-pr</code></td>
+<td>Use <code>vrg-submit-pr</code></td>
 </tr>
 <tr>
 <td><code>"Heredoc syntax (&lt;&lt;EOF) is blocked"</code></td>
@@ -4815,33 +4815,33 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 </table>
 <h3 id="my-plugin-cache-is-stale">My plugin cache is stale<a class="headerlink" href="#my-plugin-cache-is-stale" title="Permanent link">&para;</a></h3>
 <p>Until plugin release automation is fully stood up
-(<a href="https://github.com/wphillipmoore/standard-tooling-plugin/issues/46">standard-tooling-plugin#46</a>),
+(<a href="https://github.com/wphillipmoore/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>),
 the plugin is consumed from a local checkout and its cache under
-<code>~/.claude/plugins/cache/standard-tooling-marketplace/</code>. If you're
+<code>~/.claude/plugins/cache/vergil-tooling-marketplace/</code>. If you're
 running an old version of a hook:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/standard-tooling-marketplace<span class="w"> </span>pull
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>git<span class="w"> </span>-C<span class="w"> </span>~/.claude/plugins/marketplaces/vergil-tooling-marketplace<span class="w"> </span>pull
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="c1"># then restart Claude Code</span>
 </code></pre></div>
-<h3 id="st-submit-pr-threw-a-calledprocesserror-on-auto-merge"><code>st-submit-pr</code> threw a CalledProcessError on auto-merge<a class="headerlink" href="#st-submit-pr-threw-a-calledprocesserror-on-auto-merge" title="Permanent link">&para;</a></h3>
+<h3 id="vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge"><code>vrg-submit-pr</code> threw a CalledProcessError on auto-merge<a class="headerlink" href="#vrg-submit-pr-threw-a-calledprocesserror-on-auto-merge" title="Permanent link">&para;</a></h3>
 <p>Expected since 2026-04-22 — auto-merge is disabled org-wide. The
 PR itself was created successfully. See
-<a href="https://github.com/wphillipmoore/standard-tooling/issues/268">standard-tooling#268</a>
+<a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>
 for the planned fix.</p>
 <h3 id="validator-not-on-path-errors-during-posttooluse">Validator-not-on-PATH errors during PostToolUse<a class="headerlink" href="#validator-not-on-path-errors-during-posttooluse" title="Permanent link">&para;</a></h3>
 <p>The plugin's <code>validate-on-edit</code> hook expects those validators on
 PATH. Some are only installed inside the dev container image, not on
 the host. Hook-level PATH discovery is tracked in
-<a href="https://github.com/wphillipmoore/standard-tooling/issues/265">standard-tooling#265</a>.
-Workaround: run the validator explicitly via <code>st-docker-run</code> to
+<a href="https://github.com/vergil-project/vergil-tooling/issues/265">vergil-tooling#265</a>.
+Workaround: run the validator explicitly via <code>vrg-docker-run</code> to
 confirm the file is clean; then proceed.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
-<li><a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>
+<li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>
   — pre-commit hook + validator reference</li>
-<li><a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md">Worktree convention spec</a>
+<li><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">Worktree convention spec</a>
   — rationale, failure modes, trust model</li>
 <li><a href="../releasing/">Releasing</a> — release workflow detail</li>
-<li><a href="https://github.com/wphillipmoore/standard-tooling-plugin/blob/develop/docs/site/docs/hooks/index.md">standard-tooling-plugin — Hooks</a>
+<li><a href="https://github.com/wphillipmoore/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">vergil-claude-plugin — Hooks</a>
   — plugin hook reference</li>
 </ul>
 

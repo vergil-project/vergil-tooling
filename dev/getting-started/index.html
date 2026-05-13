@@ -1810,9 +1810,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-install-standard-tooling-on-the-host" class="md-nav__link">
+  <a href="#1-install-vergil-tooling-on-the-host" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Install standard-tooling on the host
+      1. Install vergil-tooling on the host
     </span>
   </a>
   
@@ -4080,9 +4080,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#1-install-standard-tooling-on-the-host" class="md-nav__link">
+  <a href="#1-install-vergil-tooling-on-the-host" class="md-nav__link">
     <span class="md-ellipsis">
-      1. Install standard-tooling on the host
+      1. Install vergil-tooling on the host
     </span>
   </a>
   
@@ -4160,7 +4160,7 @@
 
 <h1 id="getting-started">Getting Started<a class="headerlink" href="#getting-started" title="Permanent link">&para;</a></h1>
 <p>A five-to-ten minute quickstart for wiring up a new repository to
-use standard-tooling. For the detailed walkthrough with rationale,
+use vergil-tooling. For the detailed walkthrough with rationale,
 CI config, and troubleshooting, see
 <a href="../guides/consuming-repo-setup/">Consuming Repo Setup</a>.</p>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
@@ -4175,15 +4175,15 @@ CI config, and troubleshooting, see
 </ul>
 <p>Everything else — language runtimes, linters, test frameworks, and
 most <code>st-*</code> tools — lives inside the dev container. The host-side
-<code>st-*</code> tools (<code>st-docker-run</code>, <code>st-commit</code>, <code>st-submit-pr</code>, etc.)
+<code>st-*</code> tools (<code>vrg-docker-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, etc.)
 are installed via <code>uv tool install</code>.</p>
-<h2 id="1-install-standard-tooling-on-the-host">1. Install standard-tooling on the host<a class="headerlink" href="#1-install-standard-tooling-on-the-host" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;standard-tooling @ git+https://github.com/wphillipmoore/standard-tooling@v1.4&#39;</span>
+<h2 id="1-install-vergil-tooling-on-the-host">1. Install vergil-tooling on the host<a class="headerlink" href="#1-install-vergil-tooling-on-the-host" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4&#39;</span>
 </code></pre></div>
 <p>This installs all <code>st-*</code> console scripts into <code>~/.local/bin/</code>,
 which <code>uv</code>'s installer already puts on <code>PATH</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>st-docker-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/st-docker-run</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>st-docker-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-docker-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-docker-run</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-docker-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
 </code></pre></div>
 <h2 id="2-configure-git-hooks-in-your-consuming-repo">2. Configure git hooks in your consuming repo<a class="headerlink" href="#2-configure-git-hooks-in-your-consuming-repo" title="Permanent link">&para;</a></h2>
 <p>Every managed repo checks in a <code>.githooks/pre-commit</code> env-var gate
@@ -4195,15 +4195,15 @@ the gate content). Enable it once per clone:</p>
 <p>Create <code>.claude/settings.json</code> in your repo:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="p">{</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span><span class="nt">&quot;extraKnownMarketplaces&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">&quot;standard-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">    </span><span class="nt">&quot;vergil-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
 <a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">        </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;github&quot;</span><span class="p">,</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="nt">&quot;repo&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;wphillipmoore/standard-tooling-plugin&quot;</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">        </span><span class="nt">&quot;repo&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;wphillipmoore/vergil-claude-plugin&quot;</span>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="w">      </span><span class="p">}</span>
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a><span class="w">    </span><span class="p">}</span>
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="w">  </span><span class="p">},</span>
 <a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="w">  </span><span class="nt">&quot;enabledPlugins&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="nt">&quot;standard-tooling@standard-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="w">    </span><span class="nt">&quot;vergil-tooling@vergil-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
 <a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="p">}</span>
 </code></pre></div>
@@ -4211,7 +4211,7 @@ the gate content). Enable it once per clone:</p>
 <div class="admonition note">
 <p class="admonition-title">Plugin install is a known rough edge</p>
 <p>The install/update flow for the plugin itself is tracked in
-<a href="https://github.com/wphillipmoore/standard-tooling-plugin/issues/46">standard-tooling-plugin#46</a>.
+<a href="https://github.com/wphillipmoore/vergil-claude-plugin/issues/46">vergil-claude-plugin#46</a>.
 For now, this settings.json entry is enough for Claude Code to
 discover and enable the plugin on the next session restart.</p>
 </div>
@@ -4248,13 +4248,13 @@ attribute reference.</p>
 <p>Add a "Parallel AI agent development" section to your <code>CLAUDE.md</code>
 describing the convention. Every managed repo already has one you
 can copy from; the canonical source is
-<a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
+<a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
 <h2 id="6-verify">6. Verify<a class="headerlink" href="#6-verify" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Host tooling reachable</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>st-docker-run<span class="w"> </span>--help
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-docker-run<span class="w"> </span>--help
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Repo profile validates (runs inside the container)</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>st-docker-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>st-repo-profile
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>vrg-docker-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Git hook blocks raw git commit</span>
 <a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="w">    </span><span class="c1"># should be blocked by the gate</span>
@@ -4267,7 +4267,7 @@ can copy from; the canonical source is
   troubleshooting.</li>
 <li><strong><a href="../guides/git-workflow/">Git Workflow</a></strong> — branching, commit /
   PR / finalize cycle, two-layer enforcement, worktrees in practice.</li>
-<li><strong><a href="https://github.com/wphillipmoore/standard-tooling/blob/develop/docs/specs/worktree-convention.md">Worktree convention spec</a></strong>
+<li><strong><a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">Worktree convention spec</a></strong>
   — full rationale for the parallel-agent convention, failure
   modes, memory-path implications.</li>
 </ul>

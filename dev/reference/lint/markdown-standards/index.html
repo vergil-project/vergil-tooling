@@ -4103,10 +4103,10 @@
 
 
 <h1 id="markdown-validation">Markdown Validation<a class="headerlink" href="#markdown-validation" title="Permanent link">&para;</a></h1>
-<p>Markdown validation is handled by <code>st-validate</code> (common checks) as
+<p>Markdown validation is handled by <code>vrg-validate</code> (common checks) as
 part of the standard validation pipeline. It runs <code>markdownlint</code>
 against published documentation using a canonical config bundled in
-standard-tooling.</p>
+vergil-tooling.</p>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>Validation targets published markdown only:</p>
 <table>
@@ -4131,7 +4131,7 @@ standard-tooling.</p>
 not validated by this check.</p>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
 <p>The canonical config is bundled at
-<code>src/standard_tooling/configs/markdownlint.yaml</code> and resolved at
+<code>src/vergil_tooling/configs/markdownlint.yaml</code> and resolved at
 runtime via <code>importlib.resources</code>. Consuming repos do not need a
 local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">default</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">true</span>
@@ -4181,7 +4181,7 @@ local <code>.markdownlint.yaml</code> -- the bundled config applies everywhere.<
 </tbody>
 </table>
 <h2 id="how-it-runs">How it runs<a class="headerlink" href="#how-it-runs" title="Permanent link">&para;</a></h2>
-<p><code>st-validate</code> runs common checks, which:</p>
+<p><code>vrg-validate</code> runs common checks, which:</p>
 <ol>
 <li>Discovers markdown files matching the scope above.</li>
 <li>Resolves the bundled <code>markdownlint.yaml</code> config.</li>

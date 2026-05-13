@@ -4090,13 +4090,13 @@ development tooling for all managed repositories. It delivers CLI tools for
 commits, PRs, releases, and validation alongside bash validators and git hooks
 -- all consumed via PATH.</p>
 <h2 id="components">Components<a class="headerlink" href="#components" title="Permanent link">&para;</a></h2>
-<p><strong>Python CLI tools</strong> (<code>src/standard_tooling/</code>):
-<code>st-commit</code>, <code>st-submit-pr</code>, <code>st-prepare-release</code>,
-<code>st-finalize-repo</code>, <code>st-validate</code></p>
+<p><strong>Python CLI tools</strong> (<code>src/vergil_tooling/</code>):
+<code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-prepare-release</code>,
+<code>vrg-finalize-repo</code>, <code>vrg-validate</code></p>
 <p><strong>Lint tools</strong> (installed as <code>st-*</code>):
-<code>st-repo-profile</code>, <code>st-pr-issue-linkage</code>, validation drivers</p>
+<code>vrg-repo-profile</code>, <code>vrg-pr-issue-linkage</code>, validation drivers</p>
 <p><strong>Git hooks</strong> (<code>.githooks/</code>):
-Env-var gate that admits <code>st-commit</code> and blocks raw <code>git commit</code></p>
+Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit</code></p>
 <h2 id="design-principles">Design Principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Portability</strong> -- scripts run on both macOS and Linux</li>
@@ -4108,11 +4108,11 @@ Env-var gate that admits <code>st-commit</code> and blocks raw <code>git commit<
 </ul>
 <h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <ol>
-<li><code>standard-tooling</code> is installed on the developer's host via
+<li><code>vergil-tooling</code> is installed on the developer's host via
    <code>uv tool install</code>, placing <code>st-*</code> scripts in <code>~/.local/bin/</code>.</li>
-<li><code>st-docker-run</code> bridges host commands into dev container images
+<li><code>vrg-docker-run</code> bridges host commands into dev container images
    where language runtimes and validators live.</li>
-<li>Python consumers also declare <code>standard-tooling</code> as a dev dep
+<li>Python consumers also declare <code>vergil-tooling</code> as a dev dep
    via <code>[tool.uv.sources]</code> so <code>uv run st-*</code> inside the container
    resolves the pinned version.</li>
 <li>Each repo checks in a <code>.githooks/pre-commit</code> env-var gate,

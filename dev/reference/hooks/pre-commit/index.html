@@ -4188,13 +4188,13 @@
 
 <h1 id="pre-commit">pre-commit<a class="headerlink" href="#pre-commit" title="Permanent link">&para;</a></h1>
 <p><strong>Path:</strong> <code>.githooks/pre-commit</code></p>
-<p>The pre-commit hook is an env-var gate that admits <code>st-commit</code>-driven
+<p>The pre-commit hook is an env-var gate that admits <code>vrg-commit</code>-driven
 commits (via <code>ST_COMMIT_CONTEXT=1</code>) and derived workflows (amend,
 cherry-pick, revert, rebase, merge), and rejects raw <code>git commit</code>.</p>
-<p>The five branch/context checks below live in <code>st-commit</code> itself and
+<p>The five branch/context checks below live in <code>vrg-commit</code> itself and
 run before <code>git commit</code> is invoked:</p>
 <h2 id="checks">Checks<a class="headerlink" href="#checks" title="Permanent link">&para;</a></h2>
-<p><code>st-commit</code> runs five checks in order:</p>
+<p><code>vrg-commit</code> runs five checks in order:</p>
 <h3 id="1-detached-head">1. Detached HEAD<a class="headerlink" href="#1-detached-head" title="Permanent link">&para;</a></h3>
 <p>Commits on a detached HEAD are blocked unconditionally.</p>
 <h3 id="2-protected-branch">2. Protected Branch<a class="headerlink" href="#2-protected-branch" title="Permanent link">&para;</a></h3>

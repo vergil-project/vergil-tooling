@@ -3982,27 +3982,27 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#st-repo-profile" class="md-nav__link">
+  <a href="#vrg-repo-profile" class="md-nav__link">
     <span class="md-ellipsis">
-      st-repo-profile
+      vrg-repo-profile
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#markdown-validation-st-validate" class="md-nav__link">
+  <a href="#markdown-validation-vrg-validate" class="md-nav__link">
     <span class="md-ellipsis">
-      Markdown validation (st-validate)
+      Markdown validation (vrg-validate)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-pr-issue-linkage" class="md-nav__link">
+  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
     <span class="md-ellipsis">
-      st-pr-issue-linkage
+      vrg-pr-issue-linkage
     </span>
   </a>
   
@@ -4131,27 +4131,27 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#st-repo-profile" class="md-nav__link">
+  <a href="#vrg-repo-profile" class="md-nav__link">
     <span class="md-ellipsis">
-      st-repo-profile
+      vrg-repo-profile
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#markdown-validation-st-validate" class="md-nav__link">
+  <a href="#markdown-validation-vrg-validate" class="md-nav__link">
     <span class="md-ellipsis">
-      Markdown validation (st-validate)
+      Markdown validation (vrg-validate)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#st-pr-issue-linkage" class="md-nav__link">
+  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
     <span class="md-ellipsis">
-      st-pr-issue-linkage
+      vrg-pr-issue-linkage
     </span>
   </a>
   
@@ -4211,19 +4211,19 @@ and its exit codes.</p>
 <td>Repository profile</td>
 <td>--</td>
 <td>Yes</td>
-<td><code>st-repo-profile</code></td>
+<td><code>vrg-repo-profile</code></td>
 </tr>
 <tr>
 <td>Markdown standards</td>
 <td>--</td>
 <td>Yes</td>
-<td><code>st-validate</code> (common checks)</td>
+<td><code>vrg-validate</code> (common checks)</td>
 </tr>
 <tr>
 <td>PR issue linkage</td>
 <td>--</td>
 <td>Yes</td>
-<td><code>st-pr-issue-linkage</code></td>
+<td><code>vrg-pr-issue-linkage</code></td>
 </tr>
 <tr>
 <td>Shellcheck</td>
@@ -4268,17 +4268,17 @@ and its exit codes.</p>
 </tbody>
 </table>
 <h2 id="ci-checks">CI Checks<a class="headerlink" href="#ci-checks" title="Permanent link">&para;</a></h2>
-<h3 id="st-repo-profile">st-repo-profile<a class="headerlink" href="#st-repo-profile" title="Permanent link">&para;</a></h3>
+<h3 id="vrg-repo-profile">vrg-repo-profile<a class="headerlink" href="#vrg-repo-profile" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Validates <code>docs/repository-standards.md</code> has all six required
 attributes.</p>
-<h3 id="markdown-validation-st-validate">Markdown validation (st-validate)<a class="headerlink" href="#markdown-validation-st-validate" title="Permanent link">&para;</a></h3>
+<h3 id="markdown-validation-vrg-validate">Markdown validation (vrg-validate)<a class="headerlink" href="#markdown-validation-vrg-validate" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Runs markdownlint on published markdown (<code>docs/site/**/*.md</code> and
-<code>README.md</code>) using the canonical config bundled in standard-tooling.
+<code>README.md</code>) using the canonical config bundled in vergil-tooling.
 See the <a href="../../reference/lint/markdown-standards/">Markdown Validation</a>
 reference for config details and file scope.</p>
-<h3 id="st-pr-issue-linkage">st-pr-issue-linkage<a class="headerlink" href="#st-pr-issue-linkage" title="Permanent link">&para;</a></h3>
+<h3 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
 <p>Validates the PR body uses <code>Ref #N</code> for issue linkage.
 Rejects auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>
