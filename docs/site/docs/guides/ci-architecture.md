@@ -231,7 +231,7 @@ Jobs that remain inline keep their names unchanged:
 ## Dev container images
 
 Published to `ghcr.io/vergil-project/dev-<language>:<version>` from the
-[vergil-docker](https://github.com/wphillipmoore/vergil-docker)
+[vergil-docker](https://github.com/vergil-project/vergil-docker)
 repository.
 
 ### Available images

@@ -92,7 +92,7 @@ Create it in your repo:
 ```bash
 #!/usr/bin/env bash
 # Admit vrg-commit-driven commits.
-if [[ "${ST_COMMIT_CONTEXT:-}" == "1" ]]; then exit 0; fi
+if [[ "${VRG_COMMIT_CONTEXT:-}" == "1" ]]; then exit 0; fi
 # Admit derived-commit workflows (amend, cherry-pick, revert, rebase, merge).
 case "${GIT_REFLOG_ACTION:-}" in
   amend|cherry-pick|revert|rebase*|merge*) exit 0 ;;
@@ -111,7 +111,7 @@ git config core.hooksPath .githooks
 ```
 
 The gate admits commits from `vrg-commit` (which sets
-`ST_COMMIT_CONTEXT=1`) and from derived workflows like rebase and
+`VRG_COMMIT_CONTEXT=1`) and from derived workflows like rebase and
 cherry-pick. All branch/context checks (detached HEAD, protected
 branches, branch prefix, issue number) live in `vrg-commit` itself.
 
@@ -172,7 +172,7 @@ Create `.claude/settings.json` in your repo:
     "vergil-tooling-marketplace": {
       "source": {
         "source": "github",
-        "repo": "wphillipmoore/vergil-claude-plugin"
+        "repo": "vergil-project/vergil-claude-plugin"
       }
     }
   },
@@ -199,7 +199,7 @@ What the plugin provides:
   but never finalized.
 
 See the plugin's own
-[Hooks reference](https://github.com/wphillipmoore/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md)
+[Hooks reference](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md)
 for the full list.
 
 !!! warning "Plugin install is a known rough edge"
@@ -208,7 +208,7 @@ for the full list.
     default branch. Updates can be slow to propagate and the local
     `~/.claude/plugins/marketplaces/` and `…/cache/` directories
     sometimes need manual refreshing. All tracked in
-    [vergil-claude-plugin#46](https://github.com/wphillipmoore/vergil-claude-plugin/issues/46).
+    [vergil-claude-plugin#46](https://github.com/vergil-project/vergil-claude-plugin/issues/46).
     The settings above are enough to get going; plan on
     occasionally running `git pull` in
     `~/.claude/plugins/marketplaces/vergil-tooling-marketplace/`

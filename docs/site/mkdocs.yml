@@ -1,7 +1,7 @@
-site_name: Standard Tooling
+site_name: VERGIL Tooling
 site_description: Shared development tooling for git hooks, validation, and automation
-repo_url: https://github.com/wphillipmoore/standard-tooling
-repo_name: wphillipmoore/standard-tooling
+repo_url: https://github.com/vergil-project/vergil-tooling
+repo_name: vergil-project/vergil-tooling
 
 docs_dir: docs
 strict: true
