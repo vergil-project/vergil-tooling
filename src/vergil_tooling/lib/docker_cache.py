@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 _SELF_PROJECT_NAME = "vergil-tooling"
 
-_ST_GIT_URL = "https://github.com/wphillipmoore/vergil-tooling"
+_ST_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
