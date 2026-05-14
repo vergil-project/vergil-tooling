@@ -104,8 +104,8 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         co_authors[name] = trailer
 
     deps = raw.get("dependencies", {})
-    if "vergil-tooling" not in deps:
-        msg = f"{CONFIG_FILE}: [dependencies] must contain 'vergil-tooling'"
+    if "vergil" not in deps:
+        msg = f"{CONFIG_FILE}: [dependencies] must contain 'vergil'"
         raise ConfigError(msg)
 
     ml_raw = raw.get("markdownlint", {})
@@ -184,7 +184,7 @@ def read_config(repo_root: Path) -> StConfig:
 
 
 def vrg_install_tag(repo_root: Path) -> str:
-    """Return the ``[dependencies].vergil-tooling`` value for runtime install.
+    """Return the ``[dependencies].vergil`` value for runtime install.
 
     Checks ``VRG_DOCKER_INSTALL_TAG`` env var first (override).
     """
@@ -192,4 +192,4 @@ def vrg_install_tag(repo_root: Path) -> str:
     if override:
         return override
     cfg = read_config(repo_root)
-    return cfg.dependencies["vergil-tooling"]
+    return cfg.dependencies["vergil"]

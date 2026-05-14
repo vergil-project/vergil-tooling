@@ -107,7 +107,6 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]

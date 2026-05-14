@@ -31,7 +31,6 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -78,7 +77,6 @@ agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 """
 
 _VALID_TOML = _BASE_TOML + '\n[ci]\nversions = ["3.14"]\n'
@@ -133,9 +131,9 @@ def test_read_config_malformed_co_author(tmp_path: Path) -> None:
 
 
 def test_read_config_missing_dependencies_key(tmp_path: Path) -> None:
-    toml = _VALID_TOML.replace('vergil = "v2.0"\nvergil-tooling = "v2.0"', 'other = "v1.0"')
+    toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="vergil-tooling"):
+    with pytest.raises(ConfigError, match=r"must contain 'vergil'"):
         read_config(tmp_path)
 
 
@@ -272,7 +270,6 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -309,7 +306,6 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
