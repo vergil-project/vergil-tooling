@@ -15,7 +15,7 @@ update CLAUDE.md guidance, deploy project settings to consuming repos,
 deploy vergil-tooling's own permission config, switch the global
 default mode, then observe and refine.
 
-**Tech Stack:** Python CLI tools (click), Claude Code settings (JSON),
+**Tech Stack:** Python CLI tools (argparse), Claude Code settings (JSON),
 vergil plugin hooks (JSON + bash), CLAUDE.md (markdown)
 
 **Spec:** `docs/specs/2026-05-14-permission-model-design.md`
@@ -29,88 +29,221 @@ having `vrg-git` and `vrg-gh` available before the deny rules go live.
 
 ### Task 1: `vrg-git` Wrapper
 
+**Requirement:** Spec Section 2 — validate git subcommands and flags
+before execution; deny dangerous operations; log all invocations.
+
 **Files:**
-`src/vergil_tooling/cli/vrg_git.py`,
+`src/vergil_tooling/bin/vrg_git.py`,
 `tests/test_vrg_git.py`,
 `pyproject.toml` (console script entry)
 
-Build the `vrg-git` CLI tool per the spec's Section 2.
+#### RED — Subcommand allowlist
 
-- [ ] Create `src/vergil_tooling/cli/vrg_git.py` — Python CLI that
-      accepts arbitrary arguments after `vrg-git`, validates the first
-      argument (subcommand) against the allowlist, checks remaining
-      arguments against the per-subcommand denied-flags list, then
-      executes `git` via `subprocess.run` with `shell=False`
-- [ ] Implement the subcommand allowlist from the spec: `status`,
-      `log`, `diff`, `show`, `branch`, `ls-remote`, `rev-parse`,
-      `worktree add`, `worktree list`, `worktree remove`, `add`,
+- [ ] Write tests that each allowed subcommand (`status`, `log`,
+      `diff`, `show`, `branch`, `ls-remote`, `rev-parse`, `add`,
       `push`, `fetch`, `pull`, `checkout`, `switch`, `stash`, `merge`,
-      `cherry-pick`, `rebase`
-- [ ] Implement flag deny lists per-subcommand:
-      - `branch`: deny `-D`, `--force`
-      - `push`: deny `--force`, `--force-with-lease`, `-f`
-      - `checkout`: deny `-- .`, `-- *` (broad restore patterns;
-        specific-file `-- path/to/file` is allowed)
-      - `rebase`: deny `-i`, `--interactive`
-- [ ] Implement the explicit deny list: `commit`, `reset`, `clean`,
-      `config`, `remote`, `reflog`, `gc`, `prune`, `filter-branch`,
-      `replace` — with clear error messages naming the denied
-      subcommand and suggesting the VRG alternative where one exists
-      (e.g., "use vrg-commit instead of git commit")
-- [ ] Handle compound subcommands: `worktree add`, `worktree list`,
-      `worktree remove` — validate the first two arguments as a pair
-- [ ] Reject unrecognized subcommands with a clear error message
-- [ ] Add invocation logging: command, arguments, allowed/denied,
-      timestamp — append to a local log file
-      (`~/.local/share/vergil/vrg-git.log` or similar)
+      `cherry-pick`, `rebase`) passes validation and reaches
+      `subprocess.run` (mock the subprocess call)
+- [ ] Write tests that compound subcommands (`worktree add`,
+      `worktree list`, `worktree remove`) pass validation when the
+      first two arguments are provided as a pair
+- [ ] Write a test that an unrecognized subcommand (e.g., `bisect`)
+      exits non-zero with a clear error message
+- [ ] Write a test that invoking `vrg-git` with no arguments exits
+      non-zero with a usage message
+- [ ] Expected failure: no implementation exists yet
+- [ ] If any test passes unexpectedly: the test is not isolating
+      correctly — it may be calling real `git` instead of validating
+      through the wrapper
+
+#### GREEN — Subcommand allowlist
+
+- [ ] Create `src/vergil_tooling/bin/vrg_git.py` with a `main()`
+      entry point that reads `sys.argv[1:]`, validates the first
+      argument against the subcommand allowlist (dict lookup), and
+      calls `subprocess.run(["git"] + args, shell=False)`
+- [ ] Handle compound subcommands by checking whether the first
+      argument is `worktree` and validating the pair
+- [ ] Reject unrecognized subcommands with exit code 1 and a message
+      naming the rejected subcommand
 - [ ] Add `vrg-git` console script entry point in `pyproject.toml`
-- [ ] Write tests:
-      - Each allowed subcommand passes validation
-      - Each denied subcommand is rejected with appropriate message
-      - Each denied flag on an allowed subcommand is rejected
-      - Unrecognized subcommand is rejected
-      - Arguments are passed through to `git` without shell expansion
-      - Logging produces entries on both allow and deny
+- [ ] All RED tests pass
+
+#### RED — Denied subcommands
+
+- [ ] Write tests that each explicitly denied subcommand (`commit`,
+      `reset`, `clean`, `config`, `remote`, `reflog`, `gc`, `prune`,
+      `filter-branch`, `replace`) exits non-zero with a message naming
+      the denied subcommand
+- [ ] Write a test that `commit` denial message suggests `vrg-commit`
+- [ ] Expected failure: denied subcommands are not yet distinguished
+      from unrecognized ones (both rejected, but error messages differ)
+
+#### GREEN — Denied subcommands
+
+- [ ] Add an explicit deny list that is checked before the
+      unrecognized-subcommand fallback, with per-subcommand error
+      messages that suggest the VRG alternative where one exists
+- [ ] All RED tests pass
+
+#### RED — Flag deny lists
+
+- [ ] Write tests that denied flags on allowed subcommands are
+      rejected:
+      - `branch -D`, `branch --force`
+      - `push --force`, `push --force-with-lease`, `push -f`
+      - `checkout -- .`, `checkout -- *`
+      - `rebase -i`, `rebase --interactive`
+- [ ] Write tests that the same subcommands with allowed flags pass:
+      - `branch -d some-branch` (safe delete)
+      - `push origin feature/foo` (normal push)
+      - `checkout -- src/specific/file.py` (specific-file restore)
+      - `rebase main` (non-interactive)
+- [ ] Expected failure: no flag validation exists yet
+
+#### GREEN — Flag deny lists
+
+- [ ] Add per-subcommand flag scanning that checks remaining arguments
+      against deny lists before passing through to `subprocess.run`
+- [ ] For `checkout`: deny `--` followed by `.` or `*` specifically,
+      not `--` followed by a file path
+- [ ] All RED tests pass
+
+#### RED — Invocation logging
+
+- [ ] Write a test that a successful (allowed) invocation appends a
+      log entry with command, arguments, "allowed", and timestamp
+- [ ] Write a test that a denied invocation appends a log entry with
+      command, arguments, "denied", and timestamp
+- [ ] Write a test that the log directory is created if it does not
+      exist
+- [ ] Expected failure: no logging exists yet
+
+#### GREEN — Invocation logging
+
+- [ ] Add logging that appends to a local log file
+      (`~/.local/share/vergil/vrg-git.log` or similar) on every
+      invocation, recording command, arguments, allowed/denied, and
+      timestamp
+- [ ] Create the log directory if it does not exist
+- [ ] All RED tests pass
+
+#### REFACTOR
+
+- [ ] Review for duplicated validation logic that should be extracted
+      (allowlist lookup, flag scanning, error formatting)
+- [ ] Check whether the deny list error messages are consistent in
+      format
+- [ ] Verify the subprocess call uses `shell=False` and passes
+      arguments as a list, not a string
+- [ ] Look for hard-coded paths that should be configurable or use
+      platform-appropriate defaults
 
 ### Task 2: `vrg-gh` Wrapper
 
+**Requirement:** Spec Section 3 — validate gh two-level subcommand
+pairs before execution; deny dangerous operations; log all invocations.
+
 **Files:**
-`src/vergil_tooling/cli/vrg_gh.py`,
+`src/vergil_tooling/bin/vrg_gh.py`,
 `tests/test_vrg_gh.py`,
 `pyproject.toml` (console script entry)
 
-Build the `vrg-gh` CLI tool per the spec's Section 3.
+#### RED — Two-level subcommand allowlist
 
-- [ ] Create `src/vergil_tooling/cli/vrg_gh.py` — same architecture
-      as `vrg-git`: validate the two-level subcommand pair (e.g.,
-      `issue view`, `pr checks`), then execute `gh` via
-      `subprocess.run` with `shell=False`
-- [ ] Implement the subcommand allowlist from the spec:
+- [ ] Write tests that each allowed subcommand pair passes validation
+      and reaches `subprocess.run` (mock the subprocess call):
       - `issue`: `view`, `create`, `close`, `edit`, `list`, `comment`
       - `pr`: `view`, `checks`, `list`, `diff`, `comment`, `edit`
       - `run`: `list`, `view`, `watch`
       - `repo`: `view`
       - `label`: `list`, `create`
-- [ ] Implement the explicit deny list:
-      - `pr merge`, `pr review --approve`, `pr close`, `pr create`
-      - `repo edit`, `repo create`, `repo delete`
-      - `api` (entire subcommand tree)
-      - `auth` (entire subcommand tree)
-- [ ] For `pr review`: allow the subcommand but deny `--approve`
-      flag specifically (agents can comment on PRs but not approve)
+- [ ] Write a test that an unrecognized top-level subcommand (e.g.,
+      `codespace`) exits non-zero with a clear error message
+- [ ] Write a test that an unrecognized second-level subcommand under
+      a known top-level (e.g., `issue pin`) exits non-zero
+- [ ] Write a test that invoking `vrg-gh` with no arguments exits
+      non-zero with a usage message
+- [ ] Write a test that invoking `vrg-gh` with only a top-level
+      subcommand and no second-level (e.g., `vrg-gh issue`) exits
+      non-zero
+- [ ] Expected failure: no implementation exists yet
+
+#### GREEN — Two-level subcommand allowlist
+
+- [ ] Create `src/vergil_tooling/bin/vrg_gh.py` with a `main()` entry
+      point that reads `sys.argv[1:]`, validates the first two
+      arguments as a subcommand pair against a nested allowlist (dict
+      of dicts), and calls `subprocess.run(["gh"] + args, shell=False)`
 - [ ] Reject unrecognized top-level subcommands
-- [ ] Reject unrecognized second-level subcommands under a known
-      top-level
-- [ ] Add invocation logging (same format as `vrg-git`)
+- [ ] Reject unrecognized second-level subcommands under known
+      top-level commands
+- [ ] Reject invocations with fewer than two arguments
 - [ ] Add `vrg-gh` console script entry point in `pyproject.toml`
-- [ ] Write tests:
-      - Each allowed subcommand pair passes validation
-      - Each denied subcommand pair is rejected
-      - `api` and `auth` are rejected at the top level
-      - `pr review` without `--approve` is allowed
-      - `pr review --approve` is rejected
-      - Arguments are passed through without shell expansion
-      - Logging produces entries on both allow and deny
+- [ ] All RED tests pass
+
+#### RED — Denied subcommand pairs and top-level denials
+
+- [ ] Write tests that each explicitly denied subcommand pair exits
+      non-zero with a message naming the denied operation:
+      - `pr merge`, `pr close`, `pr create`
+      - `repo edit`, `repo create`, `repo delete`
+- [ ] Write tests that top-level denials reject the entire subtree:
+      - `api` with any arguments (e.g., `api repos/...`)
+      - `auth` with any arguments (e.g., `auth login`)
+- [ ] Expected failure: denied pairs are not yet distinguished from
+      unrecognized ones (both rejected, but error messages differ)
+
+#### GREEN — Denied subcommand pairs and top-level denials
+
+- [ ] Add an explicit deny list checked before the
+      unrecognized-subcommand fallback, with per-pair error messages
+      that suggest VRG alternatives where they exist (e.g., "use
+      vrg-submit-pr instead of gh pr create")
+- [ ] Handle top-level denials (`api`, `auth`) by rejecting before
+      checking for a second-level subcommand
+- [ ] All RED tests pass
+
+#### RED — `pr review` flag gating
+
+- [ ] Write a test that `pr review` without `--approve` passes
+      validation (agents can comment on reviews)
+- [ ] Write a test that `pr review --approve` is rejected with a
+      message explaining agents cannot approve PRs
+- [ ] Write a test that `pr review --comment -b "looks good"` passes
+- [ ] Expected failure: no per-subcommand flag validation exists yet
+
+#### GREEN — `pr review` flag gating
+
+- [ ] Add flag scanning for `pr review` that denies `--approve`
+      specifically while allowing other flags
+- [ ] All RED tests pass
+
+#### RED — Invocation logging
+
+- [ ] Write a test that a successful (allowed) invocation appends a
+      log entry with command, arguments, "allowed", and timestamp
+- [ ] Write a test that a denied invocation appends a log entry with
+      command, arguments, "denied", and timestamp
+- [ ] Expected failure: no logging exists yet
+
+#### GREEN — Invocation logging
+
+- [ ] Add logging that appends to a local log file
+      (`~/.local/share/vergil/vrg-gh.log` or similar), same format
+      as `vrg-git`
+- [ ] All RED tests pass
+
+#### REFACTOR
+
+- [ ] Review for duplicated logic shared with `vrg-git` (feeds into
+      Task 3's extraction decision)
+- [ ] Check whether error messages are consistent across all deny
+      types (top-level denied, pair denied, flag denied, unrecognized)
+- [ ] Verify the subprocess call uses `shell=False` and passes
+      arguments as a list
+- [ ] Look for hard-coded paths that should be configurable or use
+      platform-appropriate defaults
 
 ### Task 3: Shared Infrastructure
 
@@ -337,8 +470,7 @@ Task 3 (shared) ───┼── Task 4 (pattern verify) ── Task 5 (valida
                                            Task 11 (observe)
 ```
 
-Tasks 1-3 can proceed in parallel. Task 4 can begin as soon as
-Task 1 produces a working `vrg-git`. Tasks 6, 7, 8, 9 can proceed
+Tasks 1-3 can proceed in parallel. Task 4 begins after Tasks 1-3 complete. Tasks 6, 7, 8, 9 can proceed
 in parallel after Task 5 merges. Task 10 is the gating step — all
 prerequisites must be merged. Task 11 follows Task 10.
 
