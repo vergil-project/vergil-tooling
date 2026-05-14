@@ -220,6 +220,16 @@ Contents API. The existing `block-github-contents-api` hook only
 catches writes to the Contents API specifically. Denying `gh api`
 entirely in the wrapper closes the whole escape hatch.
 
+### Credential Selection
+
+> See the credential management design
+> (`docs/specs/2026-05-14-credential-management-design.md`, #775)
+> for the full credential selection model. `vrg-gh` is responsible
+> for choosing which `gh auth` account to use per-command. The
+> `pr merge` and `pr review --approve` entries in the table above
+> are conditionally allowed for release workflow operations under
+> the human account — see that spec's Section 4.
+
 ### VRG Tools That Bypass the Wrapper
 
 Existing VRG tools that call `gh` directly in their Python code

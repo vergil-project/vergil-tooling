@@ -149,6 +149,20 @@ before execution; deny dangerous operations; log all invocations.
 
 ### Task 2: `vrg-gh` Wrapper
 
+> **Extended by credential management design (#775).** This task
+> must also implement credential selection: `vrg-gh` determines
+> which `gh auth` account to use based on the command being
+> executed. Default is agent account; escalation to human account
+> is allowed only for release workflow operations with context
+> validation. `pr merge` and `pr review --approve` change from
+> unconditionally denied to conditionally allowed with credential
+> escalation. Additionally, mechanized tools that call `github.py`
+> directly (`vrg-merge-when-green`, `vrg-prepare-release`) must
+> be updated to set `GH_TOKEN` in their process environment
+> per-phase (Spec Section 5) — ship in the same PR as `vrg-gh`.
+> See `docs/specs/2026-05-14-credential-management-design.md`,
+> Sections 4 and 5.
+
 **Requirement:** Spec Section 3 — validate gh two-level subcommand
 pairs before execution; deny dangerous operations; log all invocations.
 
