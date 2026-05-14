@@ -305,7 +305,7 @@ def _st_config(
 ) -> StConfig:
     return StConfig(
         project=_project(language=language, release_model=release_model),
-        dependencies={"vergil-tooling": "v1.4"},
+        dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
         publish=PublishConfig(release=False, docs=True),
@@ -1277,7 +1277,7 @@ def test_compute_desired_state_includes_publish() -> None:
 def test_compute_desired_state_publish_release_true() -> None:
     config = StConfig(
         project=_project(),
-        dependencies={"vergil-tooling": "v1.4"},
+        dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
         publish=PublishConfig(release=True, docs=True),

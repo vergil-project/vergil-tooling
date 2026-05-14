@@ -84,7 +84,6 @@ def _make_profile(tmp_path: Path, model: str) -> None:
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "{model}"\nrelease-model = "tagged-release"\n'
         f'primary-language = "python"\n\n[dependencies]\nvergil = "v2.0"\n'
-        f'vergil-tooling = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 

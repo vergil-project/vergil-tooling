@@ -211,7 +211,6 @@ primary-language = "python"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -281,7 +280,7 @@ def _make_config() -> StConfig:
             primary_language="python",
             co_authors={},
         ),
-        dependencies={"vergil-tooling": "v1.4"},
+        dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         publish=PublishConfig(release=False, docs=True),
