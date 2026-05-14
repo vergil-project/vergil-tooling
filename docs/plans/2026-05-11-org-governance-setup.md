@@ -89,6 +89,13 @@ This replaces the per-harness accounts (`wphillipmoore-claude`,
 
 ### Task 2: Generate Human Fine-Grained PAT
 
+> **Superseded.** This task is superseded by the credential
+> management design (#775). Use a classic PAT instead of a
+> fine-grained PAT. Log in via `gh auth login --with-token`
+> instead of storing in macOS Keychain. See
+> `docs/specs/2026-05-14-credential-management-design.md`,
+> Section 3.
+
 **Files:** None (GitHub web UI)
 
 Only the human PAT is created in Phase 1. The agent PAT requires the
@@ -124,6 +131,13 @@ Phase 3, Task 10.
   ```
 
 ### Task 3: Store Human PAT in macOS Keychain
+
+> **Superseded.** This task is superseded by the credential
+> management design (#775). Credentials are stored in `gh auth`,
+> not the macOS Keychain. The `GH_TOKEN` keychain entry and
+> `vergil/human-pat` entry are retired after the transition. See
+> `docs/specs/2026-05-14-credential-management-design.md`,
+> Section 3.
 
 **Files:** None (macOS Keychain)
 
@@ -544,6 +558,15 @@ These tasks execute after Plan B (the VERGIL rename/migration) is
 complete and all repos are in the `vergil-project` org.
 
 ### Task 10: Invite Agent Account to Org Repos
+
+> **Superseded (PAT creation only).** The agent PAT approach is
+> superseded by the credential management design (#775). The agent
+> account uses a classic PAT logged in via
+> `gh auth login --with-token`. Fine-grained PATs for the agent
+> account are abandoned (#761 closed as won't-fix). The invitation
+> steps below remain valid. See
+> `docs/specs/2026-05-14-credential-management-design.md`,
+> Section 2.
 
 **Files:** None (`gh` CLI)
 
