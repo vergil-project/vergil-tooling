@@ -192,6 +192,14 @@ the org.
 
 ## Section 3: Credential Management
 
+> **Superseded.** This section is superseded by the credential
+> management design spec
+> (`docs/specs/2026-05-14-credential-management-design.md`, #775).
+> The approach described below (fine-grained PATs, custom keychain
+> management) was replaced with classic PATs managed through
+> `gh auth`, with credential selection enforced by the `vrg-gh`
+> wrapper. The content below is retained as historical context.
+
 ### Current State
 
 A single `GH_TOKEN` is exported globally in the shell environment. All
