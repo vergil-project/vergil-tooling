@@ -43,9 +43,12 @@ on the host and (inside the container) to manage Python
 dependencies. Install via the
 [official installer](https://docs.astral.sh/uv/getting-started/installation/).
 
-**gh** — GitHub CLI. Must be authenticated
-(`gh auth login`). Used by `vrg-submit-pr` to create PRs and, inside
-the container, to pass through your GitHub token for push operations.
+**gh** — GitHub CLI. Both the human and agent GitHub accounts must
+be logged into `gh auth` on the developer's machine. Credential
+selection is handled automatically by `vrg-gh`. See the credential
+management design
+(`docs/specs/2026-05-14-credential-management-design.md`) for the
+full setup details.
 
 **Git and Bash** — ship with macOS by default and are standard on
 Linux.
@@ -69,13 +72,6 @@ Verify:
 ```bash
 which vrg-docker-run    # should resolve to ~/.local/bin/vrg-docker-run
 vrg-docker-run --help   # should print usage
-```
-
-Optional — add `gh`'s token to your environment so it flows into
-the container automatically on `vrg-docker-run` invocations:
-
-```bash
-export GH_TOKEN=$(gh auth token)
 ```
 
 !!! note "Dev-tree override for vergil-tooling development"

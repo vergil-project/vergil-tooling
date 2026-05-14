@@ -20,6 +20,14 @@ vergil plugin hooks (JSON + bash), CLAUDE.md (markdown)
 
 **Spec:** `docs/specs/2026-05-14-permission-model-design.md`
 
+**Execution order:** This plan and the credential management plan
+(#775, `docs/plans/2026-05-14-credential-management.md`) are executed
+as a unit. Phase 0: credential management Tasks 1-3 and 6 (independent
+prep). Phase 1: this plan's Tasks 1-5, with Task 2 (`vrg-gh`)
+incorporating credential selection from the credential management
+spec's Section 4. Phase 2: this plan's Tasks 6-10 (deploy). Phase 3:
+credential management Tasks 5 and 7 (finalize).
+
 ---
 
 ## Phase 1: Build the Wrappers
@@ -140,6 +148,20 @@ before execution; deny dangerous operations; log all invocations.
       platform-appropriate defaults
 
 ### Task 2: `vrg-gh` Wrapper
+
+> **Extended by credential management design (#775).** This task
+> must also implement credential selection: `vrg-gh` determines
+> which `gh auth` account to use based on the command being
+> executed. Default is agent account; escalation to human account
+> is allowed only for release workflow operations with context
+> validation. `pr merge` and `pr review --approve` change from
+> unconditionally denied to conditionally allowed with credential
+> escalation. Additionally, mechanized tools that call `github.py`
+> directly (`vrg-merge-when-green`, `vrg-prepare-release`) must
+> be updated to set `GH_TOKEN` in their process environment
+> per-phase (Spec Section 5) — ship in the same PR as `vrg-gh`.
+> See `docs/specs/2026-05-14-credential-management-design.md`,
+> Sections 4 and 5.
 
 **Requirement:** Spec Section 3 — validate gh two-level subcommand
 pairs before execution; deny dangerous operations; log all invocations.
