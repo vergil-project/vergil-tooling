@@ -92,7 +92,7 @@ _BASE_ACTION_PATTERNS = [
     "actions/*",
     "docker/*",
     "github/*",
-    "wphillipmoore/*",
+    "vergil-project/*",
 ]
 
 _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {

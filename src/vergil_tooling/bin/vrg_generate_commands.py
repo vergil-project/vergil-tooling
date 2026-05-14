@@ -92,7 +92,7 @@ def load_commands(mapping_data_path: Path) -> list[CommandSpec]:
 # ---------------------------------------------------------------------------
 
 MQSC_REF_URL = "https://www.ibm.com/docs/en/ibm-mq/9.4?topic=reference-mqsc-commands"
-PYTHON_DOCS_BASE_URL = "https://wphillipmoore.github.io/mq-rest-admin-python"
+PYTHON_DOCS_BASE_URL = "https://vergil-project.github.io/mq-rest-admin-python"
 
 
 def _python_docstring(cmd: CommandSpec, mapping_pages: frozenset[str]) -> str:
