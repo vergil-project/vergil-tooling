@@ -24,6 +24,14 @@ plans, guides)
 
 **Spec:** `docs/specs/2026-05-14-credential-management-design.md`
 
+**Execution order:** This plan and the permission model plan (#754,
+`docs/plans/2026-05-14-permission-model.md`) are executed as a unit.
+Phase 0: this plan's Tasks 1-3 and 6 (independent prep). Phase 1:
+permission model Tasks 1-5, with Task 2 (`vrg-gh`) incorporating
+credential selection from this spec's Section 4. Phase 2: permission
+model Tasks 6-10 (deploy). Phase 3: this plan's Tasks 5 and 7
+(finalize).
+
 **Relationship to permission model plan:** This plan is independent
 of the permission model plan. Both can proceed in parallel. The
 permission model plan's Task 2 (`vrg-gh`) must be updated to include
