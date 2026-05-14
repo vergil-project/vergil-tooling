@@ -37,7 +37,7 @@ options:
   -h, --help          show this help message and exit
 
 environment variables:
-  GH_TOKEN                (required) GitHub token passed into the container
+  GH_TOKEN                GitHub token (passed into container when set)
   DOCKER_DEV_IMAGE        override the auto-detected container image
   DOCKER_NETWORK          join a Docker network (e.g. for integration tests)
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
@@ -75,14 +75,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if not command:
         print("Usage: vrg-docker-run [--] <command> [args...]", file=sys.stderr)
-        return 1
-
-    if not os.environ.get("GH_TOKEN"):
-        print(
-            "ERROR: GH_TOKEN is not set. Set GH_TOKEN in your environment before\n"
-            "running vrg-docker-run. See docs/development/environment-setup.md.",
-            file=sys.stderr,
-        )
         return 1
 
     repo_root = git.repo_root()
