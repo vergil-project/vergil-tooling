@@ -5,11 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.8] - 2026-05-14
+
+### Bug fixes
+
+- replace hardcoded wphillipmoore/* with vergil-project/* in action patterns
+
+### Chores
+
+- bump version to 2.0.8
+
 ## [2.0.7] - 2026-05-14
 
 ### Chores
 
 - bump version to 2.0.7
+
+### Documentation
+
+- add .github profile repository design spec (#753)
+- apply pushback review fixes to .github profile repo design spec
+- add .github profile repository implementation plan (#753)
+- apply alignment review fixes to .github profile repo spec and plan
 
 ### Refactoring
 
