@@ -130,9 +130,9 @@ arguments via `subprocess.run` with `shell=False`.
 | `push` | yes | `--force`, `--force-with-lease`, `-f` | Normal push allowed; force push denied |
 | `fetch` | yes | — | Read-only |
 | `pull` | yes | — | Fast-forward branch updates |
-| `checkout` | yes | `-- .`, `-- *` (restore patterns) | Branch switching allowed; file restoration denied |
+| `checkout` | yes | `-- .`, `-- *` (restore patterns) | Branch switching allowed; broad file restoration denied. Specific-file restore (`-- path/to/file`) is allowed — the agent already has equivalent capability through the Write tool, and worktree isolation is the real safety net. |
 | `switch` | yes | — | Branch switching |
-| `stash` | yes | — | Temporary state management |
+| `stash` | yes | — | Temporary state management. All subcommands (`drop`, `clear` included) are allowed — stash is an out-of-band recovery mechanism, not a normal workflow operation. The real fix is the tooling that prevents the mistakes that lead to stash usage; in the recovery context, discarding stashed state is legitimate. |
 | `merge` | yes | — | Branch updates |
 | `cherry-pick` | yes | — | Selective commit application |
 | `rebase` | yes | `-i`, `--interactive` | Non-interactive rebase allowed; interactive denied |
@@ -142,6 +142,9 @@ arguments via `subprocess.run` with `shell=False`.
 Anything not on the allowlist is rejected by default. Notable
 denials:
 
+- `commit` — all commits flow through `vrg-commit`, which sets
+  `VRG_COMMIT_CONTEXT=1` and enforces branch prefix, issue number,
+  and worktree convention checks
 - `reset` — too dangerous in all forms
 - `clean` — file deletion
 - `config` — modifying git configuration
@@ -263,17 +266,16 @@ substring-based, the deny rules move to the hook layer instead.
 {
   "permissions": {
     "allow": [
-      "Bash(vrg-*)",
-      "Bash(vrg-git *)",
-      "Bash(vrg-gh *)"
+      "Bash(vrg-*)"
     ]
   }
 }
 ```
 
-The project layer allowlists VRG tools. All `vrg-commit`,
-`vrg-submit-pr`, `vrg-validate`, `vrg-docker-run`, `vrg-git`,
-and `vrg-gh` invocations run without prompting.
+The project layer allowlists all VRG tools via a single wildcard.
+`vrg-commit`, `vrg-submit-pr`, `vrg-validate`, `vrg-docker-run`,
+`vrg-git`, `vrg-gh`, and any future `vrg-*` tools run without
+prompting. No per-tool entries are needed.
 
 ### Project Local Settings (`.claude/settings.local.json`)
 
@@ -339,7 +341,7 @@ rejects it.
 
 ### Layer 3 — Vergil Plugin Hooks
 
-The existing 11 hooks remain as a backstop. They catch patterns
+The existing 12 hooks remain as a backstop. They catch patterns
 that slip through layers 1 and 2. Hooks exit code 2 (hard block)
 which overrides even bypass mode.
 
@@ -397,10 +399,14 @@ provides an audit trail and feeds back into phase 2 planning:
    hooks evolve their error messages)
 3. Update CLAUDE.md across all repos to instruct agents to use
    `vrg-git` and `vrg-gh` instead of raw commands
-4. Deploy the permission configuration (global deny, project allow,
-   local exceptions)
-5. Switch `defaultMode` from `bypassPermissions` to `acceptEdits`
-6. Run for a week, collect data on what prompts appear, and refine
+4. Deploy `.claude/settings.json` to each consuming repo with the
+   project-level `Bash(vrg-*)` allowlist. Provide a template
+   `settings.local.json` in documentation for the phase 1
+   read-only exceptions.
+5. Deploy the permission configuration (global deny, project allow,
+   local exceptions) for vergil-tooling itself
+6. Switch `defaultMode` from `bypassPermissions` to `acceptEdits`
+7. Run for a week, collect data on what prompts appear, and refine
 
 ### Hook Evolution
 
@@ -419,6 +425,7 @@ Existing hooks after migration:
 | `block-protected-branch-work` | Still primary — worktree convention |
 | `block-worktree-bypass-write` | Still primary — Write/Edit gating |
 | `detect-deprecation-warnings` | Still primary — observability |
+| `remind-finalize` | Still primary — operational reminder |
 
 No hooks are removed. Hooks that become backstops get a comment
 noting that the permission layer is now the primary enforcement.
@@ -462,5 +469,5 @@ planning. After a month of operation:
 | Switching from bypass mode surfaces unexpected prompt volume | Run for a week after migration, refine allowlist based on data |
 | Wrapper allowlists are too restrictive for some workflows | The human can run raw commands via `! <command>` in the prompt; each case is data for allowlist refinement |
 | Agents ignore CLAUDE.md instructions to use `vrg-git`/`vrg-gh` | Permission deny rules enforce compliance mechanically — instructions are guidance, the deny is the gate |
-| Read-only bash exceptions (phase 1) used for shell redirection attacks | Accept as known risk during phase 1; wrappers and deny rules cover the highest-risk commands (git, gh); phase 2 evaluates alternatives |
+| Read-only bash exceptions (phase 1) used for command chaining attacks (`grep foo; dangerous-cmd`) | Claude Code's documented behavior splits compound commands on shell operators and evaluates each subcommand independently — deny rules on `git`/`gh` should fire against embedded dangerous commands. However, there is a known implementation gap (anthropics/claude-code#28784) where prefix matching on the full command string can produce unexpected approvals. Primary mitigation: the `Bash(git *)` and `Bash(gh *)` deny rules cover the highest-risk commands regardless. Fallback: a PreToolUse hook that rejects shell operators in read-only-allowlisted commands can be added if the implementation gap is not resolved before phase 1 deploys. Phase 2 evaluates replacing read-only exceptions entirely. |
 | `VRG_COMMIT_CONTEXT` env var used to bypass pre-commit hook | Layers 1-3 prevent the agent from reaching `git commit`; layer 4 weakness is documented but mitigated |
