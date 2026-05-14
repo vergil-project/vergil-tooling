@@ -123,7 +123,18 @@ platform-specific secure store abstraction.
 echo "<human-classic-pat>" | gh auth login --with-token
 
 # Agent account
-echo "<agent-classic-pat>" | gh auth login --with-token -u <username>-agent
+echo "<agent-classic-pat>" | gh auth login --with-token
+```
+
+The `--with-token` flag determines the account from the token itself
+by calling the GitHub API — there is no `-u` flag for `--with-token`
+mode. When the second token resolves to a different user, `gh` adds
+it as an additional logged-in account automatically.
+
+**Verification (run after both logins):**
+
+```bash
+gh auth status    # Should show both accounts logged in
 ```
 
 **Token retrieval (used by tooling):**
@@ -150,7 +161,7 @@ The following are retired once the `vrg-gh` wrapper is operational:
 | `GH_TOKEN` keychain entry | Classic PAT | Delete after transition |
 | `GH_TOKEN` in `.zshrc` `_KEYCHAIN_VARS` | Loads classic PAT into env | Remove after transition |
 | `vrg-setup-credentials` (planned) | Never built | Cancel — `gh auth login` replaces it |
-| `vrg-credential-audit` (planned) | Never built | Descope — may revisit for token expiration monitoring |
+| `vrg-credential-audit` (planned) | Never built | Deferred — the need for credential visibility remains; see Section 8 |
 
 The GitHub App keychain entries (`vergil/app-id`,
 `vergil/app-private-key`) are retained because the App token
@@ -193,6 +204,15 @@ determined during `vrg-gh` development. The design constraint is:
 escalation requires both a permitted command and a validated
 context.
 
+**Interaction with permission model (#754):** The permission model
+spec denies `pr merge` and `pr review --approve` unconditionally
+in the `vrg-gh` subcommand allowlist. This spec supersedes that
+denial for release workflow operations. The permission model plan
+(Task 2) must be updated: `pr merge` and `pr review --approve`
+move from "denied" to "conditionally allowed with context
+validation and credential escalation." The escalation logic should
+be factored out as a testable component within `vrg-gh`.
+
 ### Mechanism
 
 ```python
@@ -213,8 +233,10 @@ def run_gh(command: list[str]) -> ...:
     return subprocess.run(["gh", *command], env=env, ...)
 ```
 
-This function is shared between the `vrg-gh` CLI entry point and
-the `github.py` library. One implementation, two consumers.
+This logic lives in the `vrg-gh` CLI entry point. Mechanized
+tools that need credential escalation (`vrg-merge-when-green`,
+`vrg-prepare-release`, etc.) set `GH_TOKEN` directly in their
+process environment before calling `github.py` — see Section 5.
 
 ### No Human Detection
 
@@ -227,14 +249,20 @@ access to.
 
 ### Account Discovery
 
-The wrapper discovers account names by convention:
+The wrapper discovers account names by enumerating logged-in
+accounts from `gh auth status`:
 
-1. Read the active human account from `gh auth status` or a
-   config value in `vergil.toml`
-2. Derive the agent account: `<human-account>-agent`
+1. List all accounts logged into `gh auth` for `github.com`
+2. Identify the human account: the one whose name does **not**
+   end in `-agent`
+3. Derive the agent account: `<human-account>-agent`
+4. If both or neither match the convention, fail with an
+   explicit error
 
-No hardcoded usernames in the tooling. A new contributor's
-accounts are discovered the same way.
+This is deterministic regardless of which account is currently
+active (`gh auth switch` has no effect on the discovery). No
+config values in `vergil.toml`, no hardcoded usernames. A new
+contributor's accounts are discovered the same way.
 
 ### Failure Modes
 
@@ -251,14 +279,24 @@ accounts are discovered the same way.
 
 The existing `github.py` module calls `gh` via `subprocess.run`
 with no credential management — it inherits the ambient `GH_TOKEN`.
-This module is refactored to use the shared credential selection
-function from Section 4.
+This continues to work under the new model. `github.py` remains
+unaware of credentials — it inherits from the process environment
+as it does today.
 
-All functions in `github.py` (`run`, `read_output`, `read_json`,
-`write_json`, `delete`, `create_pr`, `merge`, `wait_for_checks`,
-etc.) route through the credential gate. The calling code in
-`vrg-submit-pr`, `vrg-merge-when-green`, `vrg-prepare-release`
-does not change — the credential selection is transparent.
+**Credential selection is the caller's responsibility.** The
+`vrg-gh` CLI handles the simple case: agent by default, human
+for release-pattern operations. Mechanized tools that call
+`github.py` directly (`vrg-merge-when-green`,
+`vrg-prepare-release`, etc.) set `GH_TOKEN` in their own process
+environment before calling `github.py` functions. This is how
+the release workflow switches between App token (for PR creation)
+and human token (for approval and merge) — each phase sets the
+appropriate token before invoking `github.py`.
+
+This keeps `github.py` simple and avoids threading credential
+logic through every function signature. The calling code changes
+only to set `GH_TOKEN` before its `github.py` calls — the
+library's API surface does not change.
 
 ## Section 6: `vrg-docker-run` and Container Credentials
 
@@ -266,15 +304,19 @@ does not change — the credential selection is transparent.
 environment (line 80 of `vrg_docker_run.py`). Under the new model:
 
 1. **Remove the hard gate.** `GH_TOKEN` in the ambient environment
-   is no longer guaranteed or expected.
-2. **Retrieve the token when needed.** If the command being run
-   inside the container needs GitHub access, `vrg-docker-run`
-   retrieves the agent account token via `gh auth token -u
-   <account>` and injects it as `GH_TOKEN` into the container
-   environment.
-3. **Don't require it when not needed.** `vrg-validate` and other
-   local-only commands run without `GH_TOKEN`. The container
-   launches regardless.
+   is no longer guaranteed or expected. The container launches
+   regardless.
+
+GitHub CLI and git operations are host-side tools by design. The
+container runs tests, linters, and builds — it does not need
+GitHub credentials. `vrg-validate` and other container commands
+do not use `GH_TOKEN`. No credential retrieval logic is added to
+`vrg-docker-run`.
+
+The existing env-var passthrough in `docker.py` (which forwards
+`GH_*`, `GITHUB_*`, and `MQ_*` prefixes into the container) is
+left as-is for now. Cleaning up the hardcoded prefix list is
+tracked separately (#777).
 
 ## Section 7: Transitional State
 
@@ -310,27 +352,71 @@ everything. The honor system. This continues to work while
 |---|---|---|
 | Org governance design (#717) | Section 3 (Credential Management) | Superseded by this spec |
 | Org governance setup plan | Tasks 2, 3, 10 (PAT generation, keychain storage) | Rewritten for classic PATs and `gh auth` |
-| Permission model design (#754) | `vrg-gh` wrapper | Gains credential selection responsibility |
-| Permission model plan | Task 2 (`vrg-gh`) | Updated to include credential selection logic |
+| Permission model design (#754) | `vrg-gh` wrapper (Section 3) | Gains credential selection responsibility; `pr merge` and `pr review --approve` change from denied to conditionally allowed |
+| Permission model plan | Task 2 (`vrg-gh`) | Updated to include credential selection logic and escalation component |
 | Issue #761 (agent fine-grained PAT) | — | Closed as won't-fix |
 | Consuming repo setup guide | Environment setup | Updated to reference `gh auth`, not `GH_TOKEN` export |
+| vergil-tooling CLAUDE.md | Architecture | Updated to describe `vrg-gh` credential selection |
+| `vrg_docker_run.py` | Usage text (line 40) | Remove `GH_TOKEN (required)` — no longer required |
+| Consuming repo CLAUDE.md files | Development commands | Updated to note `vrg-gh` handles credential selection |
 
-## Section 8: New Contributor Onboarding
+## Section 8: Credential Lifecycle (Deferred)
+
+Token expiration monitoring, rotation procedures, and compromise
+response are real requirements that are deferred from this spec.
+The org governance design (#717, Section 3) defined these in
+detail for fine-grained PATs; the requirements carry forward for
+classic PATs with minor adjustments.
+
+### What Is Deferred
+
+- **Token expiration monitoring.** Classic PATs can be created
+  with expiration dates (GitHub defaults to expiring tokens).
+  An expired token in `gh auth` still returns from
+  `gh auth token` but fails with 401 on API calls. A periodic
+  report (not inline warnings) is the likely mechanism.
+- **Rotation procedures.** Annual rotation cadence, proactive
+  refresh before expiration, documented steps for replacing
+  tokens in `gh auth`.
+- **Compromise response.** Revocation, audit, replacement —
+  carried forward from the governance design with adjustments
+  for classic PATs and `gh auth`.
+- **Whether `vrg-credential-audit` survives.** The planned tool
+  was descoped (Section 3), but the need for credential
+  visibility remains. It may be revived in modified form.
+
+### Follow-On Work
+
+The implementation plan must include tasks to create issues for
+each deferred item above. The 12-month expiration window on
+newly-created PATs provides runway, but the issues must exist
+to prevent this work from being silently dropped.
+
+## Section 9: New Contributor Onboarding
 
 The setup process for a new contributor:
 
-1. Create `<username>-agent` GitHub account
+1. Create a `<username>-agent` GitHub account (the `-agent` suffix
+   is load-bearing — the tooling uses it to distinguish human from
+   agent accounts)
 2. Generate classic PATs for both accounts
 3. Log both accounts into `gh auth`:
    ```bash
+   # Human account (order matters — log in the human account first)
    echo "<human-pat>" | gh auth login --with-token
-   echo "<agent-pat>" | gh auth login --with-token -u <username>-agent
+
+   # Agent account (gh resolves the username from the token)
+   echo "<agent-pat>" | gh auth login --with-token
    ```
-4. Org owner invites `<username>-agent` as outside collaborator
+4. Verify both accounts are visible:
+   ```bash
+   gh auth status              # Should list both accounts
+   gh auth token -u <username>          # Returns human PAT
+   gh auth token -u <username>-agent    # Returns agent PAT
+   ```
+5. Org owner invites `<username>-agent` as outside collaborator
    to each org
-5. Install vergil-tooling (`uv tool install`)
-6. Verify: `gh auth token -u <username>` and
-   `gh auth token -u <username>-agent` both succeed
+6. Install vergil-tooling (`uv tool install`)
 
 No per-org token setup. No keychain configuration. No custom
 credential utilities. One classic PAT per account covers all orgs.
