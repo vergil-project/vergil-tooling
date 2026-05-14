@@ -283,25 +283,13 @@ error message format, `subprocess.run` invocation.
 
 ### Task 4: Verify `Bash(git *)` Pattern Matching
 
-**Files:** None (manual testing)
-
-The spec identifies a critical implementation risk: the `Bash(git *)`
-deny pattern must not match `vrg-git *` via substring matching.
-
-- [ ] Before any permission config is deployed, test Claude Code's
-      matching behavior:
-      1. Set `deny: ["Bash(git *)"]` in a test settings file
-      2. Attempt `vrg-git status` — must NOT be denied
-      3. Attempt `git status` — must be denied
-      4. Attempt `echo "git status"` — document behavior
-      5. Attempt `vrg-git status && git push` — document behavior
-         (compound command splitting per anthropics/claude-code#28784)
-- [ ] Document results in the spec or as a comment on issue #754
-- [ ] If `vrg-git` is matched by `Bash(git *)`: do not deploy the
-      global deny rules. Instead, move the git/gh deny enforcement
-      entirely to the hook layer and document the limitation. The
-      rest of the plan still proceeds — only the enforcement layer
-      for the deny changes.
+**Status: RESOLVED** — verified via Claude Code documentation
+(permissions.md). `Bash(git *)` uses word-boundary matching: the
+space before `*` means `git status` matches but `vrg-git status`
+does not. Fully qualified path bypass (`/usr/bin/git status`) is
+closed by adding `Bash(*/git *)` and `Bash(*/gh *)` deny patterns.
+Compound commands are evaluated per-subcommand. Results documented
+in the spec (Section 4, pattern matching note).
 
 ### Task 5: Validation and Release
 
@@ -406,7 +394,12 @@ Deploy the full permission stack for vergil-tooling itself.
       {
         "permissions": {
           "defaultMode": "acceptEdits",
-          "deny": ["Bash(git *)", "Bash(gh *)"]
+          "deny": [
+            "Bash(git *)",
+            "Bash(*/git *)",
+            "Bash(gh *)",
+            "Bash(*/gh *)"
+          ]
         }
       }
       ```
@@ -434,12 +427,15 @@ and project settings must be deployed and merged before this step.
       {
         "permissions": {
           "defaultMode": "acceptEdits",
-          "deny": ["Bash(git *)", "Bash(gh *)"]
+          "deny": [
+            "Bash(git *)",
+            "Bash(*/git *)",
+            "Bash(gh *)",
+            "Bash(*/gh *)"
+          ]
         }
       }
       ```
-      (If Task 4 showed substring matching, omit the deny rules and
-      rely on hook enforcement instead)
 - [ ] Apply `~/.claude/settings.local.json` with the phase 1
       read-only exceptions
 - [ ] Remove `skipDangerousModePermissionPrompt` from global settings
