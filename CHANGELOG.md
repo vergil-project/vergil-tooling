@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.9] - 2026-05-14
+
+### Chores
+
+- bump version to 2.0.9
+
 ## [2.0.8] - 2026-05-14
 
 ### Bug fixes
@@ -14,6 +20,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.8
+
+### Documentation
+
+- add Claude Code permission model design spec (#754)
+- apply pushback review fixes to permission model design spec
+- add permission model implementation plan (#754)
+- apply alignment review fixes to permission model implementation plan
 
 ## [2.0.7] - 2026-05-14
 
