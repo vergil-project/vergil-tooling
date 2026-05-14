@@ -30,6 +30,19 @@ entirely — this is addressed in Task 2.
 These tasks address gaps discovered during design that must be resolved
 before the `.github` repo is created.
 
+### Task 0: Upstream Tooling Fix (vergil-tooling)
+
+**Files:** None (separate vergil-tooling change)
+
+The `vergil.toml` config parser currently requires
+`[dependencies].vergil-tooling`. This is a migration artifact being
+consolidated to just `[dependencies].vergil`. That change must land
+before Task 4's `vergil.toml` (which omits `[dependencies]`) can
+pass validation.
+
+- [ ] Verify the config parser accepts `[dependencies].vergil`
+      without requiring `vergil-tooling`
+
 ### Task 1: Enable GitHub Discussions on All Four Repos
 
 **Files:** None (GitHub API / web UI)

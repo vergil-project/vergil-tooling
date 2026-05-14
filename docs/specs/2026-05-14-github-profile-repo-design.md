@@ -50,7 +50,7 @@ vergil-project/.github/
 ├── CLAUDE.md                      # Agent guidance for this repo
 ├── vergil.toml                    # Minimal config (no primary_language)
 ├── README.md                      # Repo-level: what this repo is
-└── LICENSE                        # MIT
+└── LICENSE                        # GPL-3
 ```
 
 ### Key decisions
@@ -236,6 +236,10 @@ for clarity:
   CONTRIBUTING.md draw from Section 5.
 - VERGIL rename — complete. URLs in the profile README reflect the
   current `vergil-project/` org.
+- Missing LICENSE files — vergil-docker and vergil-claude-plugin do
+  not have LICENSE files. These must be added (GPL-3, matching
+  vergil-tooling and vergil-actions) before CONTRIBUTING.md can
+  reference a unified license across the org.
 
 ## Risks
 
