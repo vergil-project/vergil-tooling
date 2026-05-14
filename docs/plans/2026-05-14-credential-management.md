@@ -38,6 +38,11 @@ here.
 **Requirement:** Spec Section 6 — remove the hard gate; the
 container launches regardless of whether `GH_TOKEN` is set.
 
+**Note:** The env-var passthrough in `docker.py` (which forwards
+`GH_*`, `GITHUB_*`, and `MQ_*` prefixes into the container) is
+left as-is. Cleanup of the hardcoded prefix list is tracked
+separately in #777.
+
 **Files:**
 - Modify: `src/vergil_tooling/bin/vrg_docker_run.py:40,80-86`
 - Modify: `tests/vergil_tooling/test_vrg_docker_run.py:77-82`
@@ -276,9 +281,12 @@ escalation.
   > is allowed only for release workflow operations with context
   > validation. `pr merge` and `pr review --approve` change from
   > unconditionally denied to conditionally allowed with credential
-  > escalation. See
-  > `docs/specs/2026-05-14-credential-management-design.md`,
-  > Section 4.
+  > escalation. Additionally, mechanized tools that call `github.py`
+  > directly (`vrg-merge-when-green`, `vrg-prepare-release`) must
+  > be updated to set `GH_TOKEN` in their process environment
+  > per-phase (Spec Section 5) — ship in the same PR as `vrg-gh`.
+  > See `docs/specs/2026-05-14-credential-management-design.md`,
+  > Sections 4 and 5.
   ```
 
 - [ ] **Step 2: Add credential selection note to the permission model spec**
@@ -383,6 +391,11 @@ must have tracking issues.
   A periodic report (monthly or as a CI job) that checks token
   expiration dates via the GitHub API and surfaces warnings for
   tokens approaching expiry (within 30 days).
+
+  This issue also covers evaluating whether `vrg-credential-audit`
+  (planned in the org governance design but never built) should be
+  revived in modified form as the implementation vehicle for this
+  monitoring.
 
   ## Context
 

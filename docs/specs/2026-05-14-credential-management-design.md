@@ -155,7 +155,7 @@ The following are retired once the `vrg-gh` wrapper is operational:
 | Item | Current state | Action |
 |---|---|---|
 | `vergil/human-pat` keychain entry | Fine-grained PAT | Delete from keychain |
-| `vergil/agent-pat` keychain entry | Never created (#761) | Close issue as won't-fix |
+| `vergil/agent-pat` keychain entry | Never created (#761, closed as won't-fix) | No action needed |
 | `vergil/app-id` keychain entry | GitHub App ID | Retain (used by release tooling for App token exchange) |
 | `vergil/app-private-key` keychain entry | GitHub App private key | Retain (used by release tooling for App token exchange) |
 | `GH_TOKEN` keychain entry | Classic PAT | Delete after transition |
@@ -354,9 +354,7 @@ everything. The honor system. This continues to work while
 | Org governance setup plan | Tasks 2, 3, 10 (PAT generation, keychain storage) | Rewritten for classic PATs and `gh auth` |
 | Permission model design (#754) | `vrg-gh` wrapper (Section 3) | Gains credential selection responsibility; `pr merge` and `pr review --approve` change from denied to conditionally allowed |
 | Permission model plan | Task 2 (`vrg-gh`) | Updated to include credential selection logic and escalation component |
-| Issue #761 (agent fine-grained PAT) | — | Closed as won't-fix |
 | Consuming repo setup guide | Environment setup | Updated to reference `gh auth`, not `GH_TOKEN` export |
-| vergil-tooling CLAUDE.md | Architecture | Updated to describe `vrg-gh` credential selection |
 | `vrg_docker_run.py` | Usage text (line 40) | Remove `GH_TOKEN (required)` — no longer required |
 | Consuming repo CLAUDE.md files | Development commands | Updated to note `vrg-gh` handles credential selection |
 
