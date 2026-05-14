@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.7] - 2026-05-14
+
+### Chores
+
+- bump version to 2.0.7
+
+### Refactoring
+
+- consolidate [dependencies] to single 'vergil' key
+
 ## [2.0.6] - 2026-05-13
 
 ### Chores
