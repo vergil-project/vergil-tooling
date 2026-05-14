@@ -90,7 +90,7 @@ def test_desired_actions_permissions_base_only() -> None:
         "actions/*",
         "docker/*",
         "github/*",
-        "wphillipmoore/*",
+        "vergil-project/*",
     ]
 
 
@@ -102,7 +102,7 @@ def test_desired_actions_permissions_with_language_patterns() -> None:
         "docker/*",
         "github/*",
         "swatinem/*",
-        "wphillipmoore/*",
+        "vergil-project/*",
     ]
 
 
@@ -114,7 +114,7 @@ def test_desired_actions_permissions_python() -> None:
         "docker/*",
         "github/*",
         "pypa/*",
-        "wphillipmoore/*",
+        "vergil-project/*",
     ]
 
 
@@ -375,7 +375,7 @@ def test_fetch_actual_state_repo_settings() -> None:
                 "can_approve_pull_request_reviews": False,
             }
         if endpoint == "repos/o/r/actions/permissions/selected-actions":
-            return {"patterns_allowed": ["actions/*", "wphillipmoore/*"]}
+            return {"patterns_allowed": ["actions/*", "vergil-project/*"]}
         return {}
 
     with (
@@ -398,7 +398,7 @@ def test_fetch_actual_state_repo_settings() -> None:
     assert actual.actions_permissions.default_workflow_permissions == "read"
     assert actual.actions_permissions.patterns_allowed == [
         "actions/*",
-        "wphillipmoore/*",
+        "vergil-project/*",
     ]
     assert actual.rulesets == []
 
