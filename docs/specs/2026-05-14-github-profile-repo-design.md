@@ -62,8 +62,11 @@ vergil-project/.github/
   what the `.github` repo is and how org-level defaults work.
 - The `.github/.github/workflows/` nesting is correct — the repo's own
   CI config lives in its own `.github/` directory like any other repo.
-- `vergil.toml` omits `primary_language` so `vrg-validate` runs only
-  common checks (markdownlint, yamllint, shellcheck, actionlint).
+- `vergil.toml` uses `primary-language = "none"` so `vrg-validate`
+  runs only common checks (markdownlint, yamllint, shellcheck,
+  actionlint). All five `[project]` fields are required by the
+  config parser; a value of `"none"` is the mechanism for skipping
+  language-specific checks.
 - No `FUNDING.yml` — GitHub Sponsors is a future concern.
 - No `workflow-templates/` — the four VERGIL repos are infrastructure,
   not a pattern that gets replicated. Workflow templates add value in
@@ -101,7 +104,9 @@ Content outline:
 - **Reporting** — private email or GitHub's private vulnerability
   reporting feature (if enabled on the org).
 - **Scope** — what counts as a security issue: the CLI tooling, the
-  container images, the CI workflows, the Claude Code plugin hooks.
+  container images, the CI workflows, and the vergil-claude-plugin
+  configuration and hook definitions. Exact scope to be refined
+  during implementation.
 - **Response commitment** — acknowledgment and fix timelines, realistic
   for a small project that intends to grow.
 - **Out of scope** — vulnerabilities in upstream dependencies that
@@ -117,8 +122,8 @@ Content outline:
 ### SUPPORT.md
 
 - **GitHub Issues** for bugs and feature requests.
-- **GitHub Discussions** for questions and general conversation (if
-  Discussions are enabled on the org).
+- **GitHub Discussions** for questions and general conversation.
+  Discussions must be enabled on all four repos as a prerequisite.
 - **Docs site** for reference material.
 - Clear statement that this is a community project, not a commercial
   product with SLA-backed support.
@@ -126,7 +131,7 @@ Content outline:
 ## Section 3: Org Profile README
 
 The `profile/README.md` is adapted from the existing draft at
-`career-strategy/drafts/vergil-readme-draft.md`.
+`/Users/pmoore/dev/github/career-strategy/drafts/vergil-readme-draft.md`.
 
 ### Updates needed
 
@@ -160,6 +165,9 @@ The `profile/README.md` is adapted from the existing draft at
 
 ## Section 4: Consolidation
 
+This section covers follow-up work in the four consuming repos,
+after the `.github` repo is created and inheritance is verified.
+
 ### Removed from all four repos
 
 Once the org-level defaults are in place, the identical per-repo copies
@@ -182,12 +190,13 @@ vergil-claude-plugin:
 
 ### Rollout order
 
-1. Create the `.github` repo with all org-level files.
-2. Verify inheritance — create a test issue in one repo, confirm the
+1. Enable GitHub Discussions on all four repos.
+2. Create the `.github` repo with all org-level files.
+3. Verify inheritance — create a test issue in one repo, confirm the
    org template appears.
-3. Remove per-repo copies in coordinated PRs (one per repo, can be
+4. Remove per-repo copies in coordinated PRs (one per repo, can be
    parallel).
-4. Verify again post-removal — confirm templates still work via
+5. Verify again post-removal — confirm templates still work via
    inheritance.
 
 ### Risk mitigation
@@ -234,5 +243,5 @@ for clarity:
 |---|---|
 | Inheritance not working as expected | Verify with a test issue before removing per-repo copies |
 | Future repo needs custom templates but developer doesn't know about the all-or-nothing rule | Documented in CONTRIBUTING.md and in the `.github` repo's root README |
-| `vergil.toml` without `primary_language` causes `vrg-validate` to fail | Verify during implementation; may need a `docs` or `none` designation |
+| CI workflow untested with `primary-language = "none"` | Verify during implementation that vergil-actions CI steps handle this config correctly |
 | `.github/.github/workflows/` nesting confuses contributors | Documented in root README; inherent to how GitHub handles the `.github` repo |
