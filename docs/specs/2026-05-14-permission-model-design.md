@@ -241,14 +241,17 @@ wrapper only constrains agent-initiated `gh` calls via the
 
 ## Section 4: Permission Configuration
 
-Three layers of settings that work together.
+Two layers of committed settings, plus an optional per-developer
+local override.
 
-### Global User Settings (`~/.claude/settings.json`)
+### Project Settings (`.claude/settings.json`)
 
 ```json
 {
   "permissions": {
-    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(vrg-*)"
+    ],
     "deny": [
       "Bash(git *)",
       "Bash(*/git *)",
@@ -259,10 +262,17 @@ Three layers of settings that work together.
 }
 ```
 
-The global layer sets the default mode and hard-denies raw `git`
-and `gh` across all projects. Deny rules at any scope cannot be
-overridden by allow rules at a lower scope — this is Claude Code's
-precedence model.
+The project layer is the primary enforcement point. It allowlists
+all VRG tools via a single wildcard (`vrg-commit`, `vrg-submit-pr`,
+`vrg-validate`, `vrg-docker-run`, `vrg-git`, `vrg-gh`, and any
+future `vrg-*` tools run without prompting) and hard-denies raw
+`git` and `gh`.
+
+Deny rules at any scope cannot be overridden by allow rules at any
+other scope — this is Claude Code's precedence model. A deny in
+`.claude/settings.json` is just as strong as a deny in the global
+config, but self-contained: anyone who clones the repo gets the
+rules automatically with no per-developer setup.
 
 **Pattern matching (verified):** Claude Code's `Bash()` patterns
 use glob matching where the space before `*` enforces a word
@@ -273,22 +283,26 @@ prevents matching `vrg-git`. Compound commands are evaluated
 per-subcommand: `vrg-git status && git push` denies the `git
 push` half independently.
 
-### Project Settings (`.claude/settings.json`)
+### Global User Settings (`~/.claude/settings.json`)
+
+With deny rules at the project level, the global config is no
+longer required for enforcement. It remains available for
+personal preferences:
 
 ```json
 {
   "permissions": {
-    "allow": [
-      "Bash(vrg-*)"
-    ]
+    "defaultMode": "acceptEdits"
   }
 }
 ```
 
-The project layer allowlists all VRG tools via a single wildcard.
-`vrg-commit`, `vrg-submit-pr`, `vrg-validate`, `vrg-docker-run`,
-`vrg-git`, `vrg-gh`, and any future `vrg-*` tools run without
-prompting. No per-tool entries are needed.
+Switching `defaultMode` from `bypassPermissions` to `acceptEdits`
+makes unknown commands (anything not allowlisted or denied) prompt
+the human instead of auto-approving. This is an independent
+decision from the deny rules — the deny rules block raw `git`/`gh`
+regardless of mode. The `defaultMode` switch is optional and
+per-developer.
 
 ### Project Local Settings (`.claude/settings.local.json`)
 
@@ -329,7 +343,7 @@ project settings.
 - `vrg-commit` → no prompt (project allow)
 - `vrg-git status` → no prompt (project allow)
 - `grep -r "foo" src/` → no prompt (local allow, phase 1)
-- `git push` → denied (global deny)
+- `git push` → denied (project deny)
 - `curl https://...` → prompts the human
 - `rm -rf .` → prompts the human
 - `vrg-gh pr merge` → no Claude Code prompt, but the wrapper
@@ -416,9 +430,12 @@ provides an audit trail and feeds back into phase 2 planning:
    project-level `Bash(vrg-*)` allowlist. Provide a template
    `settings.local.json` in documentation for the phase 1
    read-only exceptions.
-5. Deploy the permission configuration (global deny, project allow,
-   local exceptions) for vergil-tooling itself
-6. Switch `defaultMode` from `bypassPermissions` to `acceptEdits`
+5. Deploy the deny rules to each repo's `.claude/settings.json`
+   alongside the existing `Bash(vrg-*)` allowlist. Provide a
+   template `settings.local.json` in documentation for the phase 1
+   read-only exceptions.
+6. Optionally switch `defaultMode` to `acceptEdits` (per-developer
+   global setting — independent of the deny rules)
 7. Run for a week, collect data on what prompts appear, and refine
 
 ### Hook Evolution
