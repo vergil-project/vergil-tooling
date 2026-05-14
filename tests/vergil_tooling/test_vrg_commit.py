@@ -28,7 +28,6 @@ agent = "Co-Authored-By: test-agent <test-agent@test.com>"
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]

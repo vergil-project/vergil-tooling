@@ -25,7 +25,6 @@ claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>
 
 [dependencies]
 vergil = "v2.0"
-vergil-tooling = "v2.0"
 
 [ci]
 versions = ["3.14"]
@@ -76,7 +75,7 @@ def test_malformed_co_author(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
 
 def test_missing_dependencies_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    toml = _VALID_TOML.replace('vergil = "v2.0"\nvergil-tooling = "v2.0"', 'other = "v1.0"')
+    toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
     _write_toml(tmp_path, toml)
     assert main() == 1
 
