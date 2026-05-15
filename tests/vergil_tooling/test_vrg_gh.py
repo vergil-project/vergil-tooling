@@ -166,7 +166,7 @@ _AUTH_STATUS_TWO_ACCOUNTS = """\
 github.com
   ✓ Logged in to github.com account jdoe (keyring)
   - Active account: true
-  ✓ Logged in to github.com account jdoe-agent (keyring)
+  ✓ Logged in to github.com account jdoe-vergil (keyring)
   - Active account: false
 """
 
@@ -181,7 +181,7 @@ def test_discover_accounts() -> None:
         )
         human, agent = _discover_accounts()
     assert human == "jdoe"
-    assert agent == "jdoe-agent"
+    assert agent == "jdoe-vergil"
 
 
 _AUTH_STATUS_DUPLICATE_HUMAN = """\
@@ -190,7 +190,7 @@ github.com
   - Active account: true
   ✓ Logged in to github.com account jdoe (token)
   - Active account: false
-  ✓ Logged in to github.com account jdoe-agent (keyring)
+  ✓ Logged in to github.com account jdoe-vergil (keyring)
   - Active account: false
 """
 
@@ -205,7 +205,33 @@ def test_discover_accounts_deduplicates() -> None:
         )
         human, agent = _discover_accounts()
     assert human == "jdoe"
-    assert agent == "jdoe-agent"
+    assert agent == "jdoe-vergil"
+
+
+_AUTH_STATUS_MANY_ACCOUNTS = """\
+github.com
+  ✓ Logged in to github.com account jdoe (keyring)
+  - Active account: true
+  ✓ Logged in to github.com account jdoe-vergil (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account jdoe-mimir (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account jdoe-agent (keyring)
+  - Active account: false
+"""
+
+
+def test_discover_accounts_ignores_other_accounts() -> None:
+    from vergil_tooling.bin.vrg_gh import _discover_accounts
+
+    with patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=_AUTH_STATUS_MANY_ACCOUNTS,
+        )
+        human, agent = _discover_accounts()
+    assert human == "jdoe"
+    assert agent == "jdoe-vergil"
 
 
 _AUTH_STATUS_NO_AGENT = """\
@@ -215,7 +241,7 @@ github.com
 """
 
 
-def test_discover_accounts_missing_agent(
+def test_discover_accounts_missing_vergil(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from vergil_tooling.bin.vrg_gh import _discover_accounts
@@ -238,7 +264,7 @@ def test_default_uses_human_token_workaround() -> None:
     with (
         patch(
             "vergil_tooling.bin.vrg_gh._discover_accounts",
-            return_value=("jdoe", "jdoe-agent"),
+            return_value=("jdoe", "jdoe-vergil"),
         ),
         patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
     ):
@@ -249,7 +275,7 @@ def test_default_uses_human_token_workaround() -> None:
     assert token == "human-token"  # noqa: S105
     token_call = mock_run.call_args_list[-1]
     assert "jdoe" in token_call[0][0]
-    assert "jdoe-agent" not in token_call[0][0]
+    assert "jdoe-vergil" not in token_call[0][0]
 
 
 # -- credential selection: escalation for pr merge ---------------------------
@@ -259,7 +285,7 @@ def test_pr_merge_release_branch_escalates() -> None:
     with (
         patch(
             "vergil_tooling.bin.vrg_gh._discover_accounts",
-            return_value=("jdoe", "jdoe-agent"),
+            return_value=("jdoe", "jdoe-vergil"),
         ),
         patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
         patch("vergil_tooling.bin.vrg_gh._validate_merge_context"),
@@ -271,7 +297,7 @@ def test_pr_merge_release_branch_escalates() -> None:
     assert token == "human-token"  # noqa: S105
     token_call = mock_run.call_args_list[-1]
     assert "jdoe" in token_call[0][0]
-    assert "jdoe-agent" not in token_call[0][0]
+    assert "jdoe-vergil" not in token_call[0][0]
 
 
 def test_pr_merge_allowed_with_valid_context() -> None:

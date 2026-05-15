@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.13] - 2026-05-15
+
+### Bug fixes
+
+- add explicit credential selection via GH_TOKEN injection
+
+### Chores
+
+- bump version to 2.0.13
+
+### Refactoring
+
+- replace -agent convention with -vergil across tooling, specs, and config
+
 ## [2.0.12] - 2026-05-15
 
 ### Bug fixes
@@ -24,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.11
+
+### Features
+
+- move deny rules to project-level settings and deploy to vergil-tooling
 
 ## [2.0.10] - 2026-05-14
 

@@ -4,11 +4,19 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.lib import github
+
+_real_gh_env = github._gh_env
+
+
+@pytest.fixture(autouse=True)
+def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
+    github._human_token.cache_clear()
 
 
 def _completed(
@@ -450,3 +458,144 @@ class TestRetryIntegration:
         ):
             github.delete("repos/o/r/vulnerability-alerts")
         assert mock_run.call_count == 2
+
+
+# --- Credential discovery ---
+
+
+_AUTH_TWO_ACCOUNTS = """\
+github.com
+  ✓ Logged in to github.com account jdoe (keyring)
+  - Active account: true
+  ✓ Logged in to github.com account jdoe-vergil (keyring)
+  - Active account: false
+"""
+
+_AUTH_MANY_ACCOUNTS = """\
+github.com
+  ✓ Logged in to github.com account jdoe (keyring)
+  - Active account: true
+  ✓ Logged in to github.com account jdoe-vergil (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account jdoe-mimir (keyring)
+  - Active account: false
+  ✓ Logged in to github.com account jdoe-agent (keyring)
+  - Active account: false
+"""
+
+_AUTH_NO_VERGIL = """\
+github.com
+  ✓ Logged in to github.com account jdoe (keyring)
+  - Active account: true
+"""
+
+
+class TestDiscoverAccounts:
+    def test_finds_vergil_pair(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_TWO_ACCOUNTS)
+            human, agent = github._discover_accounts()
+        assert human == "jdoe"
+        assert agent == "jdoe-vergil"
+
+    def test_ignores_other_accounts(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_MANY_ACCOUNTS)
+            human, agent = github._discover_accounts()
+        assert human == "jdoe"
+        assert agent == "jdoe-vergil"
+
+    def test_fails_without_vergil_account(self) -> None:
+        with (
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            pytest.raises(SystemExit),
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_NO_VERGIL)
+            github._discover_accounts()
+
+    def test_derives_human_from_vergil_suffix(self) -> None:
+        auth = "github.com\n  ✓ Logged in to github.com account alice-vergil (keyring)\n"
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout=auth)
+            human, agent = github._discover_accounts()
+        assert human == "alice"
+        assert agent == "alice-vergil"
+
+
+# --- Credential injection ---
+
+
+class TestCredentialInjection:
+    def test_run_with_retry_injects_env(self) -> None:
+        fake_env = {"GH_TOKEN": "test-token", "PATH": "/usr/bin"}
+        with (
+            patch("vergil_tooling.lib.github._gh_env", return_value=fake_env),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            github._run_with_retry(("gh", "pr", "list"), check=True)
+        _, kwargs = mock_run.call_args
+        assert kwargs["env"] is fake_env
+
+    def test_run_with_retry_skips_env_when_none(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed()
+            github._run_with_retry(("gh", "pr", "list"), check=True)
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs
+
+    def test_run_with_retry_preserves_caller_env(self) -> None:
+        caller_env = {"GH_TOKEN": "caller-token"}
+        with (
+            patch("vergil_tooling.lib.github._gh_env", return_value={"GH_TOKEN": "other"}),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            github._run_with_retry(("gh", "pr", "list"), check=True, env=caller_env)
+        _, kwargs = mock_run.call_args
+        assert kwargs["env"] is caller_env
+
+
+# --- _human_token ---
+
+
+class TestHumanToken:
+    def test_returns_stripped_token(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                return_value=("jdoe", "jdoe-vergil"),
+            ),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0, stdout="ghp_abc123\n")
+            token = github._human_token()
+        assert token == "ghp_abc123"  # noqa: S105
+
+
+# --- _gh_env ---
+
+
+class TestGhEnv:
+    def test_returns_env_with_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with patch("vergil_tooling.lib.github._human_token", return_value="ghp_abc123"):
+            env = github._gh_env()
+        assert env is not None
+        assert env["GH_TOKEN"] == "ghp_abc123"  # noqa: S105
+
+    def test_returns_none_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with patch(
+            "vergil_tooling.lib.github._human_token",
+            side_effect=subprocess.CalledProcessError(1, "gh"),
+        ):
+            assert github._gh_env() is None
+
+    def test_returns_none_on_system_exit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with patch(
+            "vergil_tooling.lib.github._human_token",
+            side_effect=SystemExit(1),
+        ):
+            assert github._gh_env() is None

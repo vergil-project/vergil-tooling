@@ -7,14 +7,63 @@ with exponential backoff.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
+import os
 import random
+import re
 import subprocess
+import sys
 import time
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+
+def _discover_accounts() -> tuple[str, str]:
+    """Parse ``gh auth status`` to find the human and -vergil accounts."""
+    result = subprocess.run(  # noqa: S603
+        ["gh", "auth", "status"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    output = result.stdout or result.stderr
+    accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
+    vergil = [a for a in accounts if a.endswith("-vergil")]
+    if len(vergil) != 1:
+        print(
+            "vergil-tooling: cannot discover -vergil account in gh auth status. "
+            f"Expected exactly one, found: {vergil}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    agent = vergil[0]
+    human = agent.removesuffix("-vergil")
+    return human, agent
+
+
+@functools.lru_cache(maxsize=1)
+def _human_token() -> str:
+    """Return the human account's token (cached for the process lifetime)."""
+    human, _agent = _discover_accounts()
+    result = subprocess.run(  # noqa: S603
+        ["gh", "auth", "token", "-u", human],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def _gh_env() -> dict[str, str] | None:
+    """Return env dict with the human account's GH_TOKEN, or None on failure."""
+    try:
+        token = _human_token()
+    except (subprocess.CalledProcessError, SystemExit):
+        return None
+    return {**os.environ, "GH_TOKEN": token}
 
 
 class GitHubAPIError(subprocess.CalledProcessError):
@@ -55,6 +104,10 @@ def _is_retryable(exc: subprocess.CalledProcessError) -> bool:
 
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+    if "env" not in kwargs:
+        env = _gh_env()
+        if env is not None:
+            kwargs["env"] = env
     for attempt in range(_MAX_RETRIES + 1):
         try:
             return subprocess.run(*args, **kwargs)  # noqa: S603
@@ -127,6 +180,7 @@ def delete_if_exists(endpoint: str) -> bool:
         capture_output=True,
         text=True,
         check=False,
+        env=_gh_env(),
     )
     first_line = result.stdout.split("\n")[0] if result.stdout else ""
     return "404" not in first_line
@@ -143,6 +197,7 @@ def _checks_registered(pr: str) -> bool:
         ("gh", "pr", "checks", pr),  # noqa: S607
         capture_output=True,
         text=True,
+        env=_gh_env(),
     )
     return _NO_CHECKS_PHRASE not in (result.stdout + result.stderr)
 

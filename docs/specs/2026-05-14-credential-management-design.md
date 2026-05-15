@@ -57,10 +57,10 @@ accounts per contributor plus a shared GitHub App:
 | Identity | Role | Scope |
 |---|---|---|
 | `<username>` | Human — reviews, approvals, merges, admin | Org owner/member across all orgs |
-| `<username>-agent` | AI agents — all development work | Outside collaborator on each org |
+| `<username>-vergil` | AI agents — all development work | Outside collaborator on each org |
 | `vergil-release[bot]` | GitHub App — mechanized release automation | Org-level installation per org |
 
-The naming convention `<username>-agent` is load-bearing — the
+The naming convention `<username>-vergil` is load-bearing — the
 tooling derives the agent account name from the human account name.
 
 ## Section 2: Token Strategy
@@ -141,7 +141,7 @@ gh auth status    # Should show both accounts logged in
 
 ```bash
 gh auth token -u <username>          # Returns human PAT
-gh auth token -u <username>-agent    # Returns agent PAT
+gh auth token -u <username>-vergil    # Returns agent PAT
 ```
 
 This is a read operation. It does not change the active account.
@@ -221,7 +221,7 @@ def select_credential(command: list[str]) -> str:
     role = determine_role(command)  # agent or human
     if role == "human":
         validate_context(command)   # raises if context invalid
-    account = f"{human_account}-agent" if role == "agent" else human_account
+    account = f"{human_account}-vergil" if role == "agent" else human_account
     return subprocess.run(
         ["gh", "auth", "token", "-u", account],
         capture_output=True, text=True, check=True,
@@ -254,8 +254,8 @@ accounts from `gh auth status`:
 
 1. List all accounts logged into `gh auth` for `github.com`
 2. Identify the human account: the one whose name does **not**
-   end in `-agent`
-3. Derive the agent account: `<human-account>-agent`
+   end in `-vergil`
+3. Derive the agent account: `<human-account>-vergil`
 4. If both or neither match the convention, fail with an
    explicit error
 
@@ -332,7 +332,7 @@ everything. The honor system. This continues to work while
 1. **Immediate (no code changes):** Ensure both accounts have
    classic PATs and are logged into `gh auth`. Verify
    `gh auth token -u wphillipmoore` and
-   `gh auth token -u wphillipmoore-agent` both return tokens.
+   `gh auth token -u wphillipmoore-vergil` both return tokens.
    The `GH_TOKEN` from `.zshrc` continues as the ambient fallback.
 
 2. **When `vrg-gh` lands:** The wrapper handles all credential
@@ -394,7 +394,7 @@ to prevent this work from being silently dropped.
 
 The setup process for a new contributor:
 
-1. Create a `<username>-agent` GitHub account (the `-agent` suffix
+1. Create a `<username>-vergil` GitHub account (the `-vergil` suffix
    is load-bearing — the tooling uses it to distinguish human from
    agent accounts)
 2. Generate classic PATs for both accounts
@@ -410,9 +410,9 @@ The setup process for a new contributor:
    ```bash
    gh auth status              # Should list both accounts
    gh auth token -u <username>          # Returns human PAT
-   gh auth token -u <username>-agent    # Returns agent PAT
+   gh auth token -u <username>-vergil    # Returns agent PAT
    ```
-5. Org owner invites `<username>-agent` as outside collaborator
+5. Org owner invites `<username>-vergil` as outside collaborator
    to each org
 6. Install vergil-tooling (`uv tool install`)
 
