@@ -220,6 +220,16 @@ Contents API. The existing `block-github-contents-api` hook only
 catches writes to the Contents API specifically. Denying `gh api`
 entirely in the wrapper closes the whole escape hatch.
 
+### Credential Selection
+
+> See the credential management design
+> (`docs/specs/2026-05-14-credential-management-design.md`, #775)
+> for the full credential selection model. `vrg-gh` is responsible
+> for choosing which `gh auth` account to use per-command. The
+> `pr merge` and `pr review --approve` entries in the table above
+> are conditionally allowed for release workflow operations under
+> the human account — see that spec's Section 4.
+
 ### VRG Tools That Bypass the Wrapper
 
 Existing VRG tools that call `gh` directly in their Python code
@@ -241,7 +251,9 @@ Three layers of settings that work together.
     "defaultMode": "acceptEdits",
     "deny": [
       "Bash(git *)",
-      "Bash(gh *)"
+      "Bash(*/git *)",
+      "Bash(gh *)",
+      "Bash(*/gh *)"
     ]
   }
 }
@@ -252,13 +264,14 @@ and `gh` across all projects. Deny rules at any scope cannot be
 overridden by allow rules at a lower scope — this is Claude Code's
 precedence model.
 
-**Implementation risk:** The `Bash(git *)` deny pattern must be
-verified to not match `vrg-git *` via substring matching. Claude
-Code's documentation states that bash rules match on the command
-name (the first word of each command segment), so `git` and
-`vrg-git` should be distinct. This must be verified during
-implementation before the deny rules go live. If the matching is
-substring-based, the deny rules move to the hook layer instead.
+**Pattern matching (verified):** Claude Code's `Bash()` patterns
+use glob matching where the space before `*` enforces a word
+boundary. `Bash(git *)` matches `git status` but not `vrg-git
+status`. The `*/git *` patterns cover fully qualified path
+invocations (e.g., `/usr/bin/git status`) — the `/` before `git`
+prevents matching `vrg-git`. Compound commands are evaluated
+per-subcommand: `vrg-git status && git push` denies the `git
+push` half independently.
 
 ### Project Settings (`.claude/settings.json`)
 
@@ -465,7 +478,7 @@ planning. After a month of operation:
 
 | Risk | Mitigation |
 |---|---|
-| `Bash(git *)` deny pattern matches `vrg-git *` via substring | Verify Claude Code's matching behavior before deploying deny rules; fall back to hook-only enforcement if matching is substring-based |
+| Agent bypasses deny by using fully qualified paths (`/usr/bin/git`) | Deny list includes `Bash(*/git *)` and `Bash(*/gh *)` patterns alongside the bare command patterns — verified via Claude Code documentation that `*` matches path separators |
 | Switching from bypass mode surfaces unexpected prompt volume | Run for a week after migration, refine allowlist based on data |
 | Wrapper allowlists are too restrictive for some workflows | The human can run raw commands via `! <command>` in the prompt; each case is data for allowlist refinement |
 | Agents ignore CLAUDE.md instructions to use `vrg-git`/`vrg-gh` | Permission deny rules enforce compliance mechanically — instructions are guidance, the deny is the gate |

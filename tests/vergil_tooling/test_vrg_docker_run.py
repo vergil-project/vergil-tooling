@@ -74,12 +74,18 @@ def test_no_command_after_separator() -> None:
 # -- GH_TOKEN assertion -------------------------------------------------------
 
 
-def test_missing_gh_token(tmp_path: Path) -> None:
+def test_launches_without_gh_token(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
         patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
+        patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        assert main(["--", "echo", "hi"]) == 1
+        mock_cache.return_value = "ghcr.io/vergil-project/prod-python:3.14"
+        main(["--", "uv", "run", "vrg-validate"])
+    mock_exec.assert_called_once()
 
 
 # -- image selection ----------------------------------------------------------
