@@ -28,12 +28,6 @@ Shell commands not in the allowlist prompt the human. This is the
 escalation mechanism: the agent encounters something it cannot do,
 explains the situation, and the human approves or denies.
 
-!!! note "Migration status"
-    The project currently runs in `bypassPermissions` mode. The
-    migration to `acceptEdits` with the full wrapper and deny
-    configuration described here is the documented target
-    architecture.
-
 ## `vrg-git` Wrapper
 
 A Python CLI tool that validates subcommands and flags before
@@ -236,46 +230,111 @@ are found (Explore subagent, native Read tool, future
 
 ## Defense-in-Depth
 
-Four enforcement layers, each catching what the layer above misses.
-Redundancy is intentional — no single layer is trusted.
+### The Vergil Assumption
 
-### Layer 1 — Claude Code Permissions (outermost)
+Every client-side enforcement layer in this model assumes the agent
+is cooperative — that it is operating as Vergil, not Mimir. An
+agent with file write access (which `acceptEdits` grants) can
+dismantle the entire client-side stack:
 
-The allowlist/deny configuration. Denied commands are blocked
-without prompt. Unknown commands prompt the human.
+1. Delete or edit `.claude/settings.json` — Layer 1 gone
+2. Run raw `git` and `gh` — Layer 2 bypassed (the wrappers are
+   never invoked)
+3. Remove plugin hook configuration — Layer 3 weakened
+4. Delete `.githooks/pre-commit` or run
+   `git config --unset core.hooksPath` — Layer 4 gone
 
-### Layer 2 — VRG Wrappers
+After those four steps, the agent has unrestricted local access.
+This is not a theoretical attack — it is trivial for any model
+that decides to do it.
 
-`vrg-git` and `vrg-gh` validate subcommands and flags before
-executing the underlying tool. Even if `vrg-git reset --hard`
-passes the permission layer (it is allowlisted as `vrg-*`), the
-wrapper rejects it.
+**Client-side layers are behavioral constraints, not security
+boundaries.** They keep a well-intentioned agent on the rails.
+They prevent mistakes, enforce consistency, and provide an audit
+trail. They do not stop an adversary.
 
-### Layer 3 — Vergil Plugin Hooks
+### The Actual Security Boundary
 
-The existing hook system remains as a backstop. Hooks exit code 2
-(hard block) overrides even bypass mode. Hooks that become
-redundant with layers 1-2 are retained — they catch regressions
-if a higher layer is misconfigured.
+The only enforcement an agent cannot edit its way out of is
+**server-side**: GitHub's own permissions, branch protection
+rulesets, and collaborator access controls.
 
-### Layer 4 — Git-Level Hooks (`.githooks/pre-commit`)
+- The agent account is an outside collaborator with Write access.
+  It physically cannot merge, approve, or access admin settings —
+  GitHub rejects the API call regardless of what happens locally.
+- Branch protection rulesets require review approval from a
+  different account before merging. No client-side manipulation
+  changes this.
+- The agent account cannot see or access repos it has not been
+  invited to.
 
-The innermost layer. Rejects raw `git commit` without the
+This is the real security model. Everything else is convenience.
+
+### Why Client-Side Layers Still Matter
+
+If server-side enforcement is the only real boundary, why bother
+with four client-side layers?
+
+- **Mistake prevention.** Most failures are not adversarial. An
+  agent that accidentally runs `git reset --hard` is not trying
+  to subvert the tooling — it made a mistake. The wrappers catch
+  this.
+- **Consistency.** Routing all operations through `vrg-*` tools
+  ensures commits have the right format, PRs have the right
+  metadata, and branches follow the naming convention.
+- **Audit trail.** Wrapper logging records what the agent did
+  and when. Even if a layer is bypassed, the gap in the log is
+  itself a signal.
+- **Friction.** An agent that has to actively dismantle four
+  layers is doing something visibly wrong. That visibility is
+  the value — not the strength of any individual gate.
+
+The [Mimir project](identity-architecture.md#the-mimir-convention)
+exists specifically to test this boundary — to verify that
+server-side controls hold when every client-side layer is
+deliberately bypassed.
+
+### Client-Side Layers
+
+Four layers, each catching mistakes the layer above misses.
+Redundancy is intentional — no single layer is trusted, and none
+are sufficient against adversarial behavior.
+
+**Layer 1 — Claude Code Permissions (outermost).** The
+allowlist/deny configuration. Denied commands are blocked without
+prompt. Unknown commands prompt the human.
+
+**Layer 2 — VRG Wrappers.** `vrg-git` and `vrg-gh` validate
+subcommands and flags before executing the underlying tool. Even
+if `vrg-git reset --hard` passes the permission layer (it is
+allowlisted as `vrg-*`), the wrapper rejects it.
+
+**Layer 3 — Vergil Plugin Hooks.** The existing hook system
+remains as a backstop. Hooks exit code 2 (hard block) overrides
+even bypass mode. Hooks that become redundant with layers 1-2 are
+retained — they catch regressions if a higher layer is
+misconfigured.
+
+**Layer 4 — Git-Level Hooks (`.githooks/pre-commit`).** The
+innermost layer. Rejects raw `git commit` without the
 `VRG_COMMIT_CONTEXT=1` environment variable that `vrg-commit`
 sets. With layers 1-3 in place, agents cannot reach this layer
 through normal operation.
 
 ### Layer Interaction Matrix
 
-| Operation | L1 Permissions | L2 Wrapper | L3 Plugin Hook | L4 Git Hook |
-|---|---|---|---|---|
-| `vrg-commit` | allowed | n/a | n/a | admits |
-| `vrg-git push` | allowed | validates: no `--force` | n/a | n/a |
-| `git push` | denied | n/a | blocked | n/a |
-| `vrg-gh pr merge` | allowed | rejected | blocked | n/a |
-| `gh pr create` | denied | n/a | blocked | n/a |
-| `rm -rf .` | prompts human | n/a | n/a | n/a |
-| `vrg-git reset --hard` | allowed | rejected | n/a | n/a |
+| Operation | L1 Permissions | L2 Wrapper | L3 Plugin Hook | L4 Git Hook | Server-Side |
+|---|---|---|---|---|---|
+| `vrg-commit` | allowed | n/a | n/a | admits | push accepted |
+| `vrg-git push` | allowed | validates: no `--force` | n/a | n/a | push accepted |
+| `git push` | denied | n/a | blocked | n/a | push accepted (if layers bypassed) |
+| `vrg-gh pr merge` | allowed | rejected | blocked | n/a | **API rejected** (no merge permission) |
+| `gh pr create` | denied | n/a | blocked | n/a | PR created (if layers bypassed) |
+| `gh pr merge` (raw) | denied | n/a | blocked | n/a | **API rejected** (no merge permission) |
+| `rm -rf .` | prompts human | n/a | n/a | n/a | n/a |
+| `vrg-git reset --hard` | allowed | rejected | n/a | n/a | n/a |
+
+The rightmost column is the only one that holds against Mimir.
 
 ## Phasing
 
