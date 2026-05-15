@@ -2811,7 +2811,7 @@
   <span class="md-ellipsis">
     
   
-    st-commit
+    vrg-commit
   
 
     
@@ -2839,7 +2839,7 @@
   <span class="md-ellipsis">
     
   
-    st-submit-pr
+    vrg-submit-pr
   
 
     
@@ -2867,7 +2867,7 @@
   <span class="md-ellipsis">
     
   
-    st-prepare-release
+    vrg-prepare-release
   
 
     
@@ -2895,7 +2895,7 @@
   <span class="md-ellipsis">
     
   
-    st-finalize-repo
+    vrg-finalize-repo
   
 
     
@@ -5514,7 +5514,7 @@ The setup steps below wire up each one:</p>
 </tr>
 <tr>
 <td><strong>Dev container</strong></td>
-<td><code>ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> — pre-baked images with language runtimes, validators, and every other <code>st-*</code> tool installed.</td>
+<td><code>ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> — pre-baked images with language runtimes, validators, and every other <code>vrg-*</code> tool installed.</td>
 <td>Pulled automatically by <code>vrg-docker-run</code>; nothing to install manually.</td>
 </tr>
 <tr>
@@ -5560,7 +5560,7 @@ live inside the container.</p>
 <h2 id="step-2-install-vergil-tooling">Step 2: Install vergil-tooling<a class="headerlink" href="#step-2-install-vergil-tooling" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4&#39;</span>
 </code></pre></div>
-<p>This installs all <code>st-*</code> console scripts into <code>~/.local/bin/</code>,
+<p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>,
 which <code>uv</code>'s official installer already configures on <code>PATH</code>. No
 sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
 <p>Verify:</p>
