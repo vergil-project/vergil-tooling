@@ -19,7 +19,7 @@ admits the commit.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_commit` |
+| Source | `vergil_tooling.bin.vrg_commit` |
 | Args | `--type` (required), `--scope`, `--message` (required), `--body`, `--agent` (required) |
 | Preconditions | Git repo, staged changes, not detached HEAD, not on protected branch, branch prefix matches branching model, issue number in branch name, not main worktree when `.worktrees/` present |
 | Failure mode | `SystemExit` with diagnostic on stderr for each check |
@@ -33,7 +33,7 @@ and opens a PR with a populated template body.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_submit_pr` |
+| Source | `vergil_tooling.bin.vrg_submit_pr` |
 | Args | `--issue` (required), `--summary` (required), `--linkage` (default: Fixes), `--notes`, `--title`, `--dry-run` |
 | Preconditions | Git repo, `gh` CLI on PATH |
 | Failure mode | Subprocess error from `git push` or `gh pr create` |
@@ -47,7 +47,7 @@ release-workflow PRs where the agent is both author and reviewer.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_merge_when_green` |
+| Source | `vergil_tooling.bin.vrg_merge_when_green` |
 | Args | `pr` (positional, required), `--strategy` (merge/squash/rebase), `--no-delete-branch` |
 | Preconditions | `gh` CLI on PATH, worktree-aware (skips `--delete-branch` in secondary worktrees) |
 | Failure mode | `subprocess.CalledProcessError` from `gh pr checks --fail-fast` on first red check |
@@ -63,7 +63,7 @@ Claude plugin, VERSION file) to find the version.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_prepare_release` |
+| Source | `vergil_tooling.bin.vrg_prepare_release` |
 | Args | `--issue` (required) |
 | Preconditions | On `develop` branch, clean working tree, local develop matches `origin/develop`, `gh` and `git-cliff` on PATH |
 | Failure mode | `SystemExit` with clear message for each precondition |
@@ -79,7 +79,7 @@ runs validation, and checks the Documentation workflow status.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_finalize_repo` |
+| Source | `vergil_tooling.bin.vrg_finalize_repo` |
 | Args | `--target-branch` (default: develop), `--dry-run` |
 | Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `vrg-docker-run` on PATH |
 | Failure mode | Validation failures return exit 1; docs workflow failure is a soft warning (exit 0) |
@@ -94,7 +94,7 @@ and project (discover repos via a GitHub Project and sync each).
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_ensure_label` |
+| Source | `vergil_tooling.bin.vrg_ensure_label` |
 | Args | `--repo`, `--label`, `--color`, `--description`, `--sync`, `--owner`, `--project` |
 | Preconditions | `gh` CLI on PATH |
 | Failure mode | argparse validation for incompatible flag combinations; subprocess error from `gh` |
@@ -109,7 +109,7 @@ project language to select the Docker image; falls back to
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_docker_run` |
+| Source | `vergil_tooling.bin.vrg_docker_run` |
 | Args | `[--] <command> [args...]` (manual parsing, `--` separator) |
 | Preconditions | Git repo, `GH_TOKEN` set, Docker daemon running |
 | Failure mode | Explicit error message for missing `GH_TOKEN`; `assert_docker_available()` exits with message for Docker; `git.repo_root()` raises on non-git directory |
@@ -123,7 +123,7 @@ language and selects appropriate image and test command.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_docker_test` |
+| Source | `vergil_tooling.bin.vrg_docker_test` |
 | Args | None |
 | Preconditions | Git repo, Docker daemon running, language detection or `DOCKER_DEV_IMAGE` + `DOCKER_TEST_CMD` |
 | Failure mode | Explicit error for undetected language and unavailable Docker; `git.repo_root()` raises on non-git directory |
@@ -138,7 +138,7 @@ repos, wraps with `uv sync --group docs`.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_docker_docs` |
+| Source | `vergil_tooling.bin.vrg_docker_docs` |
 | Args | `<serve\|build> [mkdocs args...]` (manual parsing) |
 | Preconditions | Git repo, Docker daemon |
 | Failure mode | Usage message on missing/unknown subcommand |
@@ -153,7 +153,7 @@ between `BEGIN/END GENERATED MQSC METHODS` markers.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_generate_commands` |
+| Source | `vergil_tooling.bin.vrg_generate_commands` |
 | Args | `--language` (required), `--mapping-data` (required), `--target`, `--mapping-pages-dir`, `--check` |
 | Preconditions | `mapping-data.json` file exists at the given path |
 | Failure mode | Explicit error for missing mapping data file |
@@ -191,7 +191,7 @@ placeholder values.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_repo_profile` |
+| Source | `vergil_tooling.bin.vrg_repo_profile` |
 | Args | None |
 | Preconditions | `docs/repository-standards.md` exists |
 | Failure mode | Exit 2 if profile file not found; exit 1 for missing or placeholder attributes |
@@ -209,7 +209,7 @@ and variants). Reads the GitHub event payload from
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.st_pr_issue_linkage` |
+| Source | `vergil_tooling.bin.vrg_pr_issue_linkage` |
 | Args | None |
 | Preconditions | `GITHUB_EVENT_PATH` set and pointing to a valid JSON file |
 | Failure mode | Exit 2 for missing env var or file; exit 1 for auto-close keyword or missing linkage |
@@ -262,7 +262,7 @@ interface than argparse would provide. No alignment needed.
 - 0: success
 - 1: check failure, validation error, or precondition violation
 - 2: infrastructure error (used by `vrg-repo-profile`,
-  `st-markdown-standards`, `vrg-pr-issue-linkage`)
+  `vrg-pr-issue-linkage`)
 
 The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.

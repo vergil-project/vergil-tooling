@@ -8,7 +8,7 @@ from pathlib import Path
 
 # Env-var contract with `.githooks/pre-commit`. Any internal caller
 # that runs `git commit` via this helper is by definition an
-# st-* tool invocation — admit it via the gate. See
+# vrg-* tool invocation — admit it via the gate. See
 # docs/specs/host-level-tool.md "Git hooks".
 _GATE_ENV_VAR = "VRG_COMMIT_CONTEXT"
 _GATE_ENABLED_VALUE = "1"
