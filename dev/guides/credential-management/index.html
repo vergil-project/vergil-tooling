@@ -5785,23 +5785,40 @@ defense-in-depth architecture.</p>
 <h3 id="gh-auth-as-the-single-source"><code>gh auth</code> as the Single Source<a class="headerlink" href="#gh-auth-as-the-single-source" title="Permanent link">&para;</a></h3>
 <p>Both accounts are logged into <code>gh auth</code> on the developer's
 machine. No custom keychain entries, no platform-specific secure
-store abstraction. Setup is a one-time operation per machine:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>-h<span class="w"> </span>github.com<span class="w"> </span>--web<span class="w"> </span>-p<span class="w"> </span>https<span class="w">   </span><span class="c1"># Human account</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>gh<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>-h<span class="w"> </span>github.com<span class="w"> </span>--web<span class="w"> </span>-p<span class="w"> </span>https<span class="w">   </span><span class="c1"># Agent account</span>
-</code></pre></div>
+store abstraction. Setup is a one-time operation per machine.</p>
+<p>The login command is the same both times — what changes is which
+GitHub account is authenticated in your browser when you authorize
+the OAuth flow.</p>
 <div class="admonition warning">
 <p class="admonition-title"><code>gh auth login</code> has no <code>-u</code> flag</p>
-<p>You cannot specify which account to log in as. Make sure you
-are logged into the correct GitHub account in your browser
-before authorizing the OAuth flow.</p>
+<p>You cannot specify which account to log in as on the command
+line. The browser session determines which account gets
+logged in.</p>
 </div>
-<p>After both logins, set the human account as the active default:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>switch<span class="w"> </span>-u<span class="w"> </span>&lt;your-username&gt;
+<p><strong>Step 1 — Log in the human account.</strong> Make sure you are signed
+into github.com as your personal account in the browser, then
+run:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>-h<span class="w"> </span>github.com<span class="w"> </span>--web<span class="w"> </span>-p<span class="w"> </span>https
+</code></pre></div>
+<p>Complete the OAuth authorization in the browser. <code>gh</code> adds your
+human account to its credential store.</p>
+<p><strong>Step 2 — Log in the agent account.</strong> Switch your browser session
+to the <code>-vergil</code> account (sign out and sign back in as
+<code>&lt;username&gt;-vergil</code>), then run the same command again:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>login<span class="w"> </span>-h<span class="w"> </span>github.com<span class="w"> </span>--web<span class="w"> </span>-p<span class="w"> </span>https
+</code></pre></div>
+<p>Complete the OAuth authorization. <code>gh</code> detects that this is a
+different account and adds it alongside the first — it does not
+replace it.</p>
+<p><strong>Step 3 — Restore the human account as the active default.</strong>
+After both logins, switch back so your human account is active
+for any raw <code>gh</code> commands:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>switch<span class="w"> </span>-u<span class="w"> </span>&lt;your-username&gt;
 </code></pre></div>
 <h3 id="token-retrieval">Token Retrieval<a class="headerlink" href="#token-retrieval" title="Permanent link">&para;</a></h3>
 <p>The tooling retrieves tokens without changing global state:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>token<span class="w"> </span>-u<span class="w"> </span>&lt;username&gt;<span class="w">          </span><span class="c1"># Human PAT</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>gh<span class="w"> </span>auth<span class="w"> </span>token<span class="w"> </span>-u<span class="w"> </span>&lt;username&gt;-vergil<span class="w">   </span><span class="c1"># Agent PAT</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>gh<span class="w"> </span>auth<span class="w"> </span>token<span class="w"> </span>-u<span class="w"> </span>&lt;username&gt;<span class="w">          </span><span class="c1"># Human PAT</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>gh<span class="w"> </span>auth<span class="w"> </span>token<span class="w"> </span>-u<span class="w"> </span>&lt;username&gt;-vergil<span class="w">   </span><span class="c1"># Agent PAT</span>
 </code></pre></div>
 <p>This is a read operation. It does not change the active account
 and is safe to call from parallel processes.</p>
