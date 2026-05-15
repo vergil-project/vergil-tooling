@@ -11,9 +11,9 @@ subcommand allowlists, Claude Code's permission layer controls what
 reaches the shell, and existing plugin hooks serve as a backstop.
 
 **Architecture:** Seven-step rollout — build wrappers, update hooks,
-update CLAUDE.md guidance, deploy project settings to consuming repos,
-deploy vergil-tooling's own permission config, switch the global
-default mode, then observe and refine.
+update CLAUDE.md guidance, deploy project-level allowlist and deny
+rules to all repos, optionally switch global default mode, then
+observe and refine.
 
 **Tech Stack:** Python CLI tools (argparse), Claude Code settings (JSON),
 vergil plugin hooks (JSON + bash), CLAUDE.md (markdown)
@@ -351,22 +351,33 @@ the wrappers.
 
 ## Phase 3: Deploy Permission Configuration
 
-Settings files are deployed to repos and the global mode is switched.
-This is the "flip the switch" phase — everything before this was
-preparation.
+Deny rules are deployed to each repo's `.claude/settings.json`
+alongside the existing allowlist. This is the "flip the switch"
+phase — everything before this was preparation.
 
-### Task 8: Deploy Project Settings to Consuming Repos
+### Task 8: Deploy Deny Rules to Consuming Repos
 
 **Files:** `.claude/settings.json` in vergil-actions, vergil-docker,
 vergil-claude-plugin
 
-Each consuming repo gets the project-level `Bash(vrg-*)` allowlist.
+Each consuming repo gets the project-level deny rules alongside
+the `Bash(vrg-*)` allowlist deployed in Task 5/PR #784.
 
-- [ ] Update `.claude/settings.json` in vergil-actions to add:
+- [x] ~~Update `.claude/settings.json` in vergil-actions to add
+      `Bash(vrg-*)` allowlist~~ (done in PR #490)
+- [x] ~~Same for vergil-docker~~ (done in PR #227)
+- [x] ~~Same for vergil-claude-plugin~~ (done in PR #337)
+- [ ] Add deny rules to `.claude/settings.json` in vergil-actions:
       ```json
       {
         "permissions": {
-          "allow": ["Bash(vrg-*)"]
+          "allow": ["Bash(vrg-*)"],
+          "deny": [
+            "Bash(git *)",
+            "Bash(*/git *)",
+            "Bash(gh *)",
+            "Bash(*/gh *)"
+          ]
         }
       }
       ```
@@ -378,22 +389,19 @@ Each consuming repo gets the project-level `Bash(vrg-*)` allowlist.
       is gitignored and per-developer, so it cannot be committed
 - [ ] One PR per repo (can run in parallel)
 
-### Task 9: Deploy Permission Configuration for vergil-tooling
+### Task 9: Deploy Deny Rules to vergil-tooling
 
-**Files:**
-`.claude/settings.json` (project-level),
-`~/.claude/settings.json` (global, manual),
-`~/.claude/settings.local.json` (global local, manual)
+**Files:** `.claude/settings.json` (project-level)
 
-Deploy the full permission stack for vergil-tooling itself.
+Deploy the deny rules for vergil-tooling itself.
 
-- [ ] Update `.claude/settings.json` (project-level) to add the
-      `Bash(vrg-*)` allowlist (merged with existing plugin config)
-- [ ] Prepare but do not yet apply the global settings changes:
+- [x] ~~Update `.claude/settings.json` (project-level) to add the
+      `Bash(vrg-*)` allowlist~~ (done in PR #784)
+- [ ] Add deny rules to `.claude/settings.json`:
       ```json
       {
         "permissions": {
-          "defaultMode": "acceptEdits",
+          "allow": ["Bash(vrg-*)"],
           "deny": [
             "Bash(git *)",
             "Bash(*/git *)",
@@ -403,36 +411,28 @@ Deploy the full permission stack for vergil-tooling itself.
         }
       }
       ```
-      These are applied in Task 10, not here — the project-level
-      changes can be committed and merged first.
-- [ ] Prepare the `.claude/settings.local.json` template with the
-      phase 1 read-only exceptions (from the spec's Section 4)
-- [ ] Commit and PR for the project-level settings change
+- [ ] Commit and PR for the deny rule addition
 
-### Task 10: Switch Global Default Mode
+### Task 10: Switch Global Default Mode (Optional)
 
 **Files:** `~/.claude/settings.json` (manual, not committed anywhere)
 
-This is the migration moment. All wrappers, hooks, CLAUDE.md updates,
-and project settings must be deployed and merged before this step.
+Independent from the deny rules. Switching `defaultMode` to
+`acceptEdits` makes unknown commands (anything not allowlisted or
+denied) prompt the human instead of auto-approving. The deny rules
+block raw `git`/`gh` regardless of mode — this step controls the
+behavior for everything *else*.
 
 - [ ] Confirm prerequisites:
       - `vrg-git` and `vrg-gh` are installed and working
-      - All four repos have updated CLAUDE.md
-      - All four repos have project-level `Bash(vrg-*)` allowlist
+      - All four repos have deny rules deployed
       - Task 4 (pattern matching verification) is complete and results
         are documented
 - [ ] Apply global `~/.claude/settings.json`:
       ```json
       {
         "permissions": {
-          "defaultMode": "acceptEdits",
-          "deny": [
-            "Bash(git *)",
-            "Bash(*/git *)",
-            "Bash(gh *)",
-            "Bash(*/gh *)"
-          ]
+          "defaultMode": "acceptEdits"
         }
       }
       ```
@@ -481,7 +481,7 @@ Task 3 (shared) ───┼── Task 4 (pattern verify) ── Task 5 (valida
                    │
                    ├── Task 6 (hook messages)  ─┐
                    ├── Task 7 (CLAUDE.md × 4) ──┤
-                   │                            ├── Task 10 (switch mode)
+                   │                            ├── Task 10 (switch mode, optional)
                    ├── Task 8 (consuming repos) ┤
                    └── Task 9 (vergil-tooling) ─┘
                                                 │
@@ -509,7 +509,11 @@ prerequisites must be merged. Task 11 follows Task 10.
 - **Phase 1 read-only exceptions are temporary.** They live in
   gitignored local settings so they can be tightened per-developer
   without requiring a PR.
-- **The switch (Task 10) is reversible.** If the prompt volume is
-  unmanageable, reverting `~/.claude/settings.json` to
-  `bypassPermissions` restores the prior behavior. The wrappers and
+- **The deny rules are reversible.** If the deny rules cause
+  problems, removing them from `.claude/settings.json` in the
+  affected repo restores the prior behavior. The wrappers and
   hooks remain as improvements regardless.
+- **Task 10 is independent.** The `defaultMode` switch is a
+  separate decision from the deny rules. Deny rules block raw
+  `git`/`gh` regardless of mode. `defaultMode` controls the
+  behavior for everything else (unknown commands).
