@@ -69,7 +69,7 @@ def _discover_accounts() -> tuple[str, str]:
         check=False,
     )
     output = result.stdout or result.stderr
-    accounts = re.findall(r"Logged in to github\.com account (\S+)", output)
+    accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
     human = [a for a in accounts if not a.endswith("-agent")]
     agent = [a for a in accounts if a.endswith("-agent")]
     if len(human) != 1 or len(agent) != 1:
