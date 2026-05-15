@@ -184,6 +184,30 @@ def test_discover_accounts() -> None:
     assert agent == "jdoe-agent"
 
 
+_AUTH_STATUS_DUPLICATE_HUMAN = """\
+github.com
+  ✓ Logged in to github.com account jdoe (keyring)
+  - Active account: true
+  ✓ Logged in to github.com account jdoe (token)
+  - Active account: false
+  ✓ Logged in to github.com account jdoe-agent (keyring)
+  - Active account: false
+"""
+
+
+def test_discover_accounts_deduplicates() -> None:
+    from vergil_tooling.bin.vrg_gh import _discover_accounts
+
+    with patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run:
+        mock_run.return_value = MagicMock(
+            returncode=0,
+            stdout=_AUTH_STATUS_DUPLICATE_HUMAN,
+        )
+        human, agent = _discover_accounts()
+    assert human == "jdoe"
+    assert agent == "jdoe-agent"
+
+
 _AUTH_STATUS_NO_AGENT = """\
 github.com
   ✓ Logged in to github.com account jdoe (keyring)
