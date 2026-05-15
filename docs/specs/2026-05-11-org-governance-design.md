@@ -40,7 +40,7 @@ There are three categories of GitHub identity in the org:
 | Identity | Represents | Role |
 |---|---|---|
 | `<username>` | The human | Reviews, approvals, merges, administration |
-| `<username>-agent` | That human's AI agents | All development work, regardless of harness or model |
+| `<username>-vergil` | That human's AI agents | All development work, regardless of harness or model |
 | `vergil-release[bot]` | The org's GitHub App | Mechanized automation (release PRs, version bumps) |
 
 Each contributor has the first two. The third is an org-level GitHub App
@@ -68,7 +68,7 @@ shared by all contributors.
 
 ### Naming Convention
 
-The agent account name follows the pattern `<username>-agent`. This
+The agent account name follows the pattern `<username>-vergil`. This
 convention is load-bearing — the cross-human review CI check (#719)
 parses the PR author's username to identify the owning human.
 
@@ -82,9 +82,9 @@ security boundary is human vs. not-human.
 ### Migration
 
 The existing accounts `wphillipmoore-claude` and `wphillipmoore-codex`
-are retired. A new `wphillipmoore-agent` account is created. Existing
+are retired. A new `wphillipmoore-vergil` account is created. Existing
 commit history remains attributed to the old accounts (Git does not
-rewrite attribution). All new work uses the `-agent` convention.
+rewrite attribution). All new work uses the `-vergil` convention.
 
 The co-author entries in the project config also migrate: the
 per-harness entries (`claude`, `codex`) are replaced with a single
@@ -177,7 +177,7 @@ what tooling or process change would prevent recurrence.
 
 At scale of 2+ human contributors, a CI status check enforces that the
 PR approver is a different human than the agent's owner. The check
-parses the PR author against the `<username>-agent` naming convention
+parses the PR author against the `<username>-vergil` naming convention
 and rejects approval from the same human.
 
 PRs authored by the GitHub App (`vergil-release[bot]`) are exempt from
@@ -454,7 +454,7 @@ audit tool consumes.
 
 ### For Future Contributors
 
-The pattern is documentable: create a `<username>-agent` account,
+The pattern is documentable: create a `<username>-vergil` account,
 generate two scoped PATs, store them in your credential manager, and
 the tooling selects the right one. The GitHub App private key is
 shared with contributors who need to run releases. Contributors who
@@ -528,7 +528,7 @@ must be deterministic, tested, and scriptable.
 
 ### For Contributors Using AI
 
-- You must create a `<username>-agent` GitHub account for AI-assisted
+- You must create a `<username>-vergil` GitHub account for AI-assisted
   development
 - All AI-assisted work must be committed and PR'd under the agent
   identity
@@ -552,7 +552,7 @@ These items are deferred as future work:
 - How external contributors' AI agents are handled (must they follow
   the same identity convention, or is that only for org members?).
   This is a prerequisite for the cross-human review check (#719) —
-  the check parses the `<username>-agent` naming convention to
+  the check parses the `<username>-vergil` naming convention to
   identify the owning human, so #719 must account for contributors
   who may not follow the convention.
 - Community policies for non-AI contributors (standard open-source

@@ -70,12 +70,12 @@ def _discover_accounts() -> tuple[str, str]:
     )
     output = result.stdout or result.stderr
     accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
-    human = [a for a in accounts if not a.endswith("-agent")]
-    agent = [a for a in accounts if a.endswith("-agent")]
+    human = [a for a in accounts if not a.endswith("-vergil")]
+    agent = [a for a in accounts if a.endswith("-vergil")]
     if len(human) != 1 or len(agent) != 1:
         print(
             "vrg-gh: cannot discover accounts. Expected one human and one "
-            f"-agent account in gh auth status. Found human={human}, agent={agent}",
+            f"-vergil account in gh auth status. Found human={human}, agent={agent}",
             file=sys.stderr,
         )
         raise SystemExit(1)

@@ -6,7 +6,7 @@ release-model = "tagged-release"
 primary-language = "python"
 
 [project.co-authors]
-wphillipmoore-agent = "Co-Authored-By: wphillipmoore-agent <284101533+wphillipmoore-agent@users.noreply.github.com>"
+wphillipmoore-vergil = "Co-Authored-By: wphillipmoore-vergil <285019742+wphillipmoore-vergil@users.noreply.github.com>"
 
 [publish]
 release = true
