@@ -70,16 +70,17 @@ def _discover_accounts() -> tuple[str, str]:
     )
     output = result.stdout or result.stderr
     accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
-    human = [a for a in accounts if not a.endswith("-vergil")]
-    agent = [a for a in accounts if a.endswith("-vergil")]
-    if len(human) != 1 or len(agent) != 1:
+    vergil = [a for a in accounts if a.endswith("-vergil")]
+    if len(vergil) != 1:
         print(
-            "vrg-gh: cannot discover accounts. Expected one human and one "
-            f"-vergil account in gh auth status. Found human={human}, agent={agent}",
+            "vrg-gh: cannot discover -vergil account in gh auth status. "
+            f"Expected exactly one, found: {vergil}",
             file=sys.stderr,
         )
         raise SystemExit(1)
-    return human[0], agent[0]
+    agent = vergil[0]
+    human = agent.removesuffix("-vergil")
+    return human, agent
 
 
 def _get_token(command: list[str]) -> str:  # noqa: ARG001
