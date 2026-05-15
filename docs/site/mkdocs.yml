@@ -121,6 +121,11 @@ nav:
           - Code Review Guidelines: standards/ai-code-review-guidelines.md
           - Interaction Contract: standards/interaction-contract.md
           - Interaction Contract (Brief): standards/interaction-contract-brief.md
+  - Identity & Permissions:
+      - Identity Architecture: guides/identity-architecture.md
+      - Credential Management: guides/credential-management.md
+      - Permission Model: guides/permission-model.md
+      - Account Setup: guides/account-setup.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md
