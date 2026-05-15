@@ -59,19 +59,43 @@ defense-in-depth architecture.
 
 Both accounts are logged into `gh auth` on the developer's
 machine. No custom keychain entries, no platform-specific secure
-store abstraction. Setup is a one-time operation per machine:
+store abstraction. Setup is a one-time operation per machine.
 
-```bash
-gh auth login -h github.com --web -p https   # Human account
-gh auth login -h github.com --web -p https   # Agent account
-```
+The login command is the same both times — what changes is which
+GitHub account is authenticated in your browser when you authorize
+the OAuth flow.
 
 !!! warning "`gh auth login` has no `-u` flag"
-    You cannot specify which account to log in as. Make sure you
-    are logged into the correct GitHub account in your browser
-    before authorizing the OAuth flow.
+    You cannot specify which account to log in as on the command
+    line. The browser session determines which account gets
+    logged in.
 
-After both logins, set the human account as the active default:
+**Step 1 — Log in the human account.** Make sure you are signed
+into github.com as your personal account in the browser, then
+run:
+
+```bash
+gh auth login -h github.com --web -p https
+```
+
+Complete the OAuth authorization in the browser. `gh` adds your
+human account to its credential store.
+
+**Step 2 — Log in the agent account.** Switch your browser session
+to the `-vergil` account (sign out and sign back in as
+`<username>-vergil`), then run the same command again:
+
+```bash
+gh auth login -h github.com --web -p https
+```
+
+Complete the OAuth authorization. `gh` detects that this is a
+different account and adds it alongside the first — it does not
+replace it.
+
+**Step 3 — Restore the human account as the active default.**
+After both logins, switch back so your human account is active
+for any raw `gh` commands:
 
 ```bash
 gh auth switch -u <your-username>
