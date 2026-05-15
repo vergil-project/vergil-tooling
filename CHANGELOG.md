@@ -5,7 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.0.10] - 2026-05-15
+## [2.0.12] - 2026-05-15
+
+### Bug fixes
+
+- use human credentials for all operations while agent account is flagged (#799)
+
+### Chores
+
+- bump version to 2.0.12
+
+## [2.0.11] - 2026-05-15
+
+### Bug fixes
+
+- deduplicate accounts in gh auth status discovery
+
+### Chores
+
+- bump version to 2.0.11
+
+## [2.0.10] - 2026-05-14
 
 ### Chores
 
