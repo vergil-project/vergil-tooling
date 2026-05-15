@@ -5135,10 +5135,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#layer-1-claude-code-permissions-outermost" class="md-nav__link">
+  <a href="#the-vergil-assumption" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 1 — Claude Code Permissions (outermost)
+        The Vergil Assumption
       
     </span>
   </a>
@@ -5146,10 +5146,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-2-vrg-wrappers" class="md-nav__link">
+  <a href="#the-actual-security-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 2 — VRG Wrappers
+        The Actual Security Boundary
       
     </span>
   </a>
@@ -5157,10 +5157,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-3-vergil-plugin-hooks" class="md-nav__link">
+  <a href="#why-client-side-layers-still-matter" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 3 — Vergil Plugin Hooks
+        Why Client-Side Layers Still Matter
       
     </span>
   </a>
@@ -5168,10 +5168,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-4-git-level-hooks-githookspre-commit" class="md-nav__link">
+  <a href="#client-side-layers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 4 — Git-Level Hooks (.githooks/pre-commit)
+        Client-Side Layers
       
     </span>
   </a>
@@ -5743,10 +5743,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#layer-1-claude-code-permissions-outermost" class="md-nav__link">
+  <a href="#the-vergil-assumption" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 1 — Claude Code Permissions (outermost)
+        The Vergil Assumption
       
     </span>
   </a>
@@ -5754,10 +5754,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-2-vrg-wrappers" class="md-nav__link">
+  <a href="#the-actual-security-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 2 — VRG Wrappers
+        The Actual Security Boundary
       
     </span>
   </a>
@@ -5765,10 +5765,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-3-vergil-plugin-hooks" class="md-nav__link">
+  <a href="#why-client-side-layers-still-matter" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 3 — Vergil Plugin Hooks
+        Why Client-Side Layers Still Matter
       
     </span>
   </a>
@@ -5776,10 +5776,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#layer-4-git-level-hooks-githookspre-commit" class="md-nav__link">
+  <a href="#client-side-layers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 4 — Git-Level Hooks (.githooks/pre-commit)
+        Client-Side Layers
       
     </span>
   </a>
@@ -5904,13 +5904,6 @@ surface is shell commands, not file edits.</p>
 <p>Shell commands not in the allowlist prompt the human. This is the
 escalation mechanism: the agent encounters something it cannot do,
 explains the situation, and the human approves or denies.</p>
-<div class="admonition note">
-<p class="admonition-title">Migration status</p>
-<p>The project currently runs in <code>bypassPermissions</code> mode. The
-migration to <code>acceptEdits</code> with the full wrapper and deny
-configuration described here is the documented target
-architecture.</p>
-</div>
 <h2 id="vrg-git-wrapper"><code>vrg-git</code> Wrapper<a class="headerlink" href="#vrg-git-wrapper" title="Permanent link">&para;</a></h2>
 <p>A Python CLI tool that validates subcommands and flags before
 executing <code>git</code>. Arguments arrive as a Python argv list — no
@@ -6291,23 +6284,81 @@ are found (Explore subagent, native Read tool, future
 </tbody>
 </table>
 <h2 id="defense-in-depth">Defense-in-Depth<a class="headerlink" href="#defense-in-depth" title="Permanent link">&para;</a></h2>
-<p>Four enforcement layers, each catching what the layer above misses.
-Redundancy is intentional — no single layer is trusted.</p>
-<h3 id="layer-1-claude-code-permissions-outermost">Layer 1 — Claude Code Permissions (outermost)<a class="headerlink" href="#layer-1-claude-code-permissions-outermost" title="Permanent link">&para;</a></h3>
-<p>The allowlist/deny configuration. Denied commands are blocked
-without prompt. Unknown commands prompt the human.</p>
-<h3 id="layer-2-vrg-wrappers">Layer 2 — VRG Wrappers<a class="headerlink" href="#layer-2-vrg-wrappers" title="Permanent link">&para;</a></h3>
-<p><code>vrg-git</code> and <code>vrg-gh</code> validate subcommands and flags before
-executing the underlying tool. Even if <code>vrg-git reset --hard</code>
-passes the permission layer (it is allowlisted as <code>vrg-*</code>), the
-wrapper rejects it.</p>
-<h3 id="layer-3-vergil-plugin-hooks">Layer 3 — Vergil Plugin Hooks<a class="headerlink" href="#layer-3-vergil-plugin-hooks" title="Permanent link">&para;</a></h3>
-<p>The existing hook system remains as a backstop. Hooks exit code 2
-(hard block) overrides even bypass mode. Hooks that become
-redundant with layers 1-2 are retained — they catch regressions
-if a higher layer is misconfigured.</p>
-<h3 id="layer-4-git-level-hooks-githookspre-commit">Layer 4 — Git-Level Hooks (<code>.githooks/pre-commit</code>)<a class="headerlink" href="#layer-4-git-level-hooks-githookspre-commit" title="Permanent link">&para;</a></h3>
-<p>The innermost layer. Rejects raw <code>git commit</code> without the
+<h3 id="the-vergil-assumption">The Vergil Assumption<a class="headerlink" href="#the-vergil-assumption" title="Permanent link">&para;</a></h3>
+<p>Every client-side enforcement layer in this model assumes the agent
+is cooperative — that it is operating as Vergil, not Mimir. An
+agent with file write access (which <code>acceptEdits</code> grants) can
+dismantle the entire client-side stack:</p>
+<ol>
+<li>Delete or edit <code>.claude/settings.json</code> — Layer 1 gone</li>
+<li>Run raw <code>git</code> and <code>gh</code> — Layer 2 bypassed (the wrappers are
+   never invoked)</li>
+<li>Remove plugin hook configuration — Layer 3 weakened</li>
+<li>Delete <code>.githooks/pre-commit</code> or run
+   <code>git config --unset core.hooksPath</code> — Layer 4 gone</li>
+</ol>
+<p>After those four steps, the agent has unrestricted local access.
+This is not a theoretical attack — it is trivial for any model
+that decides to do it.</p>
+<p><strong>Client-side layers are behavioral constraints, not security
+boundaries.</strong> They keep a well-intentioned agent on the rails.
+They prevent mistakes, enforce consistency, and provide an audit
+trail. They do not stop an adversary.</p>
+<h3 id="the-actual-security-boundary">The Actual Security Boundary<a class="headerlink" href="#the-actual-security-boundary" title="Permanent link">&para;</a></h3>
+<p>The only enforcement an agent cannot edit its way out of is
+<strong>server-side</strong>: GitHub's own permissions, branch protection
+rulesets, and collaborator access controls.</p>
+<ul>
+<li>The agent account is an outside collaborator with Write access.
+  It physically cannot merge, approve, or access admin settings —
+  GitHub rejects the API call regardless of what happens locally.</li>
+<li>Branch protection rulesets require review approval from a
+  different account before merging. No client-side manipulation
+  changes this.</li>
+<li>The agent account cannot see or access repos it has not been
+  invited to.</li>
+</ul>
+<p>This is the real security model. Everything else is convenience.</p>
+<h3 id="why-client-side-layers-still-matter">Why Client-Side Layers Still Matter<a class="headerlink" href="#why-client-side-layers-still-matter" title="Permanent link">&para;</a></h3>
+<p>If server-side enforcement is the only real boundary, why bother
+with four client-side layers?</p>
+<ul>
+<li><strong>Mistake prevention.</strong> Most failures are not adversarial. An
+  agent that accidentally runs <code>git reset --hard</code> is not trying
+  to subvert the tooling — it made a mistake. The wrappers catch
+  this.</li>
+<li><strong>Consistency.</strong> Routing all operations through <code>vrg-*</code> tools
+  ensures commits have the right format, PRs have the right
+  metadata, and branches follow the naming convention.</li>
+<li><strong>Audit trail.</strong> Wrapper logging records what the agent did
+  and when. Even if a layer is bypassed, the gap in the log is
+  itself a signal.</li>
+<li><strong>Friction.</strong> An agent that has to actively dismantle four
+  layers is doing something visibly wrong. That visibility is
+  the value — not the strength of any individual gate.</li>
+</ul>
+<p>The <a href="../identity-architecture/#the-mimir-convention">Mimir project</a>
+exists specifically to test this boundary — to verify that
+server-side controls hold when every client-side layer is
+deliberately bypassed.</p>
+<h3 id="client-side-layers">Client-Side Layers<a class="headerlink" href="#client-side-layers" title="Permanent link">&para;</a></h3>
+<p>Four layers, each catching mistakes the layer above misses.
+Redundancy is intentional — no single layer is trusted, and none
+are sufficient against adversarial behavior.</p>
+<p><strong>Layer 1 — Claude Code Permissions (outermost).</strong> The
+allowlist/deny configuration. Denied commands are blocked without
+prompt. Unknown commands prompt the human.</p>
+<p><strong>Layer 2 — VRG Wrappers.</strong> <code>vrg-git</code> and <code>vrg-gh</code> validate
+subcommands and flags before executing the underlying tool. Even
+if <code>vrg-git reset --hard</code> passes the permission layer (it is
+allowlisted as <code>vrg-*</code>), the wrapper rejects it.</p>
+<p><strong>Layer 3 — Vergil Plugin Hooks.</strong> The existing hook system
+remains as a backstop. Hooks exit code 2 (hard block) overrides
+even bypass mode. Hooks that become redundant with layers 1-2 are
+retained — they catch regressions if a higher layer is
+misconfigured.</p>
+<p><strong>Layer 4 — Git-Level Hooks (<code>.githooks/pre-commit</code>).</strong> The
+innermost layer. Rejects raw <code>git commit</code> without the
 <code>VRG_COMMIT_CONTEXT=1</code> environment variable that <code>vrg-commit</code>
 sets. With layers 1-3 in place, agents cannot reach this layer
 through normal operation.</p>
@@ -6320,6 +6371,7 @@ through normal operation.</p>
 <th>L2 Wrapper</th>
 <th>L3 Plugin Hook</th>
 <th>L4 Git Hook</th>
+<th>Server-Side</th>
 </tr>
 </thead>
 <tbody>
@@ -6329,6 +6381,7 @@ through normal operation.</p>
 <td>n/a</td>
 <td>n/a</td>
 <td>admits</td>
+<td>push accepted</td>
 </tr>
 <tr>
 <td><code>vrg-git push</code></td>
@@ -6336,6 +6389,7 @@ through normal operation.</p>
 <td>validates: no <code>--force</code></td>
 <td>n/a</td>
 <td>n/a</td>
+<td>push accepted</td>
 </tr>
 <tr>
 <td><code>git push</code></td>
@@ -6343,6 +6397,7 @@ through normal operation.</p>
 <td>n/a</td>
 <td>blocked</td>
 <td>n/a</td>
+<td>push accepted (if layers bypassed)</td>
 </tr>
 <tr>
 <td><code>vrg-gh pr merge</code></td>
@@ -6350,6 +6405,7 @@ through normal operation.</p>
 <td>rejected</td>
 <td>blocked</td>
 <td>n/a</td>
+<td><strong>API rejected</strong> (no merge permission)</td>
 </tr>
 <tr>
 <td><code>gh pr create</code></td>
@@ -6357,10 +6413,20 @@ through normal operation.</p>
 <td>n/a</td>
 <td>blocked</td>
 <td>n/a</td>
+<td>PR created (if layers bypassed)</td>
+</tr>
+<tr>
+<td><code>gh pr merge</code> (raw)</td>
+<td>denied</td>
+<td>n/a</td>
+<td>blocked</td>
+<td>n/a</td>
+<td><strong>API rejected</strong> (no merge permission)</td>
 </tr>
 <tr>
 <td><code>rm -rf .</code></td>
 <td>prompts human</td>
+<td>n/a</td>
 <td>n/a</td>
 <td>n/a</td>
 <td>n/a</td>
@@ -6371,9 +6437,11 @@ through normal operation.</p>
 <td>rejected</td>
 <td>n/a</td>
 <td>n/a</td>
+<td>n/a</td>
 </tr>
 </tbody>
 </table>
+<p>The rightmost column is the only one that holds against Mimir.</p>
 <h2 id="phasing">Phasing<a class="headerlink" href="#phasing" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-current-target">Phase 1 (current target)<a class="headerlink" href="#phase-1-current-target" title="Permanent link">&para;</a></h3>
 <ul>
