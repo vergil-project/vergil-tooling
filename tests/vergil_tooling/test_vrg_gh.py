@@ -231,10 +231,10 @@ def test_discover_accounts_missing_agent(
         _discover_accounts()
 
 
-# -- credential selection: default to agent -----------------------------------
+# -- credential selection: workaround uses human for all (#799) ---------------
 
 
-def test_default_uses_agent_token() -> None:
+def test_default_uses_human_token_workaround() -> None:
     with (
         patch(
             "vergil_tooling.bin.vrg_gh._discover_accounts",
@@ -242,13 +242,14 @@ def test_default_uses_agent_token() -> None:
         ),
         patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
     ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="agent-token\n")
+        mock_run.return_value = MagicMock(returncode=0, stdout="human-token\n")
         from vergil_tooling.bin.vrg_gh import _get_token
 
         token = _get_token(["issue", "list"])
-    assert token == "agent-token"  # noqa: S105
+    assert token == "human-token"  # noqa: S105
     token_call = mock_run.call_args_list[-1]
-    assert "jdoe-agent" in token_call[0][0]
+    assert "jdoe" in token_call[0][0]
+    assert "jdoe-agent" not in token_call[0][0]
 
 
 # -- credential selection: escalation for pr merge ---------------------------
