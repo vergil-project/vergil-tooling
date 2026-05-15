@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.10] - 2026-05-15
+
+### Chores
+
+- bump version to 2.0.10
+- remove per-repo templates in favor of org defaults
+
+### Documentation
+
+- add credential management design spec
+- apply pushback review fixes to credential management design spec
+- add credential management implementation plan
+- apply alignment review fixes to credential management design spec and plan
+- add execution order cross-references between permission model and credential management plans
+- add supersession notice to org governance credential section
+- add supersession notices to org governance setup plan
+- add credential selection cross-references to permission model
+- update consuming repo setup and CLAUDE.md for credential management model
+
+### Features
+
+- add vrg-git safe wrapper with subcommand allowlist and audit logging
+- add vrg-gh safe wrapper with credential selection and audit logging
+- deploy permission model with fully qualified path deny patterns
+
+### Refactoring
+
+- remove GH_TOKEN hard gate from vrg-docker-run
+
 ## [2.0.9] - 2026-05-14
 
 ### Chores
