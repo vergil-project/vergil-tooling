@@ -1,4 +1,4 @@
-"""Shared Docker container logic for st-docker-* commands."""
+"""Shared Docker container logic for vrg-docker-* commands."""
 
 from __future__ import annotations
 
