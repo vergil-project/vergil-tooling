@@ -23,9 +23,6 @@ branching-model = "{branching_model}"
 release-model = "tagged-release"
 primary-language = "python"
 
-[project.co-authors]
-agent = "Co-Authored-By: test-agent <test-agent@test.com>"
-
 [dependencies]
 vergil = "v2.0"
 
@@ -70,6 +67,10 @@ def _commit_environment(
             return_value=has_staged,
         ),
         patch("vergil_tooling.bin.vrg_commit.git.run"),
+        patch(
+            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
+            return_value="Co-Authored-By: test-agent <test-agent@test.com>",
+        ),
     ):
         yield
 
@@ -207,17 +208,62 @@ def test_main_missing_config(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
         patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
         patch("vergil_tooling.bin.vrg_commit.git.has_staged_changes", return_value=True),
+        patch("vergil_tooling.bin.vrg_commit.git.run"),
+        patch(
+            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
+            return_value="Co-Authored-By: test-agent <test-agent@test.com>",
+        ),
     ):
         result = main(_DEFAULT_ARGS)
-    assert result == 1
+    assert result == 0
 
 
-def test_main_unknown_agent(tmp_path: Path) -> None:
-    with _commit_environment(tmp_path):
+# --------------------------------------------------------------------------
+# Co-author auto-discovery
+# --------------------------------------------------------------------------
+
+
+def test_main_auto_discovery(tmp_path: Path) -> None:
+    commit_file_content = ""
+
+    def capture_run(*args: str) -> None:
+        nonlocal commit_file_content
+        if args[0] == "commit" and args[1] == "--file":
+            commit_file_content = Path(args[2]).read_text(encoding="utf-8")
+
+    with (
+        _commit_environment(tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
+        patch(
+            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
+            return_value="Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>",
+        ),
+    ):
         result = main(
-            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "nonexistent"]
+            ["--type", "feat", "--scope", "core", "--message", "add feature"]
         )
-    assert result == 1
+    assert result == 0
+    assert commit_file_content.startswith("feat(core): add feature\n")
+    assert "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>" in commit_file_content
+
+
+def test_main_agent_flag_prints_deprecation_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        _commit_environment(tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.run"),
+        patch(
+            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
+            return_value="Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>",
+        ),
+    ):
+        result = main(
+            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "ignored"]
+        )
+    assert result == 0
+    err = capsys.readouterr().err
+    assert "deprecated" in err.lower()
 
 
 # --------------------------------------------------------------------------
@@ -229,7 +275,7 @@ def test_main_unknown_agent(tmp_path: Path) -> None:
 # Reference: docs/specs/host-level-tool.md "Migration / vergil-tooling
 # itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
 
-_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "agent"]
+_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test"]
 
 
 # Check 1: detached HEAD
