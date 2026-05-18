@@ -49,6 +49,19 @@ multiple `-vergil` accounts are found. `read_json()` already retries
 transient GitHub API errors (502/503/504/429) with exponential
 backoff. Persistent API failures surface as `GitHubAPIError`.
 
+If `gh api /users/<agent>` returns 404, `vrg-commit` prints a clear
+error explaining the agent account may be flagged or suspended by
+GitHub. This is a known scenario — GitHub has previously flagged
+newly created bot-style accounts, making them invisible to the
+public user API even though they appear in `gh auth status`.
+
+The `/users/<name>` endpoint is public and does not require
+authentication, but the call routes through `read_json()` →
+`_run_with_retry()`, which injects `GH_TOKEN` for the human
+account. This coupling is accepted — if `gh auth` is broken,
+nothing else in `vrg-commit` works either, and the retry
+machinery is useful for transient GitHub errors.
+
 ### Changes to `vrg-commit`
 
 **Remove config-based co-author lookup.** The block that reads
@@ -98,9 +111,12 @@ This avoids coordination pressure during rollout.
 
 ### Deduplicate `_discover_accounts()`
 
-`vrg_gh.py` has a duplicate of `_discover_accounts()` that
-predates the `lib/github.py` version. The duplicate is removed and
-`vrg_gh.py` imports from the lib.
+`vrg_gh.py` has its own copy of `_discover_accounts()` that
+predates the `lib/github.py` version (added in the credential
+injection work, commit `cc5ec16`). The two copies differ only in
+error message prefix. The `vrg_gh.py` copy is removed and
+`vrg_gh.py` imports `_discover_accounts` from `lib/github.py`
+directly. The error prefix becomes `"vergil-tooling:"` everywhere.
 
 ### Test Changes
 
