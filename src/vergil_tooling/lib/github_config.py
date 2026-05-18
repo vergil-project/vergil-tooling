@@ -42,8 +42,8 @@ class DesiredRepoSettings:
 
 @dataclass
 class DesiredSecuritySettings:
-    secret_scanning: str
-    secret_scanning_push_protection: str
+    secret_scanning: str | None
+    secret_scanning_push_protection: str | None
     vulnerability_alerts: bool
     dependabot_security_updates: str
 
@@ -124,10 +124,11 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
     )
 
 
-def desired_security_settings() -> DesiredSecuritySettings:
+def desired_security_settings(*, visibility: str) -> DesiredSecuritySettings:
+    ghas_available = visibility != "private"
     return DesiredSecuritySettings(
-        secret_scanning="enabled",  # noqa: S106
-        secret_scanning_push_protection="enabled",  # noqa: S106
+        secret_scanning="enabled" if ghas_available else None,  # noqa: S106
+        secret_scanning_push_protection="enabled" if ghas_available else None,  # noqa: S106
         vulnerability_alerts=False,
         dependabot_security_updates="disabled",
     )
@@ -318,7 +319,7 @@ def compute_desired_state(config: StConfig, *, visibility: str, is_org: bool) ->
 
     return DesiredState(
         repo_settings=desired_repo_settings(visibility=visibility, is_org=is_org),
-        security=desired_security_settings(),
+        security=desired_security_settings(visibility=visibility),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
         publish=publish,

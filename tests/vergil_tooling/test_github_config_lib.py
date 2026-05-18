@@ -73,10 +73,18 @@ def test_desired_repo_settings_new_hardcoded_values() -> None:
     assert s.web_commit_signoff_required is True
 
 
-def test_desired_security_settings() -> None:
-    s = desired_security_settings()
+def test_desired_security_settings_public() -> None:
+    s = desired_security_settings(visibility="public")
     assert s.secret_scanning == "enabled"  # noqa: S105
     assert s.secret_scanning_push_protection == "enabled"  # noqa: S105
+    assert s.vulnerability_alerts is False
+    assert s.dependabot_security_updates == "disabled"
+
+
+def test_desired_security_settings_private_skips_ghas_features() -> None:
+    s = desired_security_settings(visibility="private")
+    assert s.secret_scanning is None
+    assert s.secret_scanning_push_protection is None
     assert s.vulnerability_alerts is False
     assert s.dependabot_security_updates == "disabled"
 
