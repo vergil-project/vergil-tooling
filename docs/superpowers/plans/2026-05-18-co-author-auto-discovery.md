@@ -622,3 +622,21 @@ If fixes were needed:
 vrg-git add -u
 vrg-commit --type fix --scope co-authors --message "address validation findings from co-author auto-discovery" --agent wphillipmoore-vergil
 ```
+
+---
+
+### Task 6: Cross-repo rollout
+
+Post-merge operational steps. These use existing workflows, not new code.
+
+- [ ] **Step 1: Land the PR**
+
+Submit the PR via `vrg-submit-pr` and wait for CI. Merge once approved.
+
+- [ ] **Step 2: Publish a new vergil-tooling release**
+
+Use `/vergil:publish` to drive the release workflow. The new version includes `resolve_co_author_trailer()` and the deprecated `--agent` flag.
+
+- [ ] **Step 3: Clean up consuming repos**
+
+In each consuming repo, delete the `[project.co-authors]` section from `vergil.toml`. This is optional and can happen at each repo's own pace — leftover sections are silently ignored by the updated parser.
