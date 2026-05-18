@@ -5,10 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.15] - 2026-05-18
+
+### Chores
+
+- bump version to 2.0.15
+
 ## [2.0.14] - 2026-05-18
 
 ### Bug fixes
 
+- fix validation: type errors, stale co-author refs, formatting, and coverage gaps
 - make desired_security_settings visibility-aware
 - record skipped fields in ConfigDiff during diff
 - omit None security fields from apply PATCH body
@@ -30,11 +37,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add implementation plan for repo config audit
 - rewrite repo config audit plan in TDD red/green/refactor format
 - replace stale st-* references with vrg-* across docs and source
+- add auto-discovery design spec
+- apply pushback review to auto-discovery design spec
+- add implementation plan for co-author auto-discovery
+- add cross-repo rollout task to implementation plan
 - add implementation plan for private repo visibility gating (#826)
 
 ### Features
 
 - add local config audit library, shared CLAUDE.md template, and vrg-github-repo-config CLI
+- add resolve_co_author_trailer for dynamic co-author discovery
+- replace config-based co-author lookup with dynamic API resolution
+
+### Refactoring
+
+- replace local _discover_accounts with import from lib/github
+- remove co-author parsing from config.py
 
 ## [2.0.13] - 2026-05-15
 
@@ -1280,4 +1298,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add validate_local.sh dispatch architecture (#34)
 - validate issue-linked branch names in pre-commit hook (#44)
 - add publish workflow for automated tagging and version bumps (#46)
-
