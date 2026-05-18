@@ -233,6 +233,40 @@ def test_apply_reports_legacy_protection_removed(capsys: pytest.CaptureFixture[s
     assert "legacy protection removed" in output
 
 
+def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None:
+    diff = ConfigDiff(
+        items=[],
+        skipped=[
+            "security.secret_scanning",
+            "security.secret_scanning_push_protection",
+        ],
+    )
+    with (
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "secret_scanning: skipped" in output
+    assert "secret_scanning_push_protection: skipped" in output
+    assert "requires GitHub Advanced Security" in output
+
+
+def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "skipped" not in output
+
+
 # -- --config flag integration ------------------------------------------------
 
 _VALID_TOML = b"""\
