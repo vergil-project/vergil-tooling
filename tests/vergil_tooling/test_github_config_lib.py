@@ -1029,6 +1029,29 @@ def test_apply_security_settings_disables_vuln_alerts() -> None:
     mock_del.assert_called_once_with("repos/o/r/vulnerability-alerts")
 
 
+def test_apply_security_settings_skips_none_fields() -> None:
+    from vergil_tooling.lib.github_config import DesiredSecuritySettings
+
+    sec = DesiredSecuritySettings(
+        secret_scanning=None,
+        secret_scanning_push_protection=None,
+        vulnerability_alerts=False,
+        dependabot_security_updates="disabled",
+    )
+    with (
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_security_settings("o/r", sec)
+    assert mock_write.call_count == 1
+    body = mock_write.call_args[0][2]
+    sa = body["security_and_analysis"]
+    assert "secret_scanning" not in sa
+    assert "secret_scanning_push_protection" not in sa
+    assert sa["dependabot_security_updates"] == {"status": "disabled"}
+    mock_del.assert_called_once_with("repos/o/r/vulnerability-alerts")
+
+
 def test_apply_actions_permissions_selected() -> None:
     perms = desired_actions_permissions("python")
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:

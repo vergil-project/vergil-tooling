@@ -654,20 +654,18 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
 
 
 def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:
+    sa: dict[str, object] = {}
+    if security.secret_scanning is not None:
+        sa["secret_scanning"] = {"status": security.secret_scanning}
+    if security.secret_scanning_push_protection is not None:
+        sa["secret_scanning_push_protection"] = {
+            "status": security.secret_scanning_push_protection,
+        }
+    sa["dependabot_security_updates"] = {"status": security.dependabot_security_updates}
     github.write_json(
         "PATCH",
         f"repos/{repo}",
-        {
-            "security_and_analysis": {
-                "secret_scanning": {"status": security.secret_scanning},
-                "secret_scanning_push_protection": {
-                    "status": security.secret_scanning_push_protection,
-                },
-                "dependabot_security_updates": {
-                    "status": security.dependabot_security_updates,
-                },
-            },
-        },
+        {"security_and_analysis": sa},
     )
     if security.vulnerability_alerts:
         github.write_json("PUT", f"repos/{repo}/vulnerability-alerts", {})
