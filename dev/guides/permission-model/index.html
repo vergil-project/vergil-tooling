@@ -6180,7 +6180,7 @@ entries above are conditionally allowed for release workflow
 operations under the human account.</p>
 <h3 id="vrg-tools-that-bypass-the-wrapper">VRG Tools That Bypass the Wrapper<a class="headerlink" href="#vrg-tools-that-bypass-the-wrapper" title="Permanent link">&para;</a></h3>
 <p>Mechanized VRG tools (<code>vrg-submit-pr</code>, <code>vrg-merge-when-green</code>,
-<code>vrg-ensure-label</code>, <code>vrg-github-config</code>, <code>vrg-finalize-repo</code>)
+<code>vrg-ensure-label</code>, <code>vrg-github-repo-config</code>, <code>vrg-finalize-repo</code>)
 call <code>gh</code> directly in their Python code. They bypass the wrapper
 because they are already validated — the wrapper only constrains
 agent-initiated <code>gh</code> calls via the Bash tool.</p>
