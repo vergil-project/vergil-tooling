@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import tomllib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -12,8 +11,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 CONFIG_FILE = "vergil.toml"
-
-_COAUTHOR_RE = re.compile(r"^Co-Authored-By:\s+.+\s+<.+>$")
 
 _ENUMS: dict[str, set[str]] = {
     "repository-type": {"library", "application", "infrastructure", "tooling", "documentation"},
@@ -44,7 +41,6 @@ class ProjectConfig:
     branching_model: str
     release_model: str
     primary_language: str
-    co_authors: dict[str, str]
 
 
 @dataclass
@@ -94,14 +90,6 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
             allowed = ", ".join(sorted(_ENUMS[field]))
             msg = f"{CONFIG_FILE}: invalid {field} '{value}' (allowed: {allowed})"
             raise ConfigError(msg)
-
-    co_authors: dict[str, str] = {}
-    co_authors_raw = project_raw.get("co-authors", {})
-    for name, trailer in co_authors_raw.items():
-        if not _COAUTHOR_RE.match(trailer):
-            msg = f"{CONFIG_FILE}: malformed co-author trailer for '{name}': {trailer!r}"
-            raise ConfigError(msg)
-        co_authors[name] = trailer
 
     deps = raw.get("dependencies", {})
     if "vergil" not in deps:
@@ -154,7 +142,6 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         branching_model=project_raw["branching-model"],
         release_model=project_raw["release-model"],
         primary_language=project_raw["primary-language"],
-        co_authors=co_authors,
     )
     return StConfig(
         project=project,

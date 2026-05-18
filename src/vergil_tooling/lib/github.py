@@ -44,6 +44,21 @@ def _discover_accounts() -> tuple[str, str]:
     return human, agent
 
 
+def resolve_co_author_trailer() -> str:
+    """Discover the agent account and return its ``Co-Authored-By`` trailer.
+
+    Queries the GitHub API for the agent's numeric user ID to construct
+    the noreply email that GitHub uses for commit attribution.
+    """
+    _human, agent = _discover_accounts()
+    data = read_json("api", f"users/{agent}")
+    if not isinstance(data, dict):
+        msg = f"unexpected API response for users/{agent}"
+        raise GitHubAPIError(1, f"gh api users/{agent}", msg)
+    uid = data["id"]
+    return f"Co-Authored-By: {agent} <{uid}+{agent}@users.noreply.github.com>"
+
+
 @functools.lru_cache(maxsize=1)
 def _human_token() -> str:
     """Return the human account's token (cached for the process lifetime)."""

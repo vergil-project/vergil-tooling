@@ -10,10 +10,11 @@ from __future__ import annotations
 import datetime
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
+
+from vergil_tooling.lib.github import _discover_accounts
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "create", "close", "edit", "list", "comment"},
@@ -59,28 +60,6 @@ def _log(args: list[str], result: str) -> None:
     }
     with path.open("a") as f:
         f.write(json.dumps(entry) + "\n")
-
-
-def _discover_accounts() -> tuple[str, str]:
-    result = subprocess.run(  # noqa: S603
-        ["gh", "auth", "status"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    output = result.stdout or result.stderr
-    accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
-    vergil = [a for a in accounts if a.endswith("-vergil")]
-    if len(vergil) != 1:
-        print(
-            "vrg-gh: cannot discover -vergil account in gh auth status. "
-            f"Expected exactly one, found: {vergil}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    agent = vergil[0]
-    human = agent.removesuffix("-vergil")
-    return human, agent
 
 
 def _get_token(command: list[str]) -> str:  # noqa: ARG001

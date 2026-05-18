@@ -1,6 +1,6 @@
 """Commit wrapper that constructs standards-compliant commit messages.
 
-Resolves Co-Authored-By identities from vergil.toml.
+Resolves Co-Authored-By identities dynamically via the GitHub API.
 Performs branch / context validation (formerly in
 `vergil_tooling.bin.pre_commit_hook`, removed under the host-level-tool
 spec — see docs/specs/host-level-tool.md). Sets VRG_COMMIT_CONTEXT=1
@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import config, git
+from vergil_tooling.lib import config, git, github
 
 ALLOWED_TYPES = (
     "feat",
@@ -76,7 +76,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
     parser.add_argument(
-        "--agent", required=True, help="AI agent identity (key in [project.co-authors])"
+        "--agent",
+        required=False,
+        default=None,
+        help="Deprecated. Co-author identity is now auto-discovered.",
     )
     return parser.parse_args(argv)
 
@@ -189,13 +192,18 @@ def main(argv: list[str] | None = None) -> int:
             "Issues must remain open until post-merge workflows succeed.",
         )
 
-    if st_config is None or args.agent not in st_config.project.co_authors:
+    if args.agent is not None:
         print(
-            f"ERROR: no co-author identity for agent '{args.agent}' in {config.CONFIG_FILE}.",
+            "WARNING: --agent is deprecated and will be removed in a future release. "
+            "Co-author identity is now auto-discovered from gh auth status.",
             file=sys.stderr,
         )
+
+    try:
+        identity = github.resolve_co_author_trailer()
+    except (SystemExit, github.GitHubAPIError) as exc:
+        print(f"ERROR: failed to resolve co-author identity: {exc}", file=sys.stderr)
         return 1
-    identity = st_config.project.co_authors[args.agent]
 
     if not git.has_staged_changes():
         print(
