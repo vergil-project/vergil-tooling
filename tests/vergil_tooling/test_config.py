@@ -72,9 +72,6 @@ branching-model = "library-release"
 release-model = "tagged-release"
 primary-language = "python"
 
-[project.co-authors]
-agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"
-
 [dependencies]
 vergil = "v2.0"
 """
@@ -90,8 +87,6 @@ def test_read_config_valid(tmp_path: Path) -> None:
     assert cfg.project.branching_model == "library-release"
     assert cfg.project.release_model == "tagged-release"
     assert cfg.project.primary_language == "python"
-    assert "agent" in cfg.project.co_authors
-    assert "user-agent" in cfg.project.co_authors["agent"]
     assert cfg.dependencies["vergil"] == "v2.0"
 
 
@@ -120,16 +115,6 @@ def test_read_config_invalid_enum(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_read_config_malformed_co_author(tmp_path: Path) -> None:
-    toml = _VALID_TOML.replace(
-        'agent = "Co-Authored-By: user-agent <111+user-agent@users.noreply.github.com>"',
-        'agent = "not a valid trailer"',
-    )
-    (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="co-author.*agent"):
-        read_config(tmp_path)
-
-
 def test_read_config_missing_dependencies_key(tmp_path: Path) -> None:
     toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
     (tmp_path / "vergil.toml").write_text(toml)
@@ -137,15 +122,11 @@ def test_read_config_missing_dependencies_key(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_read_config_no_co_authors(tmp_path: Path) -> None:
-    lines = [
-        ln
-        for ln in _VALID_TOML.splitlines(keepends=True)
-        if "co-authors" not in ln.lower() and "agent" not in ln
-    ]
-    (tmp_path / "vergil.toml").write_text("".join(lines))
+def test_read_config_ignores_leftover_co_authors(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[project.co-authors]\nagent = "Co-Authored-By: x <1+x@users.noreply.github.com>"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
     cfg = read_config(tmp_path)
-    assert cfg.project.co_authors == {}
+    assert not hasattr(cfg.project, "co_authors")
 
 
 # -- [markdownlint] section ---------------------------------------------------
