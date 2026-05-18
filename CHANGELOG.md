@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.14] - 2026-05-18
+
+### Bug fixes
+
+- make desired_security_settings visibility-aware
+- record skipped fields in ConfigDiff during diff
+- omit None security fields from apply PATCH body
+- render skipped fields in CLI audit/diff output
+- make skipped param required in diff helpers for full coverage
+- only print GHAS skip message for security fields
+
+### Chores
+
+- bump version to 2.0.14
+
+### Documentation
+
+- add Vergil identity account setup guide
+- publish identity, credential, and permission architecture to site docs
+- clarify credential store setup as sequential browser-authenticated steps
+- rewrite defense-in-depth to distinguish client-side constraints from server-side security
+- apply pushback review to repo config audit design
+- add implementation plan for repo config audit
+- rewrite repo config audit plan in TDD red/green/refactor format
+- replace stale st-* references with vrg-* across docs and source
+- add implementation plan for private repo visibility gating (#826)
+
+### Features
+
+- add local config audit library, shared CLAUDE.md template, and vrg-github-repo-config CLI
+
 ## [2.0.13] - 2026-05-15
 
 ### Bug fixes
