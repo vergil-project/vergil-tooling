@@ -172,9 +172,9 @@ github.com
 
 
 def test_discover_accounts() -> None:
-    from vergil_tooling.bin.vrg_gh import _discover_accounts
+    from vergil_tooling.lib.github import _discover_accounts
 
-    with patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=_AUTH_STATUS_TWO_ACCOUNTS,
@@ -196,9 +196,9 @@ github.com
 
 
 def test_discover_accounts_deduplicates() -> None:
-    from vergil_tooling.bin.vrg_gh import _discover_accounts
+    from vergil_tooling.lib.github import _discover_accounts
 
-    with patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=_AUTH_STATUS_DUPLICATE_HUMAN,
@@ -222,9 +222,9 @@ github.com
 
 
 def test_discover_accounts_ignores_other_accounts() -> None:
-    from vergil_tooling.bin.vrg_gh import _discover_accounts
+    from vergil_tooling.lib.github import _discover_accounts
 
-    with patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
         mock_run.return_value = MagicMock(
             returncode=0,
             stdout=_AUTH_STATUS_MANY_ACCOUNTS,
@@ -244,10 +244,10 @@ github.com
 def test_discover_accounts_missing_vergil(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from vergil_tooling.bin.vrg_gh import _discover_accounts
+    from vergil_tooling.lib.github import _discover_accounts
 
     with (
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         pytest.raises(SystemExit),
     ):
         mock_run.return_value = MagicMock(

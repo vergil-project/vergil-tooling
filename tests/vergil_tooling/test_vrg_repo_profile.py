@@ -20,9 +20,6 @@ branching-model = "library-release"
 release-model = "tagged-release"
 primary-language = "python"
 
-[project.co-authors]
-claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>"
-
 [dependencies]
 vergil = "v2.0"
 
@@ -59,16 +56,6 @@ def test_missing_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_invalid_enum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     toml = _VALID_TOML.replace('"library"', '"banana"')
-    _write_toml(tmp_path, toml)
-    assert main() == 1
-
-
-def test_malformed_co_author(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.chdir(tmp_path)
-    toml = _VALID_TOML.replace(
-        'claude = "Co-Authored-By: user-claude <111+user-claude@users.noreply.github.com>"',
-        'claude = "not a trailer"',
-    )
     _write_toml(tmp_path, toml)
     assert main() == 1
 
