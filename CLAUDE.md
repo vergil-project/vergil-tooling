@@ -129,7 +129,7 @@ repository under `docs/`.
 
 ### Environment Setup
 
-Host-side `st-*` tools are installed via `uv tool install` (see
+Host-side `vrg-*` tools are installed via `uv tool install` (see
 [Consumption Model](#consumption-model)). For developing
 vergil-tooling itself, there is also a **dev-tree override** using
 a local `.venv-host`:
@@ -198,7 +198,7 @@ vrg-docker-run -- uv run vrg-validate
 
 ### Python Package (`src/vergil_tooling/`)
 
-CLI tools installed as `st-*` console scripts:
+CLI tools installed as `vrg-*` console scripts:
 
 - **`vrg-commit`** — Construct standards-compliant conventional
   commits with co-author resolution
@@ -253,7 +253,7 @@ Consumed via `git config core.hooksPath .githooks`:
 | Target | Install mechanism | Who uses it |
 |---|---|---|
 | **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-repo` |
-| **Container runtime** (all languages) | `vrg-docker-run` cache-first install per `vergil.toml` | `st-*` inside the container for all consumers |
+| **Container runtime** (all languages) | `vrg-docker-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
 
 **Host install** (canonical):
 

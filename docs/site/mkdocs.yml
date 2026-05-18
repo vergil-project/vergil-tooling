@@ -70,10 +70,10 @@ nav:
           - markdown-validation: reference/lint/markdown-standards.md
           - pr-issue-linkage: reference/lint/pr-issue-linkage.md
       - CLI Tools:
-          - st-commit: reference/dev/commit.md
-          - st-submit-pr: reference/dev/submit-pr.md
-          - st-prepare-release: reference/dev/prepare-release.md
-          - st-finalize-repo: reference/dev/finalize-repo.md
+          - vrg-commit: reference/dev/commit.md
+          - vrg-submit-pr: reference/dev/submit-pr.md
+          - vrg-prepare-release: reference/dev/prepare-release.md
+          - vrg-finalize-repo: reference/dev/finalize-repo.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md

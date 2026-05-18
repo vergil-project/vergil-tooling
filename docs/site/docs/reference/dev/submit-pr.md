@@ -2,7 +2,7 @@
 
 **Installed as:** `vrg-submit-pr` (Python console script)
 
-**Source:** `src/vergil_tooling/bin/st_submit_pr.py`
+**Source:** `src/vergil_tooling/bin/vrg_submit_pr.py`
 
 Wrapper that creates standards-compliant pull requests with
 proper issue linkage.
