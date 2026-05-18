@@ -345,6 +345,28 @@
     
     
       <li class="md-tabs__item">
+        <a href="../../guides/identity-architecture/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Identity & Permissions
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
         <a href="../../guides/git-workflow/" class="md-tabs__link">
           
   
@@ -646,6 +668,8 @@
       
         
       
+        
+      
     
     
     
@@ -698,6 +722,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.14/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.14
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3133,7 +3185,7 @@
   <span class="md-ellipsis">
     
   
-    st-commit
+    vrg-commit
   
 
     
@@ -3161,7 +3213,7 @@
   <span class="md-ellipsis">
     
   
-    st-submit-pr
+    vrg-submit-pr
   
 
     
@@ -3189,7 +3241,7 @@
   <span class="md-ellipsis">
     
   
-    st-prepare-release
+    vrg-prepare-release
   
 
     
@@ -3217,7 +3269,7 @@
   <span class="md-ellipsis">
     
   
-    st-finalize-repo
+    vrg-finalize-repo
   
 
     
@@ -5078,8 +5130,6 @@
       
         
       
-        
-      
     
     
     
@@ -5103,7 +5153,7 @@
   <span class="md-ellipsis">
     
   
-    Guides
+    Identity & Permissions
   
 
     
@@ -5116,6 +5166,189 @@
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Identity & Permissions
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/identity-architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Identity Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/credential-management/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Credential Management
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/permission-model/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Permission Model
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../guides/account-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Account Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -5621,7 +5854,7 @@ admits the commit.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_commit</code></td>
+<td><code>vergil_tooling.bin.vrg_commit</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5658,7 +5891,7 @@ and opens a PR with a populated template body.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_submit_pr</code></td>
+<td><code>vergil_tooling.bin.vrg_submit_pr</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5695,7 +5928,7 @@ release-workflow PRs where the agent is both author and reviewer.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_merge_when_green</code></td>
+<td><code>vergil_tooling.bin.vrg_merge_when_green</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5734,7 +5967,7 @@ Claude plugin, VERSION file) to find the version.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_prepare_release</code></td>
+<td><code>vergil_tooling.bin.vrg_prepare_release</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5773,7 +6006,7 @@ runs validation, and checks the Documentation workflow status.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_finalize_repo</code></td>
+<td><code>vergil_tooling.bin.vrg_finalize_repo</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5811,7 +6044,7 @@ and project (discover repos via a GitHub Project and sync each).</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_ensure_label</code></td>
+<td><code>vergil_tooling.bin.vrg_ensure_label</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5849,7 +6082,7 @@ project language to select the Docker image; falls back to
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_docker_run</code></td>
+<td><code>vergil_tooling.bin.vrg_docker_run</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5886,7 +6119,7 @@ language and selects appropriate image and test command.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_docker_test</code></td>
+<td><code>vergil_tooling.bin.vrg_docker_test</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5924,7 +6157,7 @@ repos, wraps with <code>uv sync --group docs</code>.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_docker_docs</code></td>
+<td><code>vergil_tooling.bin.vrg_docker_docs</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -5962,7 +6195,7 @@ between <code>BEGIN/END GENERATED MQSC METHODS</code> markers.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_generate_commands</code></td>
+<td><code>vergil_tooling.bin.vrg_generate_commands</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -6044,7 +6277,7 @@ placeholder values.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_repo_profile</code></td>
+<td><code>vergil_tooling.bin.vrg_repo_profile</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -6084,7 +6317,7 @@ and variants). Reads the GitHub event payload from
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.st_pr_issue_linkage</code></td>
+<td><code>vergil_tooling.bin.vrg_pr_issue_linkage</code></td>
 </tr>
 <tr>
 <td>Args</td>
@@ -6145,7 +6378,7 @@ interface than argparse would provide. No alignment needed.</p>
 <li>0: success</li>
 <li>1: check failure, validation error, or precondition violation</li>
 <li>2: infrastructure error (used by <code>vrg-repo-profile</code>,
-  <code>st-markdown-standards</code>, <code>vrg-pr-issue-linkage</code>)</li>
+  <code>vrg-pr-issue-linkage</code>)</li>
 </ul>
 <p>The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.</p>
