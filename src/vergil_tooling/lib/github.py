@@ -47,16 +47,25 @@ def _discover_accounts() -> tuple[str, str]:
 def resolve_co_author_trailer() -> str:
     """Discover the agent account and return its ``Co-Authored-By`` trailer.
 
-    Queries the GitHub API for the agent's numeric user ID to construct
-    the noreply email that GitHub uses for commit attribution.
+    Workaround: hardcode the noreply trailer while the agent account is
+    flagged by GitHub (#799). The API lookup (gh api users/{agent}) fails
+    for shadow-banned accounts. Revert to the API-based approach when
+    GitHub support unflags the account.
     """
     _human, agent = _discover_accounts()
+    # Workaround (#799/#839): skip API lookup, use known noreply ID.
+    known_noreply: dict[str, int] = {
+        "wphillipmoore-vergil": 285019742,
+    }
+    uid = known_noreply.get(agent)
+    if uid is not None:
+        return f"Co-Authored-By: {agent} <{uid}+{agent}@users.noreply.github.com>"
     data = read_json("api", f"users/{agent}")
     if not isinstance(data, dict):
         msg = f"unexpected API response for users/{agent}"
         raise GitHubAPIError(1, f"gh api users/{agent}", msg)
-    uid = data["id"]
-    return f"Co-Authored-By: {agent} <{uid}+{agent}@users.noreply.github.com>"
+    api_uid = data["id"]
+    return f"Co-Authored-By: {agent} <{api_uid}+{agent}@users.noreply.github.com>"
 
 
 @functools.lru_cache(maxsize=1)

@@ -605,7 +605,22 @@ class TestGhEnv:
 
 
 class TestResolveCoAuthorTrailer:
-    def test_constructs_trailer_from_api(self) -> None:
+    def test_known_agent_skips_api(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                return_value=("wphillipmoore", "wphillipmoore-vergil"),
+            ),
+            patch("vergil_tooling.lib.github.read_json") as mock_api,
+        ):
+            trailer = github.resolve_co_author_trailer()
+        mock_api.assert_not_called()
+        assert trailer == (
+            "Co-Authored-By: wphillipmoore-vergil "
+            "<285019742+wphillipmoore-vergil@users.noreply.github.com>"
+        )
+
+    def test_unknown_agent_falls_back_to_api(self) -> None:
         with (
             patch(
                 "vergil_tooling.lib.github._discover_accounts",
