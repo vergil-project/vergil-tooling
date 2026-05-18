@@ -5,7 +5,7 @@ repository. It covers the overall shape of the workflow, the two
 enforcement layers that back it up, and the per-change cycle you walk
 through from branching to finalization.
 
-For per-tool detail, each `st-*` command has its own reference page.
+For per-tool detail, each `vrg-*` command has its own reference page.
 For the rationale behind the worktree convention,
 see [the worktree convention spec][worktree-spec].
 

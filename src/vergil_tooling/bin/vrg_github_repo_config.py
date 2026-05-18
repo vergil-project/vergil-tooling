@@ -1,4 +1,9 @@
-"""Audit, diff, and apply GitHub configuration for managed repos."""
+"""Audit, diff, and apply repository configuration for managed repos.
+
+Combines local filesystem checks (vergil.toml, CLAUDE.md,
+.claude/settings.json, .githooks) with GitHub API configuration
+auditing.
+"""
 
 from __future__ import annotations
 
@@ -17,11 +22,12 @@ from vergil_tooling.lib.github_config import (
     compute_diff,
     fetch_actual_state,
 )
+from vergil_tooling.lib.repo_config import audit_local_config
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Enforce canonical GitHub configuration.",
+        description="Enforce canonical repository configuration.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -31,30 +37,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "--repo",
             help="Single repo (OWNER/REPO); defaults to current git remote",
         )
-        sp.add_argument("--owner", help="GitHub owner (project mode)")
-        sp.add_argument("--project", help="GitHub Project number")
         sp.add_argument(
             "--config",
             help="Local path to vergil.toml (overrides remote fetch)",
         )
 
-    args = parser.parse_args(argv)
-
-    has_owner = getattr(args, "owner", None)
-    has_project = getattr(args, "project", None)
-    if bool(has_owner) != bool(has_project):
-        parser.error("--owner and --project must be specified together")
-
-    return args
+    return parser.parse_args(argv)
 
 
-def _resolve_repos(args: argparse.Namespace) -> list[str]:
-    """Return list of repos to operate on."""
+def _resolve_repo(args: argparse.Namespace) -> str:
+    """Return the repo to operate on."""
     if args.repo:
-        return [args.repo]
-    if args.owner and args.project:
-        return github.list_project_repos(args.owner, args.project)
-    return [github.current_repo()]
+        return str(args.repo)
+    return github.current_repo()
 
 
 def _load_local_config(path: str) -> StConfig:
@@ -83,21 +78,36 @@ def _fetch_remote_config(repo: str) -> StConfig:
 
 
 def _audit_repo(repo: str, config: StConfig) -> ConfigDiff:
-    """Compute diff between desired and actual state for a repo."""
+    """Compute diff between desired and actual GitHub state for a repo."""
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(config, visibility=result.visibility, is_org=is_org)
     return compute_diff(desired=desired, actual=result.state)
 
 
-def _print_diff(repo: str, diff: ConfigDiff) -> None:
-    """Print diff results for a repo."""
+def _print_local_diff(diff: ConfigDiff) -> None:
+    """Print local config audit results."""
     if diff.is_compliant():
-        print(f"  {repo}: compliant")
+        print("  local: compliant")
         return
-    print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
+    print(f"  local: NON-COMPLIANT ({len(diff.items)} issues)")
     for item in diff.items:
         print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+
+
+def _print_diff(repo: str, diff: ConfigDiff) -> None:
+    """Print GitHub config diff results for a repo."""
+    if diff.is_compliant():
+        print(f"  {repo}: compliant")
+    else:
+        print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
+        for item in diff.items:
+            print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+    for field_name in diff.skipped:
+        if field_name.startswith("security."):
+            print(
+                f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)"
+            )
 
 
 def _apply_repo(repo: str, config: StConfig) -> list[str]:
@@ -110,39 +120,38 @@ def _apply_repo(repo: str, config: StConfig) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    repos = _resolve_repos(args)
     all_compliant = True
 
-    local_config = _load_local_config(args.config) if args.config else None
+    local_diff = audit_local_config(Path.cwd())
+    _print_local_diff(local_diff)
+    if not local_diff.is_compliant():
+        all_compliant = False
 
-    def get_config(repo: str) -> StConfig:
-        return local_config if local_config is not None else _fetch_remote_config(repo)
+    repo = _resolve_repo(args)
+    config = _load_local_config(args.config) if args.config else _fetch_remote_config(repo)
 
-    for repo in repos:
-        config = get_config(repo)
-        diff = _audit_repo(repo, config)
-        _print_diff(repo, diff)
-        if not diff.is_compliant():
-            all_compliant = False
+    github_diff = _audit_repo(repo, config)
+    _print_diff(repo, github_diff)
+    if not github_diff.is_compliant():
+        all_compliant = False
 
     if args.command == "audit":
         return 0 if all_compliant else 1
     if args.command == "diff":
         return 0
 
-    non_compliant = [r for r in repos if not _audit_repo(r, get_config(r)).is_compliant()]
-    if not non_compliant:
-        print("All repos compliant, nothing to apply.")
-        return 0
-
-    for repo in non_compliant:
-        config = get_config(repo)
+    if github_diff.is_compliant():
+        print("GitHub config compliant, nothing to apply.")
+    else:
         print(f"  Applying to {repo}...")
         removed = _apply_repo(repo, config)
         if removed:
             print(f"  {repo}: applied (legacy protection removed: {', '.join(removed)})")
         else:
             print(f"  {repo}: applied")
+
+    if not local_diff.is_compliant():
+        return 1
 
     return 0
 

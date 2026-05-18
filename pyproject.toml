@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.0.13"
+version = "2.0.14"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -23,7 +23,7 @@ vrg-finalize-repo = "vergil_tooling.bin.vrg_finalize_repo:main"
 vrg-generate-commands = "vergil_tooling.bin.vrg_generate_commands:main"
 vrg-gh = "vergil_tooling.bin.vrg_gh:main"
 vrg-git = "vergil_tooling.bin.vrg_git:main"
-vrg-github-config = "vergil_tooling.bin.vrg_github_config:main"
+vrg-github-repo-config = "vergil_tooling.bin.vrg_github_repo_config:main"
 vrg-merge-when-green = "vergil_tooling.bin.vrg_merge_when_green:main"
 vrg-pr-issue-linkage = "vergil_tooling.bin.vrg_pr_issue_linkage:main"
 vrg-prepare-release = "vergil_tooling.bin.vrg_prepare_release:main"
@@ -40,7 +40,7 @@ dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-vergil_tooling = ["data/*.json", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
+vergil_tooling = ["data/*.json", "data/*.md", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

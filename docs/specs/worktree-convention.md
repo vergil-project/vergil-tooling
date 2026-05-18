@@ -137,12 +137,12 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (st-docker-run mounts the current directory).
+  (vrg-docker-run mounts the current directory).
 ```
 
 All fields are required. The template is intended as a copy-paste
 starting point; an operator launching multiple parallel agents fills
-in the placeholders for each one. A future `st-worktree-prompt` helper
+in the placeholders for each one. A future `vrg-worktree-prompt` helper
 could emit this text given `<issue-number>` and `<slug>` — see
 [Enforcement and follow-up work](#enforcement-and-follow-up-work).
 
@@ -171,18 +171,18 @@ where neither is viable.
 
 ### Cleanup
 
-Post-merge cleanup in this fleet runs through `st-finalize-repo`.
+Post-merge cleanup in this fleet runs through `vrg-finalize-repo`.
 Worktree removal should live there too — the canonical flow becomes:
 
 ```bash
 cd ~/dev/github/<project>
-st-finalize-repo                               # handles branch delete,
+vrg-finalize-repo                              # handles branch delete,
                                                # remote prune, and
                                                # worktree removal for
                                                # the finalized branch
 ```
 
-Extending `st-finalize-repo` to be worktree-aware is tracked as
+Extending `vrg-finalize-repo` to be worktree-aware is tracked as
 follow-up work (see
 [Enforcement and follow-up work](#enforcement-and-follow-up-work)).
 Until that lands, the interim procedure is raw git:
@@ -196,7 +196,7 @@ git fetch --prune                        # drop deleted remote tracking refs
 
 If the worktree directory lingers after a crash or force-removed
 branch, `git worktree prune` cleans up stale metadata. A separate
-`st-worktree-prune` for abandoned branches that never merged is not
+`vrg-worktree-prune` for abandoned branches that never merged is not
 part of this spec — add it only if the abandoned-branch case proves
 to need tooling in practice.
 
@@ -208,7 +208,7 @@ to need tooling in practice.
 | Edit at the main tree root | Rule 3 ignored, or a human edit slipped in | Standing "no direct commits to develop" policy forbids this at the commit level; same git hook catches it |
 | Memory silo from starting session in the wrong directory | Session started inside `.worktrees/<name>/` instead of the root | Documentation + muscle memory; a `claude` wrapper script could refuse to launch unless CWD is a project root |
 | Agent writes to a sibling worktree or the main tree (intentional or mis-prompted) | Prompt contract ignored or misread | Git hook (same backstop) catches any such write that actually gets committed; see [Trust model](#trust-model) for the limits of isolation |
-| Stale worktrees accumulate after branch land | Author forgets the cleanup step | `st-finalize-repo` will remove the worktree as part of its post-merge flow once extended |
+| Stale worktrees accumulate after branch land | Author forgets the cleanup step | `vrg-finalize-repo` will remove the worktree as part of its post-merge flow once extended |
 | Worktree branch gets into weird state on rebase of main | Shared history diverges during long-lived worktree | Normal git hygiene: rebase the worktree's branch onto updated `develop` periodically; no special convention needed |
 
 ### Trust model
@@ -323,10 +323,10 @@ tracked separately):
     `.worktrees/*` is non-empty (or, more simply, refuses all commits
     from the project root, since rule 3 says the main tree is
     read-only).
-- **`st-finalize-repo` extension.** Worktree removal when finalizing
+- **`vrg-finalize-repo` extension.** Worktree removal when finalizing
   the branch for that worktree. Covers the cleanup failure mode
   structurally.
-- **`st-worktree-prompt` helper.** Emits the canonical prompt
+- **`vrg-worktree-prompt` helper.** Emits the canonical prompt
   template given an issue number and slug, so operators don't
   hand-author the prompt each time.
 - **Claude Code plugin.** Hooks at session start (or on work-item
@@ -341,7 +341,7 @@ them. They raise the floor on consistency; they do not gate adoption.
 ## Out of scope
 
 - **Automated worktree provisioning for the initial adoption** (e.g.,
-  `st-worktree-add <issue-number>`). Tracked as follow-up.
+  `vrg-worktree-add <issue-number>`). Tracked as follow-up.
 - **Devcontainer integration.** Worktrees and devcontainers are
   orthogonal; a worktree can run inside or outside a devcontainer.
   This spec does not prescribe.

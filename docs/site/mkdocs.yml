@@ -70,10 +70,10 @@ nav:
           - markdown-validation: reference/lint/markdown-standards.md
           - pr-issue-linkage: reference/lint/pr-issue-linkage.md
       - CLI Tools:
-          - st-commit: reference/dev/commit.md
-          - st-submit-pr: reference/dev/submit-pr.md
-          - st-prepare-release: reference/dev/prepare-release.md
-          - st-finalize-repo: reference/dev/finalize-repo.md
+          - vrg-commit: reference/dev/commit.md
+          - vrg-submit-pr: reference/dev/submit-pr.md
+          - vrg-prepare-release: reference/dev/prepare-release.md
+          - vrg-finalize-repo: reference/dev/finalize-repo.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md
@@ -121,6 +121,11 @@ nav:
           - Code Review Guidelines: standards/ai-code-review-guidelines.md
           - Interaction Contract: standards/interaction-contract.md
           - Interaction Contract (Brief): standards/interaction-contract-brief.md
+  - Identity & Permissions:
+      - Identity Architecture: guides/identity-architecture.md
+      - Credential Management: guides/credential-management.md
+      - Permission Model: guides/permission-model.md
+      - Account Setup: guides/account-setup.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md

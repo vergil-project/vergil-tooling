@@ -26,7 +26,7 @@ MUST:
 ## Working Rules
 
 - This repository is a Python package providing shared tooling scripts.
-  Consumers resolve host-side `st-*` tools via `uv tool install` and
+  Consumers resolve host-side `vrg-*` tools via `uv tool install` and
   in-container tools via the dev container image's pre-bake (non-Python
   repos) or a `[tool.uv.sources]` dev dep (Python repos).
 - Test scripts with shellcheck before committing.

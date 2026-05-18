@@ -11,7 +11,7 @@
 ## Purpose
 
 Shared development tooling for all managed repositories. Structured as a
-Python package with CLI entry points (`st-*`), distributed as a
+Python package with CLI entry points (`vrg-*`), distributed as a
 host-level developer tool per
 [`docs/specs/host-level-tool.md`](docs/specs/host-level-tool.md).
 

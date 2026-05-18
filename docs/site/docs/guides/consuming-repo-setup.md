@@ -13,7 +13,7 @@ The setup steps below wire up each one:
 | Surface | What it is | How you consume it |
 |---|---|---|
 | **Host tools** | `vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, and other host-side CLI tools. | `uv tool install` from the vergil-tooling git URL; scripts land in `~/.local/bin/`. |
-| **Dev container** | `ghcr.io/vergil-project/dev-<lang>:<version>` — pre-baked images with language runtimes, validators, and every other `st-*` tool installed. | Pulled automatically by `vrg-docker-run`; nothing to install manually. |
+| **Dev container** | `ghcr.io/vergil-project/dev-<lang>:<version>` — pre-baked images with language runtimes, validators, and every other `vrg-*` tool installed. | Pulled automatically by `vrg-docker-run`; nothing to install manually. |
 | **Claude Code plugin** | `vergil-claude-plugin` — hooks, skills, agents, and slash commands that enforce the workflow at the Claude-Code-tool level. | Declared in `.claude/settings.json`; Claude Code loads on session start. |
 
 Plus two layers that aren't installed as packages but are expected
@@ -63,7 +63,7 @@ live inside the container.
 uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
 ```
 
-This installs all `st-*` console scripts into `~/.local/bin/`,
+This installs all `vrg-*` console scripts into `~/.local/bin/`,
 which `uv`'s official installer already configures on `PATH`. No
 sibling checkout, no custom PATH entries, no venv bootstrapping.
 
