@@ -239,12 +239,11 @@ def test_main_auto_discovery(tmp_path: Path) -> None:
             return_value="Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>",
         ),
     ):
-        result = main(
-            ["--type", "feat", "--scope", "core", "--message", "add feature"]
-        )
+        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
     assert result == 0
     assert commit_file_content.startswith("feat(core): add feature\n")
-    assert "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>" in commit_file_content
+    expected = "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>"
+    assert expected in commit_file_content
 
 
 def test_main_agent_flag_prints_deprecation_warning(
@@ -264,6 +263,23 @@ def test_main_agent_flag_prints_deprecation_warning(
     assert result == 0
     err = capsys.readouterr().err
     assert "deprecated" in err.lower()
+
+
+def test_main_resolve_failure_returns_1(tmp_path: Path) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_commit.git.current_branch",
+            return_value="feature/42-test",
+        ),
+        patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
+        patch(
+            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
+            side_effect=SystemExit(1),
+        ),
+    ):
+        result = main(_DEFAULT_ARGS)
+    assert result == 1
 
 
 # --------------------------------------------------------------------------

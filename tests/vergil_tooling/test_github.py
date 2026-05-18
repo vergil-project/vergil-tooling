@@ -620,9 +620,7 @@ class TestResolveCoAuthorTrailer:
         assert trailer == "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>"
 
     def test_api_404_raises_github_api_error(self) -> None:
-        err = github.GitHubAPIError(
-            1, ["gh"], output='{"message": "Not Found"}', stderr="HTTP 404"
-        )
+        err = github.GitHubAPIError(1, ["gh"], output='{"message": "Not Found"}', stderr="HTTP 404")
         with (
             patch(
                 "vergil_tooling.lib.github._discover_accounts",
@@ -633,6 +631,20 @@ class TestResolveCoAuthorTrailer:
                 side_effect=err,
             ),
             pytest.raises(github.GitHubAPIError, match="404"),
+        ):
+            github.resolve_co_author_trailer()
+
+    def test_non_dict_response_raises(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                return_value=("jdoe", "jdoe-vergil"),
+            ),
+            patch(
+                "vergil_tooling.lib.github.read_json",
+                return_value=[{"id": 1}],
+            ),
+            pytest.raises(github.GitHubAPIError),
         ):
             github.resolve_co_author_trailer()
 

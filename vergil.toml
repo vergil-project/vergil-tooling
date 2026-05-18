@@ -5,6 +5,9 @@ branching-model = "library-release"
 release-model = "tagged-release"
 primary-language = "python"
 
+[project.co-authors]
+wphillipmoore-vergil = "Co-Authored-By: wphillipmoore-vergil <285019742+wphillipmoore-vergil@users.noreply.github.com>"
+
 [publish]
 release = true
 docs = true

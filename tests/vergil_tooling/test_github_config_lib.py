@@ -170,7 +170,6 @@ def _project(
         branching_model="library-release",
         release_model=release_model,
         primary_language=language,
-        co_authors={},
     )
 
 

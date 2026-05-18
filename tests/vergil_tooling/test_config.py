@@ -123,8 +123,10 @@ def test_read_config_missing_dependencies_key(tmp_path: Path) -> None:
 
 
 def test_read_config_ignores_leftover_co_authors(tmp_path: Path) -> None:
-    toml = _VALID_TOML + '\n[project.co-authors]\nagent = "Co-Authored-By: x <1+x@users.noreply.github.com>"\n'
-    (tmp_path / "vergil.toml").write_text(toml)
+    co_authors = (
+        '\n[project.co-authors]\nagent = "Co-Authored-By: x <1+x@users.noreply.github.com>"\n'
+    )
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + co_authors)
     cfg = read_config(tmp_path)
     assert not hasattr(cfg.project, "co_authors")
 

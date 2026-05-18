@@ -318,7 +318,6 @@ def _make_config() -> StConfig:
             branching_model="library-release",
             release_model="tagged-release",
             primary_language="python",
-            co_authors={},
         ),
         dependencies={"vergil": "v2.0"},
         markdownlint=MarkdownlintConfig(ignore=[]),

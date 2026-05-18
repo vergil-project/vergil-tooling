@@ -52,7 +52,10 @@ def resolve_co_author_trailer() -> str:
     """
     _human, agent = _discover_accounts()
     data = read_json("api", f"users/{agent}")
-    uid = data["id"]  # type: ignore[index]
+    if not isinstance(data, dict):
+        msg = f"unexpected API response for users/{agent}"
+        raise GitHubAPIError(1, f"gh api users/{agent}", msg)
+    uid = data["id"]
     return f"Co-Authored-By: {agent} <{uid}+{agent}@users.noreply.github.com>"
 
 
