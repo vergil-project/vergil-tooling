@@ -599,3 +599,49 @@ class TestGhEnv:
             side_effect=SystemExit(1),
         ):
             assert github._gh_env() is None
+
+
+# --- resolve_co_author_trailer ---
+
+
+class TestResolveCoAuthorTrailer:
+    def test_constructs_trailer_from_api(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                return_value=("jdoe", "jdoe-vergil"),
+            ),
+            patch(
+                "vergil_tooling.lib.github.read_json",
+                return_value={"id": 12345, "login": "jdoe-vergil"},
+            ),
+        ):
+            trailer = github.resolve_co_author_trailer()
+        assert trailer == "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>"
+
+    def test_api_404_raises_github_api_error(self) -> None:
+        err = github.GitHubAPIError(
+            1, ["gh"], output='{"message": "Not Found"}', stderr="HTTP 404"
+        )
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                return_value=("jdoe", "jdoe-vergil"),
+            ),
+            patch(
+                "vergil_tooling.lib.github.read_json",
+                side_effect=err,
+            ),
+            pytest.raises(github.GitHubAPIError, match="404"),
+        ):
+            github.resolve_co_author_trailer()
+
+    def test_discovery_failure_propagates(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.github._discover_accounts",
+                side_effect=SystemExit(1),
+            ),
+            pytest.raises(SystemExit),
+        ):
+            github.resolve_co_author_trailer()
