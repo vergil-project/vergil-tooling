@@ -267,6 +267,21 @@ def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[st
     assert "skipped" not in output
 
 
+def test_audit_non_security_skipped_fields_not_printed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    diff = ConfigDiff(items=[], skipped=["repo_settings.allow_forking"])
+    with (
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "skipped" not in output
+
+
 # -- --config flag integration ------------------------------------------------
 
 _VALID_TOML = b"""\

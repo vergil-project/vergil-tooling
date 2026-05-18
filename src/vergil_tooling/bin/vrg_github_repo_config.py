@@ -104,7 +104,10 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
         for item in diff.items:
             print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
     for field_name in diff.skipped:
-        print(f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)")
+        if field_name.startswith("security."):
+            print(
+                f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)"
+            )
 
 
 def _apply_repo(repo: str, config: StConfig) -> list[str]:
