@@ -940,8 +940,8 @@ def test_diff_detects_new_repo_setting_drift() -> None:
 def test_diff_records_skipped_security_fields_for_private_repo() -> None:
     desired = compute_desired_state(_st_config(), visibility="private", is_org=True)
     actual = compute_desired_state(_st_config(), visibility="private", is_org=True)
-    actual.security.secret_scanning = "enabled"
-    actual.security.secret_scanning_push_protection = "enabled"
+    actual.security.secret_scanning = "enabled"  # noqa: S105
+    actual.security.secret_scanning_push_protection = "enabled"  # noqa: S105
     diff = compute_diff(desired=desired, actual=actual)
     assert diff.is_compliant()
     assert "security.secret_scanning" in diff.skipped

@@ -555,12 +555,11 @@ def _diff_dataclass(
     desired: object,
     actual: object,
     items: list[DiffItem],
-    skipped: list[str] | None = None,
+    skipped: list[str],
 ) -> None:
     if not hasattr(desired, "__dataclass_fields__"):
         if desired is None:
-            if skipped is not None:
-                skipped.append(prefix)
+            skipped.append(prefix)
             return
         if desired != actual:
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
@@ -575,6 +574,7 @@ def _diff_rulesets(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
     items: list[DiffItem],
+    skipped: list[str],
 ) -> None:
     desired_by_name = {r.name: r for r in desired}
     actual_by_name = {r.name: r for r in actual}
@@ -594,6 +594,7 @@ def _diff_rulesets(
                 desired_by_name[name],
                 actual_by_name[name],
                 items,
+                skipped,
             )
 
     for name in actual_by_name:
@@ -620,7 +621,7 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
         items,
         skipped,
     )
-    _diff_rulesets(desired.rulesets, actual.rulesets, items)
+    _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped)
     return ConfigDiff(items=items, skipped=skipped)
 
 
