@@ -234,7 +234,7 @@ entirely in the wrapper closes the whole escape hatch.
 
 Existing VRG tools that call `gh` directly in their Python code
 (`vrg-submit-pr`, `vrg-merge-when-green`, `vrg-wait-until-green`,
-`vrg-ensure-label`, `vrg-github-config`, `vrg-finalize-repo`)
+`vrg-ensure-label`, `vrg-github-repo-config`, `vrg-finalize-repo`)
 bypass the wrapper because they are already mechanized. The
 wrapper only constrains agent-initiated `gh` calls via the
 `Bash` tool.
