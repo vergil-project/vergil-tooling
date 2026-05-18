@@ -544,6 +544,7 @@ class DiffItem:
 @dataclass
 class ConfigDiff:
     items: list[DiffItem] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
 
     def is_compliant(self) -> bool:
         return len(self.items) == 0
@@ -554,9 +555,12 @@ def _diff_dataclass(
     desired: object,
     actual: object,
     items: list[DiffItem],
+    skipped: list[str] | None = None,
 ) -> None:
     if not hasattr(desired, "__dataclass_fields__"):
         if desired is None:
+            if skipped is not None:
+                skipped.append(prefix)
             return
         if desired != actual:
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
@@ -564,7 +568,7 @@ def _diff_dataclass(
     for field_name in cast("dict[str, object]", desired.__dataclass_fields__):
         d_val = getattr(desired, field_name)
         a_val = getattr(actual, field_name)
-        _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items)
+        _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items, skipped)
 
 
 def _diff_rulesets(
@@ -606,16 +610,18 @@ def _diff_rulesets(
 def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     """Compare desired vs actual state and return structured diff."""
     items: list[DiffItem] = []
-    _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items)
-    _diff_dataclass("security", desired.security, actual.security, items)
+    skipped: list[str] = []
+    _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items, skipped)
+    _diff_dataclass("security", desired.security, actual.security, items, skipped)
     _diff_dataclass(
         "actions_permissions",
         desired.actions_permissions,
         actual.actions_permissions,
         items,
+        skipped,
     )
     _diff_rulesets(desired.rulesets, actual.rulesets, items)
-    return ConfigDiff(items=items)
+    return ConfigDiff(items=items, skipped=skipped)
 
 
 # ---------------------------------------------------------------------------

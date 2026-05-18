@@ -937,6 +937,24 @@ def test_diff_detects_new_repo_setting_drift() -> None:
     assert "repo_settings.web_commit_signoff_required" in fields
 
 
+def test_diff_records_skipped_security_fields_for_private_repo() -> None:
+    desired = compute_desired_state(_st_config(), visibility="private", is_org=True)
+    actual = compute_desired_state(_st_config(), visibility="private", is_org=True)
+    actual.security.secret_scanning = "enabled"
+    actual.security.secret_scanning_push_protection = "enabled"
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.is_compliant()
+    assert "security.secret_scanning" in diff.skipped
+    assert "security.secret_scanning_push_protection" in diff.skipped
+
+
+def test_diff_public_repo_has_no_security_skipped() -> None:
+    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=state, actual=state)
+    assert diff.is_compliant()
+    assert not any(s.startswith("security.") for s in diff.skipped)
+
+
 # ---------------------------------------------------------------------------
 # Apply tests
 # ---------------------------------------------------------------------------
