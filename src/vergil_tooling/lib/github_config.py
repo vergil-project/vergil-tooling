@@ -42,8 +42,8 @@ class DesiredRepoSettings:
 
 @dataclass
 class DesiredSecuritySettings:
-    secret_scanning: str
-    secret_scanning_push_protection: str
+    secret_scanning: str | None
+    secret_scanning_push_protection: str | None
     vulnerability_alerts: bool
     dependabot_security_updates: str
 
@@ -124,10 +124,11 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
     )
 
 
-def desired_security_settings() -> DesiredSecuritySettings:
+def desired_security_settings(*, visibility: str) -> DesiredSecuritySettings:
+    ghas_available = visibility != "private"
     return DesiredSecuritySettings(
-        secret_scanning="enabled",  # noqa: S106
-        secret_scanning_push_protection="enabled",  # noqa: S106
+        secret_scanning="enabled" if ghas_available else None,  # noqa: S106
+        secret_scanning_push_protection="enabled" if ghas_available else None,  # noqa: S106
         vulnerability_alerts=False,
         dependabot_security_updates="disabled",
     )
@@ -318,7 +319,7 @@ def compute_desired_state(config: StConfig, *, visibility: str, is_org: bool) ->
 
     return DesiredState(
         repo_settings=desired_repo_settings(visibility=visibility, is_org=is_org),
-        security=desired_security_settings(),
+        security=desired_security_settings(visibility=visibility),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
         publish=publish,
@@ -543,6 +544,7 @@ class DiffItem:
 @dataclass
 class ConfigDiff:
     items: list[DiffItem] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
 
     def is_compliant(self) -> bool:
         return len(self.items) == 0
@@ -553,9 +555,11 @@ def _diff_dataclass(
     desired: object,
     actual: object,
     items: list[DiffItem],
+    skipped: list[str],
 ) -> None:
     if not hasattr(desired, "__dataclass_fields__"):
         if desired is None:
+            skipped.append(prefix)
             return
         if desired != actual:
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
@@ -563,13 +567,14 @@ def _diff_dataclass(
     for field_name in cast("dict[str, object]", desired.__dataclass_fields__):
         d_val = getattr(desired, field_name)
         a_val = getattr(actual, field_name)
-        _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items)
+        _diff_dataclass(f"{prefix}.{field_name}", d_val, a_val, items, skipped)
 
 
 def _diff_rulesets(
     desired: list[DesiredRuleset],
     actual: list[DesiredRuleset],
     items: list[DiffItem],
+    skipped: list[str],
 ) -> None:
     desired_by_name = {r.name: r for r in desired}
     actual_by_name = {r.name: r for r in actual}
@@ -589,6 +594,7 @@ def _diff_rulesets(
                 desired_by_name[name],
                 actual_by_name[name],
                 items,
+                skipped,
             )
 
     for name in actual_by_name:
@@ -605,16 +611,18 @@ def _diff_rulesets(
 def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
     """Compare desired vs actual state and return structured diff."""
     items: list[DiffItem] = []
-    _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items)
-    _diff_dataclass("security", desired.security, actual.security, items)
+    skipped: list[str] = []
+    _diff_dataclass("repo_settings", desired.repo_settings, actual.repo_settings, items, skipped)
+    _diff_dataclass("security", desired.security, actual.security, items, skipped)
     _diff_dataclass(
         "actions_permissions",
         desired.actions_permissions,
         actual.actions_permissions,
         items,
+        skipped,
     )
-    _diff_rulesets(desired.rulesets, actual.rulesets, items)
-    return ConfigDiff(items=items)
+    _diff_rulesets(desired.rulesets, actual.rulesets, items, skipped)
+    return ConfigDiff(items=items, skipped=skipped)
 
 
 # ---------------------------------------------------------------------------
@@ -647,20 +655,18 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
 
 
 def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:
+    sa: dict[str, object] = {}
+    if security.secret_scanning is not None:
+        sa["secret_scanning"] = {"status": security.secret_scanning}
+    if security.secret_scanning_push_protection is not None:
+        sa["secret_scanning_push_protection"] = {
+            "status": security.secret_scanning_push_protection,
+        }
+    sa["dependabot_security_updates"] = {"status": security.dependabot_security_updates}
     github.write_json(
         "PATCH",
         f"repos/{repo}",
-        {
-            "security_and_analysis": {
-                "secret_scanning": {"status": security.secret_scanning},
-                "secret_scanning_push_protection": {
-                    "status": security.secret_scanning_push_protection,
-                },
-                "dependabot_security_updates": {
-                    "status": security.dependabot_security_updates,
-                },
-            },
-        },
+        {"security_and_analysis": sa},
     )
     if security.vulnerability_alerts:
         github.write_json("PUT", f"repos/{repo}/vulnerability-alerts", {})

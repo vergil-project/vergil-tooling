@@ -73,10 +73,18 @@ def test_desired_repo_settings_new_hardcoded_values() -> None:
     assert s.web_commit_signoff_required is True
 
 
-def test_desired_security_settings() -> None:
-    s = desired_security_settings()
+def test_desired_security_settings_public() -> None:
+    s = desired_security_settings(visibility="public")
     assert s.secret_scanning == "enabled"  # noqa: S105
     assert s.secret_scanning_push_protection == "enabled"  # noqa: S105
+    assert s.vulnerability_alerts is False
+    assert s.dependabot_security_updates == "disabled"
+
+
+def test_desired_security_settings_private_skips_ghas_features() -> None:
+    s = desired_security_settings(visibility="private")
+    assert s.secret_scanning is None
+    assert s.secret_scanning_push_protection is None
     assert s.vulnerability_alerts is False
     assert s.dependabot_security_updates == "disabled"
 
@@ -929,6 +937,24 @@ def test_diff_detects_new_repo_setting_drift() -> None:
     assert "repo_settings.web_commit_signoff_required" in fields
 
 
+def test_diff_records_skipped_security_fields_for_private_repo() -> None:
+    desired = compute_desired_state(_st_config(), visibility="private", is_org=True)
+    actual = compute_desired_state(_st_config(), visibility="private", is_org=True)
+    actual.security.secret_scanning = "enabled"  # noqa: S105
+    actual.security.secret_scanning_push_protection = "enabled"  # noqa: S105
+    diff = compute_diff(desired=desired, actual=actual)
+    assert diff.is_compliant()
+    assert "security.secret_scanning" in diff.skipped
+    assert "security.secret_scanning_push_protection" in diff.skipped
+
+
+def test_diff_public_repo_has_no_security_skipped() -> None:
+    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=state, actual=state)
+    assert diff.is_compliant()
+    assert not any(s.startswith("security.") for s in diff.skipped)
+
+
 # ---------------------------------------------------------------------------
 # Apply tests
 # ---------------------------------------------------------------------------
@@ -1000,6 +1026,29 @@ def test_apply_security_settings_disables_vuln_alerts() -> None:
     ):
         _apply_security_settings("o/r", sec)
     assert mock_write.call_count == 1
+    mock_del.assert_called_once_with("repos/o/r/vulnerability-alerts")
+
+
+def test_apply_security_settings_skips_none_fields() -> None:
+    from vergil_tooling.lib.github_config import DesiredSecuritySettings
+
+    sec = DesiredSecuritySettings(
+        secret_scanning=None,
+        secret_scanning_push_protection=None,
+        vulnerability_alerts=False,
+        dependabot_security_updates="disabled",
+    )
+    with (
+        patch("vergil_tooling.lib.github_config.github.write_json") as mock_write,
+        patch("vergil_tooling.lib.github_config.github.delete") as mock_del,
+    ):
+        _apply_security_settings("o/r", sec)
+    assert mock_write.call_count == 1
+    body = mock_write.call_args[0][2]
+    sa = body["security_and_analysis"]
+    assert "secret_scanning" not in sa
+    assert "secret_scanning_push_protection" not in sa
+    assert sa["dependabot_security_updates"] == {"status": "disabled"}
     mock_del.assert_called_once_with("repos/o/r/vulnerability-alerts")
 
 

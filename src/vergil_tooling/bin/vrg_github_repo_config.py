@@ -99,10 +99,15 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
     """Print GitHub config diff results for a repo."""
     if diff.is_compliant():
         print(f"  {repo}: compliant")
-        return
-    print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
-    for item in diff.items:
-        print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+    else:
+        print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
+        for item in diff.items:
+            print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+    for field_name in diff.skipped:
+        if field_name.startswith("security."):
+            print(
+                f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)"
+            )
 
 
 def _apply_repo(repo: str, config: StConfig) -> list[str]:
