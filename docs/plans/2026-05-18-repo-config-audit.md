@@ -19,6 +19,9 @@ untouched in this phase.
 
 ### Task 1: Create the CLAUDE.md Consumer Template
 
+**Requirement:** Spec Section 1 — shared template file containing the
+four mandatory CLAUDE.md sections.
+
 **Files:**
 - Create: `src/vergil_tooling/data/claude_md_consumer.md`
 - Edit: `pyproject.toml` (add `"data/*.md"` to package-data glob)
@@ -43,128 +46,215 @@ Write a quick smoke test or manually verify that
 `importlib.resources` (or the chosen loading mechanism) can read
 the template from the installed package.
 
-### Task 2: Build the Local Audit Library
+### Task 2: Build the Local Audit Library (TDD)
+
+**Requirement:** Spec Section 3 — all seven local filesystem checks,
+implemented as `audit_local_config(repo_root: Path) -> ConfigDiff`.
 
 **Files:**
 - Create: `src/vergil_tooling/lib/repo_config.py`
+- Create: `tests/vergil_tooling/test_repo_config.py`
 
-- [ ] **Step 1: Implement `audit_local_config()`**
-
-Create `src/vergil_tooling/lib/repo_config.py` with the public
-entry point:
+Start by creating both files. The lib module needs the public entry
+point signature and imports:
 
 ```python
+from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
 ```
 
-Import `ConfigDiff` and `DiffItem` from
-`vergil_tooling.lib.github_config`.
+Each cycle below adds one check. Use `tmp_path` fixtures throughout
+— no mocks, no API calls. All checks are pure filesystem operations.
 
-- [ ] **Step 2: Implement `_check_vergil_toml()`**
+#### Cycle 1: `_check_vergil_toml()` — field prefix `local.vergil_toml`
 
-Check that `vergil.toml` exists at the repo root. If present,
-delegate to the existing `read_config()` for field validation.
-Field prefix: `local.vergil_toml`.
+##### RED
+- [ ] Write tests for: missing file, malformed TOML, missing
+  required fields, valid file.
+- Expected failure: no implementation yet, all tests fail.
+- If any passes unexpectedly: the fixture setup is wrong or the
+  test isn't actually calling the check.
 
-- [ ] **Step 3: Implement `_check_githooks()`**
+##### GREEN
+- [ ] Implement `_check_vergil_toml()`. Check file exists at repo
+  root. If present, delegate to existing `read_config()` for field
+  validation.
+- Constraints: reuse `read_config()` — do not duplicate its
+  validation logic.
 
-Check that `.githooks/pre-commit` exists.
-Field prefix: `local.githooks_pre_commit`.
+##### REFACTOR
+- [ ] Review: is the DiffItem output clear about what's missing
+  vs. what's malformed? Adjust expected/actual messages if needed.
 
-- [ ] **Step 4: Implement `_check_claude_md()`**
+#### Cycle 2: `_check_githooks()` — field prefix `local.githooks_pre_commit`
 
-Read the template from package data. Read the repo's `CLAUDE.md`.
-Check whether the template text appears as a verbatim contiguous
-substring. Field prefix: `local.claude_md`.
+##### RED
+- [ ] Write tests for: missing `.githooks/pre-commit`, present.
+- Expected failure: function not implemented.
 
-- [ ] **Step 5: Implement `_check_claude_settings()`**
+##### GREEN
+- [ ] Implement `_check_githooks()`. Check file exists.
 
-Check `.claude/settings.json` exists, is valid JSON, is an object.
-Then check:
-- `extraKnownMarketplaces.vergil-marketplace` configured with
-  source repo `vergil-project/vergil-claude-plugin`
-  (field: `local.claude_settings.marketplace`)
-- `enabledPlugins.vergil@vergil-marketplace` is `true`
-  (field: `local.claude_settings.plugin`)
-- `permissions.deny` contains all four required rules:
-  `Bash(git *)`, `Bash(*/git *)`, `Bash(gh *)`, `Bash(*/gh *)`
-  (field: `local.claude_settings.deny_rules`)
+##### REFACTOR
+- [ ] Minimal — this is a simple existence check.
 
-### Task 3: Write Tests for the Local Audit Library
+#### Cycle 3: `_check_claude_md()` — field prefix `local.claude_md`
 
-**Files:**
-- Create: `tests/vergil_tooling/test_repo_config.py`
+##### RED
+- [ ] Write tests for: missing file, file without template block,
+  file with template block present (compliant), file with
+  partial/modified template (non-compliant). Test that exact
+  match is enforced — a single character difference must fail.
+- Expected failure: function not implemented.
+- If the partial-template test passes unexpectedly: the substring
+  match is too loose.
 
-- [ ] **Step 1: Write `vergil.toml` tests**
+##### GREEN
+- [ ] Implement `_check_claude_md()`. Load template from package
+  data. Read repo's CLAUDE.md. Check verbatim substring match.
 
-Test cases: missing file, malformed TOML, missing required fields,
-valid file. Use `tmp_path` fixtures — no mocks, no API calls.
+##### REFACTOR
+- [ ] Verify the template loading mechanism works correctly with
+  `importlib.resources`. Ensure the template file from Task 1
+  loads without path issues.
 
-- [ ] **Step 2: Write `.githooks` tests**
+#### Cycle 4: `_check_claude_settings()` — field prefixes `local.claude_settings.*`
 
-Test cases: missing, present.
+##### RED
+- [ ] Write tests for: missing file, invalid JSON, not an object,
+  missing marketplace config, wrong marketplace repo, plugin not
+  enabled, missing deny rules, partial deny rules (only two of
+  four), all four deny rules present.
+- [ ] Include wrong-type edge cases for each nested field:
+  marketplace not an object, source not an object, plugins not
+  an object, permissions not an object, deny not a list.
+- Expected failure: function not implemented.
 
-- [ ] **Step 3: Write `CLAUDE.md` tests**
+##### GREEN
+- [ ] Implement `_check_claude_settings()`. Check file exists, is
+  valid JSON, is an object. Then check:
+  - `extraKnownMarketplaces.vergil-marketplace` configured with
+    source repo `vergil-project/vergil-claude-plugin`
+    (field: `local.claude_settings.marketplace`)
+  - `enabledPlugins.vergil@vergil-marketplace` is `true`
+    (field: `local.claude_settings.plugin`)
+  - `permissions.deny` contains all four required rules:
+    `Bash(git *)`, `Bash(*/git *)`, `Bash(gh *)`, `Bash(*/gh *)`
+    (field: `local.claude_settings.deny_rules`)
 
-Test cases: missing file, file without template block, file with
-template block present (compliant), file with partial/modified
-template (non-compliant). Test that exact match is enforced — a
-single character difference must fail.
+##### REFACTOR
+- [ ] Look for repeated JSON path traversal patterns. If multiple
+  sub-checks do similar nested-key lookups with type guards,
+  extract a helper.
 
-- [ ] **Step 4: Write `.claude/settings.json` tests**
+#### Cycle 5: `audit_local_config()` integration
 
-Test cases: missing file, invalid JSON, not an object, missing
-marketplace config, wrong marketplace repo, plugin not enabled,
-missing deny rules, partial deny rules, all four deny rules
-present. Include wrong-type edge cases for each nested field
-(marketplace not an object, source not an object, plugins not an
-object, permissions not an object, deny not a list).
+##### RED
+- [ ] Write integration tests: empty directory reports all checks
+  as missing/failed, fully compliant directory passes all checks.
+- Expected failure: public entry point doesn't call individual
+  checks yet.
 
-- [ ] **Step 5: Write integration tests**
+##### GREEN
+- [ ] Wire all four check functions into `audit_local_config()`.
+  Return a single `ConfigDiff` combining all results.
 
-Test cases: empty directory reports all missing, fully compliant
-repo passes.
+##### REFACTOR
+- [ ] Review composition: are the checks cleanly independent? Does
+  the ConfigDiff aggregate correctly? Ensure no check short-circuits
+  the others.
 
-- [ ] **Step 6: Run validation**
+#### Phase 1 validation
 
-```bash
-vrg-docker-run -- uv run vrg-validate
-```
-
-All tests must pass. 100% coverage on `repo_config.py`.
+- [ ] Run `vrg-docker-run -- uv run vrg-validate`. All tests must
+  pass. 100% coverage on `repo_config.py`.
 
 ---
 
 ## Phase 2 — Rename CLI and Integrate
 
-### Task 4: Create `vrg-github-repo-config`
+### Task 3: Create `vrg-github-repo-config` (TDD)
+
+**Requirement:** Spec Section 2 — renamed CLI tool combining local
+filesystem checks with existing GitHub API checks.
 
 **Files:**
 - Create: `src/vergil_tooling/bin/vrg_github_repo_config.py`
+- Create: `tests/vergil_tooling/test_vrg_github_repo_config.py`
 - Edit: `pyproject.toml` (add entry point)
 
-- [ ] **Step 1: Create the new CLI module**
+Start by copying `src/vergil_tooling/bin/vrg_github_config.py` to
+the new path and adding the entry point in `pyproject.toml`:
 
-Copy `src/vergil_tooling/bin/vrg_github_config.py` to
-`src/vergil_tooling/bin/vrg_github_repo_config.py`. Apply these
-changes:
-- Import `audit_local_config` from `vergil_tooling.lib.repo_config`
-- Drop `--owner`/`--project` flags
-- `audit`/`diff` modes: run local checks first via
-  `audit_local_config(Path.cwd())`, print results, then run
-  GitHub API checks
-- `apply` mode: run local checks (report only), then run GitHub
-  API apply. Return 1 if local issues remain after applying
-  GitHub fixes.
-
-- [ ] **Step 2: Add entry point**
-
-In `pyproject.toml`, add:
 ```
 vrg-github-repo-config = "vergil_tooling.bin.vrg_github_repo_config:main"
 ```
 
-### Task 5: Delete `vrg-github-config`
+Then apply changes through TDD cycles. Use mocks for GitHub API
+calls — only local audit logic is tested against real filesystems.
+
+#### Cycle 1: Argument parsing
+
+##### RED
+- [ ] Write tests for: `audit`/`diff`/`apply` with `--repo`,
+  `--config` flag, no arguments (defaults), missing subcommand
+  fails. Verify `--owner`/`--project` are rejected.
+- Expected failure: copied CLI still accepts `--owner`/`--project`.
+
+##### GREEN
+- [ ] Drop `--owner`/`--project` flags from the argument parser.
+  Keep `--repo` and `--config`.
+
+##### REFACTOR
+- [ ] Clean up any dead code left from the project-wide scanning
+  logic (imports, helper functions that only served `--owner`/
+  `--project`).
+
+#### Cycle 2: Combined local + GitHub audit
+
+##### RED
+- [ ] Write tests for: both compliant returns 0, local
+  non-compliant returns 1, GitHub non-compliant returns 1, `diff`
+  always returns 0.
+- Expected failure: local checks not yet wired into audit flow.
+
+##### GREEN
+- [ ] Import `audit_local_config` from
+  `vergil_tooling.lib.repo_config`. In `audit`/`diff` modes, run
+  local checks first via `audit_local_config(Path.cwd())`, print
+  results, then run GitHub API checks. Follow the output format
+  in spec Section 4 (local results before GitHub,
+  `compliant`/`NON-COMPLIANT` labels with field-level diffs).
+
+##### REFACTOR
+- [ ] Review output formatting. Ensure local and GitHub results
+  are visually distinct and the combined exit code logic is clean.
+
+#### Cycle 3: Apply mode
+
+##### RED
+- [ ] Write tests for: all compliant does nothing, non-compliant
+  applies GitHub fixes, apply returns 1 when local issues remain
+  after GitHub fixes are applied.
+- Expected failure: apply mode doesn't check local config yet.
+
+##### GREEN
+- [ ] In `apply` mode: run local checks (read-only report), then
+  run GitHub API apply. Return exit code 1 if local issues remain.
+
+##### REFACTOR
+- [ ] Look for shared logic between audit/diff/apply modes that
+  can be consolidated. Check that helper functions
+  (`_resolve_repos`, `_fetch_remote_config`, `_audit_repo`,
+  `_apply_repo`) are clean after the changes.
+
+#### CLI validation
+
+- [ ] Run `vrg-docker-run -- uv run vrg-validate`. All tests must
+  pass. 100% coverage on both new files.
+
+### Task 4: Delete `vrg-github-config`
 
 **Files:**
 - Delete: `src/vergil_tooling/bin/vrg_github_config.py`
@@ -188,43 +278,10 @@ Remove `tests/vergil_tooling/test_vrg_github_config.py`.
 Search the codebase for any remaining references to
 `vrg-github-config` or `vrg_github_config` and update them.
 
-### Task 6: Write Tests for the New CLI
+### Task 5: Update vergil-tooling's CLAUDE.md
 
-**Files:**
-- Create: `tests/vergil_tooling/test_vrg_github_repo_config.py`
-
-- [ ] **Step 1: Write argument parsing tests**
-
-Test cases: `audit`/`diff`/`apply` with `--repo`, `--config` flag,
-no arguments (defaults), missing command fails. Verify
-`--owner`/`--project` are not accepted.
-
-- [ ] **Step 2: Write local + GitHub combined audit tests**
-
-Test cases: both compliant returns 0, local non-compliant returns
-1, GitHub non-compliant returns 1, `diff` always returns 0.
-Use mocks for GitHub API calls.
-
-- [ ] **Step 3: Write apply mode tests**
-
-Test cases: all compliant does nothing, non-compliant applies
-GitHub fixes, apply reports legacy protection removal, apply
-returns 1 when local issues remain.
-
-- [ ] **Step 4: Write helper function tests**
-
-Test `_resolve_repos`, `_fetch_remote_config`,
-`_load_local_config`, `_audit_repo`, `_apply_repo`.
-
-- [ ] **Step 5: Run validation**
-
-```bash
-vrg-docker-run -- uv run vrg-validate
-```
-
-All tests must pass. 100% coverage on both new files.
-
-### Task 7: Update vergil-tooling's CLAUDE.md
+**Requirement:** Spec Section 1 (vergil-tooling exception) — template
+block inserted verbatim, followed by the `uv run` override note.
 
 **Files:**
 - Edit: `CLAUDE.md`
@@ -246,10 +303,11 @@ Immediately after the validation section, add:
 
 - [ ] **Step 3: Verify self-audit passes**
 
-Run `vrg-github-repo-config audit --local-only` (or the equivalent
-test) from vergil-tooling and confirm the CLAUDE.md check passes.
+Run `vrg-github-repo-config audit` from vergil-tooling and confirm
+the CLAUDE.md template check passes alongside the other local and
+GitHub checks.
 
-### Task 8: Final Validation
+### Task 6: Final Validation
 
 - [ ] **Step 1: Full validation**
 
