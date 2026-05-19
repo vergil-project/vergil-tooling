@@ -75,6 +75,15 @@ class TestGithooks:
         fields = {i.field for i in diff.items}
         assert "local.githooks_pre_commit" not in fields
 
+    def test_hooks_path_not_configured(self, tmp_path: Path) -> None:
+        (tmp_path / ".githooks").mkdir()
+        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\n")
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.git_config.hooks_path" in fields
+        match = next(i for i in diff.items if i.field == "local.git_config.hooks_path")
+        assert match.actual == "not configured"
+
 
 class TestClaudeMd:
     def test_missing_file(self, tmp_path: Path) -> None:

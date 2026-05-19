@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib.resources
 import json
+import subprocess
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib.config import ConfigError, read_config
@@ -97,6 +98,23 @@ def _check_githooks(repo_root: Path, items: list[DiffItem]) -> None:
                 field="local.githooks_pre_commit",
                 expected="present",
                 actual="missing",
+            )
+        )
+        return
+
+    result = subprocess.run(
+        ["git", "config", "core.hooksPath"],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    actual = result.stdout.strip()
+    if actual != ".githooks":
+        items.append(
+            DiffItem(
+                field="local.git_config.hooks_path",
+                expected=".githooks",
+                actual=actual or "not configured",
             )
         )
 
