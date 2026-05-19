@@ -684,6 +684,8 @@
       
         
       
+        
+      
     
     
     
@@ -736,6 +738,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.22/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.22
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6180,8 +6210,8 @@ shell expansion, no pipes, no redirection.</p>
 </tr>
 <tr>
 <td><code>branch</code></td>
-<td><code>-D</code>, <code>--force</code></td>
-<td>Safe delete (<code>-d</code>) allowed</td>
+<td><code>--force</code>; <code>-D</code> conditional</td>
+<td><code>-d</code> allowed; <code>-D</code> allowed when upstream is <code>[gone]</code></td>
 </tr>
 <tr>
 <td><code>ls-remote</code></td>
@@ -6215,8 +6245,8 @@ shell expansion, no pipes, no redirection.</p>
 </tr>
 <tr>
 <td><code>push</code></td>
-<td><code>--force</code>, <code>-f</code>, <code>--force-with-lease</code></td>
-<td>Normal push only</td>
+<td><code>--force</code>, <code>-f</code>; <code>--force-with-lease</code> conditional</td>
+<td><code>--force-with-lease</code> allowed on non-protected branches</td>
 </tr>
 <tr>
 <td><code>fetch</code></td>
