@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.20] - 2026-05-19
+
+### Chores
+
+- bump version to 2.0.20
+
+### Features
+
+- add exact-match allowlist to vrg-git for specific denied-subcommand overrides
+
 ## [2.0.19] - 2026-05-19
 
 ### Chores
