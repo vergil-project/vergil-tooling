@@ -224,6 +224,67 @@ def test_is_protected_branch_feature() -> None:
         assert _is_protected_branch() is False
 
 
+# -- helper: _is_upstream_gone ------------------------------------------------
+
+
+def test_is_upstream_gone_true() -> None:
+    vv_output = (
+        "  develop                  abc1234 [origin/develop] latest commit\n"
+        "  feature/123-foo          def5678 [origin/feature/123-foo: gone] old commit\n"
+        "* feature/827-force-push   ghi9012 [origin/feature/827-force-push] current\n"
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is True
+
+
+def test_is_upstream_gone_active_upstream() -> None:
+    vv_output = (
+        "  feature/123-foo abc1234 [origin/feature/123-foo] some commit\n"
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_no_upstream() -> None:
+    vv_output = "  feature/123-foo abc1234 some commit with no tracking\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_branch_not_found() -> None:
+    vv_output = "  develop abc1234 [origin/develop] latest commit\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/nonexistent") is False
+
+
 # -- flag deny lists ----------------------------------------------------------
 
 

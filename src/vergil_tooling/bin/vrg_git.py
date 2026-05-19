@@ -78,6 +78,23 @@ def _is_protected_branch() -> bool:
     return any(branch.startswith(p) for p in _PROTECTED_PREFIXES)
 
 
+def _is_upstream_gone(branch_name: str) -> bool:
+    result = subprocess.run(
+        ["git", "branch", "-vv"],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for line in result.stdout.splitlines():
+        stripped = line.lstrip("* ").strip()
+        if not stripped:
+            continue
+        parts = stripped.split(None, 1)
+        if parts and parts[0] == branch_name:
+            return ": gone]" in line
+    return False
+
+
 def _log_path() -> Path:
     return Path.home() / ".local" / "share" / "vergil" / "vrg-git.log"
 
