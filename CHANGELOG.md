@@ -1357,3 +1357,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add validate_local.sh dispatch architecture (#34)
 - validate issue-linked branch names in pre-commit hook (#44)
 - add publish workflow for automated tagging and version bumps (#46)
+
