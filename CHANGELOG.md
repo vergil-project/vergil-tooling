@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.17] - 2026-05-19
+
+### Chores
+
+- bump version to 2.0.17
+
+### Features
+
+- add vrg-scorecard with help output
+- register vrg-scorecard console script entry point
+
+### Testing
+
+- add token injection and docker exec tests
+- add image prefix resolution tests
+- verify token failure propagation
+
 ## [2.0.16] - 2026-05-18
 
 ### Bug fixes
@@ -14,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.16
+- remove co-authors section, normalize vergil dep to v2.0
 
 ## [2.0.15] - 2026-05-18
 
@@ -1308,4 +1326,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add validate_local.sh dispatch architecture (#34)
 - validate issue-linked branch names in pre-commit hook (#44)
 - add publish workflow for automated tagging and version bumps (#46)
-
