@@ -36,6 +36,10 @@ _ALLOWED_COMPOUND: dict[str, set[str]] = {
     "worktree": {"add", "list", "remove"},
 }
 
+_ALLOWED_EXACT: set[tuple[str, ...]] = {
+    ("config", "core.hooksPath", ".githooks"),
+}
+
 _DENIED: dict[str, str] = {
     "commit": "Use vrg-commit instead of git commit.",
     "reset": "git reset is denied by vrg-git.",
@@ -104,6 +108,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     subcmd = argv[0]
+
+    if tuple(argv) in _ALLOWED_EXACT:
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+        _log(argv, "allowed")
+        return result.returncode
 
     if subcmd in _DENIED:
         msg = _DENIED[subcmd]
