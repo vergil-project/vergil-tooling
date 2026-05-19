@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_scorecard import main
 
@@ -20,3 +22,66 @@ def test_help_flag(capsys: pytest.CaptureFixture[str]) -> None:
 def test_h_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["-h"]) == 0
     assert "usage: vrg-scorecard" in capsys.readouterr().out
+
+
+# -- token injection and docker exec ------------------------------------------
+
+
+def test_injects_token_and_calls_execvp(tmp_path: Path) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="test-token-123"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_scorecard.os.execvp") as mock_exec,
+    ):
+        mock_build.return_value = [
+            "docker", "run", "--rm",
+            "ghcr.io/vergil-project/prod-base:latest",
+            "scorecard", "--repo=github.com/org/repo",
+        ]
+        main(["--repo=github.com/org/repo"])
+
+    args = mock_exec.call_args[0][1]
+    assert mock_exec.call_args[0][0] == "docker"
+    token_idx = args.index("-e")
+    assert args[token_idx + 1] == "GH_TOKEN=test-token-123"
+    image_idx = args.index("ghcr.io/vergil-project/prod-base:latest")
+    assert token_idx < image_idx
+    assert args[-2:] == ["scorecard", "--repo=github.com/org/repo"]
+
+
+def test_build_docker_args_receives_correct_image_and_command(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+    ):
+        mock_build.return_value = [
+            "docker", "run", "--rm", image,
+            "scorecard", "--repo=github.com/org/repo", "--format=json",
+        ]
+        main(["--repo=github.com/org/repo", "--format=json"])
+
+    call_args = mock_build.call_args
+    assert call_args[0][0] == tmp_path
+    assert call_args[0][1] == image
+    assert call_args[0][2] == ["scorecard", "--repo=github.com/org/repo", "--format=json"]
+
+
+def test_no_args_still_runs_scorecard(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
+        main([])
+
+    assert mock_build.call_args[0][2] == ["scorecard"]
