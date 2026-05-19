@@ -128,6 +128,7 @@ def _mock_github_noncompliant() -> ConfigDiff:
 
 def test_audit_both_compliant_returns_zero() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -138,6 +139,7 @@ def test_audit_both_compliant_returns_zero() -> None:
 
 def test_audit_local_noncompliant_returns_one() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -148,6 +150,7 @@ def test_audit_local_noncompliant_returns_one() -> None:
 
 def test_audit_github_noncompliant_returns_one() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -158,6 +161,7 @@ def test_audit_github_noncompliant_returns_one() -> None:
 
 def test_diff_always_returns_zero() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -168,6 +172,7 @@ def test_diff_always_returns_zero() -> None:
 
 def test_audit_runs_local_checks_first(capsys: pytest.CaptureFixture[str]) -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -185,6 +190,7 @@ def test_audit_runs_local_checks_first(capsys: pytest.CaptureFixture[str]) -> No
 
 def test_apply_all_compliant_does_nothing() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -198,6 +204,7 @@ def test_apply_all_compliant_does_nothing() -> None:
 
 def test_apply_github_noncompliant_applies() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -211,6 +218,7 @@ def test_apply_github_noncompliant_applies() -> None:
 
 def test_apply_returns_one_when_local_issues_remain() -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -222,6 +230,7 @@ def test_apply_returns_one_when_local_issues_remain() -> None:
 
 def test_apply_reports_legacy_protection_removed(capsys: pytest.CaptureFixture[str]) -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -242,6 +251,7 @@ def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None
         ],
     )
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -257,6 +267,7 @@ def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None
 
 def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[str]) -> None:
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -272,6 +283,7 @@ def test_audit_non_security_skipped_fields_not_printed(
 ) -> None:
     diff = ConfigDiff(items=[], skipped=["repo_settings.allow_forking"])
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -305,6 +317,7 @@ def test_config_flag_bypasses_remote_fetch(tmp_path: Path) -> None:
     p.write_bytes(_VALID_TOML)
 
     with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
@@ -403,3 +416,92 @@ def test_apply_repo_calls_pipeline() -> None:
     mock_fetch.assert_called_once_with("o/r")
     mock_apply.assert_called_once()
     assert result == []
+
+
+# -- Local check skip on --repo mismatch --------------------------------------
+
+
+def test_audit_skips_local_checks_on_repo_mismatch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
+        patch(f"{_MODULE}.audit_local_config") as mock_local,
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        result = main(["audit", "--repo", "other/repo"])
+    mock_local.assert_not_called()
+    assert result == 0
+
+
+def test_audit_repo_mismatch_prints_warning_to_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
+        patch(f"{_MODULE}.audit_local_config"),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "other/repo"])
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "other/repo" in captured.err
+
+
+def test_audit_repo_mismatch_reports_local_skipped(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
+        patch(f"{_MODULE}.audit_local_config"),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "other/repo"])
+    output = capsys.readouterr().out
+    assert "local: skipped" in output
+
+
+def test_apply_skips_local_on_repo_mismatch() -> None:
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
+        patch(f"{_MODULE}.audit_local_config") as mock_local,
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
+    ):
+        result = main(["apply", "--repo", "other/repo"])
+    mock_local.assert_not_called()
+    mock_apply.assert_called_once()
+    assert result == 0
+
+
+def test_audit_runs_local_when_repo_matches_cwd() -> None:
+    with (
+        patch(f"{_MODULE}.github.current_repo", return_value="o/r"),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()) as mock_local,
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    mock_local.assert_called_once()
+    assert result == 0
+
+
+def test_audit_skips_local_when_cwd_origin_unavailable() -> None:
+    import subprocess
+
+    with (
+        patch(
+            f"{_MODULE}.github.current_repo",
+            side_effect=subprocess.CalledProcessError(1, "gh"),
+        ),
+        patch(f"{_MODULE}.audit_local_config") as mock_local,
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        result = main(["audit", "--repo", "other/repo"])
+    mock_local.assert_not_called()
+    assert result == 0

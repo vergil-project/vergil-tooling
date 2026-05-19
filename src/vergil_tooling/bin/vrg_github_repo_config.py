@@ -118,13 +118,34 @@ def _apply_repo(repo: str, config: StConfig) -> list[str]:
     return apply_desired_state(repo, desired)
 
 
+def _cwd_matches_repo(repo: str) -> bool:
+    """Check whether CWD's git origin matches the target repo."""
+    try:
+        cwd_repo = github.current_repo()
+    except Exception:
+        return False
+    return cwd_repo == repo
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     all_compliant = True
 
-    local_diff = audit_local_config(Path.cwd())
-    _print_local_diff(local_diff)
-    if not local_diff.is_compliant():
+    local_compliant = True
+    if args.repo and not _cwd_matches_repo(args.repo):
+        print(
+            f"\n  WARNING: --repo {args.repo} does not match the current directory's "
+            f"git remote.\n"
+            f"  Local checks skipped — cd into the repo's checkout to audit local files.\n",
+            file=sys.stderr,
+        )
+        print("  local: skipped (not in local checkout)")
+    else:
+        local_diff = audit_local_config(Path.cwd())
+        _print_local_diff(local_diff)
+        local_compliant = local_diff.is_compliant()
+
+    if not local_compliant:
         all_compliant = False
 
     repo = _resolve_repo(args)
@@ -150,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"  {repo}: applied")
 
-    if not local_diff.is_compliant():
+    if not local_compliant:
         return 1
 
     return 0
