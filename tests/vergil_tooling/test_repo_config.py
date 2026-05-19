@@ -301,6 +301,13 @@ class TestClaudeSettings:
 
 def _write_compliant_repo(root: Path) -> None:
     """Scaffold a fully compliant repo structure."""
+    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "config", "core.hooksPath", ".githooks"],
+        cwd=root,
+        capture_output=True,
+        check=True,
+    )
     (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
     (root / ".githooks").mkdir()
     (root / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
@@ -318,6 +325,7 @@ class TestIntegration:
         assert "local.githooks_pre_commit" in fields
         assert "local.claude_md" in fields
         assert "local.claude_settings" in fields
+        assert "local.git_config.hooks_path" not in fields
 
     def test_compliant_repo(self, tmp_path: Path) -> None:
         _write_compliant_repo(tmp_path)
