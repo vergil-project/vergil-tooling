@@ -141,6 +141,14 @@ def test_merge_status_with_empty_review_decision() -> None:
     assert result == {"mergeStateStatus": "BLOCKED", "reviewDecision": ""}
 
 
+def test_merge_status_raises_on_non_dict_response() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        github.merge_status("https://github.com/pr/1")
+
+
 def test_update_branch_calls_api() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",

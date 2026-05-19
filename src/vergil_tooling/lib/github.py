@@ -289,7 +289,9 @@ def merge_status(pr: str) -> dict[str, str]:
         "--json",
         "mergeStateStatus,reviewDecision",
     )
-    assert isinstance(result, dict)
+    if not isinstance(result, dict):
+        msg = f"unexpected API response for pr view {pr}"
+        raise GitHubAPIError(1, f"gh pr view {pr}", msg)
     state = str(result.get("mergeStateStatus", ""))
     review = result.get("reviewDecision")
     return {"mergeStateStatus": state, "reviewDecision": str(review) if review else ""}
