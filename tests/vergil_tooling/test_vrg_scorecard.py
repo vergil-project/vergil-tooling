@@ -85,3 +85,55 @@ def test_no_args_still_runs_scorecard(tmp_path: Path) -> None:
         main([])
 
     assert mock_build.call_args[0][2] == ["scorecard"]
+
+
+# -- image prefix resolution --------------------------------------------------
+
+_TOML_DEV_PREFIX = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+
+[docker]
+image-prefix = "dev"
+"""
+
+
+def test_config_prefix_used(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
+    image = "ghcr.io/vergil-project/dev-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
+        main(["--repo=github.com/org/repo"])
+
+    assert mock_build.call_args[0][1] == "ghcr.io/vergil-project/dev-base:latest"
+
+
+def test_default_prefix_without_config(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
+        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
+        main(["--repo=github.com/org/repo"])
+
+    assert mock_build.call_args[0][1] == "ghcr.io/vergil-project/prod-base:latest"
