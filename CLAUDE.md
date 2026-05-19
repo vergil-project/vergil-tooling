@@ -207,6 +207,7 @@ CLI tools installed as `vrg-*` console scripts:
   (release-workflow use only; normal PRs stay on the honor-system
   manual-merge policy)
 - **`vrg-prepare-release`** — Automate release preparation (branch, changelog, PR)
+- **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
