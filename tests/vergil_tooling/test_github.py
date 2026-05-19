@@ -123,6 +123,24 @@ def test_merge_state_status_returns_behind() -> None:
         assert github.merge_state_status("https://github.com/pr/1") == "BEHIND"
 
 
+def test_merge_status_returns_both_fields() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        return_value={"mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED"},
+    ):
+        result = github.merge_status("https://github.com/pr/1")
+    assert result == {"mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED"}
+
+
+def test_merge_status_with_empty_review_decision() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        return_value={"mergeStateStatus": "BLOCKED", "reviewDecision": ""},
+    ):
+        result = github.merge_status("https://github.com/pr/1")
+    assert result == {"mergeStateStatus": "BLOCKED", "reviewDecision": ""}
+
+
 def test_update_branch_calls_api() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",

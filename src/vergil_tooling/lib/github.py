@@ -277,6 +277,24 @@ def merge_state_status(pr: str) -> str:
     )
 
 
+def merge_status(pr: str) -> dict[str, str]:
+    """Return merge state and review decision for a PR.
+
+    Single API call returning ``{"mergeStateStatus": ..., "reviewDecision": ...}``.
+    """
+    result = read_json(
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "mergeStateStatus,reviewDecision",
+    )
+    assert isinstance(result, dict)
+    state = str(result.get("mergeStateStatus", ""))
+    review = result.get("reviewDecision")
+    return {"mergeStateStatus": state, "reviewDecision": str(review) if review else ""}
+
+
 def current_repo() -> str:
     """Return ``OWNER/REPO`` for the current directory's git remote."""
     return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
