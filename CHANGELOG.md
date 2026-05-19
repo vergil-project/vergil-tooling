@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.19] - 2026-05-19
+
+### Chores
+
+- bump version to 2.0.19
+
+### Documentation
+
+- add documentation, fix type safety, and reach 100% coverage
+
+### Features
+
+- add shared issue-linkage regex module
+- add CLI tool to extract tracking issue from merge commit
+- register console script and add integration test
+
+### Refactoring
+
+- use shared linkage module
+
 ## [2.0.18] - 2026-05-19
 
 ### Bug fixes
