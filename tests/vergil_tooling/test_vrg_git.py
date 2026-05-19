@@ -132,6 +132,46 @@ def test_commit_suggests_vrg_commit(capsys: pytest.CaptureFixture[str]) -> None:
     assert "vrg-commit" in err
 
 
+# -- exact-match allowlist ----------------------------------------------------
+
+
+def test_exact_match_allows_hooks_path() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(["config", "core.hooksPath", ".githooks"])
+    assert rc == 0
+    args = mock_run.call_args[0][0]
+    assert args == ["git", "config", "core.hooksPath", ".githooks"]
+
+
+def test_exact_match_denies_different_value(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["config", "core.hooksPath", "/tmp/evil"]) != 0  # noqa: S108
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_exact_match_denies_other_config(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["config", "user.email", "x@example.com"]) != 0
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_exact_match_denies_bare_config(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["config"]) != 0
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_exact_match_logged(tmp_path: Path) -> None:
+    log_file = tmp_path / "vrg-git.log"
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch("vergil_tooling.bin.vrg_git._log_path", return_value=log_file),
+    ):
+        mock_run.return_value.returncode = 0
+        main(["config", "core.hooksPath", ".githooks"])
+    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
+    assert len(entries) == 1
+    assert entries[0]["result"] == "allowed"
+
+
 # -- flag deny lists ----------------------------------------------------------
 
 
