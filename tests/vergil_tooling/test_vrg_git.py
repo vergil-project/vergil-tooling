@@ -288,8 +288,38 @@ def test_is_upstream_gone_branch_not_found() -> None:
 # -- flag deny lists ----------------------------------------------------------
 
 
-def test_branch_force_delete_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["branch", "-D"]) != 0
+def test_branch_force_delete_allowed_when_upstream_gone(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=True,
+        ),
+    ):
+        mock_run.return_value.returncode = 0
+        rc = main(["branch", "-D", "feature/123-foo"])
+    assert rc == 0
+
+
+def test_branch_force_delete_denied_when_upstream_active(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_upstream_gone",
+        return_value=False,
+    ):
+        rc = main(["branch", "-D", "feature/123-foo"])
+    assert rc != 0
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_branch_force_delete_denied_no_branch_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = main(["branch", "-D"])
+    assert rc != 0
     assert "denied" in capsys.readouterr().err.lower()
 
 
