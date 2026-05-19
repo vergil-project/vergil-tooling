@@ -10,21 +10,10 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 from pathlib import Path
 
-_LINKAGE_RE = re.compile(
-    r"^\s*[-*]?\s*Ref:?\s+"
-    r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
-    re.MULTILINE,
-)
-
-_AUTOCLOSE_RE = re.compile(
-    r"^\s*[-*]?\s*(close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
-    r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
-    re.MULTILINE | re.IGNORECASE,
-)
+from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
@@ -51,7 +40,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         )
         return 1
 
-    if _AUTOCLOSE_RE.search(pr_body):
+    if AUTOCLOSE_RE.search(pr_body):
         print(
             "ERROR: pull request body contains a GitHub auto-close keyword "
             "(close/fix/resolve). Use 'Ref #N' instead. "
@@ -60,7 +49,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         )
         return 1
 
-    if not _LINKAGE_RE.search(pr_body):
+    if not LINKAGE_RE.search(pr_body):
         print(
             "ERROR: pull request body must include primary issue linkage "
             "(Ref #123). Cross-repo references (Ref owner/repo#123) are "
