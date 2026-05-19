@@ -42,14 +42,14 @@ shell expansion, no pipes, no redirection.
 | `log` | — | Read-only |
 | `diff` | — | Read-only |
 | `show` | — | Read-only |
-| `branch` | `-D`, `--force` | Safe delete (`-d`) allowed |
+| `branch` | `--force`; `-D` conditional | `-d` allowed; `-D` allowed when upstream is `[gone]` |
 | `ls-remote` | — | Read-only |
 | `rev-parse` | — | Read-only |
 | `worktree add` | — | Parallel agent work |
 | `worktree list` | — | Read-only |
 | `worktree remove` | — | Cleanup after merge |
 | `add` | — | Staging files |
-| `push` | `--force`, `-f`, `--force-with-lease` | Normal push only |
+| `push` | `--force`, `-f`; `--force-with-lease` conditional | `--force-with-lease` allowed on non-protected branches |
 | `fetch` | — | Read-only |
 | `pull` | — | Fast-forward updates |
 | `checkout` | `-- .`, `-- *` | Specific-file restore allowed |
