@@ -48,8 +48,21 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("Branch is behind base — updating and re-checking...")
         github.update_branch(args.pr)
-    print("All checks passed.")
-    return 0
+    status = github.merge_status(args.pr)
+    if status["mergeStateStatus"] == "CLEAN":
+        print("All checks passed.")
+        return 0
+    state = status["mergeStateStatus"]
+    print(
+        f"All checks passed, but PR is not mergeable ({state}).",
+        file=sys.stderr,
+    )
+    if state == "BLOCKED":
+        review = status["reviewDecision"]
+        if review in ("REVIEW_REQUIRED", "CHANGES_REQUESTED"):
+            print(f"  Review status: {review}", file=sys.stderr)
+        print("  Check branch protection settings.", file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":

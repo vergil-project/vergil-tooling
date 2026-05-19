@@ -23,6 +23,10 @@ def test_main_happy_path_not_behind() -> None:
         patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks") as mock_wait,
         patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "CLEAN", "reviewDecision": ""},
+        ),
     ):
         result = main([_PR])
     assert result == 0
@@ -48,6 +52,10 @@ def test_main_updates_branch_when_behind() -> None:
             side_effect=["BEHIND", "CLEAN"],
         ),
         patch(f"{_MOD}.github.update_branch") as mock_update,
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "CLEAN", "reviewDecision": ""},
+        ),
     ):
         result = main([_PR])
     assert result == 0
@@ -64,6 +72,10 @@ def test_main_updates_branch_multiple_times() -> None:
             side_effect=["BEHIND", "BEHIND", "CLEAN"],
         ),
         patch(f"{_MOD}.github.update_branch") as mock_update,
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "CLEAN", "reviewDecision": ""},
+        ),
     ):
         result = main([_PR])
     assert result == 0
@@ -83,17 +95,111 @@ def test_main_gives_up_after_max_updates() -> None:
     assert result == 1
 
 
-def test_main_succeeds_for_non_behind_states() -> None:
-    for status in ("CLEAN", "DIRTY", "BLOCKED", "UNSTABLE", "UNKNOWN"):
-        with (
-            patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
-            patch(f"{_MOD}.github.wait_for_checks"),
-            patch(f"{_MOD}.github.merge_state_status", return_value=status),
-            patch(f"{_MOD}.github.update_branch") as mock_update,
-        ):
-            result = main([_PR])
-        assert result == 0, f"Expected success for status {status}"
-        mock_update.assert_not_called()
+def test_main_succeeds_only_for_clean() -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "CLEAN", "reviewDecision": ""},
+        ),
+        patch(f"{_MOD}.github.update_branch") as mock_update,
+    ):
+        result = main([_PR])
+    assert result == 0
+    mock_update.assert_not_called()
+
+
+def test_main_fails_for_blocked_with_review_required(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="BLOCKED"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "BLOCKED", "reviewDecision": "REVIEW_REQUIRED"},
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "BLOCKED" in err
+    assert "REVIEW_REQUIRED" in err
+    assert "branch protection" in err.lower()
+
+
+def test_main_fails_for_blocked_without_actionable_review(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="BLOCKED"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "BLOCKED", "reviewDecision": "APPROVED"},
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "BLOCKED" in err
+    assert "APPROVED" not in err
+    assert "branch protection" in err.lower()
+
+
+def test_main_fails_for_dirty(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="DIRTY"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "DIRTY", "reviewDecision": ""},
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    assert "DIRTY" in capsys.readouterr().err
+
+
+def test_main_fails_for_unstable(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="UNSTABLE"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "UNSTABLE", "reviewDecision": ""},
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    assert "UNSTABLE" in capsys.readouterr().err
+
+
+def test_main_fails_for_unknown(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="UNKNOWN"),
+        patch(
+            f"{_MOD}.github.merge_status",
+            return_value={"mergeStateStatus": "UNKNOWN", "reviewDecision": ""},
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    assert "UNKNOWN" in capsys.readouterr().err
 
 
 def test_main_fails_fast_on_merge_conflicts(

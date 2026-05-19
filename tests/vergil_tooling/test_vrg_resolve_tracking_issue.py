@@ -6,17 +6,27 @@ import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_resolve_tracking_issue import main, parse_args
+from vergil_tooling.bin.vrg_resolve_tracking_issue import (
+    _extract_pr_number,
+    main,
+    parse_args,
+)
 
 if TYPE_CHECKING:
     import pytest
 
 _MOD = "vergil_tooling.bin.vrg_resolve_tracking_issue"
 
+_PR_BODY_WITH_REF = {"body": "## Summary\n\nRef #100\n"}
+
+
+# --- parse_args ---
+
 
 def test_parse_args_defaults() -> None:
     args = parse_args([])
     assert args.commit == "HEAD"
+    assert args.pr is None
 
 
 def test_parse_args_custom_commit() -> None:
@@ -24,17 +34,46 @@ def test_parse_args_custom_commit() -> None:
     assert args.commit == "abc123"
 
 
-def test_happy_path(capsys: pytest.CaptureFixture[str]) -> None:
+def test_parse_args_pr_flag() -> None:
+    args = parse_args(["--pr", "42"])
+    assert args.pr == 42
+
+
+# --- _extract_pr_number ---
+
+
+def test_extract_merge_commit() -> None:
+    assert _extract_pr_number("Merge pull request #42 from org/branch") == 42
+
+
+def test_extract_squash_merge() -> None:
+    assert _extract_pr_number("feat: add widget (#99)") == 99
+
+
+def test_extract_squash_merge_trailing_whitespace() -> None:
+    assert _extract_pr_number("fix: bug (#7) ") == 7
+
+
+def test_extract_no_match() -> None:
+    assert _extract_pr_number("chore: bump version to 2.0.21") is None
+
+
+def test_extract_merge_takes_priority_over_squash() -> None:
+    subject = "Merge pull request #10 from org/feat (#20)"
+    assert _extract_pr_number(subject) == 10
+
+
+# --- main: merge commit (existing happy path) ---
+
+
+def test_happy_path_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(
             f"{_MOD}.git.read_output",
             return_value="Merge pull request #42 from org/release/1.0.0",
         ),
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(
-            f"{_MOD}.github.read_json",
-            return_value={"body": "## Summary\n\nRef #100\n"},
-        ),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
     ):
         result = main([])
     assert result == 0
@@ -54,11 +93,139 @@ def test_commit_arg_forwarded() -> None:
     mock_git.assert_called_once_with("log", "-1", "--format=%s", "abc123")
 
 
-def test_not_a_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch(f"{_MOD}.git.read_output", return_value="feat: add widget"):
+# --- main: squash merge ---
+
+
+def test_happy_path_squash_merge(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.git.read_output", return_value="feat: add widget (#42)"),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+
+
+# --- main: --pr flag ---
+
+
+def test_pr_flag_bypasses_commit_parsing(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value=_PR_BODY_WITH_REF),
+    ):
+        result = main(["--pr", "42"])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+
+
+# --- main: API fallback ---
+
+
+def test_api_fallback_when_no_pattern_matches(capsys: pytest.CaptureFixture[str]) -> None:
+    api_response = [{"number": 42, "merged_at": "2026-01-01T00:00:00Z"}]
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.github.read_json",
+            side_effect=[api_response, _PR_BODY_WITH_REF],
+        ),
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+
+
+def test_api_fallback_prefers_merged_pr(capsys: pytest.CaptureFixture[str]) -> None:
+    api_response = [
+        {"number": 10, "merged_at": None},
+        {"number": 42, "merged_at": "2026-01-01T00:00:00Z"},
+    ]
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.github.read_json",
+            side_effect=[api_response, _PR_BODY_WITH_REF],
+        ),
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+
+
+def test_api_fallback_uses_first_pr_if_none_merged(capsys: pytest.CaptureFixture[str]) -> None:
+    api_response = [{"number": 55, "merged_at": None}]
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(
+            f"{_MOD}.github.read_json",
+            side_effect=[api_response, _PR_BODY_WITH_REF],
+        ),
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "100"
+
+
+def test_api_fallback_empty_list_reports_all_strategies(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value=[]),
+    ):
         result = main([])
     assert result == 1
-    assert "not a merge commit" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "merge-commit pattern" in err
+    assert "squash-merge pattern" in err
+    assert "GitHub API lookup" in err
+    assert "--pr N" in err
+
+
+def test_api_fallback_non_list_response(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value={"message": "not a list"}),
+    ):
+        result = main([])
+    assert result == 1
+    assert "cannot determine PR" in capsys.readouterr().err
+
+
+def test_api_fallback_non_int_number(capsys: pytest.CaptureFixture[str]) -> None:
+    api_response = [{"number": "not-an-int", "merged_at": "2026-01-01T00:00:00Z"}]
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", "abc123sha"]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value=api_response),
+    ):
+        result = main([])
+    assert result == 1
+    assert "cannot determine PR" in capsys.readouterr().err
+
+
+def test_api_fallback_error_still_reports_strategies(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    api_err = subprocess.CalledProcessError(returncode=1, cmd=["gh"], stderr="fail")
+    with (
+        patch(f"{_MOD}.git.read_output", side_effect=["chore: bump version", api_err]),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+    ):
+        result = main([])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "cannot determine PR" in err
+
+
+# --- main: error paths ---
 
 
 def test_empty_pr_body(capsys: pytest.CaptureFixture[str]) -> None:
@@ -139,7 +306,6 @@ def test_gh_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
-    """Full main() with fixture data matching a real merge commit pattern."""
     commit_subject = "Merge pull request #856 from vergil-project/release/2.0.18"
     pr_body = (
         "## Release 2.0.18\n\n"
@@ -178,5 +344,16 @@ def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
     err = subprocess.CalledProcessError(returncode=128, cmd=["git", "log"], stderr="bad revision")
     with patch(f"{_MOD}.git.read_output", side_effect=err):
         result = main([])
+    assert result == 2
+    assert "failed to" in capsys.readouterr().err.lower()
+
+
+def test_pr_flag_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(returncode=1, cmd=["gh", "api"], stderr="Not Found")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", side_effect=err),
+    ):
+        result = main(["--pr", "42"])
     assert result == 2
     assert "failed to" in capsys.readouterr().err.lower()
