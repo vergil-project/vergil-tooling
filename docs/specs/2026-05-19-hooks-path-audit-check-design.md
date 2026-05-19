@@ -34,8 +34,12 @@ result = subprocess.run(
     ["git", "config", "core.hooksPath"],
     capture_output=True,
     text=True,
+    cwd=repo_root,
 )
 ```
+
+The `cwd=repo_root` ensures the query reads the correct repo's
+local config, not wherever the calling process happens to be.
 
 Compare `result.stdout.strip()` against `.githooks`. Emit a
 `DiffItem` when the value doesn't match:
