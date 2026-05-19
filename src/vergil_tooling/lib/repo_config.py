@@ -102,8 +102,8 @@ def _check_githooks(repo_root: Path, items: list[DiffItem]) -> None:
         )
         return
 
-    result = subprocess.run(
-        ["git", "config", "core.hooksPath"],
+    result = subprocess.run(  # noqa: S603
+        ["git", "config", "core.hooksPath"],  # noqa: S607
         capture_output=True,
         text=True,
         cwd=repo_root,

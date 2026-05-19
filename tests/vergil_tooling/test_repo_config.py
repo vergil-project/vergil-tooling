@@ -86,9 +86,9 @@ class TestGithooks:
         assert match.actual == "not configured"
 
     def test_hooks_path_wrong_value(self, tmp_path: Path) -> None:
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
-        subprocess.run(
-            ["git", "config", "core.hooksPath", "wrong/path"],
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)  # noqa: S603, S607
+        subprocess.run(  # noqa: S603
+            ["git", "config", "core.hooksPath", "wrong/path"],  # noqa: S607
             cwd=tmp_path,
             capture_output=True,
             check=True,
@@ -102,9 +102,9 @@ class TestGithooks:
         assert match.actual == "wrong/path"
 
     def test_hooks_path_configured(self, tmp_path: Path) -> None:
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
-        subprocess.run(
-            ["git", "config", "core.hooksPath", ".githooks"],
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)  # noqa: S603, S607
+        subprocess.run(  # noqa: S603
+            ["git", "config", "core.hooksPath", ".githooks"],  # noqa: S607
             cwd=tmp_path,
             capture_output=True,
             check=True,
@@ -301,9 +301,9 @@ class TestClaudeSettings:
 
 def _write_compliant_repo(root: Path) -> None:
     """Scaffold a fully compliant repo structure."""
-    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)
-    subprocess.run(
-        ["git", "config", "core.hooksPath", ".githooks"],
+    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)  # noqa: S603, S607
+    subprocess.run(  # noqa: S603
+        ["git", "config", "core.hooksPath", ".githooks"],  # noqa: S607
         cwd=root,
         capture_output=True,
         check=True,
