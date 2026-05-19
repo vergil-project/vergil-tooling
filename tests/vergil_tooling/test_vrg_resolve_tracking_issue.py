@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-import pytest
-
 from vergil_tooling.bin.vrg_resolve_tracking_issue import main, parse_args
+
+if TYPE_CHECKING:
+    import pytest
 
 _MOD = "vergil_tooling.bin.vrg_resolve_tracking_issue"
 
@@ -122,9 +124,7 @@ def test_multiple_refs_in_body(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_gh_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    err = subprocess.CalledProcessError(
-        returncode=1, cmd=["gh", "api"], stderr="Not Found"
-    )
+    err = subprocess.CalledProcessError(returncode=1, cmd=["gh", "api"], stderr="Not Found")
     with (
         patch(
             f"{_MOD}.git.read_output",
@@ -140,9 +140,7 @@ def test_gh_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
     """Full main() with fixture data matching a real merge commit pattern."""
-    commit_subject = (
-        "Merge pull request #856 from vergil-project/release/2.0.18"
-    )
+    commit_subject = "Merge pull request #856 from vergil-project/release/2.0.18"
     pr_body = (
         "## Release 2.0.18\n\n"
         "### Changes\n\n"
@@ -162,10 +160,22 @@ def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) ->
     assert capsys.readouterr().out.strip() == "830"
 
 
+def test_unexpected_api_response(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(
+            f"{_MOD}.git.read_output",
+            return_value="Merge pull request #42 from org/release/1.0.0",
+        ),
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.read_json", return_value=[]),
+    ):
+        result = main([])
+    assert result == 2
+    assert "unexpected API response" in capsys.readouterr().err
+
+
 def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
-    err = subprocess.CalledProcessError(
-        returncode=128, cmd=["git", "log"], stderr="bad revision"
-    )
+    err = subprocess.CalledProcessError(returncode=128, cmd=["git", "log"], stderr="bad revision")
     with patch(f"{_MOD}.git.read_output", side_effect=err):
         result = main([])
     assert result == 2

@@ -70,7 +70,11 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    body: str = pr_data.get("body", "") or ""  # type: ignore[union-attr]
+    if not isinstance(pr_data, dict):
+        print(f"ERROR: unexpected API response for PR #{pr_num}", file=sys.stderr)
+        return 2
+    raw_body = pr_data.get("body")
+    body = raw_body if isinstance(raw_body, str) else ""
     if not body:
         print(f"ERROR: PR #{pr_num} has no body", file=sys.stderr)
         return 1
@@ -86,8 +90,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if issue_num is None:
         print(
-            f"ERROR: PR #{pr_num} body has no tracking issue linkage "
-            "(expected 'Ref #N')",
+            f"ERROR: PR #{pr_num} body has no tracking issue linkage (expected 'Ref #N')",
             file=sys.stderr,
         )
         return 1
