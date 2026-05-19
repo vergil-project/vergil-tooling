@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.21] - 2026-05-19
+
+### Bug fixes
+
+- support all merge strategies and add --pr flag
+- exit non-zero when PR is blocked by branch protection (#806)
+
+### Documentation
+
+- add design and plan for wait-until-green merge-state awareness (#806)
+
+### Features
+
+- add merge_status() helper for combined merge state and review decision query
+
+### Styling
+
+- replace assert with isinstance guard for ruff S101 compliance
+
+## [2.0.20] - 2026-05-19
+
+### Chores
+
+- bump version to 2.0.20
+
+### Features
+
+- add exact-match allowlist to vrg-git for specific denied-subcommand overrides
+
 ## [2.0.19] - 2026-05-19
 
 ### Chores
