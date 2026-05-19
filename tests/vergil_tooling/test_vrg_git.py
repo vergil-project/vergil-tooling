@@ -270,6 +270,19 @@ def test_is_upstream_gone_no_upstream() -> None:
         assert _is_upstream_gone("feature/123-foo") is False
 
 
+def test_is_upstream_gone_skips_empty_lines() -> None:
+    vv_output = "\n  feature/123-foo abc1234 [origin/feature/123-foo: gone] old\n\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is True
+
+
 def test_is_upstream_gone_branch_not_found() -> None:
     vv_output = "  develop abc1234 [origin/develop] latest commit\n"
     with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
