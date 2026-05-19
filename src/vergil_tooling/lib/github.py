@@ -277,6 +277,26 @@ def merge_state_status(pr: str) -> str:
     )
 
 
+def merge_status(pr: str) -> dict[str, str]:
+    """Return merge state and review decision for a PR.
+
+    Single API call returning ``{"mergeStateStatus": ..., "reviewDecision": ...}``.
+    """
+    result = read_json(
+        "pr",
+        "view",
+        pr,
+        "--json",
+        "mergeStateStatus,reviewDecision",
+    )
+    if not isinstance(result, dict):
+        msg = f"unexpected API response for pr view {pr}"
+        raise GitHubAPIError(1, f"gh pr view {pr}", msg)
+    state = str(result.get("mergeStateStatus", ""))
+    review = result.get("reviewDecision")
+    return {"mergeStateStatus": state, "reviewDecision": str(review) if review else ""}
+
+
 def current_repo() -> str:
     """Return ``OWNER/REPO`` for the current directory's git remote."""
     return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
