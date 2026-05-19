@@ -130,9 +130,8 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
         for arg in args:
             if arg in ("-f", "--force"):
                 return f"push {arg} is denied by vrg-git."
-            if arg == "--force-with-lease":
-                if _is_protected_branch():
-                    return "push --force-with-lease is denied on a protected branch."
+            if arg == "--force-with-lease" and _is_protected_branch():
+                return "push --force-with-lease is denied on a protected branch."
         return None
 
     if subcmd == "branch":
@@ -145,10 +144,7 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
                     return "branch -D is denied by vrg-git."
                 branch_name = args[idx + 1]
                 if not _is_upstream_gone(branch_name):
-                    return (
-                        f"branch -D is denied (upstream is not gone"
-                        f" for {branch_name})."
-                    )
+                    return f"branch -D is denied (upstream is not gone for {branch_name})."
         return None
 
     for arg in args:

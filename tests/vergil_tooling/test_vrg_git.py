@@ -245,9 +245,7 @@ def test_is_upstream_gone_true() -> None:
 
 
 def test_is_upstream_gone_active_upstream() -> None:
-    vv_output = (
-        "  feature/123-foo abc1234 [origin/feature/123-foo] some commit\n"
-    )
+    vv_output = "  feature/123-foo abc1234 [origin/feature/123-foo] some commit\n"
     with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
         mock_run.return_value = subprocess.CompletedProcess(
             args=[],
