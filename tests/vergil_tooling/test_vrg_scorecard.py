@@ -137,3 +137,17 @@ def test_default_prefix_without_config(tmp_path: Path) -> None:
         main(["--repo=github.com/org/repo"])
 
     assert mock_build.call_args[0][1] == "ghcr.io/vergil-project/prod-base:latest"
+
+
+# -- error handling -----------------------------------------------------------
+
+
+def test_human_token_failure_propagates(tmp_path: Path) -> None:
+    import pytest as _pytest
+
+    with (
+        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_scorecard._human_token", side_effect=SystemExit(1)),
+        _pytest.raises(SystemExit, match="1"),
+    ):
+        main([])
