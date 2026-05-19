@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -172,11 +173,164 @@ def test_exact_match_logged(tmp_path: Path) -> None:
     assert entries[0]["result"] == "allowed"
 
 
+# -- helper: _is_protected_branch --------------------------------------------
+
+
+def test_is_protected_branch_develop() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="develop\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_main() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="main\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_release() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="release/2.0.22\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_feature() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="feature/827-force-push\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is False
+
+
+# -- helper: _is_upstream_gone ------------------------------------------------
+
+
+def test_is_upstream_gone_true() -> None:
+    vv_output = (
+        "  develop                  abc1234 [origin/develop] latest commit\n"
+        "  feature/123-foo          def5678 [origin/feature/123-foo: gone] old commit\n"
+        "* feature/827-force-push   ghi9012 [origin/feature/827-force-push] current\n"
+    )
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is True
+
+
+def test_is_upstream_gone_active_upstream() -> None:
+    vv_output = "  feature/123-foo abc1234 [origin/feature/123-foo] some commit\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_no_upstream() -> None:
+    vv_output = "  feature/123-foo abc1234 some commit with no tracking\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is False
+
+
+def test_is_upstream_gone_skips_empty_lines() -> None:
+    vv_output = "\n  feature/123-foo abc1234 [origin/feature/123-foo: gone] old\n\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/123-foo") is True
+
+
+def test_is_upstream_gone_branch_not_found() -> None:
+    vv_output = "  develop abc1234 [origin/develop] latest commit\n"
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=vv_output,
+        )
+        from vergil_tooling.bin.vrg_git import _is_upstream_gone
+
+        assert _is_upstream_gone("feature/nonexistent") is False
+
+
 # -- flag deny lists ----------------------------------------------------------
 
 
-def test_branch_force_delete_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["branch", "-D"]) != 0
+def test_branch_force_delete_allowed_when_upstream_gone(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=True,
+        ),
+    ):
+        mock_run.return_value.returncode = 0
+        rc = main(["branch", "-D", "feature/123-foo"])
+    assert rc == 0
+
+
+def test_branch_force_delete_denied_when_upstream_active(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_upstream_gone",
+        return_value=False,
+    ):
+        rc = main(["branch", "-D", "feature/123-foo"])
+    assert rc != 0
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_branch_force_delete_denied_no_branch_name(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc = main(["branch", "-D"])
+    assert rc != 0
     assert "denied" in capsys.readouterr().err.lower()
 
 
@@ -199,8 +353,43 @@ def test_push_force_short_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["push", "-f"]) != 0
 
 
-def test_push_force_with_lease_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["push", "--force-with-lease"]) != 0
+def test_push_force_with_lease_allowed_on_feature_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_git._is_protected_branch",
+            return_value=False,
+        ),
+    ):
+        mock_run.return_value.returncode = 0
+        rc = main(["push", "--force-with-lease"])
+    assert rc == 0
+
+
+def test_push_force_with_lease_denied_on_develop(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_protected_branch",
+        return_value=True,
+    ):
+        rc = main(["push", "--force-with-lease"])
+    assert rc != 0
+    assert "protected branch" in capsys.readouterr().err.lower()
+
+
+def test_push_force_with_lease_denied_on_release(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_protected_branch",
+        return_value=True,
+    ):
+        rc = main(["push", "--force-with-lease"])
+    assert rc != 0
+    assert "protected branch" in capsys.readouterr().err.lower()
 
 
 def test_push_normal_allowed() -> None:
