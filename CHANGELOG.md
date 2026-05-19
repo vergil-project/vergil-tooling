@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.22] - 2026-05-19
+
+### Chores
+
+- bump version to 2.0.22
+
+### Documentation
+
+- add design spec for conditional policy relaxation (#827, #845)
+- move design spec to docs/specs/
+- add implementation plan for conditional policy relaxation (#827, #845)
+- update denied-flags table for conditional push and branch policies (#827, #845)
+
+### Features
+
+- add _is_protected_branch helper (#827)
+- add _is_upstream_gone helper (#845)
+- allow --force-with-lease on non-protected branches (#827)
+- allow branch -D when upstream is gone (#845)
+
+### Styling
+
+- fix lint and formatting issues
+
+### Testing
+
+- cover empty-line branch in _is_upstream_gone
+
 ## [2.0.21] - 2026-05-19
 
 ### Bug fixes
