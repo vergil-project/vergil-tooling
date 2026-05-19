@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.18] - 2026-05-19
+
+### Bug fixes
+
+- skip local checks when --repo targets a different repository
+
+### Chores
+
+- bump version to 2.0.18
+
+### Documentation
+
+- add tooling gap analysis and expansion plan
+- add design for core.hooksPath audit check (#825)
+- move hooks-path audit spec to docs/specs/
+- add implementation plan for core.hooksPath audit check (#825)
+
+### Features
+
+- add core.hooksPath audit check (#825)
+
+### Styling
+
+- add noqa annotations for subprocess security lints
+
+### Testing
+
+- add test for wrong core.hooksPath value
+- add test for correctly configured core.hooksPath
+- update integration tests for core.hooksPath check
+
 ## [2.0.17] - 2026-05-19
 
 ### Chores
@@ -1326,3 +1357,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - add validate_local.sh dispatch architecture (#34)
 - validate issue-linked branch names in pre-commit hook (#44)
 - add publish workflow for automated tagging and version bumps (#46)
+
