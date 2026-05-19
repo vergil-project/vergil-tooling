@@ -312,8 +312,43 @@ def test_push_force_short_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["push", "-f"]) != 0
 
 
-def test_push_force_with_lease_denied(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["push", "--force-with-lease"]) != 0
+def test_push_force_with_lease_allowed_on_feature_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_git._is_protected_branch",
+            return_value=False,
+        ),
+    ):
+        mock_run.return_value.returncode = 0
+        rc = main(["push", "--force-with-lease"])
+    assert rc == 0
+
+
+def test_push_force_with_lease_denied_on_develop(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_protected_branch",
+        return_value=True,
+    ):
+        rc = main(["push", "--force-with-lease"])
+    assert rc != 0
+    assert "protected branch" in capsys.readouterr().err.lower()
+
+
+def test_push_force_with_lease_denied_on_release(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_git._is_protected_branch",
+        return_value=True,
+    ):
+        rc = main(["push", "--force-with-lease"])
+    assert rc != 0
+    assert "protected branch" in capsys.readouterr().err.lower()
 
 
 def test_push_normal_allowed() -> None:

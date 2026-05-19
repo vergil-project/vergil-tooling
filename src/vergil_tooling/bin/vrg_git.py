@@ -126,6 +126,15 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
                 return f"checkout -- {arg} is denied by vrg-git."
         return None
 
+    if subcmd == "push":
+        for arg in args:
+            if arg in ("-f", "--force"):
+                return f"push {arg} is denied by vrg-git."
+            if arg == "--force-with-lease":
+                if _is_protected_branch():
+                    return "push --force-with-lease is denied on a protected branch."
+        return None
+
     for arg in args:
         if arg in denied_flags:
             return f"{subcmd} {arg} is denied by vrg-git."
