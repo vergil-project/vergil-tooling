@@ -138,6 +138,30 @@ def test_gh_api_failure(capsys: pytest.CaptureFixture[str]) -> None:
     assert "failed to" in capsys.readouterr().err.lower()
 
 
+def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) -> None:
+    """Full main() with fixture data matching a real merge commit pattern."""
+    commit_subject = (
+        "Merge pull request #856 from vergil-project/release/2.0.18"
+    )
+    pr_body = (
+        "## Release 2.0.18\n\n"
+        "### Changes\n\n"
+        "- fix(repo-config): skip local checks when --repo targets a different repository\n\n"
+        "Ref #830\n"
+    )
+    with (
+        patch(f"{_MOD}.git.read_output", return_value=commit_subject),
+        patch(
+            f"{_MOD}.github.current_repo",
+            return_value="vergil-project/vergil-tooling",
+        ),
+        patch(f"{_MOD}.github.read_json", return_value={"body": pr_body}),
+    ):
+        result = main([])
+    assert result == 0
+    assert capsys.readouterr().out.strip() == "830"
+
+
 def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
     err = subprocess.CalledProcessError(
         returncode=128, cmd=["git", "log"], stderr="bad revision"
