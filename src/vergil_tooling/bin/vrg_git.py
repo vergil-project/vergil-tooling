@@ -61,6 +61,23 @@ _FLAG_DENY: dict[str, set[str]] = {
 }
 
 
+_PROTECTED_BRANCHES: set[str] = {"develop", "main"}
+_PROTECTED_PREFIXES: tuple[str, ...] = ("release/",)
+
+
+def _is_protected_branch() -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    branch = result.stdout.strip()
+    if branch in _PROTECTED_BRANCHES:
+        return True
+    return any(branch.startswith(p) for p in _PROTECTED_PREFIXES)
+
+
 def _log_path() -> Path:
     return Path.home() / ".local" / "share" / "vergil" / "vrg-git.log"
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -170,6 +171,57 @@ def test_exact_match_logged(tmp_path: Path) -> None:
     entries = [json.loads(line) for line in log_file.read_text().splitlines()]
     assert len(entries) == 1
     assert entries[0]["result"] == "allowed"
+
+
+# -- helper: _is_protected_branch --------------------------------------------
+
+
+def test_is_protected_branch_develop() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="develop\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_main() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="main\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_release() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="release/2.0.22\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is True
+
+
+def test_is_protected_branch_feature() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout="feature/827-force-push\n",
+        )
+        from vergil_tooling.bin.vrg_git import _is_protected_branch
+
+        assert _is_protected_branch() is False
 
 
 # -- flag deny lists ----------------------------------------------------------
