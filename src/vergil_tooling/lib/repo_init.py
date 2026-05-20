@@ -604,3 +604,52 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     git.run("add", "-A")
     git.run("commit", "-m", "chore(init): step 4 - config files")
     print("  Config files committed.")
+
+
+def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
+    """Step 5: Generate CI and CD workflow files."""
+    print("Step 5: Generating CI/CD workflows...")
+    wd = ctx.work_dir
+    assert wd is not None
+
+    workflows_dir = wd / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+
+    ci_content = render_ci_workflow(ctx)
+    (workflows_dir / "ci.yml").write_text(ci_content)
+
+    if ctx.publish_docs:
+        cd_content = render_cd_workflow(ctx)
+        (workflows_dir / "cd.yml").write_text(cd_content)
+
+    git.run("add", "-A")
+    git.run("commit", "-m", "chore(init): step 5 - CI/CD workflows")
+    print("  Workflows committed.")
+
+
+def step_docs_site(ctx: RepoInitContext) -> None:
+    """Step 6: Scaffold the docs site."""
+    if not ctx.publish_docs:
+        print("Step 6: Docs disabled, skipping.")
+        return
+
+    print("Step 6: Scaffolding docs site...")
+    wd = ctx.work_dir
+    assert wd is not None
+
+    docs_dir = wd / "docs" / "site" / "docs"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    mkdocs = render_mkdocs_yml(ctx)
+    (wd / "docs" / "site" / "mkdocs.yml").write_text(mkdocs)
+
+    index = render_docs_index(ctx)
+    (docs_dir / "index.md").write_text(index)
+
+    (docs_dir / "getting-started.md").write_text(
+        f"# Getting Started\n\nTODO: Add getting started guide for {ctx.name}.\n"
+    )
+
+    git.run("add", "-A")
+    git.run("commit", "-m", "chore(init): step 6 - docs site")
+    print("  Docs site committed.")

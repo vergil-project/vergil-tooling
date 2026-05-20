@@ -23,6 +23,8 @@ from vergil_tooling.lib.repo_init import (
     step_clone,
     step_create_repo,
     step_generate_config,
+    step_ci_cd_workflows,
+    step_docs_site,
     step_scaffold_config_files,
     render_readme,
     render_vergil_toml,
@@ -461,3 +463,58 @@ class TestStepScaffoldConfigFiles:
             step_scaffold_config_files(ctx)
 
         assert ("config", "core.hooksPath", ".githooks") in calls
+
+
+class TestStepCiCdWorkflows:
+    def test_creates_ci_yml(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.work_dir = tmp_path
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        ctx.publish_release = False
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_ci_cd_workflows(ctx)
+
+        assert (tmp_path / ".github" / "workflows" / "ci.yml").exists()
+        assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
+
+    def test_skips_cd_when_no_docs(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.work_dir = tmp_path
+        ctx.primary_language = "shell"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.publish_docs = False
+        ctx.publish_release = False
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_ci_cd_workflows(ctx)
+
+        assert (tmp_path / ".github" / "workflows" / "ci.yml").exists()
+        assert not (tmp_path / ".github" / "workflows" / "cd.yml").exists()
+
+
+class TestStepDocsSite:
+    def test_creates_docs_skeleton(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.publish_docs = True
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_docs_site(ctx)
+
+        assert (tmp_path / "docs" / "site" / "mkdocs.yml").exists()
+        assert (tmp_path / "docs" / "site" / "docs" / "index.md").exists()
+
+    def test_skips_when_docs_disabled(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.work_dir = tmp_path
+        ctx.publish_docs = False
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_docs_site(ctx)
+
+        assert not (tmp_path / "docs" / "site" / "mkdocs.yml").exists()
