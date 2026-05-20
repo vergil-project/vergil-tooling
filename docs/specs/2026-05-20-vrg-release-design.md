@@ -98,14 +98,15 @@ src/vergil_tooling/
 `lib/release.py` currently contains `is_release_branch()`. This file
 must be renamed or its contents relocated when creating the
 `lib/release/` package. Options: move to `lib/release/branches.py` or
-fold into `lib/release/__init__.py`. Callers in `vrg_merge_when_green.py`
-are retired (see below), so the only remaining consumers need to be
-identified and updated.
+fold into `lib/release/__init__.py`. All three production callers are
+retired (see below). The only remaining consumer is the test file
+`tests/vergil_tooling/test_release.py`, which needs an import path
+update.
 
 ### Retired Entry Points
 
-These standalone CLI tools are absorbed into `vrg-release` and removed
-from `pyproject.toml`:
+These standalone CLI tools are absorbed into `vrg-release` or no longer
+needed and are removed from `pyproject.toml`:
 
 - **`vrg-prepare-release`** — logic moves to `prepare.py`. The ecosystem
   detection, precondition checks, branch creation, changelog generation,
@@ -113,6 +114,10 @@ from `pyproject.toml`:
 - **`vrg-merge-when-green`** — wait-poll-merge logic moves to `merge.py`.
   The `release/*` branch restriction is eliminated since `vrg-release`
   itself is the trust boundary.
+- **`vrg-check-pr-merge`** — the `block-agent-merge` plugin hook that
+  called this tool is redundant. The `vrg-gh` wrapper is the soft
+  steering mechanism; the VM credential isolation is the hard gate.
+  This tool and its hook are retired.
 
 ### Kept Entry Points
 
@@ -166,10 +171,16 @@ phase-marker strings.
 
 ## Orchestrator
 
+Preflight runs outside the phase loop because the tracking issue does
+not exist yet — there is nowhere to post a phase-completion comment.
+Preflight results are logged to stdout only. The prepare phase's
+completion comment includes a preflight summary.
+
 ```python
 def run_release(ctx: ReleaseContext) -> None:
+    preflight(ctx)  # no tracking issue yet — stdout only
+
     phases = [
-        ("preflight",        preflight),
         ("prepare",          prepare),
         ("merge-release",    merge_release),
         ("merge-bump",       merge_bump),
@@ -209,16 +220,51 @@ tracking issue, then re-raises to terminate.
 These markers enable future resumability — a function could scan issue
 comments and reconstruct the `ReleaseContext` from completed phases.
 
+## Host Prerequisites
+
+The following must be available on the host PATH:
+
+- **`git`** — local git operations
+- **`gh`** — GitHub CLI, authenticated with the human account
+- **`git-cliff`** — changelog generation (Rust binary, installed
+  separately)
+- **`vrg-finalize-repo`** — post-merge cleanup (part of vergil-tooling)
+- **`vrg-docker-run`** — container launcher (part of vergil-tooling)
+- **`vrg-github-repo-config`** — repository config auditing (part of
+  vergil-tooling)
+- **Docker** — required by `vrg-docker-run` for validation
+
+Preflight verifies `gh` authentication and `git-cliff` availability
+before any work starts.
+
+## Implementation Prerequisites
+
+### Config parser extension
+
+`lib/config.py`'s `PublishConfig` dataclass currently only parses
+`release: bool` and `docs: bool` from the `[publish]` section of
+`vergil.toml`. The following fields must be added before `vrg-release`
+can use them:
+
+- **`consumer_refresh: str | None`** — the consumer-refresh command
+  template displayed in Phase 6. Already present in `vergil.toml`
+  files but silently ignored by the parser.
+- **`docs_workflow: str`** — the name of the documentation deployment
+  workflow, defaulting to `"Documentation"`. Currently hardcoded in
+  `vrg_finalize_repo.py` as `_DOCS_WORKFLOW_NAME`. Centralizing it in
+  the config makes it available to both `vrg-release` (Phase 4) and
+  `vrg-finalize-repo`.
+
 ## Phase Details
 
 ### Preflight
 
-1. Read `vergil.toml` and extract `repository_type`, `branching_model`.
-2. Reject if `repository_type` is not `library` or `tooling`.
-3. Confirm on `develop` branch with clean working tree and
+1. Verify host prerequisites: `git-cliff` is on PATH, `gh` is
+   authenticated (e.g., `gh repo view --json name`).
+2. Read `vergil.toml` and extract `repository_type`, `branching_model`.
+3. Reject if `repository_type` is not `library` or `tooling`.
+4. Confirm on `develop` branch with clean working tree and
    `develop == origin/develop` (fetch first).
-4. Verify `gh` authentication via a lightweight command
-   (e.g., `gh repo view --json name`).
 5. Run `vrg-github-repo-config audit --repo <owner/repo>`. Non-zero
    exit is a hard stop (non-interactive — no override prompt).
 6. Extract version from project manifest using the same detection
@@ -227,10 +273,13 @@ comments and reconstruct the `ReleaseContext` from completed phases.
    file.
 7. Compare version against the latest `v*` tag. If it matches an
    existing tag, abort — the post-publish version bump did not run.
-8. If `version_override` is `minor` or `major`: bump the version in
+8. Check for an existing open issue titled `release: <version>`. If
+   one exists, abort with a fatal error identifying the issue (see
+   Failure Model).
+9. If `version_override` is `minor` or `major`: bump the version in
    the manifest, regenerate the lockfile if needed (e.g., `uv lock`
    for Python), commit locally on develop. Do not push.
-9. Populate `ctx.repo`, `ctx.version`, `ctx.repo_root`.
+10. Populate `ctx.repo`, `ctx.version`, `ctx.repo_root`.
 
 ### Phase 1 — Prepare
 
@@ -276,13 +325,10 @@ merge in parallel with the slower async publish work.
    Retry at ~10-second intervals. Timeout after 5 minutes with
    `ReleaseError`.
 2. Verify issue linkage in the bump PR body. Look for
-   `Ref #N`, `Fixes #N`, `Closes #N`, or `Resolves #N`. If missing:
-   - Write a corrected body to a temp file adding
-     `Ref #<issue_number>`.
-   - Update the PR: `gh pr edit <url> --body-file <file>`.
-   - Push an empty commit on the bump branch to retrigger CI
-     (editing the PR body alone does not retrigger the
-     `pr-issue-linkage` check).
+   `Ref #N`, `Fixes #N`, `Closes #N`, or `Resolves #N`. If missing,
+   raise `ReleaseError` with diagnostics pointing at the bump PR and
+   the `version-bump-pr` action. Missing linkage is a bug in the
+   upstream action — `vrg-release` does not attempt to repair it.
 3. Wait for checks, handle behind-base updates (same pattern as
    Phase 2, up to 5 attempts).
 4. Merge with merge-commit strategy.
@@ -297,7 +343,7 @@ complete successfully:
    `gh run list --workflow publish.yml --branch main --limit 1 --json databaseId --jq '.[0].databaseId'`
 2. Block on it: `gh run watch --exit-status <run-id>`.
 3. Locate the docs workflow run on main (workflow name from
-   `vergil.toml` or default `"Documentation"`).
+   `vergil.toml` `[publish].docs_workflow`, default `"Documentation"`).
 4. Block on it: `gh run watch --exit-status <run-id>`.
 5. Verify artifacts:
    - Git tag `v<version>` exists on main.
