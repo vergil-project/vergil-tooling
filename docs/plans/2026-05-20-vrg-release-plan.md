@@ -363,6 +363,7 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
+from typing import Any
 from unittest.mock import call, patch
 
 import pytest
@@ -422,11 +423,28 @@ def test_comment_phase_complete() -> None:
     ctx = _ctx()
     ctx.issue_number = 42
     ctx.release_pr_url = "https://github.com/owner/repo/pull/100"
-    with patch(_MOD + ".github.run") as mock_run:
+    written_bodies: list[str] = []
+
+    original_open = tempfile.NamedTemporaryFile
+
+    def capture_tmpfile(**kwargs: Any) -> Any:
+        f = original_open(**kwargs)
+        original_write = f.write
+
+        def write_and_capture(data: str) -> int:
+            written_bodies.append(data)
+            return original_write(data)
+
+        f.write = write_and_capture  # type: ignore[method-assign]
+        return f
+
+    with (
+        patch(_MOD + ".tempfile.NamedTemporaryFile", side_effect=capture_tmpfile),
+        patch(_MOD + ".github.run"),
+    ):
         comment_phase_complete(ctx, "prepare", "Branch: release/2.1.0\nPR: https://...")
-        args = mock_run.call_args[0]
-        body = " ".join(args)
-        assert "vrg-release:prepare:complete" in body
+    assert any("vrg-release:prepare:complete" in b for b in written_bodies)
+    assert any("Branch: release/2.1.0" in b for b in written_bodies)
 
 
 def test_comment_phase_failed() -> None:
@@ -438,11 +456,28 @@ def test_comment_phase_failed() -> None:
         message="CI failed",
         detail="lint check failed",
     )
-    with patch(_MOD + ".github.run") as mock_run:
+    written_bodies: list[str] = []
+
+    original_open = tempfile.NamedTemporaryFile
+
+    def capture_tmpfile(**kwargs: Any) -> Any:
+        f = original_open(**kwargs)
+        original_write = f.write
+
+        def write_and_capture(data: str) -> int:
+            written_bodies.append(data)
+            return original_write(data)
+
+        f.write = write_and_capture  # type: ignore[method-assign]
+        return f
+
+    with (
+        patch(_MOD + ".tempfile.NamedTemporaryFile", side_effect=capture_tmpfile),
+        patch(_MOD + ".github.run"),
+    ):
         comment_phase_failed(ctx, "merge-release", exc)
-        args = mock_run.call_args[0]
-        body = " ".join(args)
-        assert "vrg-release:merge-release:failed" in body
+    assert any("vrg-release:merge-release:failed" in b for b in written_bodies)
+    assert any("CI failed" in b for b in written_bodies)
 
 
 def test_close_tracking_issue() -> None:
@@ -1533,9 +1568,11 @@ def test_merge_bump_finds_and_merges_pr() -> None:
 
 def test_merge_bump_times_out() -> None:
     ctx = _ctx()
+    fake_time = iter([0.0, 301.0])
     with (
         patch(_MOD + ".github.read_output", return_value=""),
         patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".time.monotonic", side_effect=fake_time),
         pytest.raises(ReleaseError, match="timed out"),
     ):
         merge_bump(ctx)
@@ -2158,6 +2195,7 @@ Create `tests/vergil_tooling/test_release_orchestrator.py`:
 ```python
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch, call
 
@@ -2200,6 +2238,26 @@ def test_orchestrator_runs_all_phases() -> None:
     m_handoff.assert_called_once_with(ctx)
 
 
+def test_phase_details_includes_ctx_fields() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    ctx.release_branch = "release/2.1.0"
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    ctx.issue_url = "https://github.com/o/r/issues/42"
+    details = _phase_details(ctx, "prepare")
+    assert "release/2.1.0" in details
+    assert "pull/100" in details
+    assert "issues/42" in details
+
+    ctx.tag = "v2.1.0"
+    ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
+    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
+    details = _phase_details(ctx, "confirm-publish")
+    assert "v2.1.0" in details
+    assert "runs/123" in details
+
+
 def test_orchestrator_stops_on_failure_and_comments() -> None:
     ctx = _ctx()
     exc = ReleaseError(
@@ -2216,6 +2274,23 @@ def test_orchestrator_stops_on_failure_and_comments() -> None:
     ):
         run_release(ctx)
     m_failed.assert_called_once_with(ctx, "merge-release", exc)
+
+
+def test_orchestrator_wraps_non_release_error() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".prepare",
+            side_effect=subprocess.CalledProcessError(1, "git push"),
+        ),
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".comment_phase_failed") as m_failed,
+        pytest.raises(ReleaseError),
+    ):
+        run_release(ctx)
+    wrapped = m_failed.call_args[0][2]
+    assert wrapped.phase == "prepare"
+    assert "git push" in wrapped.command
 
 
 def test_orchestrator_does_not_run_later_phases_on_failure() -> None:
@@ -2277,6 +2352,40 @@ def merge_release(ctx: ReleaseContext) -> None:
     ctx.release_merge_sha = "merged"
 
 
+def _phase_details(ctx: ReleaseContext, phase: str) -> str:
+    """Build human-readable details from ctx for a completed phase."""
+    lines: list[str] = []
+    if phase == "prepare":
+        if ctx.release_branch:
+            lines.append(f"Branch: `{ctx.release_branch}`")
+        if ctx.release_pr_url:
+            lines.append(f"PR: {ctx.release_pr_url}")
+        if ctx.issue_url:
+            lines.append(f"Tracking issue: {ctx.issue_url}")
+    elif phase == "merge-release":
+        if ctx.release_pr_url:
+            lines.append(f"Merged: {ctx.release_pr_url}")
+    elif phase == "merge-bump":
+        if ctx.bump_pr_url:
+            lines.append(f"Bump PR: {ctx.bump_pr_url}")
+        if ctx.next_version:
+            lines.append(f"Next version: {ctx.next_version}")
+    elif phase == "confirm-publish":
+        if ctx.tag:
+            lines.append(f"Tag: `{ctx.tag}`")
+        if ctx.release_url:
+            lines.append(f"Release: {ctx.release_url}")
+        if ctx.publish_run_url:
+            lines.append(f"publish.yml: {ctx.publish_run_url}")
+        if ctx.docs_run_url:
+            lines.append(f"docs workflow: {ctx.docs_run_url}")
+    elif phase == "close-finalize":
+        lines.append("Tracking issue closed. Repository finalized.")
+    elif phase == "consumer-refresh":
+        lines.append("Consumer refresh instructions displayed.")
+    return "\n".join(lines)
+
+
 def run_release(ctx: ReleaseContext) -> None:
     """Execute the release workflow phase by phase."""
     phases: list[tuple[str, object]] = [
@@ -2291,10 +2400,19 @@ def run_release(ctx: ReleaseContext) -> None:
     for phase_name, phase_fn in phases:
         try:
             phase_fn(ctx)  # type: ignore[operator]
-            comment_phase_complete(ctx, phase_name, "")
+            comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
         except ReleaseError as exc:
             comment_phase_failed(ctx, phase_name, exc)
             raise
+        except Exception as exc:
+            wrapped = ReleaseError(
+                phase=phase_name,
+                command=str(getattr(exc, "cmd", type(exc).__name__)),
+                message=str(exc),
+                detail=getattr(exc, "stderr", None) or getattr(exc, "stdout", None),
+            )
+            comment_phase_failed(ctx, phase_name, wrapped)
+            raise wrapped from exc
 ```
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -2432,6 +2550,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Error: {exc}", file=sys.stderr)
         if exc.detail:
             print(f"Detail: {exc.detail}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"\nUnexpected error: {exc}", file=sys.stderr)
         return 1
     return 0
 
