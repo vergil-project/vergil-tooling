@@ -98,18 +98,20 @@ cat > vergil.toml << 'EOF'
 [project]
 name = "vergil-vm"
 repository-type = "infrastructure"
-primary-language = "bash"
+primary-language = "shell"
 versioning-scheme = "semver"
+branching-model = "library-release"
 release-model = "tagged-release"
 
 [ci]
-versions = []
+versions = ["latest"]
 
 [publish]
-publish-packages = false
+release = true
+docs = false
 
 [dependencies]
-vergil-tooling = "v2.1"
+vergil = "v2.1"
 EOF
 
 cat > LICENSE << 'EOF'
