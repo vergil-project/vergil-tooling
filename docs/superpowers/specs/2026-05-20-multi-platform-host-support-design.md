@@ -97,7 +97,10 @@ host-specific data directories.
 
 **3. Documentation: Supported Host Platforms**
 
-Add a section to the docs explaining the platform support model:
+Add a "Supported Host Platforms" section to the project `CLAUDE.md`
+(which serves as the authoritative project reference) and to
+`docs/specs/host-level-tool.md` (which already documents the
+consumption model). The section explains the platform support model:
 
 - Linux is the development and CI/CD platform
 - macOS, Linux desktop, and Windows (via WSL2) are supported host
