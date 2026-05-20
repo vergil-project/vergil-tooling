@@ -32,7 +32,7 @@ isolation system.
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
 | 2. Session Management | vrg-session, identities.toml | Planned |
 | 3. Credential Provisioning | GitHub PAT/SSH key injection | Planned |
-| **4. Egress Filtering** (this plan) | HAProxy, pf, iptables | This plan |
+| **4. Egress Filtering** (this plan) | HAProxy, pf, iptables | Deferred to v2.2 (#901) |
 | 5. vergil-tooling Adaptations | nerdctl, wrapper simplification | Planned |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 
@@ -41,13 +41,14 @@ isolation system.
 
 **Depends on:** Plan 1 (working VM with known IP/subnet)
 
-**Deferral candidate:** This plan can be deferred to a later
-release if the complexity does not justify the security benefit
-for the initial rollout. The identity VM already provides
-filesystem and credential isolation without egress filtering.
-Egress filtering adds network isolation — important for defense
-against prompt injection exfiltration, but not required for a
-functional v1.
+**Deferred to v2.2** (milestone: v2.2, issue: #901). The identity
+VM already provides filesystem and credential isolation without
+egress filtering. This is the only heavy-complexity plan in the
+set, and deferring it does not block the v2.1 identity VM
+rollout (Plans 1-3, 5-6). Egress filtering adds network
+isolation — important for defense against prompt injection
+exfiltration, and planned for the release immediately following
+v2.1.
 
 ---
 

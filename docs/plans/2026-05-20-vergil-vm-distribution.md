@@ -31,7 +31,7 @@ isolation system.
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
 | 2. Session Management | vrg-session, identities.toml | Planned |
 | 3. Credential Provisioning | GitHub PAT/SSH key injection | Planned |
-| 4. Egress Filtering | HAProxy, pf, iptables | Planned |
+| ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
 | 5. vergil-tooling Adaptations | nerdctl, wrapper simplification | Planned |
 | **6. Distribution + Updates** (this plan) | Pre-built images, vrg-vm-update | This plan |
 
