@@ -347,10 +347,17 @@ over."
 **Duplicate tracking issue guard.** Before creating a new tracking
 issue, preflight checks for an existing open issue titled
 `release: <version>`. If one exists, `vrg-release` aborts with a
-message identifying the existing issue. The human must either close
-the stale issue (abandoned release) or investigate before re-running.
-This prevents duplicate tracking issues from cluttering the release
-history and signals that a previous attempt needs triage.
+fatal error identifying the existing issue. The human must close the
+stale issue (abandoned release) or investigate before re-running.
+
+**Future resumability requires explicit intent.** When resumability is
+added in a future version, it will require an explicit command-line
+flag (e.g., `--resume`). Without the flag, an existing tracking issue
+is always a fatal error — the tool assumes a fresh release. With the
+flag, the tool expects the issue to exist and reconstructs the
+`ReleaseContext` from its phase markers. This prevents accidental
+double-runs from silently resuming a half-finished release that the
+human may have intended to abandon.
 
 **Future resumability path.** The tracking issue architecture supports
 resumability naturally. Each phase writes a machine-parseable completion
