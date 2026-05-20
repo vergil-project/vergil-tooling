@@ -5,6 +5,8 @@ import tomllib
 from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.lib.config import _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -356,7 +358,13 @@ class TestStepClone:
             target.mkdir(exist_ok=True)
             (target / ".git").mkdir()
 
-        with patch("vergil_tooling.lib.repo_init.subprocess.run", side_effect=mock_subprocess_run):
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+        ):
             step_clone(ctx, parent_dir=tmp_path)
 
         assert ctx.work_dir == target
@@ -385,12 +393,25 @@ class TestStepClone:
             (target / ".git").mkdir()
 
         with (
-            patch("vergil_tooling.lib.repo_init.subprocess.run", side_effect=mock_subprocess_run),
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
             patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path),
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
         ):
             step_clone(ctx)
 
         assert ctx.work_dir == target
+
+    def test_clone_aborted_by_user(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=False),
+            pytest.raises(SystemExit),
+        ):
+            step_clone(ctx, parent_dir=tmp_path)
 
 
 class TestStepGenerateConfig:
