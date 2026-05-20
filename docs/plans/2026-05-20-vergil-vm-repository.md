@@ -34,7 +34,7 @@ software:
 | **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test, CI | `limactl start` produces a working identity VM |
 | 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM |
 | 3. Credential Provisioning | Bootstrap scripts, GitHub PAT/SSH key injection, GHCR auth | VM boots with agent identity credentials |
-| 4. Egress Filtering | HAProxy, pf, iptables, allowlists | VM can only reach allowlisted hosts |
+| ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) |
 | 5. vergil-tooling Adaptations | nerdctl in vrg-docker-run, wrapper simplification | vergil-tooling works natively inside VM |
 | 6. Distribution + Updates | Pre-built images on GHCR, vrg-vm-update, CD pipeline | Users pull pre-built VM images |
 
@@ -98,18 +98,20 @@ cat > vergil.toml << 'EOF'
 [project]
 name = "vergil-vm"
 repository-type = "infrastructure"
-primary-language = "bash"
+primary-language = "shell"
 versioning-scheme = "semver"
+branching-model = "library-release"
 release-model = "tagged-release"
 
 [ci]
-versions = []
+versions = ["latest"]
 
 [publish]
-publish-packages = false
+release = true
+docs = false
 
 [dependencies]
-vergil-tooling = "v2.1"
+vergil = "v2.1"
 EOF
 
 cat > LICENSE << 'EOF'

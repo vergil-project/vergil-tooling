@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.24] - 2026-05-20
+
+### Bug fixes
+
+- correct vergil.toml example in VM repository plan
+
+### Chores
+
+- bump version to 2.0.24
+
+### Documentation
+
+- identity-based VM isolation design spec
+- fix GitHub account references to use wphillipmoore
+- expand credential provisioning to extensible identity model
+- VM image management design spec (vergil-vm)
+- refine decision boundary and shell customization policy
+- pre-built distribution and dynamic tooling management
+- implementation plan for vergil-vm repository
+- expand prerequisites with manual repo bootstrap steps
+- set initial version to 2.1.0
+- annotate wrapper restrictions and CLAUDE.md audit compliance
+- design spec for eliminating hardcoded mount in vrg-docker-docs
+- move design spec to docs/specs/
+- implementation plan for build_docker_args refactor
+- implementation plans 2-6 for vergil-vm identity VM system
+- defer Plan 4 (egress filtering) to v2.2
+- multi-platform host support design spec
+- clarify documentation target files in platform support spec
+- move platform support spec to docs/specs/
+- apply pushback review: reframe #902 as dependency, phase documentation, clarify testing
+
+### Features
+
+- replace hand-built docker args with build_docker_args in vrg-docker-docs
+
+### Refactoring
+
+- remove flat-file audit logging from vrg-git and vrg-gh
+
+### Styling
+
+- apply ruff formatting
+
+### Testing
+
+- add tests for build_docker_args delegation in vrg-docker-docs
+- update existing tests to mock build_docker_args, remove sibling mount test
+
 ## [2.0.23] - 2026-05-20
 
 ### Chores
