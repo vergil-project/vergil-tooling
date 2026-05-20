@@ -75,7 +75,7 @@ git clone git@github.com:vergil-project/vergil-vm.git
 cd vergil-vm
 
 # Create minimal initial files
-echo "0.1.0" > VERSION
+echo "2.1.0" > VERSION
 cat > vergil.toml << 'EOF'
 [project]
 name = "vergil-vm"
@@ -91,7 +91,7 @@ versions = []
 publish-packages = false
 
 [dependencies]
-vergil-tooling = "v2.0"
+vergil-tooling = "v2.1"
 EOF
 
 cat > LICENSE << 'EOF'
@@ -181,7 +181,7 @@ development workflow. The agent can create worktrees, use
 
 | File | Action | Responsibility |
 |---|---|---|
-| `VERSION` | Prerequisite | Semver version (0.1.0) — created during bootstrap |
+| `VERSION` | Prerequisite | Semver version (2.1.0) — created during bootstrap |
 | `vergil.toml` | Prerequisite | Project metadata — created during bootstrap |
 | `LICENSE` | Prerequisite | GPL-3.0-or-later — created during bootstrap |
 | `.githooks/pre-commit` | Prerequisite | Commit gate — created during bootstrap |
@@ -374,7 +374,7 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 # uv tool install works (install from the configured version)
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 
 # Core vrg-* commands are available after install
 command -v vrg-commit
@@ -558,7 +558,7 @@ message: |
     limactl shell {{.Name}} -- nerdctl run --rm alpine echo hello
 
   Install vergil-tooling:
-    limactl shell {{.Name}} -- bash -c 'uv tool install "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0"'
+    limactl shell {{.Name}} -- bash -c 'uv tool install "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1"'
 ```
 
 - [ ] **Step 5: Commit**
@@ -749,7 +749,7 @@ ls ~/dev/    # Should show host's ~/dev contents
 
 ```bash
 # Inside the VM:
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 vrg-git --help
 vrg-commit --help
 uv tool uninstall vergil-tooling
