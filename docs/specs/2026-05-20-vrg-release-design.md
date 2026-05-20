@@ -344,6 +344,14 @@ triages. Recovery is typically either "fix the underlying issue and
 re-run" or "abandon this release, bump to the next patch level, start
 over."
 
+**Duplicate tracking issue guard.** Before creating a new tracking
+issue, preflight checks for an existing open issue titled
+`release: <version>`. If one exists, `vrg-release` aborts with a
+message identifying the existing issue. The human must either close
+the stale issue (abandoned release) or investigate before re-running.
+This prevents duplicate tracking issues from cluttering the release
+history and signals that a previous attempt needs triage.
+
 **Future resumability path.** The tracking issue architecture supports
 resumability naturally. Each phase writes a machine-parseable completion
 marker as an HTML comment. A future `load_from_issue()` function could
