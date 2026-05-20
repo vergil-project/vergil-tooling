@@ -84,8 +84,7 @@ All fields are required.
 
 Use `vrg-git` instead of `git` for all git operations. Use `vrg-gh`
 instead of `gh` for all GitHub CLI operations. These wrappers enforce
-subcommand allowlists, flag deny lists, credential selection, and
-audit logging.
+subcommand allowlists, flag deny lists, and credential selection.
 
 Raw `git` and `gh` are denied by the permission model. If a command
 is not available through the wrappers, explain the situation to the
