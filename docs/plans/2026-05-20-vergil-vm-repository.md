@@ -42,64 +42,41 @@ software:
 
 ## Prerequisites (Manual — Human)
 
-Before the agent begins execution:
+Lima must be installed on the development machine, and the
+vergil-vm repository must be bootstrapped on GitHub before the
+agent can begin execution. The bootstrap follows the manual
+sequence documented in vergil-tooling#807 — a future `vrg-init`
+command will automate this, but for now it is a one-time manual
+process.
 
-1. **Install Lima** on the development machine:
-   ```bash
-   brew install lima
-   limactl --version   # Confirm >= 2.0.0
-   ```
+### 1. Install Lima
 
-2. **Create the `vergil-vm` repo** on GitHub under
-   `vergil-project` org. Initialize with an empty commit or
-   no initialization (the plan creates all files).
-
-3. **Clone locally:**
-   ```bash
-   cd ~/dev/projects/vergil-project
-   git clone git@github.com:vergil-project/vergil-vm.git
-   cd vergil-vm
-   ```
-
-4. **Set up hooks and worktree** per the standard Vergil
-   development workflow.
-
----
-
-## File Map
-
-| File | Action | Responsibility |
-|---|---|---|
-| `VERSION` | Create | Semver version (0.1.0) |
-| `vergil.toml` | Create | Project metadata |
-| `.gitignore` | Create | Ignore build artifacts |
-| `templates/agent.yaml` | Create | Lima VM template with all provisioning |
-| `tests/run-tests.sh` | Create | Test runner (shells into VM, runs each test) |
-| `tests/test_base.sh` | Create | Verify OS, user, shell, sudo |
-| `tests/test_tools.sh` | Create | Verify gh, uv, jq, yq, ripgrep, fzf, git |
-| `tests/test_containerd.sh` | Create | Verify containerd running, nerdctl works |
-| `tests/test_vergil.sh` | Create | Verify vergil-tooling installable via uv |
-| `build.sh` | Create | Create VM, run provisioning, run tests, clean up |
-| `.github/workflows/ci.yml` | Create | shellcheck, yamllint, template validation |
-
----
-
-### Task 1: Repository Scaffold
-
-**Files:**
-- Create: `VERSION`
-- Create: `vergil.toml`
-- Create: `.gitignore`
-
-- [ ] **Step 1: Create VERSION file**
-
-```
-0.1.0
+```bash
+brew install lima
+limactl --version   # Confirm >= 2.0.0
 ```
 
-- [ ] **Step 2: Create vergil.toml**
+### 2. Create the GitHub repository
 
-```toml
+```bash
+gh repo create vergil-project/vergil-vm \
+  --public \
+  --description "Lima VM image definitions for Vergil identity VMs"
+```
+
+### 3. Clone and create the initial commit
+
+The empty repo has no HEAD, so `vrg-commit` cannot be used for
+the first commit. Use raw `git` for the bootstrap only.
+
+```bash
+cd ~/dev/projects/vergil-project
+git clone git@github.com:vergil-project/vergil-vm.git
+cd vergil-vm
+
+# Create minimal initial files
+echo "0.1.0" > VERSION
+cat > vergil.toml << 'EOF'
 [project]
 name = "vergil-vm"
 repository-type = "infrastructure"
@@ -115,9 +92,123 @@ publish-packages = false
 
 [dependencies]
 vergil-tooling = "v2.0"
+EOF
+
+cat > LICENSE << 'EOF'
+(GPL-3.0-or-later — copy from vergil-tooling/LICENSE)
+EOF
+
+# Initial commit (raw git — no HEAD exists yet)
+git add -A
+git commit -m "chore: initial repository scaffold"
 ```
 
-- [ ] **Step 3: Create .gitignore**
+### 4. Create branch structure
+
+GitHub repos default to `main`. Vergil convention uses
+`develop` as the default branch with `main` for releases.
+
+```bash
+# Rename the initial branch to develop
+git branch -m main develop
+git push -u origin develop
+
+# Create main from the same commit
+git branch main
+git push -u origin main
+```
+
+### 5. Set default branch to develop
+
+```bash
+gh repo edit vergil-project/vergil-vm --default-branch develop
+```
+
+### 6. Apply GitHub repository configuration
+
+This must happen after both branches exist to avoid the
+chicken-and-egg problem (#807): rulesets require branches,
+and branches require commits.
+
+```bash
+vrg-github-repo-config apply --repo vergil-project/vergil-vm
+```
+
+If rulesets block the initial push, temporarily disable them
+via the GitHub web UI, push, then re-enable. This is the
+known bootstrapping workaround until `vrg-init` exists.
+
+### 7. Set up hooks and development environment
+
+```bash
+# Create and enable the pre-commit hook
+mkdir -p .githooks
+# Copy .githooks/pre-commit from any existing Vergil repo
+cp ../vergil-tooling/.githooks/pre-commit .githooks/pre-commit
+git config core.hooksPath .githooks
+
+# Verify vrg-commit works
+vrg-commit --type chore --scope repo --message "enable pre-commit hook" \
+  --body "Copied from vergil-tooling"
+git push
+```
+
+### 8. Create CLAUDE.md
+
+Write a project-specific CLAUDE.md for vergil-vm (can be
+minimal initially — the agent will follow vergil-tooling's
+conventions for shell command policy, validation, etc.).
+
+### 9. Verify the repo is ready
+
+```bash
+vrg-github-repo-config audit --repo vergil-project/vergil-vm
+# Should exit 0 (compliant)
+
+# Create a test worktree to confirm normal workflow works
+vrg-git worktree add -b feature/test-worktree .worktrees/test .
+vrg-git worktree remove .worktrees/test
+vrg-git branch -d feature/test-worktree
+```
+
+After these steps, the repo is ready for normal Vergil
+development workflow. The agent can create worktrees, use
+`vrg-commit`, and submit PRs.
+
+---
+
+## File Map
+
+| File | Action | Responsibility |
+|---|---|---|
+| `VERSION` | Prerequisite | Semver version (0.1.0) — created during bootstrap |
+| `vergil.toml` | Prerequisite | Project metadata — created during bootstrap |
+| `LICENSE` | Prerequisite | GPL-3.0-or-later — created during bootstrap |
+| `.githooks/pre-commit` | Prerequisite | Commit gate — created during bootstrap |
+| `CLAUDE.md` | Prerequisite | Agent instructions — created during bootstrap |
+| `.gitignore` | Create | Ignore build artifacts |
+| `templates/agent.yaml` | Create | Lima VM template with all provisioning |
+| `tests/run-tests.sh` | Create | Test runner (shells into VM, runs each test) |
+| `tests/test_base.sh` | Create | Verify OS, user, shell, sudo |
+| `tests/test_tools.sh` | Create | Verify gh, uv, jq, yq, ripgrep, fzf, git |
+| `tests/test_containerd.sh` | Create | Verify containerd running, nerdctl works |
+| `tests/test_vergil.sh` | Create | Verify vergil-tooling installable via uv |
+| `build.sh` | Create | Create VM, run provisioning, run tests, clean up |
+| `.github/workflows/ci.yml` | Create | shellcheck, yamllint, template validation |
+
+---
+
+### Task 1: Directory Structure and Remaining Scaffold
+
+The prerequisite bootstrap created `VERSION`, `vergil.toml`,
+`LICENSE`, `.githooks/pre-commit`, and `CLAUDE.md`. This task
+creates the remaining directory structure and configuration
+that the bootstrap did not cover.
+
+**Files:**
+- Create: `.gitignore`
+
+- [ ] **Step 1: Create .gitignore**
 
 ```gitignore
 # Lima build artifacts
@@ -138,17 +229,17 @@ vergil-tooling = "v2.0"
 /build/
 ```
 
-- [ ] **Step 4: Create directory structure**
+- [ ] **Step 2: Create directory structure**
 
 ```bash
 mkdir -p templates tests .github/workflows
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 3: Commit**
 
 ```bash
-vrg-commit --type feat --scope vm --message "repository scaffold" \
-  --body "VERSION, vergil.toml, .gitignore, directory structure"
+vrg-commit --type chore --scope vm --message "directory structure and gitignore" \
+  --body "templates/, tests/, .github/workflows/, .gitignore"
 ```
 
 ---
