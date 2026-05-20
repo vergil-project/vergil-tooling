@@ -113,8 +113,8 @@ macOS Host
 │
 ├── wphillipmoore-vergil VM (Lima, persistent, ~1-2 GB RAM)
 │   ├── Identity
-│   │   ├── GitHub PAT (wphillipmoore-vergil: repo, read:org)
-│   │   ├── SSH key (wphillipmoore-vergil)
+│   │   ├── GitHub App credentials (App ID, private key, installation token exchange)
+│   │   ├── Git HTTPS auth (installation token via credential helper)
 │   │   └── User: agent (uid 1000)
 │   ├── Toolchain
 │   │   ├── vergil-tooling (vrg-commit, vrg-git, etc.)
@@ -222,10 +222,14 @@ any external service the agent interacts with, not just GitHub.
 
 **Current credentials (Vergil workflow):**
 
-| Credential | How it enters the VM | Scope |
+| Credential | How it enters the VM | Purpose |
 |---|---|---|
-| GitHub PAT | Provisioned at VM creation via bootstrap | `repo`, `read:org` (agent-level scope per #775) |
-| SSH key | Provisioned at VM creation via bootstrap | wphillipmoore-vergil's key |
+| App ID + Installation ID | Provisioned at VM creation via `vrg-vm-init` | JWT generation for installation token exchange |
+| App private key (.pem) | Provisioned at VM creation via `vrg-vm-init` | Signs JWTs (RS256) |
+
+> **Note:** SSH keys are not provisioned. Git authenticates to
+> GitHub over HTTPS using App installation tokens. See
+> `docs/specs/2026-05-20-single-account-identity-design.md` (#933).
 
 **Extensible by design:** The credential provisioning model is not
 limited to GitHub. As agent workflows expand to interact with
@@ -251,7 +255,7 @@ shared credential in the model. This exception may disappear when
 local LLM usage via Ollama replaces or supplements the Anthropic
 API.
 
-Human credentials (`wphillipmoore`'s PAT, SSH key, AWS credentials,
+Human credentials (`wphillipmoore`'s PAT, AWS credentials,
 etc.) never enter the VM. They exist only on the host. The VM
 boundary is the credential isolation mechanism — no wrapper logic
 required.
