@@ -9,13 +9,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-
-if TYPE_CHECKING:
-    from pathlib import Path
-from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.docker import docker_platform
 
 
@@ -32,16 +27,11 @@ def _usage(port: str) -> None:
     print("  DOCS_PORT          Host port for serve (default: 8000)")
 
 
-def _docs_image(repo_root: Path) -> str:
-    env_image = os.environ.get("DOCKER_DOCS_IMAGE")
-    if env_image:
-        return env_image
-    try:
-        cfg = read_config(repo_root)
-        prefix = cfg.docker.image_prefix
-    except (FileNotFoundError, ConfigError):
-        prefix = "prod"
-    return f"ghcr.io/vergil-project/{prefix}-base:latest"
+def _docs_image() -> str:
+    return os.environ.get(
+        "DOCKER_DOCS_IMAGE",
+        "ghcr.io/vergil-project/prod-base:latest",
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -70,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         mkdocs_cmd += " " + " ".join(extra_args)
 
     repo_root = git.repo_root()
-    image = _docs_image(repo_root)
+    image = _docs_image()
 
     container_cmd = mkdocs_cmd
     if (repo_root / "pyproject.toml").is_file():

@@ -9,18 +9,13 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
 )
 from vergil_tooling.lib.github import _human_token
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _GHCR = "ghcr.io/vergil-project"
 
@@ -40,14 +35,6 @@ examples:
 """
 
 
-def _image_prefix(repo_root: Path) -> str:
-    try:
-        cfg = read_config(repo_root)
-        return cfg.docker.image_prefix
-    except (FileNotFoundError, ConfigError):
-        return "prod"
-
-
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
 
@@ -56,8 +43,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     repo_root = git.repo_root()
-    prefix = _image_prefix(repo_root)
-    image = f"{_GHCR}/{prefix}-base:latest"
+    image = f"{_GHCR}/prod-base:latest"
 
     token = _human_token()
 
