@@ -12,7 +12,6 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
-vrg-check-pr-merge = "vergil_tooling.bin.vrg_check_pr_merge:main"
 vrg-commit = "vergil_tooling.bin.vrg_commit:main"
 vrg-docker-cache = "vergil_tooling.bin.vrg_docker_cache:main"
 vrg-docker-docs = "vergil_tooling.bin.vrg_docker_docs:main"
@@ -25,9 +24,8 @@ vrg-gh = "vergil_tooling.bin.vrg_gh:main"
 vrg-git = "vergil_tooling.bin.vrg_git:main"
 vrg-github-repo-config = "vergil_tooling.bin.vrg_github_repo_config:main"
 vrg-github-repo-init = "vergil_tooling.bin.vrg_github_repo_init:main"
-vrg-merge-when-green = "vergil_tooling.bin.vrg_merge_when_green:main"
 vrg-pr-issue-linkage = "vergil_tooling.bin.vrg_pr_issue_linkage:main"
-vrg-prepare-release = "vergil_tooling.bin.vrg_prepare_release:main"
+vrg-release = "vergil_tooling.bin.vrg_release:main"
 vrg-repo-profile = "vergil_tooling.bin.vrg_repo_profile:main"
 vrg-resolve-tracking-issue = "vergil_tooling.bin.vrg_resolve_tracking_issue:main"
 vrg-scorecard = "vergil_tooling.bin.vrg_scorecard:main"
