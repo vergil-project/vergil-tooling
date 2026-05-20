@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+
+
+def test_context_required_fields() -> None:
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),
+        version_override=None,
+    )
+    assert ctx.repo == "owner/repo"
+    assert ctx.version == "2.1.0"
+    assert ctx.repo_root == Path("/tmp/repo")
+    assert ctx.version_override is None
+
+
+def test_context_optional_fields_default_none() -> None:
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),
+        version_override=None,
+    )
+    assert ctx.issue_number is None
+    assert ctx.release_pr_url is None
+    assert ctx.bump_pr_url is None
+    assert ctx.tag is None
+
+
+def test_context_fields_are_mutable() -> None:
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),
+        version_override=None,
+    )
+    ctx.issue_number = 42
+    ctx.release_pr_url = "https://github.com/owner/repo/pull/100"
+    assert ctx.issue_number == 42
+    assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
+
+
+def test_release_error_carries_diagnostics() -> None:
+    err = ReleaseError(
+        phase="merge-release",
+        command="gh pr merge ...",
+        message="CI check failed",
+        detail="check 'lint' failed with status 'failure'",
+    )
+    assert err.phase == "merge-release"
+    assert err.command == "gh pr merge ..."
+    assert "CI check failed" in str(err)
+    assert err.detail == "check 'lint' failed with status 'failure'"
+
+
+def test_release_error_is_exception() -> None:
+    with pytest.raises(ReleaseError, match="something broke"):
+        raise ReleaseError(
+            phase="prepare",
+            command="git push",
+            message="something broke",
+        )
