@@ -52,38 +52,65 @@ Layer 3 — macOS host (user's environment, unmanaged)
 
 ### The Decision Boundary
 
-A single test determines where tooling belongs:
+Two questions determine where tooling belongs:
 
-**Does CI need this tooling?**
+**Question 1: Does the agent identity need this tool during
+development?**
+
+If yes, it must be accessible inside the VM — the agent works
+there. Proceed to Question 2.
+
+If no, it belongs on the macOS host (Layer 3) or nowhere.
+
+**Question 2: Does CI/CD also need this tool?**
 
 - **Yes → Docker image (Layer 2).** Package it in vergil-docker,
-  version it, use the same image locally and in CI. This
-  preserves the Tier 1 / Tier 2 validation parity that the
-  project depends on.
-- **No → VM base image (Layer 1)** if it's core infrastructure
-  that every Vergil user needs (git, uv, containerd, Vergil
-  tooling itself). These are the foundation that makes the VM
-  functional as an agent development environment.
-- **Neither → macOS host (Layer 3).** If it's not needed in CI
-  and not needed for Vergil's core operation, it doesn't belong
-  in the VM. The user's macOS host is the place for personal
-  tools, IDE preferences, and anything else outside Vergil's
-  scope.
+  version it, use the same image locally and in CI. Inside the
+  VM, the agent accesses it via `vrg-docker-run` / `nerdctl run`
+  — never by installing it directly in the VM. This preserves
+  Tier 1 / Tier 2 validation parity and avoids duplicating tool
+  installations across layers.
+- **No → VM base image (Layer 1).** The tool is needed by the
+  agent during development but has no CI counterpart. Install it
+  in the VM base image under standard change control.
+
+**The no-duplication rule:** If a tool exists in a Docker image
+(Layer 2), it is always consumed via the container runtime inside
+the VM. It is never also installed directly in the VM base image.
+One tool, one layer, one source of truth. The two layers of
+virtualization (containers inside a VM) is intentional and
+defensible — each layer manages different concerns in different
+ways. The VM isolates the agent identity; the containers
+standardize the build/test toolchain.
+
+```text
+                 Does the agent need this tool?
+                      /              \
+                    YES               NO
+                    /                   \
+        Does CI also need it?      macOS host (Layer 3)
+            /          \            or not at all
+          YES           NO
+          /               \
+   Docker image (2)    VM base image (1)
+   Use via container   Install directly
+   inside the VM       in the VM
+```
 
 ### Applying the Decision Boundary: Examples
 
-| Tooling | CI need? | Decision | Layer |
-|---|---|---|---|
-| Python 3.14 + ruff + mypy | Yes (lint, typecheck, test) | Docker image | 2 |
-| Ruby 3.4 + rubocop | Yes (lint, test) | Docker image | 2 |
-| AWS CLI v2 | Yes (if used in deployment/integration tests) | Docker image | 2 |
-| AWS CLI v2 | No (interactive exploration only) | Not in VM — use macOS host | 3 |
-| Terraform | Yes (if used in CI for infra validation) | Docker image | 2 |
-| Git, gh, uv | No (agent workflow essentials) | VM base image | 1 |
-| vergil-tooling (vrg-commit, etc.) | No (host/VM workflow tools) | VM base image | 1 |
-| containerd + nerdctl | No (container runtime for Layer 2) | VM base image | 1 |
-| VS Code | No | Not in VM — use macOS host | 3 |
-| Custom shell aliases | No | Not in VM — use macOS host | 3 |
+| Tooling | Agent needs it? | CI needs it? | Decision | Layer |
+|---|---|---|---|---|
+| Python 3.14 + ruff + mypy | Yes (validation) | Yes (lint, typecheck, test) | Docker image, used via vrg-docker-run | 2 |
+| Ruby 3.4 + rubocop | Yes (validation) | Yes (lint, test) | Docker image, used via vrg-docker-run | 2 |
+| AWS CLI v2 | Yes (integration tests, deployment scripts) | Yes (CD pipelines) | Docker image, used via container | 2 |
+| AWS CLI v2 | Yes (agent runs AWS commands during development) | No | VM base image | 1 |
+| AWS CLI v2 | No (human explores interactively only) | No | macOS host | 3 |
+| Terraform | Yes (infra management during development) | Yes (CI validation) | Docker image, used via container | 2 |
+| Git, gh, uv | Yes (agent workflow essentials) | No (not in validation containers) | VM base image | 1 |
+| vergil-tooling (vrg-commit, etc.) | Yes (workflow enforcement) | No (host/VM tools) | VM base image | 1 |
+| containerd + nerdctl | Yes (container runtime for Layer 2) | No | VM base image | 1 |
+| VS Code | No (human uses IDE on host) | No | macOS host | 3 |
 
 ### VM Customization Policy
 
@@ -114,12 +141,43 @@ git, gh, uv, or any `vrg-*` command. The line is: does this
 customization change what happens when Vergil's tools run? If
 yes, it's not supported.
 
+**The shell customization gray area:** Developers are
+understandably protective of their shell environment. A user
+who SSHes into the VM for debugging or triage will want their
+familiar prompt, aliases, and key bindings. Shell customization
+is legitimate — but it's also the single most likely vector for
+breaking Vergil's tooling. A `.zshrc` that reorders PATH, shadows
+a core utility with an alias, or sets environment variables that
+alter git or uv behavior can cause `vrg-*` commands to fail in
+ways that are difficult to diagnose.
+
+Mitigating factors: interactive SSH into the VM is expected to be
+infrequent. The primary workflow is launching Claude Code
+sessions via `vrg-session`, where the agent operates
+autonomously. The human SSHes in for debugging, triage, or
+tooling development — not for daily coding. The agent itself
+does not use shell customizations; it invokes commands directly.
+
+**Provisional approach for shell customization:** The VM ships
+with a clean, functional default shell configuration. User shell
+customization is acknowledged as a likely demand but is deferred
+as an open design question. The risk is real: even experienced
+developers can inadvertently break tooling through shell config.
+Any future mechanism for shell customization must ensure that
+Vergil's tools see a clean, predictable environment regardless
+of what the user's interactive shell looks like — for example,
+by having `vrg-*` commands source their own environment rather
+than inheriting the interactive shell's state. This is a
+non-trivial design problem that should be solved deliberately,
+not by opening up `.zshrc` and hoping for the best.
+
 **How this is enforced:** The initial implementation does not
-include a customization mechanism. The base image ships with a
-curated set of developer convenience tools (editors, tmux, etc.)
-alongside the Vergil toolchain. If users need additional
-safe-category tools, they can be proposed for inclusion in the
-base image through the normal change-control process.
+include a user customization mechanism. The base image ships
+with a curated set of developer convenience tools (editors,
+tmux, etc.) alongside the Vergil toolchain. If users need
+additional safe-category tools, they can be proposed for
+inclusion in the base image through the normal change-control
+process.
 
 A formal extension mechanism (e.g., a constrained package
 manifest for safe-category tools only) may be added in a later
