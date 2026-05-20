@@ -314,7 +314,9 @@ def _st_config(
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
-        publish=PublishConfig(release=False, docs=True),
+        publish=PublishConfig(
+            release=False, docs=True, consumer_refresh=None, docs_workflow="Documentation"
+        ),
     )
 
 
@@ -1326,7 +1328,9 @@ def test_compute_desired_state_publish_release_true() -> None:
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
-        publish=PublishConfig(release=True, docs=True),
+        publish=PublishConfig(
+            release=True, docs=True, consumer_refresh=None, docs_workflow="Documentation"
+        ),
     )
     state = compute_desired_state(config, visibility="public", is_org=True)
     assert state.publish.release is True

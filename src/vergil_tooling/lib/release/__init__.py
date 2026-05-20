@@ -1,4 +1,4 @@
-"""Release-workflow branch identification."""
+"""Release workflow utilities."""
 
 from __future__ import annotations
 
