@@ -13,32 +13,56 @@ import sys
 from vergil_tooling.lib import git
 from vergil_tooling.lib.docker import docker_platform
 
+_VALID_PREFIXES = {"dev", "prod"}
+
 
 def _usage(port: str) -> None:
-    print("Usage: docker-docs <serve|build> [mkdocs args...]")
+    print("Usage: docker-docs [--prefix <dev|prod>] <serve|build> [mkdocs args...]")
     print()
     print("Commands:")
     print(f"  serve   Start a live-reloading preview server (port {port})")
     print("  build   Build the static documentation site")
     print()
+    print("Options:")
+    print("  --prefix <dev|prod>  image prefix (default: prod)")
+    print()
     print("Environment variables:")
-    print("  DOCKER_DOCS_IMAGE  Docker image (default: ghcr.io/vergil-project/prod-base:latest)")
+    print("  DOCKER_DOCS_IMAGE  Docker image (override; ignores --prefix)")
     print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
     print("  DOCS_PORT          Host port for serve (default: 8000)")
 
 
-def _docs_image() -> str:
+def _docs_image(prefix: str) -> str:
     return os.environ.get(
         "DOCKER_DOCS_IMAGE",
-        "ghcr.io/vergil-project/prod-base:latest",
+        f"ghcr.io/vergil-project/{prefix}-base:latest",
     )
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = argv if argv is not None else sys.argv[1:]
+    args = list(argv if argv is not None else sys.argv[1:])
 
     config = os.environ.get("MKDOCS_CONFIG", "docs/site/mkdocs.yml")
     port = os.environ.get("DOCS_PORT", "8000")
+
+    prefix = "prod"
+    if "--prefix" in args:
+        pi = args.index("--prefix")
+        if pi + 1 >= len(args):
+            print(
+                "error: --prefix requires a value (dev or prod)",
+                file=sys.stderr,
+            )
+            return 1
+        prefix = args[pi + 1]
+        if prefix not in _VALID_PREFIXES:
+            allowed = ", ".join(sorted(_VALID_PREFIXES))
+            print(
+                f"error: invalid prefix '{prefix}' (allowed: {allowed})",
+                file=sys.stderr,
+            )
+            return 1
+        del args[pi : pi + 2]
 
     if not args:
         _usage(port)
@@ -60,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
         mkdocs_cmd += " " + " ".join(extra_args)
 
     repo_root = git.repo_root()
-    image = _docs_image()
+    image = _docs_image(prefix)
 
     container_cmd = mkdocs_cmd
     if (repo_root / "pyproject.toml").is_file():
