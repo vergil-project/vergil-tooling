@@ -49,6 +49,22 @@ sequence documented in vergil-tooling#807 — a future `vrg-init`
 command will automate this, but for now it is a one-time manual
 process.
 
+**Wrapper restrictions:** Several bootstrap commands require
+raw `gh` or raw `git` because the wrappers block them:
+
+- **`vrg-gh`** restricts `repo` to `view` only. `repo create`,
+  `repo edit`, `api`, and `auth` are denied.
+- **`vrg-git`** denies `commit` (use vrg-commit — but vrg-commit
+  fails on an empty repo with no HEAD), `config` (except the
+  exact `config core.hooksPath .githooks`), and does not allow
+  `clone` (not in the subcommand allowlist).
+
+These commands must be run by the human directly (via
+`! <command>` in Claude Code, or from a separate terminal).
+Commands below are annotated with `# human: raw gh` or
+`# human: raw git` where this applies. Unmarked commands
+work through the normal wrappers.
+
 ### 1. Install Lima
 
 ```bash
@@ -59,6 +75,7 @@ limactl --version   # Confirm >= 2.0.0
 ### 2. Create the GitHub repository
 
 ```bash
+# human: raw gh — repo create is denied by vrg-gh
 gh repo create vergil-project/vergil-vm \
   --public \
   --description "Lima VM image definitions for Vergil identity VMs"
@@ -70,6 +87,7 @@ The empty repo has no HEAD, so `vrg-commit` cannot be used for
 the first commit. Use raw `git` for the bootstrap only.
 
 ```bash
+# human: raw git — clone is not in the vrg-git allowlist
 cd ~/dev/projects/vergil-project
 git clone git@github.com:vergil-project/vergil-vm.git
 cd vergil-vm
@@ -98,7 +116,8 @@ cat > LICENSE << 'EOF'
 (GPL-3.0-or-later — copy from vergil-tooling/LICENSE)
 EOF
 
-# Initial commit (raw git — no HEAD exists yet)
+# human: raw git — commit is denied by vrg-git, and vrg-commit
+# fails on an empty repo with no HEAD (#807)
 git add -A
 git commit -m "chore: initial repository scaffold"
 ```
@@ -109,18 +128,19 @@ GitHub repos default to `main`. Vergil convention uses
 `develop` as the default branch with `main` for releases.
 
 ```bash
-# Rename the initial branch to develop
-git branch -m main develop
-git push -u origin develop
+# These work through vrg-git (branch, push are allowed;
+# -m and -u are not denied flags)
+vrg-git branch -m main develop
+vrg-git push -u origin develop
 
-# Create main from the same commit
-git branch main
-git push -u origin main
+vrg-git branch main
+vrg-git push -u origin main
 ```
 
 ### 5. Set default branch to develop
 
 ```bash
+# human: raw gh — repo edit is denied by vrg-gh
 gh repo edit vergil-project/vergil-vm --default-branch develop
 ```
 
@@ -131,6 +151,7 @@ chicken-and-egg problem (#807): rulesets require branches,
 and branches require commits.
 
 ```bash
+# This is vrg-github-repo-config, not gh — no restriction
 vrg-github-repo-config apply --repo vergil-project/vergil-vm
 ```
 
@@ -141,23 +162,46 @@ known bootstrapping workaround until `vrg-init` exists.
 ### 7. Set up hooks and development environment
 
 ```bash
-# Create and enable the pre-commit hook
 mkdir -p .githooks
 # Copy .githooks/pre-commit from any existing Vergil repo
 cp ../vergil-tooling/.githooks/pre-commit .githooks/pre-commit
-git config core.hooksPath .githooks
 
-# Verify vrg-commit works
+# vrg-git allows the exact command: config core.hooksPath .githooks
+vrg-git config core.hooksPath .githooks
+
+# Verify vrg-commit works (normal workflow from here on)
 vrg-commit --type chore --scope repo --message "enable pre-commit hook" \
   --body "Copied from vergil-tooling"
-git push
+vrg-git push
 ```
 
 ### 8. Create CLAUDE.md
 
-Write a project-specific CLAUDE.md for vergil-vm (can be
-minimal initially — the agent will follow vergil-tooling's
-conventions for shell command policy, validation, etc.).
+The `vrg-github-repo-config audit` command checks that
+`CLAUDE.md` exists and contains the **exact** consumer template
+from `vergil_tooling/data/claude_md_consumer.md` as a substring
+(case-sensitive, whitespace-exact). The template includes four
+mandatory sections: Memory management, Parallel AI agent
+development (with structure, rules, and agent prompt contract),
+Shell command policy, and Validation.
+
+Start with the verbatim template, then add a project-specific
+header above it (`# CLAUDE.md`, project overview, etc.).
+Additional sections can appear before or after the template,
+but the template text must not be modified.
+
+```bash
+# Copy the consumer template as the base
+cp ../vergil-tooling/src/vergil_tooling/data/claude_md_consumer.md CLAUDE.md
+
+# Prepend the project header (edit the file to add above the template):
+#   # CLAUDE.md
+#   ## Project Overview
+#   vergil-vm provides Lima VM image definitions ...
+
+# Verify audit compliance
+vrg-github-repo-config audit --repo vergil-project/vergil-vm
+```
 
 ### 9. Verify the repo is ready
 
@@ -166,7 +210,7 @@ vrg-github-repo-config audit --repo vergil-project/vergil-vm
 # Should exit 0 (compliant)
 
 # Create a test worktree to confirm normal workflow works
-vrg-git worktree add -b feature/test-worktree .worktrees/test .
+vrg-git worktree add -b feature/test-worktree .worktrees/test develop
 vrg-git worktree remove .worktrees/test
 vrg-git branch -d feature/test-worktree
 ```
