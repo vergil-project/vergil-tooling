@@ -22,6 +22,7 @@ from vergil_tooling.lib.repo_init import (
     render_mkdocs_yml,
     step_clone,
     step_create_repo,
+    step_generate_config,
     render_readme,
     render_vergil_toml,
 )
@@ -312,3 +313,94 @@ class TestStepClone:
 
         step_clone(ctx, parent_dir=tmp_path)
         assert ctx.work_dir == target
+
+
+class TestStepGenerateConfig:
+    def test_prompts_and_writes_vergil_toml(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+
+        # Indices are alphabetical within each sorted enum:
+        # repository-type: 5=tooling, primary-language: 8=shell,
+        # branching-model: 3=library-release, versioning-scheme: 4=semver,
+        # release-model: 4=tagged-release
+        inputs = iter([
+            "5",       # repository-type: tooling
+            "8",       # primary-language: shell
+            "3",       # branching-model: library-release
+            "4",       # versioning-scheme: semver
+            "4",       # release-model: tagged-release
+            "latest",  # ci versions
+            "n",       # integration tests
+            "y",       # publish releases
+            "y",       # publish docs
+            "",        # vergil version (default v2.0)
+            "1",       # license: GPL-3.0
+        ])
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+
+        with (
+            patch("builtins.input", side_effect=lambda _="": next(inputs)),
+            patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run),
+        ):
+            step_generate_config(ctx)
+
+        toml_path = tmp_path / "vergil.toml"
+        assert toml_path.exists()
+        content = toml_path.read_text()
+        assert 'primary-language = "shell"' in content
+
+        assert any("commit" in c for c in calls)
+
+    def test_prefills_from_existing_toml_in_adopt_mode(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        ctx = RepoInitContext(
+            org="vergil-project",
+            name="vergil-vm",
+            adopt=True,
+        )
+        ctx.work_dir = tmp_path
+
+        existing = (
+            "[project]\n"
+            'repository-type = "tooling"\n'
+            'versioning-scheme = "semver"\n'
+            'branching-model = "library-release"\n'
+            'release-model = "tagged-release"\n'
+            'primary-language = "shell"\n'
+            "\n"
+            "[ci]\n"
+            'versions = ["latest"]\n'
+            "integration-tests = false\n"
+            "\n"
+            "[publish]\n"
+            "release = true\n"
+            "docs = true\n"
+            "\n"
+            "[dependencies]\n"
+            'vergil = "v2.0"\n'
+        )
+        (tmp_path / "vergil.toml").write_text(existing)
+
+        # All defaults accepted (empty input)
+        inputs = iter([""] * 11)
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+
+        with (
+            patch("builtins.input", side_effect=lambda _="": next(inputs)),
+            patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.primary_language == "shell"
+        assert ctx.repository_type == "tooling"

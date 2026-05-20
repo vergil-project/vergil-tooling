@@ -8,8 +8,10 @@ import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+from typing import Any
 
 from vergil_tooling.lib import git, github
+from vergil_tooling.lib.config import _ENUMS
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -460,3 +462,94 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
     )
     ctx.work_dir = target
     print(f"  Cloned to {target}.")
+
+
+def _default_ci_versions(language: str) -> str:
+    """Return sensible default CI versions for a language."""
+    defaults: dict[str, str] = {
+        "python": "3.12, 3.13, 3.14",
+        "go": "1.23",
+        "java": "21",
+        "ruby": "3.3",
+        "rust": "stable",
+        "shell": "latest",
+        "none": "latest",
+        "claude-plugin": "latest",
+    }
+    return defaults.get(language, "latest")
+
+
+def _load_existing_config(work_dir: Path) -> dict[str, Any] | None:
+    """Load existing vergil.toml if present. Returns raw TOML dict."""
+    toml_path = work_dir / "vergil.toml"
+    if not toml_path.is_file():
+        return None
+    import tomllib
+
+    with toml_path.open("rb") as f:
+        return tomllib.load(f)
+
+
+def step_generate_config(ctx: RepoInitContext) -> None:
+    """Step 3: Interactive vergil.toml generation."""
+    print("Step 3: Generating vergil.toml...")
+
+    existing = _load_existing_config(ctx.work_dir) if ctx.adopt else None
+    project = existing.get("project", {}) if existing else {}
+    ci_raw = existing.get("ci", {}) if existing else {}
+    pub_raw = existing.get("publish", {}) if existing else {}
+    deps = existing.get("dependencies", {}) if existing else {}
+
+    enum_fields = [
+        ("repository_type", "repository-type", "Repository type"),
+        ("primary_language", "primary-language", "Primary language"),
+        ("branching_model", "branching-model", "Branching model"),
+        ("versioning_scheme", "versioning-scheme", "Versioning scheme"),
+        ("release_model", "release-model", "Release model"),
+    ]
+
+    for attr, toml_key, label in enum_fields:
+        options = sorted(_ENUMS[toml_key])
+        default = project.get(toml_key, "")
+        value = prompt_choice(label, options, default=default)
+        setattr(ctx, attr, value)
+
+    default_versions = _default_ci_versions(ctx.primary_language)
+    existing_versions = ", ".join(ci_raw.get("versions", []))
+    raw_versions = prompt_free_text(
+        "CI versions (comma-separated)",
+        default=existing_versions or default_versions,
+    )
+    ctx.ci_versions = [v.strip() for v in raw_versions.split(",")]
+
+    ctx.integration_tests = prompt_yes_no(
+        "Integration tests?",
+        default=ci_raw.get("integration-tests", False),
+    )
+
+    release_default = ctx.release_model != "none"
+    ctx.publish_release = prompt_yes_no(
+        "Publish releases?",
+        default=pub_raw.get("release", release_default),
+    )
+
+    ctx.publish_docs = prompt_yes_no(
+        "Publish docs?",
+        default=pub_raw.get("docs", True),
+    )
+
+    ctx.vergil_version = prompt_free_text(
+        "Vergil dependency version",
+        default=deps.get("vergil", "v2.0"),
+    )
+
+    license_options = ["GPL-3.0", "MIT", "Apache-2.0", "none"]
+    ctx.license_type = prompt_choice("License", license_options, default="GPL-3.0")
+
+    content = render_vergil_toml(ctx)
+    assert ctx.work_dir is not None
+    (ctx.work_dir / "vergil.toml").write_text(content)
+
+    git.run("add", "vergil.toml")
+    git.run("commit", "-m", "chore(init): step 3 - vergil.toml")
+    print("  vergil.toml committed.")
