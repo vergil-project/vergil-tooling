@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
-from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_git import main
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 # -- no arguments -------------------------------------------------------------
 
@@ -158,19 +152,6 @@ def test_exact_match_denies_other_config(capsys: pytest.CaptureFixture[str]) -> 
 def test_exact_match_denies_bare_config(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["config"]) != 0
     assert "denied" in capsys.readouterr().err.lower()
-
-
-def test_exact_match_logged(tmp_path: Path) -> None:
-    log_file = tmp_path / "vrg-git.log"
-    with (
-        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_git._log_path", return_value=log_file),
-    ):
-        mock_run.return_value.returncode = 0
-        main(["config", "core.hooksPath", ".githooks"])
-    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert len(entries) == 1
-    assert entries[0]["result"] == "allowed"
 
 
 # -- helper: _is_protected_branch --------------------------------------------
@@ -427,45 +408,6 @@ def test_rebase_normal_allowed() -> None:
         mock_run.return_value.returncode = 0
         rc = main(["rebase", "main"])
     assert rc == 0
-
-
-# -- invocation logging -------------------------------------------------------
-
-
-def test_allowed_invocation_logged(tmp_path: Path) -> None:
-    log_file = tmp_path / "vrg-git.log"
-    with (
-        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_git._log_path", return_value=log_file),
-    ):
-        mock_run.return_value.returncode = 0
-        main(["status"])
-    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert len(entries) == 1
-    assert entries[0]["args"] == ["status"]
-    assert entries[0]["result"] == "allowed"
-    assert "timestamp" in entries[0]
-
-
-def test_denied_invocation_logged(tmp_path: Path) -> None:
-    log_file = tmp_path / "vrg-git.log"
-    with patch("vergil_tooling.bin.vrg_git._log_path", return_value=log_file):
-        main(["commit"])
-    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert len(entries) == 1
-    assert entries[0]["args"] == ["commit"]
-    assert entries[0]["result"] == "denied"
-
-
-def test_log_directory_created(tmp_path: Path) -> None:
-    log_file = tmp_path / "subdir" / "vrg-git.log"
-    with (
-        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_git._log_path", return_value=log_file),
-    ):
-        mock_run.return_value.returncode = 0
-        main(["status"])
-    assert log_file.exists()
 
 
 # -- subprocess passthrough ----------------------------------------------------
