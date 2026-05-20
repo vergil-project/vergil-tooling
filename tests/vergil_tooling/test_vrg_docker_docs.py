@@ -26,7 +26,12 @@ def test_serve_execvp(tmp_path: Path) -> None:
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
         ]
         main(["serve"])
@@ -47,7 +52,12 @@ def test_build_execvp(tmp_path: Path) -> None:
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs build -f docs/site/mkdocs.yml",
         ]
         main(["build"])
@@ -84,7 +94,13 @@ def test_custom_env_vars(tmp_path: Path) -> None:
         patch.dict("os.environ", env, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", "my-docs:1", "bash", "-c", "placeholder",
+            "docker",
+            "run",
+            "--rm",
+            "my-docs:1",
+            "bash",
+            "-c",
+            "placeholder",
         ]
         main(["serve"])
     assert mock_build.call_args[0][1] == "my-docs:1"
@@ -153,7 +169,12 @@ def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs build -f docs/site/mkdocs.yml",
         ]
         main(["build"])
@@ -173,7 +194,12 @@ def test_serve_splices_port_before_image(tmp_path: Path) -> None:
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
         ]
         main(["serve"])
@@ -194,7 +220,12 @@ def test_serve_custom_port(tmp_path: Path) -> None:
         patch.dict("os.environ", {"DOCS_PORT": "9000"}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
         ]
         main(["serve"])
@@ -212,7 +243,12 @@ def test_build_no_port_splice(tmp_path: Path) -> None:
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
-            "docker", "run", "--rm", image, "bash", "-c",
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
             "mkdocs build -f docs/site/mkdocs.yml",
         ]
         main(["build"])

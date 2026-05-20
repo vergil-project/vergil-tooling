@@ -91,7 +91,9 @@ def main(argv: list[str] | None = None) -> int:
         container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
 
     docker_args = build_docker_args(
-        repo_root, image, ["bash", "-c", container_cmd],
+        repo_root,
+        image,
+        ["bash", "-c", container_cmd],
     )
 
     if command == "serve":
