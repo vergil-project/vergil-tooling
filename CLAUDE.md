@@ -202,10 +202,7 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-commit`** — Construct standards-compliant conventional
   commits with co-author resolution
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge)
-- **`vrg-merge-when-green`** — Wait for a PR's checks, then merge it
-  (release-workflow use only; normal PRs stay on the honor-system
-  manual-merge policy)
-- **`vrg-prepare-release`** — Automate release preparation (branch, changelog, PR)
+- **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
@@ -218,6 +215,8 @@ Shared libraries under `src/vergil_tooling/lib/`:
 - **`git.py`** — Git subprocess wrappers
 - **`github.py`** — gh CLI subprocess wrappers
 - **`config.py`** — Parse `vergil.toml`
+- **`release/`** — Mechanized release workflow (preflight, prepare, merge,
+  bump, confirm, finalize, handoff, orchestrator)
 
 ### Docker Dev Images
 
