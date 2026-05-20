@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.25] - 2026-05-20
+
+### Chores
+
+- bump version to 2.0.25
+
+### Features
+
+- add label to version selector in site header
+
 ## [2.0.24] - 2026-05-20
 
 ### Bug fixes
@@ -30,6 +40,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - design spec for eliminating hardcoded mount in vrg-docker-docs
 - move design spec to docs/specs/
 - implementation plan for build_docker_args refactor
+- vrg-github-repo-init design spec
+- incorporate pushback review findings into design spec
+- vrg-github-repo-init implementation plan
 - implementation plans 2-6 for vergil-vm identity VM system
 - defer Plan 4 (egress filtering) to v2.2
 - multi-platform host support design spec
@@ -40,6 +53,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Features
 
 - replace hand-built docker args with build_docker_args in vrg-docker-docs
+- add template data files for repo init
+- add prompt helpers and RepoInitContext dataclass
+- add checkpoint detection for idempotent resume
+- add template rendering functions for all generated files
+- add wizard steps 1-2: repo creation and clone
+- add wizard step 3: interactive vergil.toml generation
+- add wizard step 4: scaffold config files
+- add wizard steps 5-6: CI/CD workflows and docs site
+- add wizard steps 7-9: branches, GitHub config, Pages
+- add wizard orchestrator with idempotent step skipping
+- add vrg-github-repo-init CLI entry point
 
 ### Refactoring
 
@@ -53,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - add tests for build_docker_args delegation in vrg-docker-docs
 - update existing tests to mock build_docker_args, remove sibling mount test
+- add coverage tests for repo init wizard and CLI entry point
 
 ## [2.0.23] - 2026-05-20
 
