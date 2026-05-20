@@ -96,29 +96,10 @@ def test_no_args_still_runs_scorecard(tmp_path: Path) -> None:
     assert mock_build.call_args[0][2] == ["scorecard"]
 
 
-# -- image prefix resolution --------------------------------------------------
-
-_TOML_DEV_PREFIX = """\
-[project]
-repository-type = "library"
-versioning-scheme = "semver"
-branching-model = "library-release"
-release-model = "tagged-release"
-primary-language = "python"
-
-[dependencies]
-vergil = "v2.0"
-
-[ci]
-versions = ["3.14"]
-
-[docker]
-image-prefix = "dev"
-"""
+# -- --prefix flag ------------------------------------------------------------
 
 
-def test_config_prefix_used(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
+def test_cli_prefix_used(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/dev-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
@@ -128,24 +109,20 @@ def test_config_prefix_used(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
-        main(["--repo=github.com/org/repo"])
+        main(["--prefix", "dev", "--repo=github.com/org/repo"])
 
-    assert mock_build.call_args[0][1] == "ghcr.io/vergil-project/dev-base:latest"
+    assert mock_build.call_args[0][1] == image
+    assert mock_build.call_args[0][2] == ["scorecard", "--repo=github.com/org/repo"]
 
 
-def test_default_prefix_without_config(tmp_path: Path) -> None:
-    image = "ghcr.io/vergil-project/prod-base:latest"
-    with (
-        patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
-        patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
-        patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
-    ):
-        mock_build.return_value = ["docker", "run", "--rm", image, "scorecard"]
-        main(["--repo=github.com/org/repo"])
+def test_invalid_prefix(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--prefix", "staging"]) == 1
+    assert "invalid prefix" in capsys.readouterr().err
 
-    assert mock_build.call_args[0][1] == "ghcr.io/vergil-project/prod-base:latest"
+
+def test_prefix_missing_value(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--prefix"]) == 1
+    assert "--prefix requires a value" in capsys.readouterr().err
 
 
 # -- error handling -----------------------------------------------------------

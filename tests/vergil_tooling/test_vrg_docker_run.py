@@ -120,28 +120,8 @@ def test_language_detected_image(tmp_path: Path) -> None:
     assert "ghcr.io/vergil-project/prod-python:3.14" in args
 
 
-_TOML_DEV_PREFIX = """\
-[project]
-repository-type = "library"
-versioning-scheme = "semver"
-branching-model = "library-release"
-release-model = "tagged-release"
-primary-language = "python"
-
-[dependencies]
-vergil = "v2.0"
-
-[ci]
-versions = ["3.14"]
-
-[docker]
-image-prefix = "dev"
-"""
-
-
-def test_config_prefix_used(tmp_path: Path) -> None:
+def test_cli_prefix_used(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
-    (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
     env = {"GH_TOKEN": "tok"}
     with (
         patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
@@ -151,9 +131,19 @@ def test_config_prefix_used(tmp_path: Path) -> None:
         patch.dict("os.environ", env, clear=True),
     ):
         mock_cache.return_value = "ghcr.io/vergil-project/dev-python:3.14"
-        main(["--", "echo", "hi"])
+        main(["--prefix", "dev", "--", "echo", "hi"])
     mock_cache.assert_called_once()
     assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/dev-python:3.14"
+
+
+def test_invalid_prefix(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--prefix", "staging", "--", "echo"]) == 1
+    assert "invalid prefix" in capsys.readouterr().err
+
+
+def test_prefix_missing_value(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--prefix"]) == 1
+    assert "--prefix requires a value" in capsys.readouterr().err
 
 
 def test_env_image_override(tmp_path: Path) -> None:
