@@ -138,6 +138,9 @@ command and its context pass validation:
   merging to `main`, back-merge from `main` to `develop`).
 - **Approval:** Allowed under the human account only for release
   PRs authored by `vergil-release[bot]`.
+- **Issue close:** Allowed under the human account. The agent
+  account may lack the `CloseIssue` GraphQL permission as an
+  outside collaborator; escalating avoids this dependency.
 - **Other admin operations:** Denied entirely.
 
 Escalation requires both a permitted command and a validated

@@ -43,6 +43,7 @@ _DENIED_TOP: dict[str, str] = {
 
 _ESCALATED_COMMANDS: set[tuple[str, str]] = {
     ("pr", "merge"),
+    ("issue", "close"),
 }
 
 

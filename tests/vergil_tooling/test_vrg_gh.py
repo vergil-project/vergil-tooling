@@ -281,6 +281,24 @@ def test_default_uses_human_token_workaround() -> None:
 # -- credential selection: escalation for pr merge ---------------------------
 
 
+def test_issue_close_escalates_to_human() -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh._discover_accounts",
+            return_value=("jdoe", "jdoe-vergil"),
+        ),
+        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = MagicMock(returncode=0, stdout="human-token\n")
+        from vergil_tooling.bin.vrg_gh import _get_token
+
+        token = _get_token(["issue", "close", "42"])
+    assert token == "human-token"  # noqa: S105
+    token_call = mock_run.call_args_list[-1]
+    assert "jdoe" in token_call[0][0]
+    assert "jdoe-vergil" not in token_call[0][0]
+
+
 def test_pr_merge_release_branch_escalates() -> None:
     with (
         patch(
