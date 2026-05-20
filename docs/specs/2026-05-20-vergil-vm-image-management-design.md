@@ -262,11 +262,12 @@ The single `vergil-agent` image contains:
 - curl, wget, jq, yq, ripgrep, fzf
 - zsh (default shell for the `agent` user)
 
-**Vergil tooling:**
-- vergil-tooling installed via `uv tool install` from a pinned
-  version tag
-- Git hooks path configured
-- `vrg-*` commands available on PATH
+**Vergil tooling (dynamically managed, not baked in):**
+- vergil-tooling is NOT pre-installed in the base image
+- Installed and updated dynamically at VM startup via
+  `uv tool install` (see Dynamic Tooling Management below)
+- Git hooks path configured at first-run
+- `vrg-*` commands available on PATH after startup
 
 **Container runtime:**
 - Rootless containerd + nerdctl
@@ -313,12 +314,16 @@ The build process:
 1. Render the Lima YAML template with version placeholders
    resolved
 2. Boot a fresh VM from the template
-3. Run provisioning scripts in order (base → tools → vergil →
+3. Run provisioning scripts in order (base → tools →
    containerd → hardening)
-4. Run test suite inside the VM to verify all tools are
-   installed and functional
-5. Capture a clean snapshot
-6. Export the image artifact
+4. Run the dynamic tooling installer (to verify it works and
+   to exercise the startup hook)
+5. Run test suite inside the VM to verify all base tools are
+   installed, containerd works, and the dynamic tooling
+   installer successfully installs vergil-tooling
+6. Capture a clean snapshot (with vergil-tooling uninstalled —
+   it will be installed dynamically on first real boot)
+7. Export the image artifact
 
 **CI pipeline:**
 
@@ -326,40 +331,50 @@ On PR:
 - Lint provisioning scripts (shellcheck)
 - Build a test VM
 - Run the full test suite inside it
-- Verify vergil-tooling works (vrg-validate inside a container
-  inside the VM)
+- Verify the dynamic tooling installer works end-to-end
+- Verify containerd can pull and run a vergil-docker image
 
 On merge to main:
 - Build the release image
 - Tag with version from `VERSION` file
-- Publish (see Distribution below)
+- Publish to GHCR (OCI artifact) or GitHub Releases
 
 ### Distribution
 
-Lima VM images are not OCI containers — they can't be pushed to
-GHCR the same way Docker images can. Distribution options:
+VM images must be pre-built and published. Requiring users to
+build images locally exposes them to the full complexity of the
+build environment (Lima configuration, provisioning scripts,
+architecture-specific toolchain) and creates a support burden
+from build failures across different macOS configurations. The
+goal is a low barrier to entry — users install a pre-built image,
+not a build toolchain.
 
-1. **Git-based (simplest):** The vergil-vm repository IS the
-   distribution mechanism. Users clone it and run `build.sh` to
-   produce their local VM. The Lima YAML template and
-   provisioning scripts are the artifact. Version pinning is via
-   git tags.
+Lima VM images are not OCI containers, but there are two viable
+distribution mechanisms:
 
-2. **Pre-built disk images:** Build and publish qcow2 or raw
-   disk images as GitHub Release artifacts. Users download the
-   image and point Lima at it. Faster provisioning (no build
-   step), but larger artifacts and architecture-specific.
+1. **Pre-built disk images via GitHub Releases.** Build and
+   publish qcow2 or raw disk images as GitHub Release artifacts,
+   one per supported architecture. Users download the image and
+   point Lima at it. Simple, well-understood, no experimental
+   dependencies.
 
-3. **OCI artifact registry:** Lima supports OCI-based image
-   distribution. Publish the VM image to GHCR as an OCI
-   artifact (not a container image). Experimental but aligns
-   with the existing GHCR infrastructure.
+2. **OCI artifact registry (preferred).** Lima supports
+   OCI-based image distribution. Publish the VM image to GHCR
+   as an OCI artifact (not a container image, but stored in the
+   same registry). This leverages the existing GHCR
+   infrastructure that vergil-docker already uses, keeps all
+   Vergil artifacts in one place, and aligns with the broader
+   OCI ecosystem.
 
-**Recommended starting point:** Option 1 (git-based). It's the
-simplest, requires no new infrastructure, and matches how
-vergil-tooling itself is distributed (`uv tool install` from a
-git URL). Pre-built images (option 2) can be added later when
-build time becomes a pain point.
+**Recommended approach:** Option 2 (OCI artifacts on GHCR) if
+Lima's OCI support is mature enough. Fall back to option 1
+(GitHub Releases) if OCI distribution proves unreliable. Both
+options deliver pre-built images — the difference is where they
+are stored and how they are pulled.
+
+Building locally (`build.sh`) remains available for vergil-vm
+contributors developing the image itself, but is not the
+consumption path for end users.
 
 ### Versioning
 
@@ -368,14 +383,70 @@ definition, not the tools inside it:
 
 - **Major:** Breaking changes to the VM layout, mount points,
   or user environment that require consumers to re-provision
-- **Minor:** New tools added, version bumps of included tools,
-  provisioning improvements
+- **Minor:** New tools added, OS version bumps, provisioning
+  improvements, new base infrastructure
 - **Patch:** Bug fixes, security updates, documentation
 
-The vergil-tooling version inside the VM is pinned in the
-provisioning scripts and updated via the normal dependency-update
-workflow. A vergil-tooling version bump is a minor version bump
-of vergil-vm.
+Major.minor affinity between vergil-vm and vergil-tooling: the
+2.0.x releases of vergil-vm depend on the v2.0 release line of
+vergil-tooling. This keeps the pairing predictable without
+creating a tight coupling that requires VM rebuilds for every
+tooling patch.
+
+### Dynamic Tooling Management
+
+Vergil-tooling is **not baked into the VM image.** It is
+installed and updated dynamically, mirroring the approach used
+in the Docker layer where vergil-tooling is installed at
+container build time rather than pre-installed in the base image.
+
+**Why not pre-install?** Vergil-tooling's rate of change is
+high — especially during active development. Pre-installing it
+would require rebuilding and republishing the VM image for every
+tooling release. The base VM image should be a stable,
+slowly-changing foundation (OS, core utilities, container
+runtime). Fast-changing dependencies are managed dynamically.
+
+**How it works:**
+
+1. **VM startup hook.** When the VM boots (or when a new session
+   is launched via `vrg-session`), a startup script checks the
+   installed vergil-tooling version against the configured target
+   (e.g., `v2.0`). If the installed version is older than the
+   latest available release in the target range, it updates
+   automatically via `uv tool install`.
+
+2. **Explicit update command.** A CLI command (e.g.,
+   `vrg-vm-update`) can be run inside the VM at any time to pull
+   the latest vergil-tooling within the configured version range.
+   This supports the mid-development-cycle scenario: you find a
+   bug in vergil-tooling, fix and publish it, then run
+   `vrg-vm-update` in the VM to pick up the fix immediately
+   without restarting anything.
+
+3. **Version range configuration.** The VM is configured with a
+   major.minor version affinity (e.g., `v2.0`). The dynamic
+   installer resolves this to the latest patch release within
+   that range (e.g., `v2.0.24`). This is analogous to how
+   `vergil.toml` configures the tooling version for Docker
+   cache builds.
+
+**Analogy to the Docker cache system:**
+
+| Aspect | Docker (current) | VM (proposed) |
+|---|---|---|
+| Base artifact | vergil-docker image (no tooling pre-installed) | vergil-vm image (no tooling pre-installed) |
+| Tooling installation | `vrg-docker-cache build` installs vergil-tooling into cached image | VM startup hook installs vergil-tooling at boot |
+| Version pinning | `vergil.toml` specifies version tag | VM config specifies version range |
+| Mid-cycle update | Rebuild Docker cache | Run `vrg-vm-update` |
+| CI behavior | Installs tooling dynamically per workflow | N/A (CI uses Docker, not VMs) |
+
+**Consequence for VM image versioning:** Vergil-tooling updates
+do NOT trigger VM image rebuilds. The VM image changes only when
+the base infrastructure changes (OS updates, new core utilities,
+container runtime upgrades, provisioning improvements). This
+dramatically reduces the VM image release cadence while keeping
+vergil-tooling current.
 
 ### Relationship to Corral
 
@@ -442,16 +513,17 @@ GHCR authentication is configured during VM setup.
 
 ## Open Questions
 
-1. **Distribution model.** Git-based distribution (clone + build)
-   is the recommended starting point. Pre-built images or OCI
-   artifacts are future optimizations. Revisit when build time
-   or first-setup friction becomes a real pain point.
+1. **OCI artifact maturity.** Lima's OCI-based image distribution
+   is the preferred approach but needs validation. If OCI
+   artifacts on GHCR prove unreliable, fall back to GitHub
+   Releases with architecture-specific disk images.
 
-2. **vergil-tooling version pinning.** The VM pins a specific
-   vergil-tooling version. When vergil-tooling releases a new
-   version, vergil-vm needs a corresponding update. This is the
-   same dependency-update pattern used across all Vergil repos,
-   handled by the existing `dependency-update` workflow.
+2. **Dynamic tooling installer implementation.** The startup hook
+   that installs/updates vergil-tooling needs to handle edge
+   cases: network unavailability (use the last-installed version),
+   version resolution failures, and concurrent sessions triggering
+   simultaneous updates. The `vrg-vm-update` CLI command needs
+   to be safe to run while Claude Code sessions are active.
 
 3. **Ubuntu version policy.** Track Ubuntu LTS releases? Pin to
    a specific release and update on a schedule? The simplest
