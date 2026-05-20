@@ -463,6 +463,11 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
         print(f"Step 2: {target} already cloned, skipping.")
         return
 
+    resolved = target.resolve()
+    if not prompt_yes_no(f"Step 2: Clone to {resolved}?", default=True):
+        print("Aborted. Re-run from the directory where you want the clone.")
+        raise SystemExit(1)
+
     print(f"Step 2: Cloning {ctx.repo}...")
     subprocess.run(  # noqa: S603
         ("git", "clone", f"git@github.com:{ctx.repo}.git", str(target)),  # noqa: S607
