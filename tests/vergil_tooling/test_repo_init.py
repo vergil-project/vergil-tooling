@@ -6,6 +6,7 @@ import pytest
 
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    detect_completed_steps,
     prompt_choice,
     prompt_free_text,
     prompt_yes_no,
@@ -82,3 +83,27 @@ class TestRepoInitContext:
             adopt=True,
         )
         assert ctx.adopt is True
+
+
+class TestDetectCompletedSteps:
+    def test_no_commits_returns_empty(self) -> None:
+        log_output = ""
+        result = detect_completed_steps(log_output)
+        assert result == set()
+
+    def test_parses_checkpoint_markers(self) -> None:
+        log_output = (
+            "abc1234 chore(init): step 3 - vergil.toml\n"
+            "def5678 chore(init): step 4 - config files\n"
+        )
+        result = detect_completed_steps(log_output)
+        assert result == {3, 4}
+
+    def test_ignores_non_marker_commits(self) -> None:
+        log_output = (
+            "abc1234 feat: something else\n"
+            "def5678 chore(init): step 3 - vergil.toml\n"
+            "ghi9012 docs: readme\n"
+        )
+        result = detect_completed_steps(log_output)
+        assert result == {3}

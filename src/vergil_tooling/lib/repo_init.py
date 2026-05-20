@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
+
+_CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
 
 @dataclass
@@ -34,6 +37,16 @@ class RepoInitContext:
     @property
     def repo(self) -> str:
         return f"{self.org}/{self.name}"
+
+
+def detect_completed_steps(log_output: str) -> set[int]:
+    """Parse git log output for checkpoint markers."""
+    steps: set[int] = set()
+    for line in log_output.splitlines():
+        m = _CHECKPOINT_RE.search(line)
+        if m:
+            steps.add(int(m.group(1)))
+    return steps
 
 
 def prompt_choice(label: str, options: list[str], *, default: str = "") -> str:
