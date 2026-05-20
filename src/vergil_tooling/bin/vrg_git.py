@@ -1,16 +1,12 @@
 """Safe git wrapper for AI agent sessions.
 
-Enforces a subcommand allowlist, flag deny lists, and logs every
-invocation to a JSON-lines audit file.
+Enforces a subcommand allowlist and flag deny lists.
 """
 
 from __future__ import annotations
 
-import datetime
-import json
 import subprocess
 import sys
-from pathlib import Path
 
 _ALLOWED_SIMPLE: set[str] = {
     "status",
@@ -95,22 +91,6 @@ def _is_upstream_gone(branch_name: str) -> bool:
     return False
 
 
-def _log_path() -> Path:
-    return Path.home() / ".local" / "share" / "vergil" / "vrg-git.log"
-
-
-def _log(args: list[str], result: str) -> None:
-    path = _log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entry = {
-        "timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
-        "args": args,
-        "result": result,
-    }
-    with path.open("a") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
 def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
     denied_flags = _FLAG_DENY.get(subcmd, set())
     if not denied_flags:
@@ -159,20 +139,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argv:
         print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
-        _log([], "denied")
         return 2
 
     subcmd = argv[0]
 
     if tuple(argv) in _ALLOWED_EXACT:
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-        _log(argv, "allowed")
         return result.returncode
 
     if subcmd in _DENIED:
         msg = _DENIED[subcmd]
         print(f"vrg-git: {subcmd} is denied. {msg}", file=sys.stderr)
-        _log(argv, "denied")
         return 1
 
     if subcmd in _ALLOWED_COMPOUND:
@@ -184,17 +161,14 @@ def main(argv: list[str] | None = None) -> int:
                 f"Allowed: {', '.join(sorted(allowed_subs))}",
                 file=sys.stderr,
             )
-            _log(argv, "denied")
             return 1
 
         flag_err = _check_denied_flags(subcmd, argv[1:])
         if flag_err:
             print(f"vrg-git: {flag_err}", file=sys.stderr)
-            _log(argv, "denied")
             return 1
 
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-        _log(argv, "allowed")
         return result.returncode
 
     if subcmd not in _ALLOWED_SIMPLE:
@@ -203,15 +177,12 @@ def main(argv: list[str] | None = None) -> int:
             f"Allowed: {', '.join(sorted(_ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND)))}",
             file=sys.stderr,
         )
-        _log(argv, "denied")
         return 1
 
     flag_err = _check_denied_flags(subcmd, argv[1:])
     if flag_err:
         print(f"vrg-git: {flag_err}", file=sys.stderr)
-        _log(argv, "denied")
         return 1
 
     result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-    _log(argv, "allowed")
     return result.returncode

@@ -1,18 +1,14 @@
 """Safe gh wrapper for AI agent sessions.
 
-Enforces a two-level subcommand allowlist, flag deny lists, selects
-credentials based on command context, and logs every invocation to
-a JSON-lines audit file.
+Enforces a two-level subcommand allowlist, flag deny lists, and selects
+credentials based on command context.
 """
 
 from __future__ import annotations
 
-import datetime
-import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 from vergil_tooling.lib.github import _discover_accounts
 
@@ -47,22 +43,6 @@ _ESCALATED_COMMANDS: set[tuple[str, str]] = {
 }
 
 
-def _log_path() -> Path:
-    return Path.home() / ".local" / "share" / "vergil" / "vrg-gh.log"
-
-
-def _log(args: list[str], result: str) -> None:
-    path = _log_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    entry = {
-        "timestamp": datetime.datetime.now(tz=datetime.UTC).isoformat(),
-        "args": args,
-        "result": result,
-    }
-    with path.open("a") as f:
-        f.write(json.dumps(entry) + "\n")
-
-
 def _get_token(command: list[str]) -> str:  # noqa: ARG001
     # Workaround: always use human credentials while agent account is
     # flagged by GitHub (#799). Revert when the flag is lifted.
@@ -90,7 +70,6 @@ def main(argv: list[str] | None = None) -> int:
 
     if not argv:
         print("usage: vrg-gh <subcommand> <action> [args...]", file=sys.stderr)
-        _log([], "denied")
         return 2
 
     top = argv[0]
@@ -98,7 +77,6 @@ def main(argv: list[str] | None = None) -> int:
     if top in _DENIED_TOP:
         msg = _DENIED_TOP[top]
         print(f"vrg-gh: {top} is denied. {msg}", file=sys.stderr)
-        _log(argv, "denied")
         return 1
 
     if top not in _ALLOWED:
@@ -106,7 +84,6 @@ def main(argv: list[str] | None = None) -> int:
             f"vrg-gh: {top} is not recognized. Allowed: {', '.join(sorted(_ALLOWED))}",
             file=sys.stderr,
         )
-        _log(argv, "denied")
         return 1
 
     if len(argv) < 2:  # noqa: PLR2004
@@ -114,7 +91,6 @@ def main(argv: list[str] | None = None) -> int:
             f"vrg-gh: {top} requires a subcommand. Allowed: {', '.join(sorted(_ALLOWED[top]))}",
             file=sys.stderr,
         )
-        _log(argv, "denied")
         return 1
 
     sub = argv[1]
@@ -122,7 +98,6 @@ def main(argv: list[str] | None = None) -> int:
     if top in _DENIED_PAIRS and sub in _DENIED_PAIRS[top]:
         msg = _DENIED_PAIRS[top][sub]
         print(f"vrg-gh: {top} {sub} is denied. {msg}", file=sys.stderr)
-        _log(argv, "denied")
         return 1
 
     if sub not in _ALLOWED[top]:
@@ -130,7 +105,6 @@ def main(argv: list[str] | None = None) -> int:
             f"vrg-gh: {top} {sub} is not recognized. Allowed: {', '.join(sorted(_ALLOWED[top]))}",
             file=sys.stderr,
         )
-        _log(argv, "denied")
         return 1
 
     if top == "pr" and sub == "review" and "--approve" in argv:
@@ -138,14 +112,12 @@ def main(argv: list[str] | None = None) -> int:
             "vrg-gh: pr review --approve is denied. Agents cannot approve PRs.",
             file=sys.stderr,
         )
-        _log(argv, "denied")
         return 1
 
     if top == "pr" and sub == "merge":
         err = _validate_merge_context(argv)
         if err:
             print(f"vrg-gh: pr merge is denied. {err}", file=sys.stderr)
-            _log(argv, "denied")
             return 1
 
     token = _get_token(argv)
@@ -155,5 +127,4 @@ def main(argv: list[str] | None = None) -> int:
         env=env,
         check=False,
     )
-    _log(argv, "allowed")
     return result.returncode

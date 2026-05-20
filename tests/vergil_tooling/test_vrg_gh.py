@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import json
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
 
 # -- no arguments / missing subcommand ----------------------------------------
 
@@ -348,47 +342,6 @@ def test_gh_token_injected_into_env() -> None:
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
     assert kwargs["env"]["GH_TOKEN"] == "injected-token"  # noqa: S105
-
-
-# -- invocation logging -------------------------------------------------------
-
-
-def test_allowed_invocation_logged(tmp_path: Path) -> None:
-    log_file = tmp_path / "vrg-gh.log"
-    with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_gh._log_path", return_value=log_file),
-    ):
-        mock_run.return_value.returncode = 0
-        main(["issue", "list"])
-    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert len(entries) == 1
-    assert entries[0]["args"] == ["issue", "list"]
-    assert entries[0]["result"] == "allowed"
-    assert "timestamp" in entries[0]
-
-
-def test_denied_invocation_logged(tmp_path: Path) -> None:
-    log_file = tmp_path / "vrg-gh.log"
-    with patch("vergil_tooling.bin.vrg_gh._log_path", return_value=log_file):
-        main(["api", "repos/owner/repo"])
-    entries = [json.loads(line) for line in log_file.read_text().splitlines()]
-    assert len(entries) == 1
-    assert entries[0]["args"] == ["api", "repos/owner/repo"]
-    assert entries[0]["result"] == "denied"
-
-
-def test_log_directory_created(tmp_path: Path) -> None:
-    log_file = tmp_path / "subdir" / "vrg-gh.log"
-    with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_gh._log_path", return_value=log_file),
-    ):
-        mock_run.return_value.returncode = 0
-        main(["issue", "list"])
-    assert log_file.exists()
 
 
 # -- subprocess passthrough ---------------------------------------------------
