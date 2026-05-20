@@ -23,8 +23,11 @@ from vergil_tooling.lib.repo_init import (
     step_clone,
     step_create_repo,
     step_generate_config,
+    step_branch_structure,
     step_ci_cd_workflows,
     step_docs_site,
+    step_github_config,
+    step_github_pages,
     step_scaffold_config_files,
     render_readme,
     render_vergil_toml,
@@ -518,3 +521,79 @@ class TestStepDocsSite:
             step_docs_site(ctx)
 
         assert not (tmp_path / "docs" / "site" / "mkdocs.yml").exists()
+
+
+class TestStepBranchStructure:
+    def test_pushes_develop_and_creates_main(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+
+        with (
+            patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run),
+            patch("vergil_tooling.lib.repo_init.github.run"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+        ):
+            step_branch_structure(ctx)
+
+        assert any("push" in c for c in calls)
+
+
+class TestStepGithubConfig:
+    def test_applies_config_and_labels(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = Path("/tmp/test")
+
+        config_applied: list[bool] = []
+        labels_synced: list[str] = []
+
+        def mock_apply(*a: Any, **kw: Any) -> list[str]:
+            config_applied.append(True)
+            return []
+
+        def mock_sync(repo: str) -> None:
+            labels_synced.append(repo)
+
+        with (
+            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
+            patch("vergil_tooling.lib.github_config.compute_desired_state"),
+            patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
+            patch("vergil_tooling.lib.repo_init._sync_labels", side_effect=mock_sync),
+            patch("vergil_tooling.lib.config.read_config"),
+        ):
+            mock_fetch.return_value.owner_type = "Organization"
+            mock_fetch.return_value.visibility = "public"
+            step_github_config(ctx)
+
+        assert config_applied
+        assert ctx.repo in labels_synced
+
+
+class TestStepGithubPages:
+    def test_creates_gh_pages_branch_and_configures(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.publish_docs = True
+
+        write_json_calls: list[tuple[str, str, dict[str, object]]] = []
+
+        def mock_write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
+            write_json_calls.append((method, endpoint, body))
+
+        with (
+            patch("vergil_tooling.lib.repo_init.github.run"),
+            patch("vergil_tooling.lib.repo_init.github.write_json", side_effect=mock_write_json),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_github_pages(ctx)
+
+        assert any("repos/vergil-project/vergil-vm/pages" in c[1] for c in write_json_calls)
+
+    def test_skips_when_docs_disabled(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.publish_docs = False
+
+        step_github_pages(ctx)

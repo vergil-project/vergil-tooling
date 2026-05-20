@@ -653,3 +653,113 @@ def step_docs_site(ctx: RepoInitContext) -> None:
     git.run("add", "-A")
     git.run("commit", "-m", "chore(init): step 6 - docs site")
     print("  Docs site committed.")
+
+
+def _remote_branch_exists(repo: str, branch: str) -> bool:
+    """Check if a branch exists on the remote."""
+    try:
+        github.read_output(
+            "api", f"repos/{repo}/branches/{branch}", "--jq", ".name",
+        )
+        return True
+    except subprocess.CalledProcessError:
+        return False
+
+
+def step_branch_structure(ctx: RepoInitContext) -> None:
+    """Step 7: Set up develop + main branches."""
+    print("Step 7: Setting up branch structure...")
+
+    develop_exists = _remote_branch_exists(ctx.repo, "develop")
+    main_exists = _remote_branch_exists(ctx.repo, "main")
+
+    if not develop_exists:
+        try:
+            git.run("branch", "-m", "main", "develop")
+        except subprocess.CalledProcessError:
+            git.run("checkout", "-b", "develop")
+        git.run("push", "-u", "origin", "develop")
+        print("  Pushed develop.")
+
+    if not main_exists:
+        git.run("branch", "main")
+        git.run("push", "-u", "origin", "main")
+        print("  Pushed main.")
+
+    github.run("repo", "edit", ctx.repo, "--default-branch", "develop")
+    print("  Default branch set to develop.")
+
+
+def _sync_labels(repo: str) -> None:
+    """Provision all canonical labels into a repo."""
+    from vergil_tooling.lib.labels import load_labels
+
+    registry = load_labels()
+    for label in registry["labels"]:
+        cmd: list[str] = [
+            "label", "create", label["name"],
+            "--repo", repo, "--force",
+        ]
+        if label.get("color"):
+            cmd.extend(["--color", label["color"]])
+        if label.get("description"):
+            cmd.extend(["--description", label["description"]])
+        github.run(*cmd)
+
+
+def step_github_config(ctx: RepoInitContext) -> None:
+    """Step 8: Apply GitHub config and labels."""
+    from vergil_tooling.lib import config as config_module
+    from vergil_tooling.lib.github_config import (
+        apply_desired_state,
+        compute_desired_state,
+        fetch_actual_state,
+    )
+
+    print("Step 8: Applying GitHub config...")
+
+    assert ctx.work_dir is not None
+    cfg = config_module.read_config(ctx.work_dir)
+    result = fetch_actual_state(ctx.repo)
+    is_org = result.owner_type == "Organization"
+    desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+    removed = apply_desired_state(ctx.repo, desired)
+    if removed:
+        print(f"  Legacy protection removed: {', '.join(removed)}")
+    print("  GitHub config applied.")
+
+    print("  Syncing labels...")
+    _sync_labels(ctx.repo)
+    print("  Labels synced.")
+
+
+def step_github_pages(ctx: RepoInitContext) -> None:
+    """Step 9: Configure GitHub Pages."""
+    if not ctx.publish_docs:
+        print("Step 9: Docs disabled, skipping Pages.")
+        return
+
+    print("Step 9: Configuring GitHub Pages...")
+
+    if not _remote_branch_exists(ctx.repo, "gh-pages"):
+        git.run("checkout", "--orphan", "gh-pages")
+        git.run("reset", "--hard")
+        git.run("commit", "--allow-empty", "-m", "chore: initialize gh-pages")
+        git.run("push", "origin", "gh-pages")
+        git.run("checkout", "develop")
+        print("  Created gh-pages branch.")
+
+    github.write_json(
+        "POST",
+        f"repos/{ctx.repo}/pages",
+        {"source": {"branch": "gh-pages", "path": "/"}},
+    )
+    print("  Pages source configured.")
+
+    homepage = f"https://{ctx.org}.github.io/{ctx.name}/"
+    github.write_json(
+        "PATCH",
+        f"repos/{ctx.repo}",
+        {"homepage": homepage},
+    )
+    print(f"  Homepage set to {homepage}")
