@@ -1,16 +1,17 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-from typing import Any
-from unittest.mock import patch
-
-import pytest
 import tomllib
+from typing import TYPE_CHECKING, Any
+from unittest.mock import patch
 
 from vergil_tooling.lib.config import _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    _check_remote_steps,
+    _load_existing_config,
+    _remote_branch_exists,
+    _sync_labels,
     detect_completed_steps,
     prompt_choice,
     prompt_free_text,
@@ -20,19 +21,22 @@ from vergil_tooling.lib.repo_init import (
     render_claude_md,
     render_gitignore,
     render_mkdocs_yml,
-    step_clone,
-    step_create_repo,
-    step_generate_config,
+    render_readme,
+    render_vergil_toml,
+    run_wizard,
     step_branch_structure,
     step_ci_cd_workflows,
+    step_clone,
+    step_create_repo,
     step_docs_site,
+    step_generate_config,
     step_github_config,
     step_github_pages,
     step_scaffold_config_files,
-    run_wizard,
-    render_readme,
-    render_vergil_toml,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestPromptChoice:
@@ -72,6 +76,10 @@ class TestPromptYesNo:
         with patch("builtins.input", return_value=""):
             assert prompt_yes_no("Continue?", default=False) is False
 
+    def test_invalid_then_valid(self) -> None:
+        with patch("builtins.input", side_effect=["maybe", "y"]):
+            assert prompt_yes_no("Continue?") is True
+
 
 class TestPromptFreeText:
     def test_returns_input(self) -> None:
@@ -88,6 +96,11 @@ class TestPromptFreeText:
         with patch("builtins.input", side_effect=["", "", "got it"]):
             result = prompt_free_text("Enter text")
         assert result == "got it"
+
+    def test_not_required_returns_empty(self) -> None:
+        with patch("builtins.input", return_value=""):
+            result = prompt_free_text("Optional", required=False)
+        assert result == ""
 
 
 class TestRepoInitContext:
@@ -205,6 +218,23 @@ class TestRenderReadme:
         content = render_readme(ctx)
         assert "vergil-project.github.io/vergil-vm" in content
 
+    def test_no_docs_local_fallback(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.description = "test"
+        ctx.license_type = "MIT"
+        ctx.publish_docs = False
+        content = render_readme(ctx)
+        assert "`docs/` directory" in content
+
+    def test_license_none(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.description = "test"
+        ctx.license_type = "none"
+        ctx.publish_docs = True
+        content = render_readme(ctx)
+        assert "See [LICENSE](LICENSE).\n" in content
+        assert "GPL" not in content
+
 
 class TestRenderGitignore:
     def test_contains_baseline_patterns(self) -> None:
@@ -251,6 +281,12 @@ class TestRenderCdWorkflow:
         assert "cd-docs.yml@v2.0" in content
         assert "cd-release" not in content
 
+    def test_no_docs_job(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        content = render_cd_workflow(ctx)
+        assert "cd-docs" not in content
+
 
 class TestRenderMkdocsYml:
     def test_contains_site_name(self) -> None:
@@ -283,6 +319,19 @@ class TestStepCreateRepo:
             step_create_repo(ctx)
 
         assert any("repo" in c and "create" in c for c in calls)
+
+    def test_skips_when_repo_exists_nonadopt(self) -> None:
+        ctx = RepoInitContext(
+            org="vergil-project",
+            name="vergil-vm",
+            visibility="public",
+        )
+
+        with patch(
+            "vergil_tooling.lib.repo_init.github.read_output",
+            return_value='{"name":"vergil-vm"}',
+        ):
+            step_create_repo(ctx)
 
     def test_skips_when_repo_exists_adopt(self) -> None:
         ctx = RepoInitContext(
@@ -321,6 +370,28 @@ class TestStepClone:
         step_clone(ctx, parent_dir=tmp_path)
         assert ctx.work_dir == target
 
+    def test_adopt_uses_cwd(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm", adopt=True)
+
+        step_clone(ctx)
+        assert ctx.work_dir is not None
+
+    def test_default_parent_dir(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        target = tmp_path / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch("vergil_tooling.lib.repo_init.subprocess.run", side_effect=mock_subprocess_run),
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path),
+        ):
+            step_clone(ctx)
+
+        assert ctx.work_dir == target
+
 
 class TestStepGenerateConfig:
     def test_prompts_and_writes_vergil_toml(self, tmp_path: Path) -> None:
@@ -331,19 +402,21 @@ class TestStepGenerateConfig:
         # repository-type: 5=tooling, primary-language: 8=shell,
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
-        inputs = iter([
-            "5",       # repository-type: tooling
-            "8",       # primary-language: shell
-            "3",       # branching-model: library-release
-            "4",       # versioning-scheme: semver
-            "4",       # release-model: tagged-release
-            "latest",  # ci versions
-            "n",       # integration tests
-            "y",       # publish releases
-            "y",       # publish docs
-            "",        # vergil version (default v2.0)
-            "1",       # license: GPL-3.0
-        ])
+        inputs = iter(
+            [
+                "5",  # repository-type: tooling
+                "8",  # primary-language: shell
+                "3",  # branching-model: library-release
+                "4",  # versioning-scheme: semver
+                "4",  # release-model: tagged-release
+                "latest",  # ci versions
+                "n",  # integration tests
+                "y",  # publish releases
+                "y",  # publish docs
+                "",  # vergil version (default v2.0)
+                "1",  # license: GPL-3.0
+            ]
+        )
 
         calls: list[tuple[str, ...]] = []
 
@@ -544,9 +617,9 @@ class TestStepBranchStructure:
 
 
 class TestStepGithubConfig:
-    def test_applies_config_and_labels(self) -> None:
+    def test_applies_config_and_labels(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
-        ctx.work_dir = Path("/tmp/test")
+        ctx.work_dir = tmp_path
 
         config_applied: list[bool] = []
         labels_synced: list[str] = []
@@ -600,6 +673,161 @@ class TestStepGithubPages:
         step_github_pages(ctx)
 
 
+class TestLoadExistingConfig:
+    def test_returns_none_when_no_file(self, tmp_path: Path) -> None:
+        result = _load_existing_config(tmp_path)
+        assert result is None
+
+    def test_returns_parsed_toml(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text('[project]\nrepository-type = "tooling"\n')
+        result = _load_existing_config(tmp_path)
+        assert result is not None
+        assert result["project"]["repository-type"] == "tooling"
+
+
+class TestRemoteBranchExists:
+    def test_returns_true_when_exists(self) -> None:
+        with patch(
+            "vergil_tooling.lib.repo_init.github.read_output",
+            return_value="develop",
+        ):
+            assert _remote_branch_exists("org/repo", "develop") is True
+
+    def test_returns_false_when_missing(self) -> None:
+        with patch(
+            "vergil_tooling.lib.repo_init.github.read_output",
+            side_effect=subprocess.CalledProcessError(1, "gh"),
+        ):
+            assert _remote_branch_exists("org/repo", "develop") is False
+
+
+class TestSyncLabels:
+    def test_provisions_labels(self) -> None:
+        mock_registry = {
+            "labels": [
+                {"name": "bug", "color": "d73a4a", "description": "Something is broken"},
+                {"name": "docs"},
+            ]
+        }
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_gh_run(*args: str) -> None:
+            calls.append(args)
+
+        with (
+            patch("vergil_tooling.lib.repo_init.github.run", side_effect=mock_gh_run),
+            patch("vergil_tooling.lib.labels.load_labels", return_value=mock_registry),
+        ):
+            _sync_labels("org/repo")
+
+        assert len(calls) == 2
+        assert any("bug" in c for c in calls)
+        assert any("--color" in c for c in calls)
+
+
+class TestCheckRemoteSteps:
+    def test_repo_and_branches_exist(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.github.read_output", return_value="test"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=True),
+        ):
+            result = _check_remote_steps(ctx)
+
+        assert result == {1, 7}
+
+    def test_nothing_exists(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_output",
+                side_effect=subprocess.CalledProcessError(1, "gh"),
+            ),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+        ):
+            result = _check_remote_steps(ctx)
+
+        assert result == set()
+
+    def test_repo_exists_no_branches(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.github.read_output", return_value="test"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+        ):
+            result = _check_remote_steps(ctx)
+
+        assert result == {1}
+
+
+class TestStepBranchStructureExtended:
+    def test_rename_fails_creates_branch(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+            if args == ("branch", "-m", "main", "develop"):
+                raise subprocess.CalledProcessError(1, "git")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run),
+            patch("vergil_tooling.lib.repo_init.github.run"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=False),
+        ):
+            step_branch_structure(ctx)
+
+        assert ("checkout", "-b", "develop") in calls
+
+    def test_both_branches_exist(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.github.run"),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=True),
+        ):
+            step_branch_structure(ctx)
+
+
+class TestStepGithubConfigExtended:
+    def test_legacy_protection_removed(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+
+        def mock_apply(*a: Any, **kw: Any) -> list[str]:
+            return ["develop", "main"]
+
+        with (
+            patch("vergil_tooling.lib.github_config.fetch_actual_state") as mock_fetch,
+            patch("vergil_tooling.lib.github_config.compute_desired_state"),
+            patch("vergil_tooling.lib.github_config.apply_desired_state", side_effect=mock_apply),
+            patch("vergil_tooling.lib.repo_init._sync_labels"),
+            patch("vergil_tooling.lib.config.read_config"),
+        ):
+            mock_fetch.return_value.owner_type = "Organization"
+            mock_fetch.return_value.visibility = "public"
+            step_github_config(ctx)
+
+
+class TestStepGithubPagesExtended:
+    def test_skips_branch_creation_when_exists(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.publish_docs = True
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.write_json",
+            ),
+            patch("vergil_tooling.lib.repo_init._remote_branch_exists", return_value=True),
+        ):
+            step_github_pages(ctx)
+
+
 class TestRunWizard:
     def test_skips_completed_local_steps(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -610,26 +838,98 @@ class TestRunWizard:
         def mock_step(step_num: int) -> Any:
             def inner(*a: Any, **kw: Any) -> None:
                 steps_run.append(step_num)
+
             return inner
 
         with (
             patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
             patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
             patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
-            patch("vergil_tooling.lib.repo_init.step_scaffold_config_files", side_effect=mock_step(4)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step(4),
+            ),
             patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
             patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
             patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
-            patch("vergil_tooling.lib.repo_init.git.read_output", return_value=(
-                "abc1234 chore(init): step 3 - vergil.toml\n"
-                "def5678 chore(init): step 4 - config files\n"
-            )),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                return_value=(
+                    "abc1234 chore(init): step 3 - vergil.toml\n"
+                    "def5678 chore(init): step 4 - config files\n"
+                ),
+            ),
         ):
             run_wizard(ctx)
 
         assert 3 not in steps_run
         assert 4 not in steps_run
         assert 5 in steps_run
+
+    def test_handles_git_log_failure(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+
+        steps_run: list[int] = []
+
+        def mock_step(step_num: int) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                steps_run.append(step_num)
+
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
+            patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step(4),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                side_effect=subprocess.CalledProcessError(1, "git"),
+            ),
+        ):
+            run_wizard(ctx)
+
+        assert 1 in steps_run
+
+    def test_no_docs_skips_url(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+
+        def mock_step(_step_num: int) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                pass
+
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
+            patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step(4),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                side_effect=subprocess.CalledProcessError(1, "git"),
+            ),
+        ):
+            run_wizard(ctx)

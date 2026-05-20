@@ -192,16 +192,16 @@ def render_readme(ctx: RepoInitContext) -> str:
         "\n",
     ]
     if ctx.publish_docs:
-        lines.append(
-            f"See the [documentation](https://{ctx.org}.github.io/{ctx.name}/).\n"
-        )
+        lines.append(f"See the [documentation](https://{ctx.org}.github.io/{ctx.name}/).\n")
     else:
         lines.append("See the documentation in the `docs/` directory.\n")
-    lines.extend([
-        "\n",
-        "## License\n",
-        "\n",
-    ])
+    lines.extend(
+        [
+            "\n",
+            "## License\n",
+            "\n",
+        ]
+    )
     if ctx.license_type != "none":
         lines.append(f"{ctx.license_type} — see [LICENSE](LICENSE).\n")
     else:
@@ -313,16 +313,19 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     ]
 
     if ctx.release_model != "none":
-        lines.extend([
-            "\n",
-            "  version:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-version-bump.yml@v2.0\n",
-            "    with:\n",
-            f"      language: {ctx.primary_language}\n",
-            "      run-release: ${{ inputs.run-release != 'false' }}\n",
-            f"      container-tag: '{tag}'\n",
-            f"      container-suffix: {suffix}\n",
-        ])
+        lines.extend(
+            [
+                "\n",
+                "  version:\n",
+                "    uses: vergil-project/vergil-actions/"
+                ".github/workflows/ci-version-bump.yml@v2.0\n",
+                "    with:\n",
+                f"      language: {ctx.primary_language}\n",
+                "      run-release: ${{ inputs.run-release != 'false' }}\n",
+                f"      container-tag: '{tag}'\n",
+                f"      container-suffix: {suffix}\n",
+            ]
+        )
 
     return "".join(lines)
 
@@ -344,12 +347,14 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     ]
 
     if ctx.publish_docs:
-        lines.extend([
-            "  docs:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.0\n",
-            "    permissions:\n",
-            "      contents: write\n",
-        ])
+        lines.extend(
+            [
+                "  docs:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.0\n",
+                "    permissions:\n",
+                "      contents: write\n",
+            ]
+        )
 
     return "".join(lines)
 
@@ -430,9 +435,12 @@ def step_create_repo(ctx: RepoInitContext) -> None:
         pass
 
     cmd = [
-        "repo", "create", ctx.repo,
+        "repo",
+        "create",
+        ctx.repo,
         f"--{ctx.visibility}",
-        "--description", ctx.description,
+        "--description",
+        ctx.description,
     ]
     github.run(*cmd)
     print(f"  Created {ctx.repo}.")
@@ -456,8 +464,8 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
         return
 
     print(f"Step 2: Cloning {ctx.repo}...")
-    subprocess.run(
-        ("git", "clone", f"git@github.com:{ctx.repo}.git", str(target)),
+    subprocess.run(  # noqa: S603
+        ("git", "clone", f"git@github.com:{ctx.repo}.git", str(target)),  # noqa: S607
         check=True,
     )
     ctx.work_dir = target
@@ -494,7 +502,7 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     """Step 3: Interactive vergil.toml generation."""
     print("Step 3: Generating vergil.toml...")
 
-    existing = _load_existing_config(ctx.work_dir) if ctx.adopt else None
+    existing = _load_existing_config(ctx.work_dir) if ctx.adopt and ctx.work_dir else None
     project = existing.get("project", {}) if existing else {}
     ci_raw = existing.get("ci", {}) if existing else {}
     pub_raw = existing.get("publish", {}) if existing else {}
@@ -547,7 +555,8 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     ctx.license_type = prompt_choice("License", license_options, default="GPL-3.0")
 
     content = render_vergil_toml(ctx)
-    assert ctx.work_dir is not None
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
     (ctx.work_dir / "vergil.toml").write_text(content)
 
     git.run("add", "vergil.toml")
@@ -557,12 +566,13 @@ def step_generate_config(ctx: RepoInitContext) -> None:
 
 def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     """Step 4: Scaffold local config files."""
+    import datetime
     import stat
-    from datetime import datetime, timezone
 
     print("Step 4: Scaffolding config files...")
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
-    assert wd is not None
 
     # .githooks/pre-commit
     hooks_dir = wd / ".githooks"
@@ -595,7 +605,7 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
 
     # LICENSE
     if ctx.license_type != "none":
-        year = datetime.now(tz=timezone.utc).year
+        year = datetime.datetime.now(tz=datetime.UTC).year
         license_text = _load_license(ctx.license_type)
         license_text = license_text.replace("{year}", str(year))
         license_text = license_text.replace("{copyright_holder}", ctx.org)
@@ -609,8 +619,9 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
 def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
     """Step 5: Generate CI and CD workflow files."""
     print("Step 5: Generating CI/CD workflows...")
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
-    assert wd is not None
 
     workflows_dir = wd / ".github" / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
@@ -634,8 +645,9 @@ def step_docs_site(ctx: RepoInitContext) -> None:
         return
 
     print("Step 6: Scaffolding docs site...")
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
-    assert wd is not None
 
     docs_dir = wd / "docs" / "site" / "docs"
     docs_dir.mkdir(parents=True, exist_ok=True)
@@ -659,7 +671,10 @@ def _remote_branch_exists(repo: str, branch: str) -> bool:
     """Check if a branch exists on the remote."""
     try:
         github.read_output(
-            "api", f"repos/{repo}/branches/{branch}", "--jq", ".name",
+            "api",
+            f"repos/{repo}/branches/{branch}",
+            "--jq",
+            ".name",
         )
         return True
     except subprocess.CalledProcessError:
@@ -697,8 +712,12 @@ def _sync_labels(repo: str) -> None:
     registry = load_labels()
     for label in registry["labels"]:
         cmd: list[str] = [
-            "label", "create", label["name"],
-            "--repo", repo, "--force",
+            "label",
+            "create",
+            label["name"],
+            "--repo",
+            repo,
+            "--force",
         ]
         if label.get("color"):
             cmd.extend(["--color", label["color"]])
@@ -718,7 +737,8 @@ def step_github_config(ctx: RepoInitContext) -> None:
 
     print("Step 8: Applying GitHub config...")
 
-    assert ctx.work_dir is not None
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
     cfg = config_module.read_config(ctx.work_dir)
     result = fetch_actual_state(ctx.repo)
     is_org = result.owner_type == "Organization"
@@ -775,10 +795,7 @@ def _check_remote_steps(ctx: RepoInitContext) -> set[int]:
     except subprocess.CalledProcessError:
         pass
 
-    if (
-        _remote_branch_exists(ctx.repo, "develop")
-        and _remote_branch_exists(ctx.repo, "main")
-    ):
+    if _remote_branch_exists(ctx.repo, "develop") and _remote_branch_exists(ctx.repo, "main"):
         completed.add(7)
 
     return completed
