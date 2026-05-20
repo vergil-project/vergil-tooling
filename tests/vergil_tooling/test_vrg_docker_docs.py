@@ -116,17 +116,110 @@ def test_prefix_missing_value() -> None:
     assert main(["--prefix"]) == 1
 
 
-def test_common_sibling_mount(tmp_path: Path) -> None:
-    common = tmp_path / ".." / "mq-rest-admin-common"
-    common.mkdir(parents=True)
+def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = [
+            "docker", "run", "--rm", image, "bash", "-c",
+            "mkdocs build -f docs/site/mkdocs.yml",
+        ]
+        main(["build"])
+
+    call_args = mock_build.call_args
+    assert call_args[0][0] == tmp_path
+    assert call_args[0][1] == image
+    assert call_args[0][2] == ["bash", "-c", "mkdocs build -f docs/site/mkdocs.yml"]
+
+
+def test_serve_splices_port_before_image(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        main(["build"])
+        mock_build.return_value = [
+            "docker", "run", "--rm", image, "bash", "-c",
+            "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
+        ]
+        main(["serve"])
+
     args = mock_exec.call_args[0][1]
-    v_indices = [i for i, a in enumerate(args) if a == "-v"]
-    assert len(v_indices) == 2
-    mount_arg = args[v_indices[1] + 1]
-    assert ".mq-rest-admin-common:ro" in mount_arg
+    image_idx = args.index(image)
+    p_idx = args.index("-p")
+    assert p_idx < image_idx
+    assert args[p_idx + 1] == "8000:8000"
+
+
+def test_serve_custom_port(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {"DOCS_PORT": "9000"}, clear=True),
+    ):
+        mock_build.return_value = [
+            "docker", "run", "--rm", image, "bash", "-c",
+            "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
+        ]
+        main(["serve"])
+
+    args = mock_exec.call_args[0][1]
+    assert "9000:8000" in args
+
+
+def test_build_no_port_splice(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = [
+            "docker", "run", "--rm", image, "bash", "-c",
+            "mkdocs build -f docs/site/mkdocs.yml",
+        ]
+        main(["build"])
+
+    args = mock_exec.call_args[0][1]
+    assert "-p" not in args
+
+
+def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
+        main(["build"])
+
+    cmd = mock_build.call_args[0][2]
+    assert cmd[0] == "bash"
+    assert cmd[1] == "-c"
+    assert "uv sync --group docs && uv run" in cmd[2]
+
+
+def test_prefix_passed_to_image(tmp_path: Path) -> None:
+    dev_image = "ghcr.io/vergil-project/dev-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = ["docker", "run", "--rm", dev_image, "bash", "-c", "x"]
+        main(["--prefix", "dev", "serve"])
+
+    assert mock_build.call_args[0][1] == dev_image
