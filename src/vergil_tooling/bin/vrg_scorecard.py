@@ -9,54 +9,65 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
 )
 from vergil_tooling.lib.github import _human_token
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
 _GHCR = "ghcr.io/vergil-project"
 
+_VALID_PREFIXES = {"dev", "prod"}
+
 _USAGE = """\
-usage: vrg-scorecard [scorecard-args...]
+usage: vrg-scorecard [--prefix <dev|prod>] [scorecard-args...]
 
 Run OpenSSF Scorecard inside a dev container with GitHub credentials.
 
-All arguments are passed through to the scorecard CLI.  The human
-account's GitHub token is resolved via gh auth and injected into the
-container as GH_TOKEN.
+All arguments after optional flags are passed through to the scorecard
+CLI.  The human account's GitHub token is resolved via gh auth and
+injected into the container as GH_TOKEN.
+
+options:
+  -h, --help              show this help message and exit
+  --prefix <dev|prod>     image prefix (default: prod)
 
 examples:
   vrg-scorecard --repo=github.com/vergil-project/vergil-tooling
+  vrg-scorecard --prefix dev --repo=github.com/vergil-project/vergil-tooling
   vrg-scorecard --repo=github.com/vergil-project/vergil-tooling --format=json
-  vrg-scorecard --repo=github.com/vergil-project/vergil-tooling --checks=Branch-Protection
 """
 
 
-def _image_prefix(repo_root: Path) -> str:
-    try:
-        cfg = read_config(repo_root)
-        return cfg.docker.image_prefix
-    except (FileNotFoundError, ConfigError):
-        return "prod"
-
-
 def main(argv: list[str] | None = None) -> int:
-    args = argv if argv is not None else sys.argv[1:]
+    args = list(argv if argv is not None else sys.argv[1:])
 
     if {"-h", "--help"} & set(args):
         print(_USAGE, end="")
         return 0
 
+    prefix = "prod"
+    if "--prefix" in args:
+        pi = args.index("--prefix")
+        if pi + 1 >= len(args):
+            print(
+                "error: --prefix requires a value (dev or prod)",
+                file=sys.stderr,
+            )
+            return 1
+        prefix = args[pi + 1]
+        if prefix not in _VALID_PREFIXES:
+            allowed = ", ".join(sorted(_VALID_PREFIXES))
+            print(
+                f"error: invalid prefix '{prefix}' (allowed: {allowed})",
+                file=sys.stderr,
+            )
+            return 1
+        del args[pi : pi + 2]
+
     repo_root = git.repo_root()
-    prefix = _image_prefix(repo_root)
     image = f"{_GHCR}/{prefix}-base:latest"
 
     token = _human_token()

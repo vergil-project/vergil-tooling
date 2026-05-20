@@ -110,7 +110,7 @@ project language to select the Docker image; falls back to
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_docker_run` |
-| Args | `[--] <command> [args...]` (manual parsing, `--` separator) |
+| Args | `[--prefix <dev\|prod>] [--] <command> [args...]` (manual parsing, `--` separator) |
 | Preconditions | Git repo, `GH_TOKEN` set, Docker daemon running |
 | Failure mode | Explicit error message for missing `GH_TOKEN`; `assert_docker_available()` exits with message for Docker; `git.repo_root()` raises on non-git directory |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |

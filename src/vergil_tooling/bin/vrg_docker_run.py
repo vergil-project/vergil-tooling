@@ -10,13 +10,8 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-
-if TYPE_CHECKING:
-    from pathlib import Path
-from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
@@ -25,8 +20,10 @@ from vergil_tooling.lib.docker import (
 )
 from vergil_tooling.lib.docker_cache import ensure_cached_image
 
+_VALID_PREFIXES = {"dev", "prod"}
+
 _USAGE = """\
-usage: vrg-docker-run [--] <command> [args...]
+usage: vrg-docker-run [--prefix <dev|prod>] [--] <command> [args...]
 
 Run a command inside the project's dev container.
 
@@ -34,7 +31,8 @@ The project language is auto-detected to select the right Docker image;
 falls back to dev-base:latest when detection fails.
 
 options:
-  -h, --help          show this help message and exit
+  -h, --help              show this help message and exit
+  --prefix <dev|prod>     image prefix (default: prod)
 
 environment variables:
   GH_TOKEN                GitHub token (passed into container when set)
@@ -44,17 +42,10 @@ environment variables:
 
 examples:
   vrg-docker-run -- uv run vrg-validate
+  vrg-docker-run --prefix dev -- vrg-validate
   vrg-docker-run -- uv run pytest tests/
   DOCKER_DEV_IMAGE=custom:img vrg-docker-run -- make build
 """
-
-
-def _image_prefix(repo_root: Path) -> str:
-    try:
-        cfg = read_config(repo_root)
-        return cfg.docker.image_prefix
-    except (FileNotFoundError, ConfigError):
-        return "prod"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,13 +64,24 @@ def main(argv: list[str] | None = None) -> int:
         print(_USAGE, end="")
         return 0
 
+    prefix = "prod"
+    if "--prefix" in pre_separator:
+        pi = pre_separator.index("--prefix")
+        if pi + 1 >= len(pre_separator):
+            print("error: --prefix requires a value (dev or prod)", file=sys.stderr)
+            return 1
+        prefix = pre_separator[pi + 1]
+        if prefix not in _VALID_PREFIXES:
+            allowed = ", ".join(sorted(_VALID_PREFIXES))
+            print(f"error: invalid prefix '{prefix}' (allowed: {allowed})", file=sys.stderr)
+            return 1
+
     if not command:
-        print("Usage: vrg-docker-run [--] <command> [args...]", file=sys.stderr)
+        print("error: no command specified", file=sys.stderr)
         return 1
 
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
-    prefix = _image_prefix(repo_root)
 
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:

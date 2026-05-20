@@ -97,35 +97,23 @@ def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     assert "uv" not in container_cmd
 
 
-_TOML_DEV_PREFIX = """\
-[project]
-repository-type = "library"
-versioning-scheme = "semver"
-branching-model = "library-release"
-release-model = "tagged-release"
-primary-language = "python"
-
-[dependencies]
-vergil = "v2.0"
-
-[ci]
-versions = ["3.14"]
-
-[docker]
-image-prefix = "dev"
-"""
-
-
-def test_config_prefix_used(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(_TOML_DEV_PREFIX)
+def test_cli_prefix_used(tmp_path: Path) -> None:
     with (
         patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
         patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        main(["serve"])
+        main(["--prefix", "dev", "serve"])
     args = mock_exec.call_args[0][1]
     assert "ghcr.io/vergil-project/dev-base:latest" in args
+
+
+def test_invalid_prefix() -> None:
+    assert main(["--prefix", "staging", "serve"]) == 1
+
+
+def test_prefix_missing_value() -> None:
+    assert main(["--prefix"]) == 1
 
 
 def test_common_sibling_mount(tmp_path: Path) -> None:

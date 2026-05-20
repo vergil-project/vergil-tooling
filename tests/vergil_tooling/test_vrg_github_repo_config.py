@@ -22,7 +22,6 @@ from vergil_tooling.bin.vrg_github_repo_config import (
 )
 from vergil_tooling.lib.config import (
     CiConfig,
-    DockerConfig,
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
@@ -385,7 +384,6 @@ def _make_config() -> StConfig:
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         publish=PublishConfig(release=False, docs=True),
-        docker=DockerConfig(image_prefix="prod"),
     )
 
 

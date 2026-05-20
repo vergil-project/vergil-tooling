@@ -87,7 +87,7 @@ second-level subcommands as a pair.
 |---|---|
 | `issue view` | Read-only |
 | `issue create` | Issue tracking |
-| `issue close` | Post-finalization closure |
+| `issue close` | Post-finalization closure (escalates to human credentials) |
 | `issue edit` | Updating metadata |
 | `issue list` | Read-only |
 | `issue comment` | Adding comments |

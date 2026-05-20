@@ -11,7 +11,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`,
 `vrg-finalize-repo`, `vrg-validate`
 
-**Lint tools** (installed as `st-*`):
+**Lint tools** (installed as `vrg-*`):
 `vrg-repo-profile`, `vrg-pr-issue-linkage`, validation drivers
 
 **Git hooks** (`.githooks/`):
@@ -23,17 +23,17 @@ Env-var gate that admits `vrg-commit` and blocks raw `git commit`
 - **shellcheck clean** -- all shell scripts pass shellcheck
 - **No repo-specific logic** -- every script works in any consuming
   repository
-- **Host-level install** -- `uv tool install` puts `st-*` on PATH;
+- **Host-level install** -- `uv tool install` puts `vrg-*` on PATH;
   no sibling checkout required
 
 ## How It Works
 
 1. `vergil-tooling` is installed on the developer's host via
-   `uv tool install`, placing `st-*` scripts in `~/.local/bin/`.
+   `uv tool install`, placing `vrg-*` scripts in `~/.local/bin/`.
 2. `vrg-docker-run` bridges host commands into dev container images
    where language runtimes and validators live.
 3. Python consumers also declare `vergil-tooling` as a dev dep
-   via `[tool.uv.sources]` so `uv run st-*` inside the container
+   via `[tool.uv.sources]` so `uv run vrg-*` inside the container
    resolves the pinned version.
 4. Each repo checks in a `.githooks/pre-commit` env-var gate,
    enabled via `git config core.hooksPath .githooks`.
