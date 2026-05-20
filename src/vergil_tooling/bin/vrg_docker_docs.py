@@ -11,7 +11,7 @@ import os
 import sys
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.docker import docker_platform
+from vergil_tooling.lib.docker import build_docker_args
 
 _VALID_PREFIXES = {"dev", "prod"}
 
@@ -90,27 +90,15 @@ def main(argv: list[str] | None = None) -> int:
     if (repo_root / "pyproject.toml").is_file():
         container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
 
-    docker_args = [
-        "docker",
-        "run",
-        "--rm",
-        f"--platform={docker_platform()}",
-        "-v",
-        f"{repo_root}:/workspace",
-        "-w",
-        "/workspace",
-    ]
+    docker_args = build_docker_args(
+        repo_root,
+        image,
+        ["bash", "-c", container_cmd],
+    )
 
     if command == "serve":
-        docker_args.extend(["-p", f"{port}:8000"])
-
-    common_dir = repo_root / ".." / "mq-rest-admin-common"
-    if common_dir.is_dir():
-        real_common = str(common_dir.resolve())
-        docker_args.extend(["-v", f"{real_common}:/workspace/.mq-rest-admin-common:ro"])
-
-    docker_args.append(image)
-    docker_args.extend(["bash", "-c", container_cmd])
+        idx = docker_args.index(image)
+        docker_args[idx:idx] = ["-p", f"{port}:8000"]
 
     print(f"Image:   {image}")
     print(f"Config:  {config}")
