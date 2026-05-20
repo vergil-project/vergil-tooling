@@ -24,8 +24,7 @@ A human-facing interactive wizard (`vrg-github-repo-init`) that
 walks through the full bootstrap sequence for a new
 VERGIL-managed repository, from `gh repo create` to "ready for
 PRs." The wizard commits each step as a checkpoint, enabling
-idempotent resume on failure. At the end, checkpoint commits are
-squashed into a single clean bootstrap commit.
+idempotent resume on failure.
 
 ## Command Interface
 
@@ -41,31 +40,27 @@ squashed into a single clean bootstrap commit.
 - `--adopt` — required for existing repos; confirms intent to
   vergilize. Without this flag, running inside an existing repo
   is an error.
-- `--resume` — explicitly resume a previously interrupted run.
-  Auto-detected from checkpoint commits, but the flag makes
-  intent clear and suppresses the confirmation prompt.
 - `--visibility {public,private}` — for new repos. Prompted
   interactively if omitted.
 
 ## Wizard Steps
 
-The wizard runs ten steps in sequence. Each step that modifies the
+The wizard runs nine steps in sequence. Each step that modifies the
 local repo commits its work with a marker message:
 `chore(init): step N - <description>`. On re-run, the tool scans
 `git log` for these markers and skips completed steps.
 
 | Step | Description | Checkpoint? | Idempotency check |
 |------|-------------|-------------|-------------------|
-| 1 | Repo creation/verification | No (remote) | `gh repo view` succeeds |
+| 1 | Repo creation/verification (with description) | No (remote) | `gh repo view` succeeds |
 | 2 | Clone & working directory | No (local) | `.git/` exists with correct remote |
 | 3 | Interactive vergil.toml generation | Yes | Commit marker in log |
 | 4 | Scaffold local config files | Yes | Commit marker in log |
-| 5 | CI workflow generation | Yes | Commit marker in log |
+| 5 | CI + CD workflow generation | Yes | Commit marker in log |
 | 6 | Docs site scaffold | Yes | Commit marker in log |
 | 7 | Branch structure | No (remote) | Both branches exist on remote |
-| 8 | GitHub config | No (remote) | `vrg-github-repo-config audit` passes |
-| 9 | GitHub Pages | No (remote) | Pages already configured |
-| 10 | Squash & finalize | No (cleanup) | Single commit on branch |
+| 8 | GitHub config + labels | No (remote) | `vrg-github-repo-config audit` passes, standard labels exist |
+| 9 | GitHub Pages | No (remote) | Pages source set, homepage URL set |
 
 ### Sequencing Constraint
 
@@ -83,32 +78,42 @@ the files being scaffolded), so raw `git commit` works. The
 checkpoint commits use `chore(init):` prefix to stay
 conventional-commit-compliant.
 
-## Interactive Prompts (Step 3)
+## Interactive Prompts
+
+Prompts are split across steps — each value is collected when
+it's first needed.
+
+### Pre-step 1 prompts (new repos only)
+
+1. **Visibility** — `public | private`
+2. **Project description** — free-text, one paragraph. Used in
+   README.md and as the GitHub repo description.
+
+### Step 3 prompts (vergil.toml + file generation)
 
 Each prompt presents valid enum values from the existing
 `config.py` schema. Later prompts adjust defaults based on earlier
 answers.
 
-1. **Repository type** —
+3. **Repository type** —
    `library | application | infrastructure | tooling | documentation`
-2. **Primary language** —
+4. **Primary language** —
    `python | go | java | ruby | rust | shell | none | claude-plugin`
-3. **Branching model** —
+5. **Branching model** —
    `library-release | application-promotion | docs-single-branch`
-4. **Versioning scheme** —
+6. **Versioning scheme** —
    `library | semver | application | none`
-5. **Release model** —
+7. **Release model** —
    `artifact-publishing | tagged-release | environment-promotion | none`
-6. **CI versions** — free-text, comma-separated. Defaults by
+8. **CI versions** — free-text, comma-separated. Defaults by
    language (Python: `3.12, 3.13, 3.14`; shell: `latest`).
-7. **Integration tests?** — yes/no (default: no)
-8. **Publish releases?** — yes/no (default: yes if
-   tagged-release, no if release-model is none)
-9. **Publish docs?** — yes/no (default: yes)
-10. **Vergil dependency version** — default: current latest
+9. **Integration tests?** — yes/no (default: no)
+10. **Publish releases?** — yes/no (default: yes if
+    tagged-release, no if release-model is none)
+11. **Publish docs?** — yes/no (default: yes)
+12. **Vergil dependency version** — default: current latest
     (e.g., `v2.0`)
-11. **Visibility** (new repos only) — `public | private`
-12. **License** — `GPL-3.0 | MIT | Apache-2.0 | none`
+13. **License** — `GPL-3.0 | MIT | Apache-2.0 | none`
 
 Defaults are shown in brackets (e.g., `[MIT]`) and accepted with
 Enter.
@@ -151,6 +156,8 @@ Identical to the existing gate script: admits
 `VRG_COMMIT_CONTEXT=1` and derived workflows (amend, cherry-pick,
 revert, rebase, merge), rejects raw `git commit`. Stored as a
 template in `src/vergil_tooling/data/githooks_pre_commit.sh`.
+After writing the file, step 4 also runs
+`git config core.hooksPath .githooks` to activate the hook.
 
 ### CLAUDE.md
 
@@ -185,6 +192,57 @@ Canonical structure:
 }
 ```
 
+### README.md
+
+Structured template with placeholder prose. The wizard prompts
+for the one-paragraph description; the rest is derived from
+context (project name, license, Pages URL).
+
+```markdown
+# <Project Name>
+
+<one-paragraph description — what this is and why it exists>
+
+## Status
+
+<project status: e.g., "Early development", "Stable (v1.x)">
+
+## Overview
+
+<what the project does, its place in the ecosystem, key concepts>
+
+## Getting Started
+
+See the [documentation](<pages-url>).
+
+## License
+
+<license name> — see [LICENSE](LICENSE).
+```
+
+### .gitignore
+
+Baseline patterns common to all Vergil-managed repos. Does not
+include language-specific patterns — those are handled by
+`vrg-scaffold` (#914).
+
+```gitignore
+# Editors
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vergil
+.venv-host/
+.worktrees/
+```
+
 ### LICENSE
 
 Full license text for the chosen license (GPL-3.0, MIT, or
@@ -198,6 +256,18 @@ derived from language and CI config: quality, security, test,
 version-bump. Language determines CodeQL language and container
 image suffix. Built programmatically, not from a Jinja template.
 
+### .github/workflows/cd.yml
+
+Generated when `publish.docs = true` (the default). Contains
+the docs deployment job calling
+`vergil-project/vergil-actions/cd-docs.yml` for deployment
+via Mike to the `gh-pages` branch. Triggered on pushes to
+`develop` and `main`.
+
+Release publishing (package artifacts) is not configured by
+this tool — it is language-specific and belongs in
+`vrg-scaffold` (#914).
+
 ### docs/site/mkdocs.yml
 
 Material theme, standard extensions (admonition, pymdownx
@@ -207,6 +277,22 @@ standard navigation skeleton. `site_name` derived from repo name.
 ### docs/site/docs/index.md
 
 Minimal placeholder page with the repo name as heading.
+
+## GitHub Pages Setup (Step 9)
+
+Skipped when `publish.docs = false`.
+
+1. **Create `gh-pages` branch** — an empty orphan branch that
+   Mike will deploy into. Push it to the remote.
+2. **Configure Pages source** — `POST /repos/{owner}/{repo}/pages`
+   with `{"source": {"branch": "gh-pages", "path": "/"}}`.
+3. **Set homepage URL** — `PATCH /repos/{owner}/{repo}` with
+   `{"homepage": "https://{org}.github.io/{name}/"}`.
+
+The `gh-pages` branch is protected from deletion by
+`vrg-finalize-repo` (eternal branch list). The actual docs
+content is deployed by the `cd.yml` workflow via Mike on pushes
+to `develop` and `main`.
 
 ## Adopt Mode
 
@@ -226,13 +312,6 @@ Minimal placeholder page with the repo name as heading.
   `develop` already exist, skip. Set default branch to `develop`
   if not already.
 - **Steps 8-9:** identical.
-- **Step 10:** squash only checkpoint commits from this run. The
-  tool records the parent commit SHA before step 3 begins (stored
-  in a local file `.vrg-init-base`). On squash, all commits
-  after that SHA are collapsed. For new repos (no prior commits),
-  the squash target is the root — `git rebase --root`. The
-  `.vrg-init-base` file is removed after squash.
-
 ### Existing vergil.toml Handling
 
 If one exists, the wizard pre-fills prompts from it. The user can
@@ -259,7 +338,7 @@ Steps without commit markers query actual state:
 - **Step 2:** `.git/config` remote matches expected repo
 - **Step 7:** both branches exist on remote
 - **Step 8:** `vrg-github-repo-config audit` returns compliant
-- **Step 9:** Pages endpoint responds
+- **Step 9:** Pages source is set to `gh-pages`, homepage URL is set
 
 ### Failure Recovery
 
@@ -269,7 +348,6 @@ Steps without commit markers query actual state:
 | File generation crashes mid-step | No marker written — step reruns |
 | `git push` fails after local commits | Checkpoints exist locally, remote steps retry |
 | Ruleset apply fails | Step 8 retries — `apply_desired_state` is idempotent |
-| Squash fails | Checkpoints remain — rerun step 10 |
 
 ### Atomicity Within Steps
 
@@ -277,11 +355,12 @@ Each step stages all its files and commits atomically. If the
 process dies between staging and committing, there are no markers
 and the step reruns cleanly.
 
-### The --resume Flag
+### Resume Behavior
 
-Optional sugar. The tool auto-detects checkpoint state regardless.
-The flag suppresses the "this repo already has init commits, did
-you mean to resume?" prompt.
+The tool auto-detects checkpoint state on every run. If
+checkpoint commits or completed remote state are found, the
+tool prints what it's skipping and resumes from the next
+incomplete step. No special flag is needed.
 
 ## Code Structure
 
@@ -307,8 +386,6 @@ src/vergil_tooling/lib/repo_init.py                # step logic, wizard, templat
   `step_clone()`, `step_generate_config()`, etc.
 - `run_wizard()` — orchestrator calling steps in sequence,
   skipping completed ones
-- `squash_checkpoints()` — rebases checkpoint commits into
-  single bootstrap commit
 - Prompt helpers — wrappers around `input()` presenting choices
   with defaults
 
@@ -328,6 +405,8 @@ Added to `src/vergil_tooling/data/`:
   creation, branch queries
 - `vergil_tooling.lib.github_config` — `apply_desired_state()`
   for step 8
+- `vrg-ensure-label` — applies standard label set from
+  `labels.json` in step 8
 - `vergil_tooling.lib.config` — `StConfig` dataclass and enum
   validation
 
