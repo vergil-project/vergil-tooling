@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.23] - 2026-05-20
+
+### Chores
+
+- bump version to 2.0.23
+- replace stale st- prefix references with vrg- in site docs
+
+### Features
+
+- escalate issue close to human credentials
+- replace vergil.toml image-prefix with --prefix CLI flag
+- add --prefix CLI flag to vrg-docker-docs and vrg-scorecard
+
 ## [2.0.22] - 2026-05-19
 
 ### Chores
