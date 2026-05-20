@@ -23,6 +23,7 @@ from vergil_tooling.lib.repo_init import (
     step_clone,
     step_create_repo,
     step_generate_config,
+    step_scaffold_config_files,
     render_readme,
     render_vergil_toml,
 )
@@ -404,3 +405,59 @@ class TestStepGenerateConfig:
 
         assert ctx.primary_language == "shell"
         assert ctx.repository_type == "tooling"
+
+
+class TestStepScaffoldConfigFiles:
+    def test_creates_all_files(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.description = "Test repo"
+        ctx.license_type = "MIT"
+        ctx.publish_docs = True
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+
+        with patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run):
+            step_scaffold_config_files(ctx)
+
+        assert (tmp_path / ".githooks" / "pre-commit").exists()
+        assert (tmp_path / ".githooks" / "pre-commit").stat().st_mode & 0o111
+        assert (tmp_path / "CLAUDE.md").exists()
+        assert (tmp_path / ".claude" / "settings.json").exists()
+        assert (tmp_path / "LICENSE").exists()
+        assert (tmp_path / "README.md").exists()
+        assert (tmp_path / ".gitignore").exists()
+
+        assert any("commit" in c for c in calls)
+
+    def test_skips_license_when_none(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        ctx.publish_docs = True
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_scaffold_config_files(ctx)
+
+        assert not (tmp_path / "LICENSE").exists()
+
+    def test_hooks_path_set(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.description = "Test"
+        ctx.license_type = "none"
+        ctx.publish_docs = True
+
+        calls: list[tuple[str, ...]] = []
+
+        def mock_git_run(*args: str) -> None:
+            calls.append(args)
+
+        with patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run):
+            step_scaffold_config_files(ctx)
+
+        assert ("config", "core.hooksPath", ".githooks") in calls

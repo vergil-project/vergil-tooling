@@ -553,3 +553,54 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     git.run("add", "vergil.toml")
     git.run("commit", "-m", "chore(init): step 3 - vergil.toml")
     print("  vergil.toml committed.")
+
+
+def step_scaffold_config_files(ctx: RepoInitContext) -> None:
+    """Step 4: Scaffold local config files."""
+    import stat
+    from datetime import datetime, timezone
+
+    print("Step 4: Scaffolding config files...")
+    wd = ctx.work_dir
+    assert wd is not None
+
+    # .githooks/pre-commit
+    hooks_dir = wd / ".githooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_content = _load_data_file("githooks_pre_commit.sh")
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text(hook_content)
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    # Activate hooks
+    git.run("config", "core.hooksPath", ".githooks")
+
+    # CLAUDE.md
+    claude_md = render_claude_md(ctx)
+    (wd / "CLAUDE.md").write_text(claude_md)
+
+    # .claude/settings.json
+    claude_dir = wd / ".claude"
+    claude_dir.mkdir(exist_ok=True)
+    settings = _load_data_file("claude_settings.json")
+    (claude_dir / "settings.json").write_text(settings)
+
+    # README.md
+    readme = render_readme(ctx)
+    (wd / "README.md").write_text(readme)
+
+    # .gitignore
+    gitignore = render_gitignore()
+    (wd / ".gitignore").write_text(gitignore)
+
+    # LICENSE
+    if ctx.license_type != "none":
+        year = datetime.now(tz=timezone.utc).year
+        license_text = _load_license(ctx.license_type)
+        license_text = license_text.replace("{year}", str(year))
+        license_text = license_text.replace("{copyright_holder}", ctx.org)
+        (wd / "LICENSE").write_text(license_text)
+
+    git.run("add", "-A")
+    git.run("commit", "-m", "chore(init): step 4 - config files")
+    print("  Config files committed.")
