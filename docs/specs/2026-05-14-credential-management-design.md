@@ -197,6 +197,10 @@ credential gate checks both what command and what context:
   arbitrary feature branches is denied.
 - **Approval:** Allowed under the human account only for release
   PRs authored by the GitHub App (`vergil-release[bot]`).
+- **Issue close:** Allowed under the human account. The agent
+  account (outside collaborator) may lack the `CloseIssue`
+  GraphQL permission depending on org configuration. Escalating
+  to the human account avoids this dependency.
 - **Other admin operations:** Denied entirely through the wrapper.
 
 The specific per-command role mapping is an implementation detail
