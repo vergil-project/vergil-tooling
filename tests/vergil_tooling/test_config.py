@@ -302,3 +302,29 @@ def test_publish_docs_defaults_true(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_PUBLISH_RELEASE_ONLY_TOML)
     cfg = read_config(tmp_path)
     assert cfg.publish.docs is True
+
+
+def test_publish_consumer_refresh(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[publish]\nconsumer-refresh = "uv tool install pkg@v<VERSION>"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.consumer_refresh == "uv tool install pkg@v<VERSION>"
+
+
+def test_publish_consumer_refresh_default_none(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.consumer_refresh is None
+
+
+def test_publish_docs_workflow(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[publish]\ndocs-workflow = "Pages"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.docs_workflow == "Pages"
+
+
+def test_publish_docs_workflow_default(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.publish.docs_workflow == "Documentation"
