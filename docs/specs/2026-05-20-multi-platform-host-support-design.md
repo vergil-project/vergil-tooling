@@ -87,31 +87,28 @@ Replace bash-specific syntax in `.githooks/pre-commit` with POSIX
 file is 36 lines; the logic (env var checks and a case statement) is
 fully expressible in POSIX `sh`.
 
-**2. Remove flat-file audit logging (#902)**
-
-`vrg-git` and `vrg-gh` append JSON-lines audit entries to
-`~/.local/share/vergil/vrg-git.log` and `vrg-gh.log`. These files
-grow without bound. Issue #902 tracks their removal and replacement
-with a scalable approach. Once resolved, `vergil-tooling` has zero
-host-specific data directories.
-
-**3. Documentation: Supported Host Platforms**
+**2. Documentation: Supported Host Platforms**
 
 Add a "Supported Host Platforms" section to the project `CLAUDE.md`
 (which serves as the authoritative project reference) and to
 `docs/specs/host-level-tool.md` (which already documents the
-consumption model). The section explains the platform support model:
+consumption model). Delivered in two phases:
+
+**Phase A (this issue):** Document the platform model and governing
+principles — these are true today regardless of `vergil-vm`'s
+status:
 
 - Linux is the development and CI/CD platform
 - macOS, Linux desktop, and Windows (via WSL2) are supported host
   platforms for running the VM and human-facing CLI tools
 - Host prerequisites: Python 3.12+ and `uv` (for `vrg-*` tool
-  installation), POSIX `sh` (for git hooks), a hypervisor
-  (platform-specific, managed by `vergil-vm`)
-- Link to `vergil-vm` for platform-specific VM setup and
-  provisioning
+  installation), POSIX `sh` (for git hooks)
 
-**4. No platform abstraction module**
+**Phase B (after `vergil-vm` ships):** Add platform-specific setup
+instructions and link to `vergil-vm` for hypervisor provisioning
+and VM lifecycle management.
+
+**3. No platform abstraction module**
 
 A centralized `lib/platform.py` was considered and rejected. The
 architecture detection code in `docker.py` will be reworked during
@@ -129,7 +126,9 @@ centralization.
 
 ### Contract with `vergil-vm`
 
-The two repositories share a clear boundary:
+The two repositories share a clear boundary. The `vergil-vm` side of
+this contract should be incorporated into `vergil-vm`'s own spec
+when that repository is created.
 
 **`vergil-tooling` assumes:**
 
@@ -168,13 +167,14 @@ For reference, not specced here:
 
 ## Testing Strategy
 
-- Unit tests with mocked platform detection for any new
-  platform-aware code (minimal — likely just the POSIX hook rewrite
-  needs manual verification)
+- The POSIX hook rewrite is validated by shellcheck (already part of
+  `vrg-validate`) and a manual smoke test: confirm the hook admits
+  `vrg-commit` and rejects raw `git commit`
+- No new platform-aware Python code is introduced, so no unit tests
+  are needed
 - Manual validation on actual Linux desktop and Windows/WSL2 hardware
-  when available
-- No CI matrix expansion (host-side tools are pure Python; the
-  pre-commit hook is too simple to warrant cross-platform CI)
+  when available, to confirm the full host-side tool install and
+  hook workflow
 
 ## Dependencies
 
@@ -186,7 +186,8 @@ For reference, not specced here:
 
 ## Summary
 
-`vergil-tooling` is already 99% portable. The pre-commit hook gets
-a POSIX rewrite, the flat-file logs go away via #902, the docs get a
-platform support section, and all real multi-platform engineering
-lives in `vergil-vm`.
+`vergil-tooling` is already 99% portable. This issue delivers the
+pre-commit POSIX rewrite and platform documentation. Once #902 also
+lands (tracked independently), `vergil-tooling` has zero
+host-specific code paths. All real multi-platform engineering lives
+in `vergil-vm`.
