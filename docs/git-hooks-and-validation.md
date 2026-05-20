@@ -41,7 +41,7 @@ entry points that share a common set of validators:
   [Validation Matrix](#validation-matrix) below.
 
 All hooks and validators are managed by vergil-tooling.
-Consuming repositories resolve host-side `st-*` tools via
+Consuming repositories resolve host-side `vrg-*` tools via
 `uv tool install` and in-container validators via the dev
 container image's pre-bake or a Python dev-dep declaration.
 

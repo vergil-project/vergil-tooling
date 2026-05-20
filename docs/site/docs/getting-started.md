@@ -17,8 +17,8 @@ Install these on your host:
 - **macOS or Linux** (Bash)
 
 Everything else — language runtimes, linters, test frameworks, and
-most `st-*` tools — lives inside the dev container. The host-side
-`st-*` tools (`vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
+most `vrg-*` tools — lives inside the dev container. The host-side
+`vrg-*` tools (`vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
 are installed via `uv tool install`.
 
 ## 1. Install vergil-tooling on the host
@@ -27,7 +27,7 @@ are installed via `uv tool install`.
 uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
 ```
 
-This installs all `st-*` console scripts into `~/.local/bin/`,
+This installs all `vrg-*` console scripts into `~/.local/bin/`,
 which `uv`'s installer already puts on `PATH`.
 
 ```bash
