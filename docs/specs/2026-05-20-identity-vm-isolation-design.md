@@ -25,7 +25,7 @@ structural gaps and a growing maintenance burden:
    credentials with no defense layer to prevent it.
 
 3. **Credential isolation is policy, not physics.** The two-account
-   model (`pmoore` and `pmoore-vergil`) relies on wrapper logic to
+   model (`wphillipmoore` and `wphillipmoore-vergil`) relies on wrapper logic to
    select the right token per operation. Both tokens exist on the
    same filesystem. The wrapper is the only thing preventing the
    agent from using human credentials directly.
@@ -81,8 +81,8 @@ the wrong one creates a scaling problem.
 A developer working on 5-10 repositories simultaneously cannot
 sustain 5-10 Lima VMs on a laptop — especially one also running
 local LLMs via Ollama. But the same developer has only 1-2 agent
-identities (`pmoore-vergil`, and potentially `pmoore-mimir` in
-future).
+identities (`wphillipmoore-vergil`, and potentially
+`wphillipmoore-mimir` in future).
 
 **The identity VM model:** Each agent identity gets a single
 persistent Lima VM provisioned with that identity's credentials and
@@ -111,10 +111,10 @@ macOS Host
 │   ├── pf firewall (per-VM egress rules)
 │   └── HAProxy (SNI allowlist enforcement)
 │
-├── pmoore-vergil VM (Lima, persistent, ~1-2 GB RAM)
+├── wphillipmoore-vergil VM (Lima, persistent, ~1-2 GB RAM)
 │   ├── Identity
-│   │   ├── GitHub PAT (pmoore-vergil: repo, read:org)
-│   │   ├── SSH key (pmoore-vergil)
+│   │   ├── GitHub PAT (wphillipmoore-vergil: repo, read:org)
+│   │   ├── SSH key (wphillipmoore-vergil)
 │   │   └── User: agent (uid 1000)
 │   ├── Toolchain
 │   │   ├── vergil-tooling (vrg-commit, vrg-git, etc.)
@@ -131,7 +131,7 @@ macOS Host
 │       ├── claude (vergil-actions, issue #180)
 │       └── claude (diogenes-core, issue #42)
 │
-└── pmoore-mimir VM (future, same architecture)
+└── wphillipmoore-mimir VM (future, same architecture)
     └── Different credentials, different capabilities
 ```
 
@@ -193,7 +193,7 @@ for most users is their entire development tree:
 # ~/.config/vergil/identities.toml (conceptual)
 [vergil]
 mounts = ["~/dev"]
-github_user = "pmoore-vergil"
+github_user = "wphillipmoore-vergil"
 ```
 
 Inside the VM, mounted paths preserve their host-side absolute
@@ -216,10 +216,10 @@ needs. No more, no less.
 | Credential | How it enters the VM | Scope |
 |---|---|---|
 | GitHub PAT | Provisioned at VM creation via bootstrap | `repo`, `read:org` (agent-level scope per #775) |
-| SSH key | Provisioned at VM creation via bootstrap | pmoore-vergil's key |
+| SSH key | Provisioned at VM creation via bootstrap | wphillipmoore-vergil's key |
 | `ANTHROPIC_API_KEY` | Passed at `claude` launch time | Per-session |
 
-Human credentials (`pmoore`'s PAT, SSH key) never enter the VM.
+Human credentials (`wphillipmoore`'s PAT, SSH key) never enter the VM.
 They exist only on the host. The VM boundary is the credential
 isolation mechanism — no wrapper logic required.
 
@@ -278,7 +278,7 @@ modification:
 
 ```text
 Human launches: vrg-session vergil-tooling
-└── SSH into pmoore-vergil VM
+└── SSH into wphillipmoore-vergil VM
     └── Claude Code runs
         └── Agent works on vergil-tooling
             └── vrg-commit triggers pre-commit hook
@@ -304,7 +304,7 @@ Corral provisions a dedicated ext4 block device per VM for Claude
 Code's persistent memory (`claude-mem`). In the identity VM model,
 this becomes per-identity memory:
 
-- The `pmoore-vergil` identity has one memory store shared across
+- The `wphillipmoore-vergil` identity has one memory store shared across
   all projects it works on.
 - Memory persists across VM restarts, resets, and even VM deletion
   (the disk is retained separately).
@@ -440,7 +440,7 @@ Install corral alongside the existing Vergil stack and run real
 agent work through it to validate assumptions:
 
 1. Install corral on the development machine.
-2. Provision a VM for one active project using `pmoore-vergil`
+2. Provision a VM for one active project using `wphillipmoore-vergil`
    credentials (corral's per-project model, not yet identity-scoped).
 3. Install vergil-tooling inside the VM via `uv tool install`.
 4. Run real agent work sessions: feature development, bug fixes,
@@ -490,7 +490,7 @@ Once identity VMs are operational:
 
 When the Mimir identity (#805) is implemented:
 
-1. Provision a second identity VM (`pmoore-mimir`) with Mimir's
+1. Provision a second identity VM (`wphillipmoore-mimir`) with Mimir's
    credentials and capabilities.
 2. Configure distinct egress allowlists reflecting Mimir's different
    operational profile.
