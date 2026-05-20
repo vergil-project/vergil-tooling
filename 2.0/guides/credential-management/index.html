@@ -686,6 +686,8 @@
       
         
       
+        
+      
     
     
     
@@ -738,6 +740,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.23/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.23
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6111,6 +6141,9 @@ command and its context pass validation:</p>
   merging to <code>main</code>, back-merge from <code>main</code> to <code>develop</code>).</li>
 <li><strong>Approval:</strong> Allowed under the human account only for release
   PRs authored by <code>vergil-release[bot]</code>.</li>
+<li><strong>Issue close:</strong> Allowed under the human account. The agent
+  account may lack the <code>CloseIssue</code> GraphQL permission as an
+  outside collaborator; escalating avoids this dependency.</li>
 <li><strong>Other admin operations:</strong> Denied entirely.</li>
 </ul>
 <p>Escalation requires both a permitted command and a validated

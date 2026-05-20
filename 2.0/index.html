@@ -775,6 +775,8 @@
       
         
       
+        
+      
     
     
     
@@ -827,6 +829,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.0.23/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.23
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5586,7 +5616,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 <p><strong>Python CLI tools</strong> (<code>src/vergil_tooling/</code>):
 <code>vrg-commit</code>, <code>vrg-submit-pr</code>, <code>vrg-prepare-release</code>,
 <code>vrg-finalize-repo</code>, <code>vrg-validate</code></p>
-<p><strong>Lint tools</strong> (installed as <code>st-*</code>):
+<p><strong>Lint tools</strong> (installed as <code>vrg-*</code>):
 <code>vrg-repo-profile</code>, <code>vrg-pr-issue-linkage</code>, validation drivers</p>
 <p><strong>Git hooks</strong> (<code>.githooks/</code>):
 Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit</code></p>
@@ -5596,17 +5626,17 @@ Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit
 <li><strong>shellcheck clean</strong> -- all shell scripts pass shellcheck</li>
 <li><strong>No repo-specific logic</strong> -- every script works in any consuming
   repository</li>
-<li><strong>Host-level install</strong> -- <code>uv tool install</code> puts <code>st-*</code> on PATH;
+<li><strong>Host-level install</strong> -- <code>uv tool install</code> puts <code>vrg-*</code> on PATH;
   no sibling checkout required</li>
 </ul>
 <h2 id="how-it-works">How It Works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <ol>
 <li><code>vergil-tooling</code> is installed on the developer's host via
-   <code>uv tool install</code>, placing <code>st-*</code> scripts in <code>~/.local/bin/</code>.</li>
+   <code>uv tool install</code>, placing <code>vrg-*</code> scripts in <code>~/.local/bin/</code>.</li>
 <li><code>vrg-docker-run</code> bridges host commands into dev container images
    where language runtimes and validators live.</li>
 <li>Python consumers also declare <code>vergil-tooling</code> as a dev dep
-   via <code>[tool.uv.sources]</code> so <code>uv run st-*</code> inside the container
+   via <code>[tool.uv.sources]</code> so <code>uv run vrg-*</code> inside the container
    resolves the pinned version.</li>
 <li>Each repo checks in a <code>.githooks/pre-commit</code> env-var gate,
    enabled via <code>git config core.hooksPath .githooks</code>.</li>
