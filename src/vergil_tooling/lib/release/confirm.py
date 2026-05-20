@@ -23,9 +23,7 @@ def confirm_publish(ctx: ReleaseContext) -> None:
     print(f"All artifacts confirmed for v{ctx.version}.")
 
 
-def _watch_workflow(
-    ctx: ReleaseContext, workflow: str, label: str
-) -> None:
+def _watch_workflow(ctx: ReleaseContext, workflow: str, label: str) -> None:
     print(f"Waiting for {workflow} on main...")
     run_id = github.read_output(
         "run",

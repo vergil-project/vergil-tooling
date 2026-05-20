@@ -23,7 +23,7 @@ def _ctx() -> ReleaseContext:
     return ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
 
@@ -131,3 +131,27 @@ def test_close_tracking_issue() -> None:
     with patch(_MOD + ".github.run") as mock_run:
         close_tracking_issue(ctx, "Summary text here")
     assert mock_run.call_count == 2
+
+
+def test_create_tracking_issue_bad_url() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output", return_value="not-a-url"),
+        pytest.raises(ValueError, match="Could not extract issue number"),
+    ):
+        create_tracking_issue(ctx)
+
+
+def test_comment_phase_failed_no_detail() -> None:
+    ctx = _ctx()
+    ctx.issue_number = 42
+    exc = ReleaseError(
+        phase="merge-release",
+        command="gh pr merge ...",
+        message="CI failed",
+    )
+    with (
+        patch(_MOD + ".tempfile.NamedTemporaryFile", side_effect=tempfile.NamedTemporaryFile),
+        patch(_MOD + ".github.run"),
+    ):
+        comment_phase_failed(ctx, "merge-release", exc)

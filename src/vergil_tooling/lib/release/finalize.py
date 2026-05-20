@@ -19,8 +19,8 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     print("Tracking issue closed.")
 
     print("Running vrg-finalize-repo...")
-    result = subprocess.run(
-        ("vrg-finalize-repo",),
+    result = subprocess.run(  # noqa: S603
+        ("vrg-finalize-repo",),  # noqa: S607
         check=False,
         capture_output=True,
         text=True,

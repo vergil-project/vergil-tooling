@@ -16,7 +16,7 @@ def _ctx() -> ReleaseContext:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
     ctx.issue_number = 42
@@ -42,6 +42,18 @@ def test_close_and_finalize_succeeds() -> None:
     ):
         close_and_finalize(ctx)
     mock_close.assert_called_once()
+
+
+def test_close_and_finalize_prints_stdout() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".close_tracking_issue"),
+        patch(
+            _MOD + ".subprocess.run",
+            return_value=CompletedProcess(args=(), returncode=0, stdout="cleaned up"),
+        ),
+    ):
+        close_and_finalize(ctx)
 
 
 def test_close_and_finalize_fails_on_finalize_error() -> None:

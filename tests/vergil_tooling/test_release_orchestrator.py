@@ -16,7 +16,7 @@ def _ctx() -> ReleaseContext:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
     ctx.issue_number = 42
@@ -116,3 +116,78 @@ def test_orchestrator_does_not_run_later_phases_on_failure() -> None:
     ):
         run_release(ctx)
     m_merge.assert_not_called()
+
+
+def test_merge_release_raises_if_no_pr_url() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    with pytest.raises(ReleaseError, match="release_pr_url is not set"):
+        merge_release(ctx)
+
+
+def test_merge_release_calls_wait_and_merge() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    with patch(_MOD + ".wait_and_merge") as m_wm:
+        merge_release(ctx)
+    m_wm.assert_called_once_with("https://github.com/o/r/pull/100", phase="merge-release")
+    assert ctx.release_merge_sha == "merged"
+
+
+def test_phase_details_merge_release() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    details = _phase_details(ctx, "merge-release")
+    assert "pull/100" in details
+
+
+def test_phase_details_merge_bump() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    ctx.bump_pr_url = "https://github.com/o/r/pull/101"
+    ctx.next_version = "2.1.1"
+    details = _phase_details(ctx, "merge-bump")
+    assert "pull/101" in details
+    assert "2.1.1" in details
+
+
+def test_phase_details_close_finalize() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    details = _phase_details(ctx, "close-finalize")
+    assert "finalized" in details.lower()
+
+
+def test_phase_details_consumer_refresh() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    details = _phase_details(ctx, "consumer-refresh")
+    assert "Consumer refresh" in details
+
+
+def test_phase_details_unknown_phase() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    details = _phase_details(ctx, "unknown-phase")
+    assert details == ""
+
+
+def test_phase_details_confirm_docs_workflow() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()
+    ctx.tag = "v2.1.0"
+    ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
+    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
+    ctx.docs_run_url = "https://github.com/o/r/actions/runs/456"
+    details = _phase_details(ctx, "confirm-publish")
+    assert "docs workflow" in details

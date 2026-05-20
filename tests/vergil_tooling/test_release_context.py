@@ -11,12 +11,12 @@ def test_context_required_fields() -> None:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
     assert ctx.repo == "owner/repo"
     assert ctx.version == "2.1.0"
-    assert ctx.repo_root == Path("/tmp/repo")
+    assert ctx.repo_root == Path("/tmp/repo")  # noqa: S108
     assert ctx.version_override is None
 
 
@@ -24,7 +24,7 @@ def test_context_optional_fields_default_none() -> None:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
     assert ctx.issue_number is None
@@ -37,7 +37,7 @@ def test_context_fields_are_mutable() -> None:
     ctx = ReleaseContext(
         repo="owner/repo",
         version="2.1.0",
-        repo_root=Path("/tmp/repo"),
+        repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
     ctx.issue_number = 42

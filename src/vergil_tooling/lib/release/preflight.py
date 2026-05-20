@@ -116,8 +116,8 @@ def _check_branch_and_tree() -> None:
 
 
 def _audit_repo_config(repo: str) -> None:
-    result = subprocess.run(
-        ("vrg-github-repo-config", "audit", "--repo", repo),
+    result = subprocess.run(  # noqa: S603
+        ("vrg-github-repo-config", "audit", "--repo", repo),  # noqa: S607
         check=False,
         capture_output=True,
         text=True,
@@ -148,9 +148,7 @@ def _detect_maven() -> str | None:
     if not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
-    match = re.search(
-        r"<artifactId>[^<]+</artifactId>\s*<version>([^<]+)</version>", text
-    )
+    match = re.search(r"<artifactId>[^<]+</artifactId>\s*<version>([^<]+)</version>", text)
     return match.group(1) if match else None
 
 
@@ -190,7 +188,8 @@ def _detect_claude_plugin() -> str | None:
     if not path.is_file():
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
-    return data.get("version")
+    version: str | None = data.get("version")
+    return version
 
 
 def _detect_version_file() -> str | None:
@@ -219,7 +218,7 @@ _DETECTORS = [
 
 
 def _detect_version(repo_root: Path) -> str:
-    prev = os.getcwd()
+    prev = Path.cwd()
     os.chdir(repo_root)
     try:
         for detector in _DETECTORS:
@@ -281,25 +280,20 @@ def _apply_version_override(
             message=f"Version '{current}' is not valid semver for override.",
         )
     major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
-    if override == "minor":
-        target = f"{major}.{minor + 1}.0"
-    else:
-        target = f"{major + 1}.0.0"
+    target = f"{major}.{minor + 1}.0" if override == "minor" else f"{major + 1}.0.0"
 
     _bump_version_in_manifest(repo_root, current, target, cfg)
     print(f"Version override: {current} -> {target}")
     return target
 
 
-def _bump_version_in_manifest(
-    repo_root: Path, old: str, new: str, cfg: config.StConfig
-) -> None:
+def _bump_version_in_manifest(repo_root: Path, old: str, new: str, cfg: config.StConfig) -> None:
     if cfg.project.primary_language == "python":
         path = repo_root / "pyproject.toml"
         text = path.read_text(encoding="utf-8")
         text = text.replace(f'version = "{old}"', f'version = "{new}"')
         path.write_text(text, encoding="utf-8")
-        subprocess.run(("uv", "lock"), check=True, cwd=repo_root)
+        subprocess.run(("uv", "lock"), check=True, cwd=repo_root)  # noqa: S603, S607
     else:
         raise ReleaseError(
             phase="preflight",

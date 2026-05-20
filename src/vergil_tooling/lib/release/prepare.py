@@ -64,8 +64,8 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
     tag = f"develop-v{ctx.version}"
     print(f"Generating changelog with boundary tag: {tag}")
     config_path = files("vergil_tooling.configs") / "cliff.toml"
-    subprocess.run(
-        ("git-cliff", "--config", str(config_path), "--tag", tag, "-o", "CHANGELOG.md"),
+    subprocess.run(  # noqa: S603
+        ("git-cliff", "--config", str(config_path), "--tag", tag, "-o", "CHANGELOG.md"),  # noqa: S607
         check=True,
     )
     _normalize_trailing_newline(Path("CHANGELOG.md"))
@@ -76,8 +76,8 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
     output_file = releases_dir / f"v{ctx.version}.md"
     print(f"Generating release notes: {output_file}")
     release_notes_config = files("vergil_tooling.configs") / "cliff-release-notes.toml"
-    subprocess.run(
-        (
+    subprocess.run(  # noqa: S603
+        (  # noqa: S607
             "git-cliff",
             "--config",
             str(release_notes_config),
@@ -106,9 +106,7 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
 
 
 def _normalize_trailing_newline(path: Path) -> None:
-    path.write_text(
-        path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8"
-    )
+    path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
 
 
 def _create_pr(ctx: ReleaseContext) -> str:

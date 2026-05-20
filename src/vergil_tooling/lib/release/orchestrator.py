@@ -17,12 +17,19 @@ from vergil_tooling.lib.release.tracking import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from vergil_tooling.lib.release.context import ReleaseContext
 
 
 def merge_release(ctx: ReleaseContext) -> None:
     """Phase 2: merge the release PR."""
-    assert ctx.release_pr_url is not None
+    if ctx.release_pr_url is None:
+        raise ReleaseError(
+            phase="merge-release",
+            command="merge_release",
+            message="release_pr_url is not set — prepare phase may not have run.",
+        )
     wait_and_merge(ctx.release_pr_url, phase="merge-release")
     ctx.release_merge_sha = "merged"
 
@@ -63,7 +70,7 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
 
 def run_release(ctx: ReleaseContext) -> None:
     """Execute the release workflow phase by phase."""
-    phases: list[tuple[str, object]] = [
+    phases: list[tuple[str, Callable[[ReleaseContext], None]]] = [
         ("prepare", prepare),
         ("merge-release", merge_release),
         ("merge-bump", merge_bump),
@@ -74,7 +81,7 @@ def run_release(ctx: ReleaseContext) -> None:
 
     for phase_name, phase_fn in phases:
         try:
-            phase_fn(ctx)  # type: ignore[operator]
+            phase_fn(ctx)
             comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
         except ReleaseError as exc:
             comment_phase_failed(ctx, phase_name, exc)
