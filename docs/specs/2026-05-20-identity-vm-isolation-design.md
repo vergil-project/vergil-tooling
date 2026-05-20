@@ -213,15 +213,48 @@ are identity-scoped, not project-scoped.
 The VM is provisioned with exactly the credentials the identity
 needs. No more, no less.
 
+**Design principle:** Every interaction the agent has with an
+external system should appear under the agent's own identity, not
+the human's. The VM is the enforcement boundary for this — the
+agent's credentials live inside the VM, the human's credentials
+stay on the host, and the two never mix. This principle extends to
+any external service the agent interacts with, not just GitHub.
+
+**Current credentials (Vergil workflow):**
+
 | Credential | How it enters the VM | Scope |
 |---|---|---|
 | GitHub PAT | Provisioned at VM creation via bootstrap | `repo`, `read:org` (agent-level scope per #775) |
 | SSH key | Provisioned at VM creation via bootstrap | wphillipmoore-vergil's key |
-| `ANTHROPIC_API_KEY` | Passed at `claude` launch time | Per-session |
 
-Human credentials (`wphillipmoore`'s PAT, SSH key) never enter the VM.
-They exist only on the host. The VM boundary is the credential
-isolation mechanism — no wrapper logic required.
+**Extensible by design:** The credential provisioning model is not
+limited to GitHub. As agent workflows expand to interact with
+additional external systems, each gets its own agent-scoped
+credentials provisioned into the VM:
+
+| Future credential | Use case | Identity model |
+|---|---|---|
+| AWS IAM credentials | Cloud infrastructure, deployments | Dedicated IAM user or role per agent identity |
+| Container registry tokens | Pushing images to GHCR, ECR, etc. | Agent-scoped token |
+| Additional SaaS API keys | CI services, monitoring, etc. | Per-agent credentials as needed |
+
+The pattern is consistent: the agent identity has its own account
+or role in each external system, and only those credentials are
+provisioned into the VM. The human's credentials for the same
+systems remain on the host.
+
+**Exception — `ANTHROPIC_API_KEY`:** The one credential that
+crosses the VM boundary at session launch time is the Anthropic API
+key, because the agent runs under the human's Anthropic account.
+This is passed per-session (not baked into the VM) and is the only
+shared credential in the model. This exception may disappear when
+local LLM usage via Ollama replaces or supplements the Anthropic
+API.
+
+Human credentials (`wphillipmoore`'s PAT, SSH key, AWS credentials,
+etc.) never enter the VM. They exist only on the host. The VM
+boundary is the credential isolation mechanism — no wrapper logic
+required.
 
 **Consequence for vrg-gh:** The `_discover_accounts()` function,
 credential selection logic, and escalation dance for `pr merge` /
