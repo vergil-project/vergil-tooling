@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 import tomllib
 
 from vergil_tooling.lib.config import _parse_raw_config
@@ -18,6 +20,8 @@ from vergil_tooling.lib.repo_init import (
     render_claude_md,
     render_gitignore,
     render_mkdocs_yml,
+    step_clone,
+    step_create_repo,
     render_readme,
     render_vergil_toml,
 )
@@ -246,3 +250,65 @@ class TestRenderMkdocsYml:
         content = render_mkdocs_yml(ctx)
         assert 'site_name: "vergil-vm"' in content
         assert "material" in content
+
+
+class TestStepCreateRepo:
+    def test_creates_new_repo(self) -> None:
+        ctx = RepoInitContext(
+            org="vergil-project",
+            name="vergil-vm",
+            visibility="public",
+            description="Test repo",
+        )
+        calls: list[tuple[str, ...]] = []
+
+        def mock_run(*args: str) -> None:
+            calls.append(args)
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.github.read_output",
+                side_effect=subprocess.CalledProcessError(1, "gh"),
+            ),
+            patch("vergil_tooling.lib.repo_init.github.run", side_effect=mock_run),
+        ):
+            step_create_repo(ctx)
+
+        assert any("repo" in c and "create" in c for c in calls)
+
+    def test_skips_when_repo_exists_adopt(self) -> None:
+        ctx = RepoInitContext(
+            org="vergil-project",
+            name="vergil-vm",
+            adopt=True,
+        )
+
+        with patch(
+            "vergil_tooling.lib.repo_init.github.read_output",
+            return_value="vergil-project/vergil-vm",
+        ):
+            step_create_repo(ctx)
+
+
+class TestStepClone:
+    def test_clones_to_work_dir(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        target = tmp_path / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with patch("vergil_tooling.lib.repo_init.subprocess.run", side_effect=mock_subprocess_run):
+            step_clone(ctx, parent_dir=tmp_path)
+
+        assert ctx.work_dir == target
+
+    def test_skips_when_already_cloned(self, tmp_path: Path) -> None:
+        target = tmp_path / "vergil-vm"
+        target.mkdir()
+        (target / ".git").mkdir()
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        step_clone(ctx, parent_dir=tmp_path)
+        assert ctx.work_dir == target

@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
+
+from vergil_tooling.lib import git, github
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -406,3 +409,54 @@ def render_mkdocs_yml(ctx: RepoInitContext) -> str:
 def render_docs_index(ctx: RepoInitContext) -> str:
     """Render docs/site/docs/index.md."""
     return f"# {ctx.name}\n\nWelcome to the {ctx.name} documentation.\n"
+
+
+def step_create_repo(ctx: RepoInitContext) -> None:
+    """Step 1: Create the GitHub repo or verify it exists."""
+    if ctx.adopt:
+        print(f"Step 1: Verifying {ctx.repo} exists...")
+        github.read_output("repo", "view", ctx.repo, "--json", "name")
+        print(f"  {ctx.repo} exists.")
+        return
+
+    print(f"Step 1: Creating {ctx.repo}...")
+    try:
+        github.read_output("repo", "view", ctx.repo, "--json", "name")
+        print(f"  {ctx.repo} already exists, skipping creation.")
+        return
+    except subprocess.CalledProcessError:
+        pass
+
+    cmd = [
+        "repo", "create", ctx.repo,
+        f"--{ctx.visibility}",
+        "--description", ctx.description,
+    ]
+    github.run(*cmd)
+    print(f"  Created {ctx.repo}.")
+
+
+def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
+    """Step 2: Clone the repo locally or verify an existing clone."""
+    if parent_dir is None:
+        parent_dir = Path.cwd()
+
+    target = parent_dir / ctx.name
+
+    if ctx.adopt:
+        ctx.work_dir = Path.cwd()
+        print("Step 2: Using current directory as working directory.")
+        return
+
+    if (target / ".git").is_dir():
+        ctx.work_dir = target
+        print(f"Step 2: {target} already cloned, skipping.")
+        return
+
+    print(f"Step 2: Cloning {ctx.repo}...")
+    subprocess.run(
+        ("git", "clone", f"git@github.com:{ctx.repo}.git", str(target)),
+        check=True,
+    )
+    ctx.work_dir = target
+    print(f"  Cloned to {target}.")
