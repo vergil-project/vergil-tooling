@@ -763,3 +763,62 @@ def step_github_pages(ctx: RepoInitContext) -> None:
         {"homepage": homepage},
     )
     print(f"  Homepage set to {homepage}")
+
+
+def _check_remote_steps(ctx: RepoInitContext) -> set[int]:
+    """Check which remote-only steps are already complete."""
+    completed: set[int] = set()
+
+    try:
+        github.read_output("repo", "view", ctx.repo, "--json", "name")
+        completed.add(1)
+    except subprocess.CalledProcessError:
+        pass
+
+    if (
+        _remote_branch_exists(ctx.repo, "develop")
+        and _remote_branch_exists(ctx.repo, "main")
+    ):
+        completed.add(7)
+
+    return completed
+
+
+def run_wizard(ctx: RepoInitContext) -> None:
+    """Run all wizard steps, skipping completed ones."""
+    try:
+        log_output = git.read_output("log", "--oneline")
+    except subprocess.CalledProcessError:
+        log_output = ""
+    local_completed = detect_completed_steps(log_output)
+
+    remote_completed = _check_remote_steps(ctx)
+
+    ctx.completed_steps = local_completed | remote_completed
+
+    if ctx.completed_steps:
+        print(f"Resuming — completed steps: {sorted(ctx.completed_steps)}")
+
+    steps: list[tuple[int, str, Any]] = [
+        (1, "Repo creation", lambda: step_create_repo(ctx)),
+        (2, "Clone", lambda: step_clone(ctx)),
+        (3, "vergil.toml", lambda: step_generate_config(ctx)),
+        (4, "Config files", lambda: step_scaffold_config_files(ctx)),
+        (5, "CI/CD workflows", lambda: step_ci_cd_workflows(ctx)),
+        (6, "Docs site", lambda: step_docs_site(ctx)),
+        (7, "Branch structure", lambda: step_branch_structure(ctx)),
+        (8, "GitHub config", lambda: step_github_config(ctx)),
+        (9, "GitHub Pages", lambda: step_github_pages(ctx)),
+    ]
+
+    for step_num, desc, func in steps:
+        if step_num in ctx.completed_steps:
+            print(f"Step {step_num} ({desc}): already completed, skipping.")
+            continue
+        func()
+
+    print("\nRepository bootstrap complete!")
+    print(f"  Repo: https://github.com/{ctx.repo}")
+    if ctx.publish_docs:
+        print(f"  Docs: https://{ctx.org}.github.io/{ctx.name}/")
+    print("  Ready for PRs.")

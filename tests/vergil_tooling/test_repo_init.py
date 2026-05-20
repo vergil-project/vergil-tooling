@@ -29,6 +29,7 @@ from vergil_tooling.lib.repo_init import (
     step_github_config,
     step_github_pages,
     step_scaffold_config_files,
+    run_wizard,
     render_readme,
     render_vergil_toml,
 )
@@ -597,3 +598,38 @@ class TestStepGithubPages:
         ctx.publish_docs = False
 
         step_github_pages(ctx)
+
+
+class TestRunWizard:
+    def test_skips_completed_local_steps(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.completed_steps = {3, 4}
+
+        steps_run: list[int] = []
+
+        def mock_step(step_num: int) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                steps_run.append(step_num)
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
+            patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
+            patch("vergil_tooling.lib.repo_init.step_scaffold_config_files", side_effect=mock_step(4)),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            patch("vergil_tooling.lib.repo_init.git.read_output", return_value=(
+                "abc1234 chore(init): step 3 - vergil.toml\n"
+                "def5678 chore(init): step 4 - config files\n"
+            )),
+        ):
+            run_wizard(ctx)
+
+        assert 3 not in steps_run
+        assert 4 not in steps_run
+        assert 5 in steps_run
