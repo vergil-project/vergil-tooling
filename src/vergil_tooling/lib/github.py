@@ -17,9 +17,126 @@ import sys
 import time
 from typing import Any
 
+from pathlib import Path
+
 from vergil_tooling.lib import retry
 
 log = logging.getLogger(__name__)
+
+_cached_token: tuple[str, float] | None = None
+
+
+def _load_app_config() -> tuple[str, str, Path] | None:
+    """Read GitHub App credentials from env vars or ~/.config/vergil/.
+
+    Returns ``(app_id, installation_id, key_path)`` or ``None``
+    when App mode is not configured.
+    """
+    app_id = os.environ.get("VRG_APP_ID", "")
+    installation_id = os.environ.get("VRG_INSTALLATION_ID", "")
+    key_path_str = os.environ.get("VRG_PRIVATE_KEY_PATH", "")
+
+    if app_id and installation_id and key_path_str:
+        return app_id, installation_id, Path(key_path_str).expanduser()
+
+    env_file = Path.home() / ".config" / "vergil" / "app.env"
+    key_file = Path.home() / ".config" / "vergil" / "app.pem"
+    if not env_file.exists() or not key_file.exists():
+        return None
+
+    values: dict[str, str] = {}
+    for line in env_file.read_text().splitlines():
+        stripped = line.strip()
+        if "=" in stripped and not stripped.startswith("#"):
+            k, v = stripped.split("=", 1)
+            values[k.strip()] = v.strip()
+
+    app_id = app_id or values.get("APP_ID", "")
+    installation_id = installation_id or values.get("INSTALLATION_ID", "")
+
+    if not app_id or not installation_id:
+        return None
+
+    return app_id, installation_id, key_file
+
+
+def _generate_jwt(app_id: str, key_path: Path) -> str:
+    """Generate an RS256 JWT for GitHub App authentication.
+
+    Uses ``openssl`` for RSA signing to avoid adding a
+    cryptography dependency.
+    """
+    import base64 as _b64
+
+    def b64url(data: bytes) -> str:
+        return _b64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    now = int(time.time())
+    header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    payload = b64url(
+        json.dumps({"iat": now - 60, "exp": now + 600, "iss": int(app_id)}).encode()
+    )
+
+    signing_input = f"{header}.{payload}"
+
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "openssl",
+            "dgst",
+            "-sha256",
+            "-sign",
+            str(key_path),
+            "-binary",
+        ],
+        input=signing_input.encode(),
+        capture_output=True,
+        check=True,
+    )
+
+    signature = b64url(result.stdout)
+    return f"{header}.{payload}.{signature}"
+
+
+def get_installation_token() -> str | None:
+    """Return a GitHub App installation token, or ``None`` if not in App mode.
+
+    Reads App credentials from ``~/.config/vergil/`` (or env var
+    overrides), generates a JWT, and exchanges it for a 1-hour
+    installation token via the GitHub API. Tokens are cached for
+    55 minutes.
+    """
+    global _cached_token  # noqa: PLW0603
+    if _cached_token is not None:
+        token, expiry = _cached_token
+        if time.time() < expiry:
+            return token
+
+    config = _load_app_config()
+    if config is None:
+        return None
+
+    app_id, installation_id, key_path = config
+    jwt_token = _generate_jwt(app_id, key_path)
+
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "gh",
+            "api",
+            f"/app/installations/{installation_id}/access_tokens",
+            "-X",
+            "POST",
+            "--jq",
+            ".token",
+        ],
+        env={**os.environ, "GH_TOKEN": jwt_token},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    token = result.stdout.strip()
+    _cached_token = (token, time.time() + 3300)
+    return token
 
 
 def _discover_accounts() -> tuple[str, str]:
