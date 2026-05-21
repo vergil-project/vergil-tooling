@@ -5,6 +5,47 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.27] - 2026-05-20
+
+### Bug fixes
+
+- apply alignment review fixes to vrg-release plan
+- lint fixes and 100% branch coverage for release modules
+
+### Chores
+
+- bump version to 2.0.27
+
+### Documentation
+
+- vrg-release mechanized release workflow design
+- add duplicate tracking issue guard to vrg-release spec
+- clarify resume semantics require explicit --resume flag
+- apply pushback review fixes to vrg-release spec
+- implementation plan for vrg-release mechanized workflow
+- move vrg-release plan to docs/plans/
+- alignment review report for vrg-release spec and plan
+- update CLAUDE.md for vrg-release and retired tools
+
+### Features
+
+- add consumer_refresh and docs_workflow to PublishConfig
+- add ReleaseContext dataclass and ReleaseError exception
+- add tracking module for release issue management
+- add preflight module with version detection and checks
+- add prepare module for branch creation and changelog
+- add merge module for wait-poll-merge logic
+- add bump module for version-bump PR handling
+- add confirm module for workflow watching and artifact verification
+- add finalize module for issue close and repo cleanup
+- add handoff module for consumer-refresh display
+- add orchestrator for sequential phase execution
+- add vrg-release CLI entry point, retire absorbed tools
+
+### Refactoring
+
+- migrate lib/release.py to lib/release/ package
+
 ## [2.0.26] - 2026-05-20
 
 ### Bug fixes
