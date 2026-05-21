@@ -90,15 +90,13 @@ match the project requirements:
 | CI versions | `latest` |
 | Integration tests? | `no` |
 | Publish releases? | `yes` |
-| Publish docs? | `no` |
-| Vergil dependency version | `v2.1` |
+| Publish docs? | `yes` |
+| Vergil dependency version | `v2.0` |
 | License | `GPL-3.0` |
 
 The tool runs 9 steps automatically (create repo, clone,
 generate vergil.toml, scaffold files, CI/CD workflows, docs
-site, branch structure, GitHub config, GitHub Pages). Steps
-that don't apply (docs site, Pages) are skipped based on the
-configuration above.
+site, branch structure, GitHub config, GitHub Pages).
 
 **What the init tool creates vs. what this plan extends:**
 The init tool generates a baseline `.gitignore` and a standard
@@ -107,34 +105,36 @@ CI workflow (`.github/workflows/ci.yml`). Task 1 extends the
 used as-is — `vrg-validate` already runs shellcheck and
 yamllint as common checks for shell-language repos.
 
-### 3. Create the VERSION file
+### 3. Bootstrap PR (VERSION file + CI fixes)
 
-`vrg-github-repo-init` does not create a `VERSION` file.
-Create it after the wizard completes:
+`vrg-github-repo-init` does not create a `VERSION` file, and
+the generated CI workflow needs patching for shell-language
+repos (see vergil-tooling#960, #961, #962). The first PR
+combines both:
 
-```bash
-cd ~/dev/projects/vergil-project/vergil-vm
-echo "2.1.0" > VERSION
-vrg-commit --type chore --scope repo --message "add VERSION file" \
-  --body "Initial version for vergil-vm"
-vrg-git push
-```
+- Add `VERSION` file (2.1.0)
+- Add `run-codeql: false` to security job (CodeQL doesn't
+  support shell)
+- Add `container-suffix: base` to audit and test jobs (shell
+  repos use `prod-base`, not `prod-shell`)
+- Add `## Table of Contents` to README.md (required by
+  quality/common standards check)
+
+This bootstrap PR validates that CI is functional. See
+vergil-tooling#970 for the strategic fix to make
+`vrg-github-repo-init` handle this automatically.
 
 ### 4. Verify the repo is ready
 
-```bash
-vrg-github-repo-config audit --repo vergil-project/vergil-vm
-# Should exit 0 (compliant)
+After the bootstrap PR merges, confirm the repo is ready for
+normal development workflow:
 
+```bash
 # Create a test worktree to confirm normal workflow works
 vrg-git worktree add -b feature/test-worktree .worktrees/test develop
 vrg-git worktree remove .worktrees/test
 vrg-git branch -d feature/test-worktree
 ```
-
-After these steps, the repo is ready for normal Vergil
-development workflow. The agent can create worktrees, use
-`vrg-commit`, and submit PRs.
 
 ---
 
@@ -336,7 +336,7 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 
 # uv tool install works (install from the configured version)
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0'
 
 # Core vrg-* commands are available after install
 command -v vrg-commit
@@ -525,7 +525,7 @@ message: |
     limactl shell {{.Name}} -- nerdctl run --rm alpine echo hello
 
   Install vergil-tooling:
-    limactl shell {{.Name}} -- bash -c 'uv tool install "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1"'
+    limactl shell {{.Name}} -- bash -c 'uv tool install "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0"'
 ```
 
 - [ ] **Step 5: Commit**
@@ -665,7 +665,7 @@ ls ~/dev/    # Should show host's ~/dev contents
 
 ```bash
 # Inside the VM:
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.0'
 vrg-git --help
 vrg-commit --help
 uv tool uninstall vergil-tooling
