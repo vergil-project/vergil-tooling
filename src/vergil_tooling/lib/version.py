@@ -39,9 +39,16 @@ _DEFAULT_VERSION_FILES: dict[str, str] = {
 
 VERSION_FILE = "VERSION"
 
-_LANGUAGES_WITH_SEPARATE_VERSION = frozenset({
-    "python", "rust", "java", "ruby", "go", "claude-plugin",
-})
+_LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
+    {
+        "python",
+        "rust",
+        "java",
+        "ruby",
+        "go",
+        "claude-plugin",
+    }
+)
 
 
 class VersionSyncError(Exception):
@@ -70,9 +77,7 @@ def _discover_version_file(repo_root: Path, language: str) -> Path:
     raise ValueError(msg)
 
 
-def _cross_check_language_file(
-    repo_root: Path, language: str, canonical_version: str
-) -> None:
+def _cross_check_language_file(repo_root: Path, language: str, canonical_version: str) -> None:
     if language not in _LANGUAGES_WITH_SEPARATE_VERSION:
         return
     try:
