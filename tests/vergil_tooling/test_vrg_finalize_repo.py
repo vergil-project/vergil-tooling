@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_repo import (
-    _check_docs_workflow_status,
+    _check_cd_workflow_status,
     _worktree_for_branch,
     _worktree_is_dirty,
     main,
@@ -105,7 +105,7 @@ def test_main_library_release(tmp_path: Path) -> None:
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -121,7 +121,7 @@ def test_main_already_on_target(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -150,7 +150,7 @@ def test_main_no_profile(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -178,7 +178,7 @@ def test_main_application_promotion(tmp_path: Path) -> None:
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -192,7 +192,7 @@ def test_main_docs_single_branch(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -206,7 +206,7 @@ def test_main_no_deleted_branches(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["develop"]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -223,7 +223,7 @@ def test_main_validation_fails(tmp_path: Path) -> None:
             "vergil_tooling.bin.vrg_finalize_repo.subprocess.run",
             return_value=CompletedProcess(args=("vrg-validate",), returncode=1),
         ),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 1
@@ -237,7 +237,7 @@ def test_main_calls_docker_run(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()) as mock_sub,
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -255,7 +255,7 @@ def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()) as mock_sub,
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -263,7 +263,7 @@ def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
     assert cmd == ("vrg-docker-run", "--", "uv", "run", "vrg-validate")
 
 
-# -- _check_docs_workflow_status (issue #303) --------------------------------
+# -- _check_cd_workflow_status (issue #303) --------------------------------
 
 
 def _gh_run_json(conclusion: str | None) -> str:
@@ -281,45 +281,45 @@ def _gh_run_json(conclusion: str | None) -> str:
     )
 
 
-def test_check_docs_workflow_returns_none_when_gh_fails() -> None:
+def test_check_cd_workflow_returns_none_when_gh_fails() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=1, stdout="", stderr="oops"),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
-def test_check_docs_workflow_returns_none_when_no_runs() -> None:
+def test_check_cd_workflow_returns_none_when_no_runs() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout="[]"),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
-def test_check_docs_workflow_returns_none_on_success() -> None:
+def test_check_cd_workflow_returns_none_on_success() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json("success")),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
-def test_check_docs_workflow_returns_none_on_in_progress() -> None:
+def test_check_cd_workflow_returns_none_on_in_progress() -> None:
     # gh reports null conclusion (in_progress / queued).
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json(None)),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
-def test_check_docs_workflow_returns_message_on_failure() -> None:
+def test_check_cd_workflow_returns_message_on_failure() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json("failure")),
     ):
-        msg = _check_docs_workflow_status("develop")
+        msg = _check_cd_workflow_status("develop")
     assert msg is not None
     assert "12345" in msg
     assert "develop" in msg
@@ -328,21 +328,21 @@ def test_check_docs_workflow_returns_message_on_failure() -> None:
     assert "actions/runs/12345" in msg
 
 
-def test_check_docs_workflow_returns_none_on_malformed_json() -> None:
+def test_check_cd_workflow_returns_none_on_malformed_json() -> None:
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout="not json"),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
-def test_check_docs_workflow_returns_none_on_empty_stdout() -> None:
+def test_check_cd_workflow_returns_none_on_empty_stdout() -> None:
     # Defensive: stdout missing entirely (None) shouldn't crash.
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout=None),
     ):
-        assert _check_docs_workflow_status("develop") is None
+        assert _check_cd_workflow_status("develop") is None
 
 
 def test_main_returns_one_on_docs_failure(
@@ -356,17 +356,16 @@ def test_main_returns_one_on_docs_failure(
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(
-            _MOD + "._check_docs_workflow_status",
+            _MOD + "._check_cd_workflow_status",
             return_value=(
-                "Documentation workflow run 999 on develop (deadbee) "
-                "ended with conclusion 'failure'."
+                "CD workflow run 999 on develop (deadbee) ended with conclusion 'failure'."
             ),
         ),
     ):
         result = main([])
     assert result == 1
     stderr = capsys.readouterr().err
-    assert "Documentation workflow" in stderr
+    assert "CD workflow" in stderr
 
 
 def test_main_skips_docs_check_on_dry_run(tmp_path: Path) -> None:
@@ -377,7 +376,7 @@ def test_main_skips_docs_check_on_dry_run(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
-            _MOD + "._check_docs_workflow_status",
+            _MOD + "._check_cd_workflow_status",
             return_value="should not appear",
         ) as mock_check,
     ):
@@ -504,7 +503,7 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         patch(_MOD + "._worktree_is_dirty", return_value=False),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
 
@@ -537,7 +536,7 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
         patch(_MOD + ".git.read_output", return_value=porcelain),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
 
@@ -572,7 +571,7 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
         patch(_MOD + ".git.read_output", return_value=porcelain),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
 
@@ -596,7 +595,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=2) as mock_clean,
-        patch(_MOD + "._check_docs_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
     assert result == 0

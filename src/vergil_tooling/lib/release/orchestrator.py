@@ -66,10 +66,8 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
             lines.append(f"Tag: `{ctx.tag}`")
         if ctx.release_url:
             lines.append(f"Release: {ctx.release_url}")
-        if ctx.publish_run_url:
-            lines.append(f"publish.yml: {ctx.publish_run_url}")
-        if ctx.docs_run_url:
-            lines.append(f"docs workflow: {ctx.docs_run_url}")
+        if ctx.cd_run_url:
+            lines.append(f"CD workflow: {ctx.cd_run_url}")
     elif phase == "close-finalize":
         lines.append("Tracking issue closed. Repository finalized.")
     elif phase == "consumer-refresh":

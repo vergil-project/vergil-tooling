@@ -2,9 +2,9 @@
 
 Switches to the target branch, fast-forward pulls, deletes merged local
 branches, and prunes stale remote-tracking references. After
-validation succeeds, also checks the most recent Documentation
-workflow run on the target branch and fails if it did not succeed
-(issue #303 — docs publish is async and used to fail silently).
+validation succeeds, also checks the most recent CD workflow run on the
+target branch and fails if it did not succeed (issue #303 — docs
+publish is async and used to fail silently).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from pathlib import Path
 from vergil_tooling.lib import config, git
 from vergil_tooling.lib.docker_cache import clean_branch_images
 
-_DOCS_WORKFLOW_NAME = "Documentation"
+_CD_WORKFLOW_NAME = "CD"
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "docs-single-branch": ["develop"],
@@ -88,19 +88,18 @@ def _worktree_for_branch(branch: str, repo_root: Path) -> Path | None:
     return None
 
 
-def _check_docs_workflow_status(target_branch: str) -> str | None:
-    """Inspect the most recent Documentation workflow run on
-    ``target_branch`` and return a one-line message if it failed,
-    None if it succeeded, is in progress, or doesn't exist.
+def _check_cd_workflow_status(target_branch: str) -> str | None:
+    """Inspect the most recent CD workflow run on ``target_branch`` and
+    return a one-line message if it failed, None if it succeeded, is in
+    progress, or doesn't exist.
 
-    Docs publication is async relative to the merge that triggers it,
-    so a failure here doesn't block any PR — but it does mean the
-    site is stale until the next successful run. This check surfaces
-    such failures during finalize so they can be investigated
-    immediately. Issue #303.
+    The CD workflow is async relative to the merge that triggers it, so
+    a failure here doesn't block any PR — but it does mean the site or
+    release artifacts may be stale. This check surfaces such failures
+    during finalize so they can be investigated immediately. Issue #303.
 
     Returns None when:
-      - no Documentation workflow exists in the repo
+      - no CD workflow exists in the repo
       - the latest run succeeded or is still in progress
       - the JSON response is malformed (defensive)
     """
@@ -110,7 +109,7 @@ def _check_docs_workflow_status(target_branch: str) -> str | None:
             "run",
             "list",
             "--workflow",
-            _DOCS_WORKFLOW_NAME,
+            _CD_WORKFLOW_NAME,
             "--branch",
             target_branch,
             "--limit",
@@ -123,8 +122,6 @@ def _check_docs_workflow_status(target_branch: str) -> str | None:
         text=True,
     )
     if result.returncode != 0:
-        # gh failed (no workflow, no auth, network issue) — defensive
-        # silence rather than turning every finalize into a warning.
         return None
     stdout = result.stdout or ""
     try:
@@ -136,11 +133,10 @@ def _check_docs_workflow_status(target_branch: str) -> str | None:
     run = runs[0]
     conclusion = run.get("conclusion") or ""
     if conclusion in ("", "success", "skipped", "neutral"):
-        # "" means still in_progress / queued / not_completed.
         return None
     sha = (run.get("headSha") or "")[:7]
     return (
-        f"Documentation workflow run {run.get('databaseId')} on "
+        f"CD workflow run {run.get('databaseId')} on "
         f"{target_branch} ({sha}) ended with conclusion '{conclusion}'.\n"
         f"  {run.get('url') or ''}"
     )
@@ -271,7 +267,7 @@ def main(argv: list[str] | None = None) -> int:
     # block subsequent merges.
     docs_failure: str | None = None
     if not args.dry_run:
-        docs_failure = _check_docs_workflow_status(args.target_branch)
+        docs_failure = _check_cd_workflow_status(args.target_branch)
 
     print()
     print("Finalization complete.")
@@ -289,12 +285,12 @@ def main(argv: list[str] | None = None) -> int:
     if docs_failure is not None:
         print()
         print(
-            "ERROR: most recent Documentation workflow run did not succeed.",
+            "ERROR: most recent CD workflow run did not succeed.",
             file=sys.stderr,
         )
         print(f"  {docs_failure}", file=sys.stderr)
         print(
-            "  Docs publish is async — investigate before the next merge so",
+            "  CD workflow is async — investigate before the next merge so",
             file=sys.stderr,
         )
         print("  the site doesn't drift further from develop.", file=sys.stderr)

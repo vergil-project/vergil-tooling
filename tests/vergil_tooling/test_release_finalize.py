@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
-from vergil_tooling.lib.release.finalize import close_and_finalize
+from vergil_tooling.lib.release.finalize import _build_summary, close_and_finalize
 
 _MOD = "vergil_tooling.lib.release.finalize"
 
@@ -26,8 +26,7 @@ def _ctx() -> ReleaseContext:
     ctx.tag = "v2.1.0"
     ctx.develop_tag = "develop-v2.1.0"
     ctx.release_url = "https://github.com/owner/repo/releases/tag/v2.1.0"
-    ctx.publish_run_url = "https://github.com/owner/repo/actions/runs/123"
-    ctx.docs_run_url = "https://github.com/owner/repo/actions/runs/456"
+    ctx.cd_run_url = "https://github.com/owner/repo/actions/runs/123"
     return ctx
 
 
@@ -54,6 +53,19 @@ def test_close_and_finalize_prints_stdout() -> None:
         ),
     ):
         close_and_finalize(ctx)
+
+
+def test_build_summary_omits_none_fields() -> None:
+    ctx = _ctx()
+    ctx.tag = None
+    ctx.develop_tag = None
+    ctx.release_url = None
+    ctx.cd_run_url = None
+    summary = _build_summary(ctx)
+    assert "Release tag" not in summary
+    assert "Develop boundary tag" not in summary
+    assert "GitHub Release" not in summary
+    assert "CD workflow" not in summary
 
 
 def test_close_and_finalize_fails_on_finalize_error() -> None:
