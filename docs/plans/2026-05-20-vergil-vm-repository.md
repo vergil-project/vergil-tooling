@@ -33,7 +33,7 @@ software:
 |---|---|---|
 | **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test, CI | `limactl start` produces a working identity VM |
 | 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM |
-| 3. Credential Provisioning | Bootstrap scripts, GitHub PAT/SSH key injection, GHCR auth | VM boots with agent identity credentials |
+| 3. Credential Provisioning | GitHub App credentials (App ID, private key, installation token exchange), GHCR auth | VM boots with agent identity credentials |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) |
 | 5. vergil-tooling Adaptations | nerdctl in vrg-docker-run, wrapper simplification | vergil-tooling works natively inside VM |
 | 6. Distribution + Updates | Pre-built images on GHCR, vrg-vm-update, CD pipeline | Users pull pre-built VM images |
@@ -493,8 +493,13 @@ mounts:
   writable: true
 
 ssh:
-  forwardAgent: true
+  forwardAgent: false
 ```
+
+> **Note:** `ssh.forwardAgent` is set to `false`. The agent VM
+> authenticates to GitHub via App installation tokens over HTTPS,
+> not SSH keys. There is no SSH agent to forward. See
+> `docs/specs/2026-05-20-single-account-identity-design.md` (#933).
 
 - [ ] **Step 2: Add system-level provisioning (core tools)**
 
