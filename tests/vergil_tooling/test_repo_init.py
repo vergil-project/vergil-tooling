@@ -266,6 +266,8 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "container-suffix: base" in content
         assert "run-codeql: false" in content
+        assert content.count("container-suffix: base") == 5
+        assert content.count("container-tag: 'latest'") == 5
 
     def test_codeql_disabled_for_claude_plugin(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
