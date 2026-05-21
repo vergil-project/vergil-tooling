@@ -278,9 +278,16 @@ _CODEQL_LANGUAGES = frozenset(
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
+    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+
     suffix = _container_suffix(ctx.primary_language)
     tag = _container_tag(ctx.primary_language, ctx.ci_versions)
     versions_json = json.dumps(ctx.ci_versions)
+
+    has_audit = len(language_commands(ctx.primary_language, CheckKind.AUDIT)) > 0
+    has_test = (
+        len(language_commands(ctx.primary_language, CheckKind.TEST)) > 0 or ctx.integration_tests
+    )
 
     lines = [
         "name: CI\n",
@@ -304,50 +311,62 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         "  cancel-in-progress: true\n",
         "\n",
         "jobs:\n",
-        "  audit:\n",
-        "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.0\n",
-        "    with:\n",
-        f"      language: {ctx.primary_language}\n",
-        f"      versions: '{versions_json}'\n",
-        f"      container-tag: '{tag}'\n",
-        f"      container-suffix: {suffix}\n",
-        "\n",
-        "  quality:\n",
-        "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0\n",
-        "    with:\n",
-        f"      language: {ctx.primary_language}\n",
-        f"      versions: '{versions_json}'\n",
-        f"      container-tag: '{tag}'\n",
-        f"      container-suffix: {suffix}\n",
-        "\n",
-        "  security:\n",
-        "    uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.0\n",
-        "    permissions:\n",
-        "      contents: read\n",
-        "      security-events: write\n",
-        "    with:\n",
-        f"      language: {ctx.primary_language}\n",
-        "      run-standards: ${{ inputs.run-release != 'false' }}\n",
-        "      run-security: ${{ inputs.run-security != 'false' }}\n",
-        f"      container-tag: '{tag}'\n",
-        f"      container-suffix: {suffix}\n",
     ]
 
-    if ctx.primary_language not in _CODEQL_LANGUAGES:
-        lines.append("      run-codeql: false\n")
+    if has_audit:
+        lines.extend(
+            [
+                "  audit:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.0\n",
+                "    with:\n",
+                f"      language: {ctx.primary_language}\n",
+                f"      versions: '{versions_json}'\n",
+                f"      container-tag: '{tag}'\n",
+                f"      container-suffix: {suffix}\n",
+                "\n",
+            ]
+        )
 
     lines.extend(
         [
-            "\n",
-            "  test:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
+            "  quality:\n",
+            "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0\n",
             "    with:\n",
             f"      language: {ctx.primary_language}\n",
             f"      versions: '{versions_json}'\n",
             f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
+            "\n",
+            "  security:\n",
+            "    uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.0\n",
+            "    permissions:\n",
+            "      contents: read\n",
+            "      security-events: write\n",
+            "    with:\n",
+            f"      language: {ctx.primary_language}\n",
+            "      run-standards: ${{ inputs.run-release != 'false' }}\n",
+            "      run-security: ${{ inputs.run-security != 'false' }}\n",
+            f"      container-tag: '{tag}'\n",
+            f"      container-suffix: {suffix}\n",
         ]
     )
+
+    if ctx.primary_language not in _CODEQL_LANGUAGES:
+        lines.append("      run-codeql: false\n")
+
+    if has_test:
+        lines.extend(
+            [
+                "\n",
+                "  test:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
+                "    with:\n",
+                f"      language: {ctx.primary_language}\n",
+                f"      versions: '{versions_json}'\n",
+                f"      container-tag: '{tag}'\n",
+                f"      container-suffix: {suffix}\n",
+            ]
+        )
 
     if ctx.release_model != "none":
         lines.extend(
@@ -369,6 +388,15 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
 
 def render_cd_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/cd.yml."""
+    permissions = ["  contents: write\n"]
+    if ctx.publish_release:
+        permissions = [
+            "  attestations: write\n",
+            "  contents: write\n",
+            "  id-token: write\n",
+            "  pull-requests: write\n",
+        ]
+
     lines = [
         "name: CD\n",
         "\n",
@@ -378,7 +406,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         "  workflow_dispatch:\n",
         "\n",
         "permissions:\n",
-        "  contents: write\n",
+        *permissions,
         "\n",
         "jobs:\n",
     ]
@@ -390,6 +418,22 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                 "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.0\n",
                 "    permissions:\n",
                 "      contents: write\n",
+            ]
+        )
+
+    if ctx.publish_release:
+        suffix = _container_suffix(ctx.primary_language)
+        tag = _container_tag(ctx.primary_language, ctx.ci_versions)
+        lines.append("\n")
+        lines.extend(
+            [
+                "  release:\n",
+                "    if: github.ref == 'refs/heads/main'\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.0\n",
+                "    with:\n",
+                f"      language: {suffix}\n",
+                f'      container-tag: "{tag}"\n',
+                "    secrets: inherit\n",
             ]
         )
 
@@ -678,7 +722,7 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
     ci_content = render_ci_workflow(ctx)
     (workflows_dir / "ci.yml").write_text(ci_content)
 
-    if ctx.publish_docs:
+    if ctx.publish_docs or ctx.publish_release:
         cd_content = render_cd_workflow(ctx)
         (workflows_dir / "cd.yml").write_text(cd_content)
 
