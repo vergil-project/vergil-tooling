@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 # Env-var contract with `.githooks/pre-commit`. Any internal caller
@@ -26,7 +27,17 @@ def run(*args: str) -> None:
     env = None
     if args and args[0] == "commit":
         env = {**os.environ, _GATE_ENV_VAR: _GATE_ENABLED_VALUE}
-    subprocess.run(("git", *args), check=True, env=env)  # noqa: S603, S607
+    result = subprocess.run(  # noqa: S603
+        ("git", *args),  # noqa: S607
+        check=True,
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
 
 
 def read_output(*args: str) -> str:

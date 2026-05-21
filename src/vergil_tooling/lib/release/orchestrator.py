@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.release.bump import merge_bump
@@ -22,6 +23,14 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
 
+def _format_elapsed(seconds: float) -> str:
+    if seconds < 60:
+        return f"{seconds:.0f}s"
+    minutes = int(seconds // 60)
+    secs = int(seconds % 60)
+    return f"{minutes}m{secs:02d}s"
+
+
 def merge_release(ctx: ReleaseContext) -> None:
     """Phase 2: merge the release PR."""
     if ctx.release_pr_url is None:
@@ -30,7 +39,7 @@ def merge_release(ctx: ReleaseContext) -> None:
             command="merge_release",
             message="release_pr_url is not set — prepare phase may not have run.",
         )
-    wait_and_merge(ctx.release_pr_url, phase="merge-release")
+    wait_and_merge(ctx.release_pr_url, phase="merge-release", verbose=ctx.verbose)
     ctx.release_merge_sha = "merged"
 
 
@@ -80,13 +89,21 @@ def run_release(ctx: ReleaseContext) -> None:
     ]
 
     for phase_name, phase_fn in phases:
+        print(f"\n=== Phase: {phase_name} ===")
+        start = time.monotonic()
         try:
             phase_fn(ctx)
+            elapsed = time.monotonic() - start
+            print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
             comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
         except ReleaseError as exc:
+            elapsed = time.monotonic() - start
+            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
             comment_phase_failed(ctx, phase_name, exc)
             raise
         except Exception as exc:
+            elapsed = time.monotonic() - start
+            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
             wrapped = ReleaseError(
                 phase=phase_name,
                 command=str(getattr(exc, "cmd", type(exc).__name__)),

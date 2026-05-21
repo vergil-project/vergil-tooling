@@ -37,7 +37,7 @@ def test_confirm_publish_succeeds() -> None:
                 "https://github.com/o/r/releases/tag/v2.1.0",  # release url
             ],
         ),
-        patch(_MOD + ".github.run"),
+        patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".config.read_config") as mock_config,
     ):
@@ -73,7 +73,7 @@ def test_confirm_publish_fails_if_develop_tag_missing() -> None:
                 "https://github.com/o/r/actions/runs/67890",
             ],
         ),
-        patch(_MOD + ".github.run"),
+        patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", side_effect=ref_exists_calls),
         patch(_MOD + ".config.read_config") as mock_config,
@@ -95,7 +95,7 @@ def test_confirm_publish_fails_if_tag_missing() -> None:
                 "https://github.com/o/r/actions/runs/67890",
             ],
         ),
-        patch(_MOD + ".github.run"),
+        patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".config.read_config") as mock_config,
         pytest.raises(ReleaseError, match="Tag.*does not exist"),

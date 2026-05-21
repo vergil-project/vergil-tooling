@@ -313,11 +313,14 @@ def test_preflight_with_version_override(_repo: Path) -> None:
 
 
 def test_preflight_version_override_minor(_repo: Path) -> None:
+    import subprocess as _sp
+
     from vergil_tooling.lib import config
 
     cfg = config.read_config(_repo)
+    cp = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with (
-        patch(_MOD + ".subprocess.run"),
+        patch(_MOD + ".subprocess.run", return_value=cp),
         patch(_MOD + ".git.run"),
     ):
         result = _apply_version_override(_repo, "2.1.0", "minor", cfg)

@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import sys
 import tomllib
 from typing import TYPE_CHECKING
 
@@ -176,7 +177,11 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
-    subprocess.run(cmd, cwd=repo_root, check=True)  # noqa: S603
+    result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
 
 
 def bump(repo_root: Path) -> str:

@@ -6,6 +6,8 @@ import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.lib import git
 
 
@@ -18,7 +20,9 @@ def test_run_delegates_to_subprocess() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         git.run("status")
-    mock_run.assert_called_once_with(("git", "status"), check=True, env=None)
+    mock_run.assert_called_once_with(
+        ("git", "status"), check=True, env=None, capture_output=True, text=True
+    )
 
 
 def test_run_sets_st_commit_context_for_commit() -> None:
@@ -34,6 +38,8 @@ def test_run_sets_st_commit_context_for_commit() -> None:
     args, kwargs = mock_run.call_args
     assert args == (("git", "commit", "-m", "msg"),)
     assert kwargs["check"] is True
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
     assert kwargs["env"] is not None
     assert kwargs["env"]["VRG_COMMIT_CONTEXT"] == "1"
 
@@ -65,6 +71,30 @@ def test_run_does_not_set_st_commit_context_for_non_commit() -> None:
         git.run("push", "origin", "main")
     _args, kwargs = mock_run.call_args
     assert kwargs["env"] is None
+    assert kwargs["capture_output"] is True
+    assert kwargs["text"] is True
+
+
+def test_run_prints_captured_output(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        result = _completed(stdout="branch created\n")
+        result.stderr = "warning: refname\n"
+        mock_run.return_value = result
+        git.run("checkout", "-b", "test")
+    captured = capsys.readouterr()
+    assert "branch created" in captured.out
+    assert "warning: refname" in captured.err
+
+
+def test_run_error_carries_output() -> None:
+    err = subprocess.CalledProcessError(1, "git push", output="out", stderr="err")
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError) as exc_info,
+    ):
+        git.run("push", "origin", "main")
+    assert exc_info.value.stdout == "out"
+    assert exc_info.value.stderr == "err"
 
 
 def test_read_output_returns_stripped_stdout() -> None:
