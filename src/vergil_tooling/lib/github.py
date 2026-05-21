@@ -11,12 +11,13 @@ import functools
 import json
 import logging
 import os
-import random
 import re
 import subprocess
 import sys
 import time
 from typing import Any
+
+from vergil_tooling.lib import retry
 
 log = logging.getLogger(__name__)
 
@@ -109,48 +110,19 @@ _NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 60
 
-_MAX_RETRIES = 4
-_BASE_DELAY_SECS = 2.0
-_MAX_DELAY_SECS = 60.0
-_RETRYABLE_PATTERNS = (
-    "http 502",
-    "http 503",
-    "http 504",
-    "http 429",
-    "timed out",
-    "connection reset",
-)
-
-
-def _is_retryable(exc: subprocess.CalledProcessError) -> bool:
-    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
-    return any(p in detail for p in _RETRYABLE_PATTERNS)
-
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     if "env" not in kwargs:
         env = _gh_env()
         if env is not None:
             kwargs["env"] = env
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            return subprocess.run(*args, **kwargs)  # noqa: S603
-        except subprocess.CalledProcessError as exc:
-            if attempt == _MAX_RETRIES or not _is_retryable(exc):
-                detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
-                if detail:
-                    raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
-                raise
-            delay = min(_BASE_DELAY_SECS * (2**attempt), _MAX_DELAY_SECS)
-            delay *= 0.5 + random.random()  # noqa: S311
-            log.warning(
-                "GitHub API error (attempt %d/%d), retrying in %.1fs",
-                attempt + 1,
-                _MAX_RETRIES + 1,
-                delay,
-            )
-            time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
+    try:
+        return retry.run_with_retry(*args, **kwargs)
+    except subprocess.CalledProcessError as exc:
+        detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
+        if detail:
+            raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
+        raise
 
 
 def run(*args: str) -> None:

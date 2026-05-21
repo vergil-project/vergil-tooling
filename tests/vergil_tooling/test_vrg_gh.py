@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
+
+
+def _completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
 
 # -- no arguments / missing subcommand ----------------------------------------
 
@@ -54,9 +62,9 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
 def test_allowed_pair_passes(top: str, sub: str) -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main([top, sub])
     assert rc == 0
     args = mock_run.call_args[0][0]
@@ -130,9 +138,9 @@ def test_auth_denied(capsys: pytest.CaptureFixture[str]) -> None:
 def test_pr_review_comment_allowed() -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "review", "--comment", "-b", "looks good"])
     assert rc == 0
 
@@ -140,9 +148,9 @@ def test_pr_review_comment_allowed() -> None:
 def test_pr_review_no_flags_allowed() -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "review"])
     assert rc == 0
 
@@ -315,9 +323,9 @@ def test_pr_merge_release_branch_escalates() -> None:
 def test_pr_merge_allowed_with_valid_context() -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="human-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "merge", "42"])
     assert rc == 0
 
@@ -336,9 +344,9 @@ def test_pr_merge_denied_without_args(
 def test_gh_token_injected_into_env() -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="injected-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
     assert kwargs["env"]["GH_TOKEN"] == "injected-token"  # noqa: S105
@@ -350,19 +358,115 @@ def test_gh_token_injected_into_env() -> None:
 def test_subprocess_uses_shell_false() -> None:
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
     assert kwargs.get("shell") is not True
 
 
 def test_returns_subprocess_exit_code() -> None:
+    err = subprocess.CalledProcessError(128, ["gh", "issue", "list"])
+    err.stdout = ""
+    err.stderr = "fatal\n"
     with (
         patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
     ):
-        mock_run.return_value.returncode = 128
         rc = main(["issue", "list"])
     assert rc == 128
+
+
+def test_stdout_and_stderr_replayed_on_success(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="output\n", stderr="warning\n")
+        main(["issue", "list"])
+    captured = capsys.readouterr()
+    assert "output" in captured.out
+    assert "warning" in captured.err
+
+
+def test_stdout_and_stderr_replayed_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, ["gh"])
+    err.stdout = "partial\n"
+    err.stderr = "HTTP 404 Not Found\n"
+    with (
+        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+    ):
+        rc = main(["issue", "view", "42"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "partial" in captured.out
+    assert "404" in captured.err
+
+
+def test_failure_with_no_output(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, ["gh"])
+    err.stdout = ""
+    err.stderr = ""
+    with (
+        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+    ):
+        rc = main(["issue", "view", "42"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+# -- retry behaviour ----------------------------------------------------------
+
+
+def _api_error(
+    returncode: int = 1, stderr: str = "", stdout: str = ""
+) -> subprocess.CalledProcessError:
+    exc = subprocess.CalledProcessError(returncode=returncode, cmd=["gh"])
+    exc.stderr = stderr
+    exc.stdout = stdout
+    return exc
+
+
+class TestVrgGhRetry:
+    def test_retries_on_502_then_succeeds(self) -> None:
+        err = _api_error(stderr="HTTP 502 Bad Gateway")
+        with (
+            patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                side_effect=[err, _completed(stdout="ok\n")],
+            ) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            rc = main(["issue", "list"])
+        assert rc == 0
+        assert mock_run.call_count == 2
+
+    def test_gives_up_after_max_retries(self) -> None:
+        err = _api_error(stderr="HTTP 503 Service Unavailable")
+        with (
+            patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            rc = main(["issue", "list"])
+        assert rc == 1
+
+    def test_no_retry_on_non_transient_error(self) -> None:
+        err = _api_error(stderr="HTTP 404 Not Found")
+        with (
+            patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+        ):
+            rc = main(["issue", "view", "42"])
+        assert rc == 1
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()

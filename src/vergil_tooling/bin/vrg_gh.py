@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 
+from vergil_tooling.lib import retry
 from vergil_tooling.lib.github import _discover_accounts
 
 _ALLOWED: dict[str, set[str]] = {
@@ -122,9 +123,22 @@ def main(argv: list[str] | None = None) -> int:
 
     token = _get_token(argv)
     env = {**os.environ, "GH_TOKEN": token}
-    result = subprocess.run(  # noqa: S603
-        ["gh", *argv],  # noqa: S607
-        env=env,
-        check=False,
-    )
-    return result.returncode
+    try:
+        result = retry.run_with_retry(
+            ["gh", *argv],  # noqa: S607
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stdout:
+            sys.stdout.write(exc.stdout)
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        return exc.returncode
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    return 0
