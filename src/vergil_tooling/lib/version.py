@@ -207,9 +207,24 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
 
 
 def bump(repo_root: Path) -> str:
-    version_file, language = _get_version_file(repo_root)
-    old_version = _read_version(version_file.read_text(), language)
+    version_file = repo_root / VERSION_FILE
+    if not version_file.is_file():
+        msg = f"VERSION file not found at {repo_root}"
+        raise FileNotFoundError(msg)
+    old_version = version_file.read_text().strip()
     new_version = _increment_patch(old_version)
-    _write_version(version_file, language, old_version, new_version)
+
+    version_file.write_text(new_version + "\n")
+
+    cfg = read_config(repo_root)
+    language = cfg.project.primary_language
+    if language in _LANGUAGES_WITH_SEPARATE_VERSION:
+        try:
+            lang_file = _discover_version_file(repo_root, language)
+            if lang_file.is_file():
+                _write_version(lang_file, language, old_version, new_version)
+        except (FileNotFoundError, ValueError):
+            pass
+
     _run_lockfile_maintenance(repo_root, language)
     return new_version

@@ -182,63 +182,75 @@ def test_bump_generic(tmp_path: Path) -> None:
 
 def test_bump_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("2.0.0\n")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.0.0"\n')
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "2.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "2.0.1"
     text = (tmp_path / "pyproject.toml").read_text()
     assert 'version = "2.0.1"' in text
 
 
 def test_bump_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.3.7\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "0.3.8"
+    assert (tmp_path / "VERSION").read_text().strip() == "0.3.8"
     text = (tmp_path / "Cargo.toml").read_text()
     assert 'version = "0.3.8"' in text
 
 
 def test_bump_ruby(tmp_path: Path) -> None:
     _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
     text = (version_dir / "version.rb").read_text()
     assert "VERSION = '1.0.1'" in text
 
 
 def test_bump_go(tmp_path: Path) -> None:
     _write_toml(tmp_path, "go")
+    (tmp_path / "VERSION").write_text("1.0.5\n")
     pkg_dir = tmp_path / "pkg"
     pkg_dir.mkdir()
     (pkg_dir / "version.go").write_text('package pkg\n\nVersion = "1.0.5"\n')
     result = bump(tmp_path)
     assert result == "1.0.6"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.6"
     text = (pkg_dir / "version.go").read_text()
     assert 'Version = "1.0.6"' in text
 
 
 def test_bump_java(tmp_path: Path) -> None:
     _write_toml(tmp_path, "java")
+    (tmp_path / "VERSION").write_text("3.2.1\n")
     (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
     result = bump(tmp_path)
     assert result == "3.2.2"
+    assert (tmp_path / "VERSION").read_text().strip() == "3.2.2"
     text = (tmp_path / "pom.xml").read_text()
     assert "<version>3.2.2</version>" in text
 
 
 def test_bump_claude_plugin(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
+    (tmp_path / "VERSION").write_text("1.4.19\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.4.19"\n}\n')
     result = bump(tmp_path)
     assert result == "1.4.20"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.4.20"
     text = (plugin_dir / "plugin.json").read_text()
     assert '"version": "1.4.20"' in text
     assert '"name": "example"' in text
@@ -251,6 +263,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
     import subprocess as _sp
 
     _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
     cp = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("vergil_tooling.lib.version.subprocess.run", return_value=cp) as mock_run:
@@ -266,6 +279,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
 
 def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
     with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
@@ -280,6 +294,7 @@ def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
 
 def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
     _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
@@ -304,6 +319,7 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
 
 def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.0.0"\n}\n')
