@@ -62,6 +62,15 @@ _TEMPLATE_PATH = (
 )
 _TEMPLATE_TEXT = _TEMPLATE_PATH.read_text(encoding="utf-8")
 
+_HOOK_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "src"
+    / "vergil_tooling"
+    / "data"
+    / "githooks_pre_commit.sh"
+)
+_HOOK_TEMPLATE_TEXT = _HOOK_TEMPLATE_PATH.read_text(encoding="utf-8")
+
 
 class TestGithooks:
     def test_missing(self, tmp_path: Path) -> None:
@@ -75,6 +84,7 @@ class TestGithooks:
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
         assert "local.githooks_pre_commit" not in fields
+        assert "local.githooks_pre_commit_content" in fields
 
     def test_hooks_path_not_configured(self, tmp_path: Path) -> None:
         (tmp_path / ".githooks").mkdir()
@@ -114,6 +124,28 @@ class TestGithooks:
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
         assert "local.git_config.hooks_path" not in fields
+
+    def test_content_matches(self, tmp_path: Path) -> None:
+        (tmp_path / ".githooks").mkdir()
+        (tmp_path / ".githooks" / "pre-commit").write_text(_HOOK_TEMPLATE_TEXT)
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.githooks_pre_commit_content" not in fields
+
+    def test_content_differs(self, tmp_path: Path) -> None:
+        (tmp_path / ".githooks").mkdir()
+        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.githooks_pre_commit_content" in fields
+
+    def test_stale_st_commit_context(self, tmp_path: Path) -> None:
+        stale = _HOOK_TEMPLATE_TEXT.replace("VRG_COMMIT_CONTEXT", "ST_COMMIT_CONTEXT")
+        (tmp_path / ".githooks").mkdir()
+        (tmp_path / ".githooks" / "pre-commit").write_text(stale)
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.githooks_pre_commit_content" in fields
 
 
 class TestClaudeMd:
@@ -310,7 +342,7 @@ def _write_compliant_repo(root: Path) -> None:
     )
     (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
     (root / ".githooks").mkdir()
-    (root / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+    (root / ".githooks" / "pre-commit").write_text(_HOOK_TEMPLATE_TEXT)
     (root / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
     (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text(json.dumps(_MINIMAL_SETTINGS))
