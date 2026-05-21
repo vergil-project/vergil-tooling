@@ -27,7 +27,7 @@ harness.
   — Credential Provisioning
 
 **Relationship to Plan 5:** This plan supersedes Tasks 3-4 of the
-vergil-tooling VM adaptations plan (`docs/plans/2026-05-20-vergil-tooling-vm-adaptations.md`).
+vergil-tooling VM adaptations plan (`docs/plans/in-progress/2026-05-20-vergil-tooling-vm-adaptations.md`).
 Plan 5 Tasks 1-2 (nerdctl runtime detection) remain
 independent.
 

@@ -18,7 +18,7 @@ needed in vergil-tooling itself.
 credential selection removal from `vrg-gh` and credential-guard
 removal from `vrg-git` are now covered by the single-account
 identity plan
-(`docs/plans/2026-05-20-single-account-identity-tooling.md`,
+(`docs/plans/in-progress/2026-05-20-single-account-identity-tooling.md`,
 #933). That plan implements GitHub App token exchange and
 rewrites both wrappers as part of a broader identity model
 change that applies on both the host and in the VM. This plan
