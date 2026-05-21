@@ -6,10 +6,28 @@ import subprocess as _subprocess
 import sys
 import time
 
-from vergil_tooling.lib.github import _checks_registered, _gh_env
+from vergil_tooling.lib.github import _checks_registered, _run_with_retry
 
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 60
+
+
+def _run_verbose(cmd: tuple[str, ...], *, verbose: bool) -> None:
+    """Run *cmd* through the GitHub retry wrapper, printing output if verbose."""
+    try:
+        result = _run_with_retry(cmd, capture_output=True, text=True, check=True)
+    except _subprocess.CalledProcessError as exc:
+        if verbose:
+            if exc.stdout:
+                print(exc.stdout, end="")
+            if exc.stderr:
+                print(exc.stderr, end="", file=sys.stderr)
+        raise
+    if verbose:
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
 
 
 def wait_for_checks(pr: str, *, verbose: bool) -> None:
@@ -20,49 +38,15 @@ def wait_for_checks(pr: str, *, verbose: bool) -> None:
             break
         time.sleep(_POLL_INTERVAL_SECS)
 
-    env = _gh_env()
-    result = _subprocess.run(  # noqa: S603
+    _run_verbose(
         ("gh", "pr", "checks", pr, "--watch", "--fail-fast"),  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
+        verbose=verbose,
     )
-    if verbose:
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-
-    if result.returncode != 0:
-        raise _subprocess.CalledProcessError(
-            result.returncode,
-            result.args,
-            output=result.stdout,
-            stderr=result.stderr,
-        )
 
 
 def watch_workflow(repo: str, run_id: str, *, verbose: bool) -> None:
     """Block until a workflow run completes. Verbose controls output."""
-    env = _gh_env()
-    result = _subprocess.run(  # noqa: S603
+    _run_verbose(
         ("gh", "run", "watch", "--repo", repo, "--exit-status", run_id),  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-        env=env,
+        verbose=verbose,
     )
-    if verbose:
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-
-    if result.returncode != 0:
-        raise _subprocess.CalledProcessError(
-            result.returncode,
-            result.args,
-            output=result.stdout,
-            stderr=result.stderr,
-        )
