@@ -46,12 +46,15 @@ def _build_summary(ctx: ReleaseContext) -> str:
         f"- Bump PR: {ctx.bump_pr_url}",
         "",
         "### Tags",
-        f"- Release tag: `{ctx.tag}`",
-        f"- Develop boundary tag: `{ctx.develop_tag}`",
-        "",
-        "### Artifacts",
-        f"- GitHub Release: {ctx.release_url}",
-        f"- publish.yml: {ctx.publish_run_url}",
-        f"- docs workflow: {ctx.docs_run_url}",
     ]
+    if ctx.tag:
+        lines.append(f"- Release tag: `{ctx.tag}`")
+    if ctx.develop_tag:
+        lines.append(f"- Develop boundary tag: `{ctx.develop_tag}`")
+    lines.append("")
+    lines.append("### Artifacts")
+    if ctx.release_url:
+        lines.append(f"- GitHub Release: {ctx.release_url}")
+    if ctx.cd_run_url:
+        lines.append(f"- CD workflow: {ctx.cd_run_url}")
     return "\n".join(lines)

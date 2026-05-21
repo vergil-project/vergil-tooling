@@ -29,10 +29,8 @@ class ReleaseContext:
     bump_pr_url: str | None = None
     next_version: str | None = None
 
-    publish_run_id: str | None = None
-    publish_run_url: str | None = None
-    docs_run_id: str | None = None
-    docs_run_url: str | None = None
+    cd_run_id: str | None = None
+    cd_run_url: str | None = None
     tag: str | None = None
     develop_tag: str | None = None
     release_url: str | None = None

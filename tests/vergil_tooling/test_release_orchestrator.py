@@ -64,7 +64,7 @@ def test_phase_details_includes_ctx_fields() -> None:
 
     ctx.tag = "v2.1.0"
     ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
-    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
+    ctx.cd_run_url = "https://github.com/o/r/actions/runs/123"
     details = _phase_details(ctx, "confirm-publish")
     assert "v2.1.0" in details
     assert "runs/123" in details
@@ -190,13 +190,12 @@ def test_phase_details_unknown_phase() -> None:
     assert details == ""
 
 
-def test_phase_details_confirm_docs_workflow() -> None:
+def test_phase_details_confirm_cd_workflow() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
     ctx = _ctx()
     ctx.tag = "v2.1.0"
     ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
-    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
-    ctx.docs_run_url = "https://github.com/o/r/actions/runs/456"
+    ctx.cd_run_url = "https://github.com/o/r/actions/runs/123"
     details = _phase_details(ctx, "confirm-publish")
-    assert "docs workflow" in details
+    assert "CD workflow" in details
