@@ -167,10 +167,16 @@ def test_main_identity_only(
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
     monkeypatch.setattr("vergil_tooling.bin.vrg_session.check_vm_running", lambda _: True)
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.subprocess.call", lambda _: 0)
 
-    with pytest.raises(SystemExit, match="^0$"):
-        main(["--shell", "--identity", "vergil"])
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["--shell", "--identity", "vergil"])
+    assert len(execed) == 1
+    assert execed[0][0] == "limactl"
 
 
 def test_main_launches_session(
@@ -183,10 +189,16 @@ def test_main_launches_session(
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
     monkeypatch.setattr("vergil_tooling.bin.vrg_session.check_vm_running", lambda _: True)
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.subprocess.call", lambda _: 0)
 
-    with pytest.raises(SystemExit, match="^0$"):
-        main(["vergil-tooling"])
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["vergil-tooling"])
+    assert len(execed) == 1
+    assert "claude" in " ".join(execed[0][1])
 
 
 def test_main_starts_vm_if_not_running(
@@ -206,9 +218,8 @@ def test_main_starts_vm_if_not_running(
         started.append(cmd)
 
     monkeypatch.setattr("vergil_tooling.bin.vrg_session.subprocess.run", fake_run)
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.subprocess.call", lambda _: 0)
+    monkeypatch.setattr("vergil_tooling.bin.vrg_session.os.execvp", lambda *_: None)
 
-    with pytest.raises(SystemExit, match="^0$"):
-        main(["vergil-tooling"])
+    main(["vergil-tooling"])
     assert len(started) == 1
     assert started[0] == ["limactl", "start", "vergil-agent"]

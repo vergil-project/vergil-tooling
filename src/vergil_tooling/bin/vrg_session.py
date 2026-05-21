@@ -132,9 +132,4 @@ def main(argv: list[str] | None = None) -> None:
         shell_only=args.shell or not args.project,
     )
 
-    result = subprocess.call(cmd)  # noqa: S603
-    raise SystemExit(result)
-
-
-if __name__ == "__main__":
-    main()
+    os.execvp(cmd[0], cmd)  # noqa: S606, S607
