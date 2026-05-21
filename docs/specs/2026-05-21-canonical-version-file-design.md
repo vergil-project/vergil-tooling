@@ -58,15 +58,20 @@ files are always at their ecosystem-standard locations.
 
 ### `show` subcommand
 
-1. Read `VERSION` from the repo root (or via `git show <ref>:VERSION`
-   for a specific git ref).
+1. Read `VERSION` from the repo root.
 2. Read `primary-language` from vergil.toml.
 3. If the language has a separate version file (python, rust, java,
-   ruby, go, claude-plugin), read that file and compare.
-4. If they disagree: hard error with both values printed —
-   "VERSION contains X but <language-file> contains Y".
-5. If the language is `shell` or `none`: skip cross-check.
-6. Return the version from VERSION.
+   ruby, go, claude-plugin):
+   - If the language file exists, read it and compare. Hard error
+     on mismatch: "VERSION contains X but <language-file> contains Y".
+   - If the language file does not exist (bootstrap scenario), emit
+     a warning to stderr and skip the cross-check.
+4. If the language is `shell` or `none`: skip cross-check.
+5. Return the version from VERSION.
+
+**`--ref` flag:** When `show --ref <git-ref>` is used, read VERSION
+from the ref via `git show <ref>:VERSION`. No cross-check is
+performed — sync enforcement only runs against the working tree.
 
 ### `bump` subcommand
 
@@ -104,8 +109,7 @@ known set. Emit a warning to stderr for any unrecognized key:
   `publish`
 - `[project]`: `repository-type`, `versioning-scheme`,
   `branching-model`, `release-model`, `primary-language`
-- `[dependencies]`: `vergil` (additional keys allowed without
-  warning — repos may declare other dependencies)
+- `[dependencies]`: `vergil`
 - `[markdownlint]`: `ignore`
 - `[ci]`: `versions`, `integration-tests`
 - `[publish]`: `release`, `docs`, `consumer-refresh`
@@ -122,22 +126,19 @@ cleanup without requiring a coordinated rollout.
 + `src/vergil_tooling/lib/repo_init.py`) is updated.
 
 **Prompting:** The initial version question (default: `0.1.0`) is
-collected during the existing interactive question-gathering phase,
-alongside repository-type, primary-language, etc. All user input is
-gathered before any automated work begins. Once the automation
-starts, the user's next interaction is success or failure — no
-mid-process questions.
+collected during the existing interactive question-gathering phase
+(step 3), alongside repository-type, primary-language, etc. All
+user input is gathered before any automated work begins. Once the
+automation starts, the user's next interaction is success or
+failure — no mid-process questions.
 
-**Sequencing (all automated, no prompts):**
-
-1. Bootstrap main branch with vergil.toml, CI workflows, docs, etc.
-   (existing behavior).
-2. Switch to develop.
-3. Write `VERSION` with the version collected earlier.
-4. Commit on develop.
-
-Main has no VERSION file. The version-divergence CI check skips the
-main-side comparison. The first PR passes cleanly.
+**Sequencing:** VERSION is written during step 4 (config files),
+alongside .gitignore, README, CLAUDE.md, and other scaffolded
+files. This happens before step 7 (branch structure), so both
+develop and main receive the VERSION file at the same initial
+version. The version-divergence CI check passes because the
+versions are equal. The first PR's bump changes VERSION on
+develop, establishing the divergence.
 
 ## Rollout
 
@@ -158,6 +159,6 @@ All changes are in vergil-tooling:
 |------|--------|
 | `src/vergil_tooling/lib/version.py` | `show` reads VERSION, cross-checks language file, hard error on mismatch. `bump` writes both. Remove `version-file` override handling. |
 | `src/vergil_tooling/lib/config.py` | Add unrecognized-key warnings. Remove `version-file` from known schema. |
-| `src/vergil_tooling/lib/repo_init.py` | Add initial version prompt to question-gathering phase. Write VERSION on develop after main is bootstrapped. |
+| `src/vergil_tooling/lib/repo_init.py` | Add initial version prompt to step 3 question-gathering. Write VERSION in step 4 config file scaffolding. |
 | `VERSION` | Update from `2.0.4` to match pyproject.toml. |
 | `tests/` | Cover sync enforcement, dual-write bump, unrecognized-key warnings, init wizard VERSION creation. |
