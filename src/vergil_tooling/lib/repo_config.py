@@ -33,6 +33,14 @@ def _load_template() -> str:
     )
 
 
+def _load_hook_template() -> str:
+    return (
+        importlib.resources.files("vergil_tooling.data")
+        .joinpath("githooks_pre_commit.sh")
+        .read_text(encoding="utf-8")
+    )
+
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
@@ -101,6 +109,17 @@ def _check_githooks(repo_root: Path, items: list[DiffItem]) -> None:
             )
         )
         return
+
+    local_content = hook_path.read_text(encoding="utf-8")
+    expected_content = _load_hook_template()
+    if local_content.rstrip() != expected_content.rstrip():
+        items.append(
+            DiffItem(
+                field="local.githooks_pre_commit_content",
+                expected="matches canonical template",
+                actual="content differs",
+            )
+        )
 
     result = subprocess.run(  # noqa: S603
         ["git", "config", "core.hooksPath"],  # noqa: S607
