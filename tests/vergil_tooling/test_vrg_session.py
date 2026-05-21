@@ -28,55 +28,11 @@ def config_dir(tmp_path: Path) -> Path:
     return tmp_path
 
 
-def test_build_command_claude_session() -> None:
+def test_build_command_with_command() -> None:
     cmd = build_command(
         vm_instance="vergil-agent",
         workspace="/projects/vergil-project/vergil-tooling",
-        shell_only=False,
-    )
-    assert cmd == [
-        "limactl",
-        "shell",
-        "--start",
-        "vergil-agent",
-        "--workdir",
-        "/projects/vergil-project/vergil-tooling",
-        "--",
-        "claude",
-    ]
-
-
-def test_build_command_shell_only() -> None:
-    cmd = build_command(
-        vm_instance="vergil-agent",
-        workspace="/projects/vergil-project/vergil-tooling",
-        shell_only=True,
-    )
-    assert cmd == [
-        "limactl",
-        "shell",
-        "--start",
-        "vergil-agent",
-        "--workdir",
-        "/projects/vergil-project/vergil-tooling",
-    ]
-
-
-def test_build_command_no_workspace() -> None:
-    cmd = build_command(
-        vm_instance="vergil-agent",
-        workspace=None,
-        shell_only=True,
-    )
-    assert cmd == ["limactl", "shell", "--start", "vergil-agent"]
-
-
-def test_build_command_with_claude_args() -> None:
-    cmd = build_command(
-        vm_instance="vergil-agent",
-        workspace="/projects/vergil-project/vergil-tooling",
-        shell_only=False,
-        claude_args=["--model", "claude-opus-4-6"],
+        command=["claude", "--model", "claude-opus-4-6"],
     )
     assert cmd == [
         "limactl",
@@ -92,12 +48,10 @@ def test_build_command_with_claude_args() -> None:
     ]
 
 
-def test_build_command_claude_args_ignored_in_shell_mode() -> None:
+def test_build_command_no_command() -> None:
     cmd = build_command(
         vm_instance="vergil-agent",
         workspace="/projects/vergil-project/vergil-tooling",
-        shell_only=True,
-        claude_args=["--model", "claude-opus-4-6"],
     )
     assert cmd == [
         "limactl",
@@ -109,13 +63,29 @@ def test_build_command_claude_args_ignored_in_shell_mode() -> None:
     ]
 
 
-def test_no_workspace_or_identity(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session._default_config_path",
-        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+def test_build_command_no_workspace() -> None:
+    cmd = build_command(
+        vm_instance="vergil-agent",
+        workspace=None,
     )
-    with pytest.raises(SystemExit):
-        main([])
+    assert cmd == ["limactl", "shell", "--start", "vergil-agent"]
+
+
+def test_build_command_command_no_workspace() -> None:
+    cmd = build_command(
+        vm_instance="vergil-agent",
+        workspace=None,
+        command=["ls", "-al"],
+    )
+    assert cmd == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--",
+        "ls",
+        "-al",
+    ]
 
 
 def test_identity_not_found(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,10 +94,10 @@ def test_identity_not_found(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
     with pytest.raises(SystemExit):
-        main(["--shell", "--identity", "nonexistent"])
+        main(["--identity", "nonexistent"])
 
 
-def test_main_shell_with_identity(
+def test_main_no_args_defaults_to_shell(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -142,12 +112,12 @@ def test_main_shell_with_identity(
         lambda prog, args: execed.append((prog, args)),
     )
 
-    main(["--shell", "--identity", "vergil"])
+    main([])
     assert len(execed) == 1
     assert execed[0][1] == ["limactl", "shell", "--start", "vergil-agent"]
 
 
-def test_main_relative_path(
+def test_main_workspace_only_is_shell(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -171,8 +141,37 @@ def test_main_relative_path(
         "vergil-agent",
         "--workdir",
         "/projects/vergil-project/vergil-tooling",
+    ]
+
+
+def test_main_workspace_and_command(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session._default_config_path",
+        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+    )
+
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["vergil-project/vergil-tooling", "claude", "--model", "claude-opus-4-6"])
+    assert len(execed) == 1
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
         "--",
         "claude",
+        "--model",
+        "claude-opus-4-6",
     ]
 
 
@@ -191,7 +190,7 @@ def test_main_absolute_path(
         lambda prog, args: execed.append((prog, args)),
     )
 
-    main(["/custom/absolute/path"])
+    main(["/custom/path", "ls", "-al"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -199,40 +198,10 @@ def test_main_absolute_path(
         "--start",
         "vergil-agent",
         "--workdir",
-        "/custom/absolute/path",
+        "/custom/path",
         "--",
-        "claude",
-    ]
-
-
-def test_main_passes_claude_args(
-    config_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session._default_config_path",
-        lambda: config_dir / ".config" / "vergil" / "identities.toml",
-    )
-
-    execed: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session.os.execvp",
-        lambda prog, args: execed.append((prog, args)),
-    )
-
-    main(["vergil-project/vergil-tooling", "--", "--model", "claude-opus-4-6"])
-    assert len(execed) == 1
-    assert execed[0][1] == [
-        "limactl",
-        "shell",
-        "--start",
-        "vergil-agent",
-        "--workdir",
-        "/projects/vergil-project/vergil-tooling",
-        "--",
-        "claude",
-        "--model",
-        "claude-opus-4-6",
+        "ls",
+        "-al",
     ]
 
 
@@ -247,7 +216,7 @@ def test_main_explicit_config(
     )
 
     cfg = str(config_dir / ".config" / "vergil" / "identities.toml")
-    main(["--config", cfg, "vergil-project/vergil-tooling"])
+    main(["--config", cfg, "vergil-project/vergil-tooling", "claude"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -261,7 +230,7 @@ def test_main_explicit_config(
     ]
 
 
-def test_main_shell_default_identity(
+def test_main_explicit_identity(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -276,27 +245,7 @@ def test_main_shell_default_identity(
         lambda prog, args: execed.append((prog, args)),
     )
 
-    main(["--shell"])
-    assert len(execed) == 1
-    assert execed[0][1] == ["limactl", "shell", "--start", "vergil-agent"]
-
-
-def test_main_shell_with_workspace(
-    config_dir: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session._default_config_path",
-        lambda: config_dir / ".config" / "vergil" / "identities.toml",
-    )
-
-    execed: list[tuple[str, list[str]]] = []
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session.os.execvp",
-        lambda prog, args: execed.append((prog, args)),
-    )
-
-    main(["--shell", "vergil-project/vergil-tooling"])
+    main(["--identity", "vergil", "vergil-project/vergil-tooling", "claude"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -305,4 +254,6 @@ def test_main_shell_with_workspace(
         "vergil-agent",
         "--workdir",
         "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
     ]
