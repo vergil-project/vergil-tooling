@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -27,25 +28,26 @@ def build_command(
 ) -> list[str]:
     cmd = ["limactl", "shell", vm_instance, "--"]
     env_prefix = f"ANTHROPIC_API_KEY={api_key}"
+    safe_workspace = shlex.quote(workspace) if workspace else None
 
-    if workspace and not shell_only:
+    if safe_workspace and not shell_only:
         cmd.extend(
             [
                 "env",
                 env_prefix,
                 "bash",
                 "-lc",
-                f"cd {workspace} && claude",
+                f"cd {safe_workspace} && claude",
             ]
         )
-    elif workspace:
+    elif safe_workspace:
         cmd.extend(
             [
                 "env",
                 env_prefix,
                 "bash",
                 "-lc",
-                f"cd {workspace} && exec zsh",
+                f"cd {safe_workspace} && exec zsh",
             ]
         )
     else:
