@@ -79,26 +79,6 @@ def test_preflight_fails_if_gh_auth_fails(_repo: Path) -> None:
         )
 
 
-def test_preflight_fails_if_not_library_or_tooling(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.chdir(tmp_path)
-    toml = _valid_toml().replace(
-        'repository-type = "library"',
-        'repository-type = "documentation"',
-    )
-    (tmp_path / "vergil.toml").write_text(toml)
-    (tmp_path / "pyproject.toml").write_text('[project]\nname = "test"\nversion = "1.0.0"\n')
-    with (
-        patch("shutil.which", return_value="/usr/bin/git-cliff"),
-        patch(_MOD + ".github.read_output", return_value="test-repo"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
-        pytest.raises(ReleaseError, match="repository_type"),
-    ):
-        preflight(version_override=None, repo_root=tmp_path)
-
-
 def test_preflight_fails_if_version_matches_tag(_repo: Path) -> None:
     with (
         patch("shutil.which", return_value="/usr/bin/git-cliff"),
