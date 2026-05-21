@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import subprocess
-from unittest.mock import MagicMock, patch
+from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _real_gh_env = github._gh_env
 
@@ -16,7 +20,7 @@ _real_gh_env = github._gh_env
 @pytest.fixture(autouse=True)
 def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
-    github._human_token.cache_clear()
+    github._cached_token = None
 
 
 def _completed(
@@ -26,14 +30,25 @@ def _completed(
 
 
 def test_run_delegates_to_subprocess() -> None:
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         github.run("pr", "list")
-    mock_run.assert_called_once_with(("gh", "pr", "list"), check=True)
+    mock_run.assert_called_once_with(
+        ("gh", "pr", "list"), check=True, capture_output=True, text=True
+    )
+
+
+def test_run_prints_captured_output(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(stdout="PR merged\n", stderr="warning\n")
+        github.run("pr", "merge")
+    captured = capsys.readouterr()
+    assert "PR merged" in captured.out
+    assert "warning" in captured.err
 
 
 def test_read_output_returns_stripped_stdout() -> None:
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed(stdout="  result\n")
         assert github.read_output("pr", "view") == "result"
     mock_run.assert_called_once_with(
@@ -213,7 +228,7 @@ def test_list_project_repos_empty() -> None:
 def test_read_json_returns_parsed_dict() -> None:
     payload = {"name": "test", "value": 42}
     cp = _completed(stdout=json.dumps(payload) + "\n")
-    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
         result = github.read_json("api", "repos/o/r")
     assert result == payload
 
@@ -221,7 +236,7 @@ def test_read_json_returns_parsed_dict() -> None:
 def test_read_json_returns_parsed_list() -> None:
     payload = [{"id": 1}, {"id": 2}]
     cp = _completed(stdout=json.dumps(payload) + "\n")
-    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
         result = github.read_json("api", "repos/o/r/rulesets")
     assert result == payload
 
@@ -245,7 +260,7 @@ def test_checks_registered_returns_true_when_checks_exist() -> None:
 
 
 def test_write_json_sends_body_via_stdin() -> None:
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         github.write_json("PATCH", "repos/o/r", {"key": "value"})
     mock_run.assert_called_once_with(
@@ -258,7 +273,7 @@ def test_write_json_sends_body_via_stdin() -> None:
 
 
 def test_write_json_put_method() -> None:
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         github.write_json("PUT", "repos/o/r/actions/permissions", {"allowed_actions": "all"})
     call_args = mock_run.call_args
@@ -268,7 +283,7 @@ def test_write_json_put_method() -> None:
 
 
 def test_delete_calls_gh_api() -> None:
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         github.delete("repos/o/r/vulnerability-alerts")
     mock_run.assert_called_once_with(
@@ -335,34 +350,9 @@ def _api_error(
     return exc
 
 
-class TestIsRetryable:
-    @pytest.mark.parametrize(
-        "stderr",
-        [
-            "HTTP 502 Bad Gateway",
-            "HTTP 503 Service Unavailable",
-            "HTTP 504 Gateway Timeout",
-            "HTTP 429 rate limit exceeded",
-            "request timed out",
-            "connection reset by peer",
-        ],
-    )
-    def test_retryable_errors(self, stderr: str) -> None:
-        assert github._is_retryable(_api_error(stderr=stderr)) is True
-
-    def test_retryable_error_in_stdout(self) -> None:
-        assert github._is_retryable(_api_error(stdout="HTTP 504")) is True
-
-    def test_non_retryable_error(self) -> None:
-        assert github._is_retryable(_api_error(stderr="HTTP 404 Not Found")) is False
-
-    def test_empty_output(self) -> None:
-        assert github._is_retryable(_api_error()) is False
-
-
 class TestRunWithRetry:
     def test_succeeds_on_first_attempt(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
             mock_run.return_value = _completed(stdout="ok")
             result = github._run_with_retry(("gh", "pr", "view"), check=True)
         assert result.stdout == "ok"
@@ -372,11 +362,11 @@ class TestRunWithRetry:
         err = _api_error(stderr="HTTP 504 Gateway Timeout")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, err, _completed(stdout="ok")],
             ) as mock_run,
-            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             result = github._run_with_retry(("gh", "pr", "view"), check=True)
         assert result.stdout == "ok"
@@ -386,12 +376,9 @@ class TestRunWithRetry:
     def test_raises_after_max_retries(self) -> None:
         err = _api_error(stderr="HTTP 504 Gateway Timeout")
         with (
-            patch(
-                "vergil_tooling.lib.github.subprocess.run",
-                side_effect=err,
-            ),
-            patch("vergil_tooling.lib.github.time.sleep"),
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
             pytest.raises(github.GitHubAPIError, match="Gateway Timeout"),
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
@@ -399,8 +386,8 @@ class TestRunWithRetry:
     def test_raises_immediately_on_non_retryable_error(self) -> None:
         err = _api_error(stderr="HTTP 404 Not Found")
         with (
-            patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
-            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
             pytest.raises(github.GitHubAPIError, match="404 Not Found"),
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
@@ -411,7 +398,7 @@ class TestRunWithRetry:
         err.stderr = ""
         err.stdout = ""
         with (
-            patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
             pytest.raises(subprocess.CalledProcessError) as exc_info,
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
@@ -421,11 +408,11 @@ class TestRunWithRetry:
         err = _api_error(stderr="HTTP 504 Gateway Timeout")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, err, err, _completed()],
             ),
-            patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             github._run_with_retry(("gh", "pr", "view"), check=True)
         delays = [c.args[0] for c in mock_sleep.call_args_list]
@@ -437,11 +424,11 @@ class TestRetryIntegration:
         err = _api_error(stderr="HTTP 504 Gateway Timeout")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, _completed()],
             ) as mock_run,
-            patch("vergil_tooling.lib.github.time.sleep"),
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             github.run("pr", "list")
         assert mock_run.call_count == 2
@@ -450,11 +437,11 @@ class TestRetryIntegration:
         err = _api_error(stderr="HTTP 502 Bad Gateway")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, _completed(stdout="result\n")],
             ) as mock_run,
-            patch("vergil_tooling.lib.github.time.sleep"),
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             assert github.read_output("pr", "view") == "result"
         assert mock_run.call_count == 2
@@ -463,11 +450,11 @@ class TestRetryIntegration:
         err = _api_error(stderr="HTTP 503 Service Unavailable")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, _completed()],
             ) as mock_run,
-            patch("vergil_tooling.lib.github.time.sleep"),
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             github.write_json("PATCH", "repos/o/r", {"key": "val"})
         assert mock_run.call_count == 2
@@ -476,76 +463,14 @@ class TestRetryIntegration:
         err = _api_error(stderr="HTTP 429 rate limit exceeded")
         with (
             patch(
-                "vergil_tooling.lib.github.subprocess.run",
+                "vergil_tooling.lib.retry.subprocess.run",
                 side_effect=[err, _completed()],
             ) as mock_run,
-            patch("vergil_tooling.lib.github.time.sleep"),
-            patch("vergil_tooling.lib.github.random.random", return_value=0.5),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
         ):
             github.delete("repos/o/r/vulnerability-alerts")
         assert mock_run.call_count == 2
-
-
-# --- Credential discovery ---
-
-
-_AUTH_TWO_ACCOUNTS = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  - Active account: false
-"""
-
-_AUTH_MANY_ACCOUNTS = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  - Active account: false
-  ✓ Logged in to github.com account jdoe-mimir (keyring)
-  - Active account: false
-  ✓ Logged in to github.com account jdoe-agent (keyring)
-  - Active account: false
-"""
-
-_AUTH_NO_VERGIL = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-"""
-
-
-class TestDiscoverAccounts:
-    def test_finds_vergil_pair(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_TWO_ACCOUNTS)
-            human, agent = github._discover_accounts()
-        assert human == "jdoe"
-        assert agent == "jdoe-vergil"
-
-    def test_ignores_other_accounts(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_MANY_ACCOUNTS)
-            human, agent = github._discover_accounts()
-        assert human == "jdoe"
-        assert agent == "jdoe-vergil"
-
-    def test_fails_without_vergil_account(self) -> None:
-        with (
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
-            pytest.raises(SystemExit),
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stdout=_AUTH_NO_VERGIL)
-            github._discover_accounts()
-
-    def test_derives_human_from_vergil_suffix(self) -> None:
-        auth = "github.com\n  ✓ Logged in to github.com account alice-vergil (keyring)\n"
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0, stdout=auth)
-            human, agent = github._discover_accounts()
-        assert human == "alice"
-        assert agent == "alice-vergil"
 
 
 # --- Credential injection ---
@@ -556,7 +481,7 @@ class TestCredentialInjection:
         fake_env = {"GH_TOKEN": "test-token", "PATH": "/usr/bin"}
         with (
             patch("vergil_tooling.lib.github._gh_env", return_value=fake_env),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed()
             github._run_with_retry(("gh", "pr", "list"), check=True)
@@ -564,7 +489,7 @@ class TestCredentialInjection:
         assert kwargs["env"] is fake_env
 
     def test_run_with_retry_skips_env_when_none(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+        with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
             mock_run.return_value = _completed()
             github._run_with_retry(("gh", "pr", "list"), check=True)
         _, kwargs = mock_run.call_args
@@ -574,7 +499,7 @@ class TestCredentialInjection:
         caller_env = {"GH_TOKEN": "caller-token"}
         with (
             patch("vergil_tooling.lib.github._gh_env", return_value={"GH_TOKEN": "other"}),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed()
             github._run_with_retry(("gh", "pr", "list"), check=True, env=caller_env)
@@ -582,119 +507,262 @@ class TestCredentialInjection:
         assert kwargs["env"] is caller_env
 
 
-# --- _human_token ---
-
-
-class TestHumanToken:
-    def test_returns_stripped_token(self) -> None:
-        with (
-            patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                return_value=("jdoe", "jdoe-vergil"),
-            ),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
-        ):
-            mock_run.return_value = MagicMock(returncode=0, stdout="ghp_abc123\n")
-            token = github._human_token()
-        assert token == "ghp_abc123"  # noqa: S105
-
-
 # --- _gh_env ---
 
 
-class TestGhEnv:
-    def test_returns_env_with_token(self, monkeypatch: pytest.MonkeyPatch) -> None:
+class TestGhEnvNew:
+    def test_returns_env_with_app_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
-        with patch("vergil_tooling.lib.github._human_token", return_value="ghp_abc123"):
+        with patch(
+            "vergil_tooling.lib.github.get_installation_token",
+            return_value="ghs_app_token",
+        ):
             env = github._gh_env()
         assert env is not None
-        assert env["GH_TOKEN"] == "ghp_abc123"  # noqa: S105
+        assert env["GH_TOKEN"] == "ghs_app_token"  # noqa: S105
 
-    def test_returns_none_on_subprocess_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_returns_none_when_no_app_token(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
         with patch(
-            "vergil_tooling.lib.github._human_token",
-            side_effect=subprocess.CalledProcessError(1, "gh"),
-        ):
-            assert github._gh_env() is None
-
-    def test_returns_none_on_system_exit(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
-        with patch(
-            "vergil_tooling.lib.github._human_token",
-            side_effect=SystemExit(1),
+            "vergil_tooling.lib.github.get_installation_token",
+            return_value=None,
         ):
             assert github._gh_env() is None
 
 
-# --- resolve_co_author_trailer ---
+# --- App token exchange ---
 
 
-class TestResolveCoAuthorTrailer:
-    def test_known_agent_skips_api(self) -> None:
-        with (
-            patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                return_value=("wphillipmoore", "wphillipmoore-vergil"),
-            ),
-            patch("vergil_tooling.lib.github.read_json") as mock_api,
-        ):
-            trailer = github.resolve_co_author_trailer()
-        mock_api.assert_not_called()
-        assert trailer == (
-            "Co-Authored-By: wphillipmoore-vergil "
-            "<285019742+wphillipmoore-vergil@users.noreply.github.com>"
+class TestLoadAppConfig:
+    def test_returns_none_when_no_config_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        assert github._load_app_config() is None
+
+    def test_returns_config_from_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        result = github._load_app_config()
+        assert result is not None
+        app_id, installation_id, key_path = result
+        assert app_id == "12345"
+        assert installation_id == "67890"
+        assert key_path == config_dir / "app.pem"
+
+    def test_returns_none_when_missing_installation_id(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        assert github._load_app_config() is None
+
+    def test_env_vars_override_files(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        key_file = tmp_path / "override.pem"
+        key_file.write_text("override-key\n")
+        monkeypatch.setenv("VRG_APP_ID", "99999")
+        monkeypatch.setenv("VRG_INSTALLATION_ID", "88888")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", str(key_file))
+        result = github._load_app_config()
+        assert result is not None
+        app_id, installation_id, key_path = result
+        assert app_id == "99999"
+        assert installation_id == "88888"
+        assert key_path == key_file
+
+    def test_ignores_comments_in_env_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text(
+            "# GitHub App credentials\nAPP_ID=12345\nINSTALLATION_ID=67890\n"
         )
+        (config_dir / "app.pem").write_text("fake-key\n")
+        result = github._load_app_config()
+        assert result is not None
+        assert result[0] == "12345"
 
-    def test_unknown_agent_falls_back_to_api(self) -> None:
+
+class TestGenerateJwt:
+    def test_produces_three_part_token(self, tmp_path: Path) -> None:
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            jwt_str = github._generate_jwt("12345", key_path)
+        parts = jwt_str.split(".")
+        assert len(parts) == 3
+
+    def test_calls_openssl_with_key_path(self, tmp_path: Path) -> None:
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            github._generate_jwt("12345", key_path)
+        args = mock_run.call_args[0][0]
+        assert args[0] == "openssl"
+        assert str(key_path) in args
+
+    def test_header_contains_rs256(self, tmp_path: Path) -> None:
+        import base64
+
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            jwt_str = github._generate_jwt("12345", key_path)
+        header_b64 = jwt_str.split(".")[0]
+        padding = 4 - len(header_b64) % 4
+        header = json.loads(base64.urlsafe_b64decode(header_b64 + "=" * padding))
+        assert header == {"alg": "RS256", "typ": "JWT"}
+
+    def test_payload_contains_app_id_as_iss(self, tmp_path: Path) -> None:
+        import base64
+
+        key_path = tmp_path / "test.pem"
+        key_path.write_text("fake-key\n")
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=[], returncode=0, stdout=b"\x00" * 256
+            )
+            jwt_str = github._generate_jwt("12345", key_path)
+        payload_b64 = jwt_str.split(".")[1]
+        padding = 4 - len(payload_b64) % 4
+        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + "=" * padding))
+        assert payload["iss"] == 12345
+        assert "iat" in payload
+        assert "exp" in payload
+
+
+class TestGetInstallationToken:
+    def test_returns_none_when_no_app_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        github._cached_token = None
+        assert github.get_installation_token() is None
+
+    def test_exchanges_jwt_for_installation_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        github._cached_token = None
         with (
             patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                return_value=("jdoe", "jdoe-vergil"),
+                "vergil_tooling.lib.github._generate_jwt",
+                return_value="fake-jwt",
             ),
-            patch(
-                "vergil_tooling.lib.github.read_json",
-                return_value={"id": 12345, "login": "jdoe-vergil"},
-            ),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
-            trailer = github.resolve_co_author_trailer()
-        assert trailer == "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>"
+            mock_run.return_value = _completed(stdout="ghs_install_token_abc\n")
+            token = github.get_installation_token()
+        assert token == "ghs_install_token_abc"  # noqa: S105
+        call_args = mock_run.call_args[0][0]
+        assert "/app/installations/67890/access_tokens" in " ".join(call_args)
 
-    def test_api_404_raises_github_api_error(self) -> None:
-        err = github.GitHubAPIError(1, ["gh"], output='{"message": "Not Found"}', stderr="HTTP 404")
+    def test_caches_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        github._cached_token = None
         with (
-            patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                return_value=("jdoe", "jdoe-vergil"),
-            ),
-            patch(
-                "vergil_tooling.lib.github.read_json",
-                side_effect=err,
-            ),
-            pytest.raises(github.GitHubAPIError, match="404"),
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
-            github.resolve_co_author_trailer()
+            mock_run.return_value = _completed(stdout="ghs_token\n")
+            first = github.get_installation_token()
+            second = github.get_installation_token()
+        assert first == second == "ghs_token"
+        assert mock_run.call_count == 1
 
-    def test_non_dict_response_raises(self) -> None:
+    def test_refreshes_expired_cache(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        github._cached_token = ("old_token", 0.0)
         with (
-            patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                return_value=("jdoe", "jdoe-vergil"),
-            ),
-            patch(
-                "vergil_tooling.lib.github.read_json",
-                return_value=[{"id": 1}],
-            ),
-            pytest.raises(github.GitHubAPIError),
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
-            github.resolve_co_author_trailer()
-
-    def test_discovery_failure_propagates(self) -> None:
-        with (
-            patch(
-                "vergil_tooling.lib.github._discover_accounts",
-                side_effect=SystemExit(1),
-            ),
-            pytest.raises(SystemExit),
-        ):
-            github.resolve_co_author_trailer()
+            mock_run.return_value = _completed(stdout="new_token\n")
+            token = github.get_installation_token()
+        assert token == "new_token"  # noqa: S105

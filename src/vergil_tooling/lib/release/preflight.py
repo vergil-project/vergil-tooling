@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config, git, github
@@ -20,6 +21,7 @@ def preflight(
     *,
     version_override: str | None,
     repo_root: Path,
+    verbose: bool = False,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext."""
     _check_host_prerequisites()
@@ -40,6 +42,7 @@ def preflight(
         version=version,
         repo_root=repo_root,
         version_override=version_override,
+        verbose=verbose,
     )
 
 
@@ -72,17 +75,7 @@ def _check_gh_auth() -> str:
 
 
 def _read_and_validate_config(repo_root: Path) -> config.StConfig:
-    cfg = config.read_config(repo_root)
-    if cfg.project.repository_type not in ("library", "tooling"):
-        raise ReleaseError(
-            phase="preflight",
-            command="read vergil.toml",
-            message=(
-                f"vrg-release requires repository_type 'library' or 'tooling', "
-                f"got '{cfg.project.repository_type}'."
-            ),
-        )
-    return cfg
+    return config.read_config(repo_root)
 
 
 def _check_branch_and_tree() -> None:
@@ -293,7 +286,17 @@ def _bump_version_in_manifest(repo_root: Path, old: str, new: str, cfg: config.S
         text = path.read_text(encoding="utf-8")
         text = text.replace(f'version = "{old}"', f'version = "{new}"')
         path.write_text(text, encoding="utf-8")
-        subprocess.run(("uv", "lock"), check=True, cwd=repo_root)  # noqa: S603, S607
+        result = subprocess.run(  # noqa: S603
+            ("uv", "lock"),  # noqa: S607
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
     else:
         raise ReleaseError(
             phase="preflight",

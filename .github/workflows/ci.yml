@@ -24,6 +24,7 @@ jobs:
     with:
       language: python
       versions: '["3.12", "3.13", "3.14"]'
+      container-suffix: python
 
   quality:
     uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0
@@ -50,6 +51,7 @@ jobs:
     with:
       language: python
       versions: '["3.12", "3.13", "3.14"]'
+      container-suffix: python
 
   version:
     uses: vergil-project/vergil-actions/.github/workflows/ci-version-bump.yml@v2.0

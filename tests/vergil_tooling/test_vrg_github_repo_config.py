@@ -383,9 +383,7 @@ def _make_config() -> StConfig:
         dependencies={"vergil": "v2.0"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
-        publish=PublishConfig(
-            release=False, docs=True, consumer_refresh=None, docs_workflow="Documentation"
-        ),
+        publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
     )
 
 

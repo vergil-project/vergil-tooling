@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 import tempfile
 from importlib.resources import files
 from pathlib import Path
@@ -64,10 +65,16 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
     tag = f"develop-v{ctx.version}"
     print(f"Generating changelog with boundary tag: {tag}")
     config_path = files("vergil_tooling.configs") / "cliff.toml"
-    subprocess.run(  # noqa: S603
+    result = subprocess.run(  # noqa: S603
         ("git-cliff", "--config", str(config_path), "--tag", tag, "-o", "CHANGELOG.md"),  # noqa: S607
         check=True,
+        capture_output=True,
+        text=True,
     )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
     _normalize_trailing_newline(Path("CHANGELOG.md"))
     git.run("add", "CHANGELOG.md")
 
@@ -76,7 +83,7 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
     output_file = releases_dir / f"v{ctx.version}.md"
     print(f"Generating release notes: {output_file}")
     release_notes_config = files("vergil_tooling.configs") / "cliff-release-notes.toml"
-    subprocess.run(  # noqa: S603
+    result = subprocess.run(  # noqa: S603
         (  # noqa: S607
             "git-cliff",
             "--config",
@@ -88,7 +95,13 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
             str(output_file),
         ),
         check=True,
+        capture_output=True,
+        text=True,
     )
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
     _normalize_trailing_newline(output_file)
     git.run("add", str(releases_dir))
 

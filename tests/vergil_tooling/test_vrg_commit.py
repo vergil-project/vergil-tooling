@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -40,20 +41,16 @@ def _commit_environment(
     branching_model: str = "library-release",
     has_staged: bool = True,
     write_config: bool = True,
+    co_author: str = "test-agent <test-agent@test.com>",
 ) -> Iterator[None]:
-    """Set up mocks for `commit.main()`.
-
-    Defaults represent a happy path: secondary worktree, library-release
-    config, valid feature/42-test branch, staged changes present.
-
-    When *write_config* is True (default), a ``vergil.toml``
-    is written with the given *branching_model*.  Set *write_config*
-    to False to test the no-config fallback path.
-    """
     if write_config:
         (tmp_path / "vergil.toml").write_text(
             _TEST_TOML_TEMPLATE.format(branching_model=branching_model)
         )
+
+    env_patches = {}
+    if co_author:
+        env_patches["VRG_CO_AUTHOR"] = co_author
 
     with (
         patch("vergil_tooling.bin.vrg_commit.git.current_branch", return_value=branch),
@@ -67,22 +64,16 @@ def _commit_environment(
             return_value=has_staged,
         ),
         patch("vergil_tooling.bin.vrg_commit.git.run"),
-        patch(
-            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
-            return_value="Co-Authored-By: test-agent <test-agent@test.com>",
-        ),
+        patch.dict(os.environ, env_patches, clear=False),
     ):
         yield
 
 
 def test_parse_args_required() -> None:
-    args = parse_args(
-        ["--type", "feat", "--scope", "core", "--message", "add thing", "--agent", "agent"]
-    )
+    args = parse_args(["--type", "feat", "--scope", "core", "--message", "add thing"])
     assert args.commit_type == "feat"
     assert args.scope == "core"
     assert args.message == "add thing"
-    assert args.agent == "agent"
     assert args.body == ""
 
 
@@ -97,8 +88,6 @@ def test_parse_args_with_scope_and_body() -> None:
             "correct regex",
             "--body",
             "Fixed edge case",
-            "--agent",
-            "agent",
         ]
     )
     assert args.commit_type == "fix"
@@ -107,31 +96,18 @@ def test_parse_args_with_scope_and_body() -> None:
 
 
 def test_parse_args_revert_type() -> None:
-    args = parse_args(
-        [
-            "--type",
-            "revert",
-            "--scope",
-            "auth",
-            "--message",
-            "undo token change",
-            "--agent",
-            "agent",
-        ]
-    )
+    args = parse_args(["--type", "revert", "--scope", "auth", "--message", "undo token change"])
     assert args.commit_type == "revert"
 
 
 def test_parse_args_invalid_type() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["--type", "invalid", "--scope", "core", "--message", "x", "--agent", "agent"])
+        parse_args(["--type", "invalid", "--scope", "core", "--message", "x"])
 
 
 def test_main_no_staged_changes(tmp_path: Path) -> None:
     with _commit_environment(tmp_path, has_staged=False):
-        result = main(
-            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "agent"]
-        )
+        result = main(["--type", "feat", "--scope", "core", "--message", "test"])
     assert result == 1
 
 
@@ -147,9 +123,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
         _commit_environment(tmp_path),
         patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
     ):
-        result = main(
-            ["--type", "feat", "--scope", "core", "--message", "add feature", "--agent", "agent"]
-        )
+        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
     assert result == 0
     assert commit_file_content.startswith("feat(core): add feature\n")
     assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
@@ -177,8 +151,6 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
                 "correct regex",
                 "--body",
                 "Fixed edge case",
-                "--agent",
-                "agent",
             ]
         )
     assert result == 0
@@ -190,6 +162,8 @@ def test_main_with_scope_and_body(tmp_path: Path) -> None:
 # --------------------------------------------------------------------------
 # Config error handling
 # --------------------------------------------------------------------------
+
+_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test"]
 
 
 def test_main_config_error(tmp_path: Path) -> None:
@@ -209,21 +183,18 @@ def test_main_missing_config(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
         patch("vergil_tooling.bin.vrg_commit.git.has_staged_changes", return_value=True),
         patch("vergil_tooling.bin.vrg_commit.git.run"),
-        patch(
-            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
-            return_value="Co-Authored-By: test-agent <test-agent@test.com>",
-        ),
+        patch.dict(os.environ, {"VRG_CO_AUTHOR": "test <test@test.com>"}, clear=False),
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 0
 
 
 # --------------------------------------------------------------------------
-# Co-author auto-discovery
+# Co-author from VRG_CO_AUTHOR env var
 # --------------------------------------------------------------------------
 
 
-def test_main_auto_discovery(tmp_path: Path) -> None:
+def test_co_author_from_env_var(tmp_path: Path) -> None:
     commit_file_content = ""
 
     def capture_run(*args: str) -> None:
@@ -232,66 +203,37 @@ def test_main_auto_discovery(tmp_path: Path) -> None:
             commit_file_content = Path(args[2]).read_text(encoding="utf-8")
 
     with (
-        _commit_environment(tmp_path),
+        _commit_environment(
+            tmp_path,
+            co_author="Claude Opus 4.6 <noreply@anthropic.com>",
+        ),
         patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
-        patch(
-            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
-            return_value="Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>",
-        ),
-    ):
-        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
-    assert result == 0
-    assert commit_file_content.startswith("feat(core): add feature\n")
-    expected = "Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>"
-    assert expected in commit_file_content
-
-
-def test_main_agent_flag_prints_deprecation_warning(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    with (
-        _commit_environment(tmp_path),
-        patch("vergil_tooling.bin.vrg_commit.git.run"),
-        patch(
-            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
-            return_value="Co-Authored-By: jdoe-vergil <12345+jdoe-vergil@users.noreply.github.com>",
-        ),
-    ):
-        result = main(
-            ["--type", "feat", "--scope", "core", "--message", "test", "--agent", "ignored"]
-        )
-    assert result == 0
-    err = capsys.readouterr().err
-    assert "deprecated" in err.lower()
-
-
-def test_main_resolve_failure_returns_1(tmp_path: Path) -> None:
-    with (
-        patch(
-            "vergil_tooling.bin.vrg_commit.git.current_branch",
-            return_value="feature/42-test",
-        ),
-        patch("vergil_tooling.bin.vrg_commit.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_commit.git.is_main_worktree", return_value=False),
-        patch(
-            "vergil_tooling.bin.vrg_commit.github.resolve_co_author_trailer",
-            side_effect=SystemExit(1),
-        ),
     ):
         result = main(_DEFAULT_ARGS)
-    assert result == 1
+    assert result == 0
+    assert "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" in commit_file_content
+
+
+def test_no_co_author_when_env_var_unset(tmp_path: Path) -> None:
+    commit_file_content = ""
+
+    def capture_run(*args: str) -> None:
+        nonlocal commit_file_content
+        if args[0] == "commit" and args[1] == "--file":
+            commit_file_content = Path(args[2]).read_text(encoding="utf-8")
+
+    with (
+        _commit_environment(tmp_path, co_author=""),
+        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
+    ):
+        result = main(_DEFAULT_ARGS)
+    assert result == 0
+    assert "Co-Authored-By" not in commit_file_content
 
 
 # --------------------------------------------------------------------------
 # Task 1.1 — branch / context validation
 # --------------------------------------------------------------------------
-#
-# Five checks ported from src/vergil_tooling/bin/pre_commit_hook.py into
-# vrg-commit. Each check has a rejection-path and a happy-path test.
-# Reference: docs/specs/host-level-tool.md "Migration / vergil-tooling
-# itself" step 1; docs/plans/host-level-tool-plan.md Task 1.1.
-
-_DEFAULT_ARGS = ["--type", "feat", "--scope", "core", "--message", "test"]
 
 
 # Check 1: detached HEAD
@@ -339,7 +281,6 @@ def test_validate_rejects_hotfix_for_docs_single_branch(tmp_path: Path) -> None:
 
 
 def test_validate_admits_promotion_for_application_promotion(tmp_path: Path) -> None:
-    # promotion branches are allowed and not subject to the issue-number rule.
     with _commit_environment(
         tmp_path, branch="promotion/42-deploy", branching_model="application-promotion"
     ):
@@ -428,8 +369,6 @@ def test_validate_admits_secondary_worktree_feature_commit(tmp_path: Path) -> No
 def test_validate_admits_main_worktree_release_commit_when_worktrees_dir(
     tmp_path: Path,
 ) -> None:
-    # release/* is not subject to the worktree-convention check (only
-    # feature|bugfix|hotfix|chore are scoped under that rule).
     (tmp_path / ".worktrees").mkdir()
     with _commit_environment(
         tmp_path,
@@ -449,7 +388,6 @@ def test_validate_admits_main_worktree_feature_commit_without_worktrees_dir(
         branching_model="library-release",
         is_main_worktree=True,
     ):
-        # No .worktrees/ → the rule does not apply.
         assert main(_DEFAULT_ARGS) == 0
 
 
@@ -491,8 +429,6 @@ def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) 
                 "test",
                 "--body",
                 body,
-                "--agent",
-                "agent",
             ]
         )
     assert result == 1
@@ -520,15 +456,6 @@ def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
                 "test",
                 "--body",
                 body,
-                "--agent",
-                "agent",
             ]
         )
     assert result == 0
-
-
-# --------------------------------------------------------------------------
-# Task 1.2 — `git.run` is responsible for setting VRG_COMMIT_CONTEXT=1
-# (issue #295 moved the contract from commit.py to lib/git.py). The
-# pinning test for that contract lives in tests/vergil_tooling/test_git.py;
-# commit.py just calls `git.run("commit", ...)` and trusts the helper.

@@ -30,9 +30,9 @@ isolation system.
 |---|---|---|
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
 | **2. Session Management** (this plan) | vrg-session, identities.toml | This plan |
-| 3. Credential Provisioning | GitHub PAT/SSH key injection | Planned |
+| 3. Credential Provisioning | GitHub App credentials, GHCR auth | Planned |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl, wrapper simplification | Planned |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection | Planned |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
 
 **Repository:** vergil-tooling
@@ -71,7 +71,10 @@ limactl shell vergil-agent -- \
 
 [identities.vergil]
 vm_instance = "vergil-agent"
-github_user = "wphillipmoore-vergil"
+auth_type = "app"
+app_id = 12345
+installation_id = 67890
+private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
 
 # Project workspace mappings — maps short names to paths
 # inside the VM. Paths mirror host paths under the mount.
@@ -85,7 +88,10 @@ diogenes-core  = "~/dev/projects/diogenes-project/diogenes-core"
 # Future: second identity
 # [identities.mimir]
 # vm_instance = "mimir-agent"
-# github_user = "wphillipmoore-mimir"
+# auth_type = "app"
+# app_id = ...
+# installation_id = ...
+# private_key_path = "~/.config/vergil/keys/mimir-agent.pem"
 ```
 
 ### Session Flow
@@ -152,7 +158,10 @@ def config_file(tmp_path: Path) -> Path:
     p.write_text(textwrap.dedent("""\
         [identities.vergil]
         vm_instance = "vergil-agent"
-        github_user = "wphillipmoore-vergil"
+        auth_type = "app"
+        app_id = 12345
+        installation_id = 67890
+        private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
 
         [identities.vergil.workspaces]
         vergil-tooling = "~/dev/projects/vergil-project/vergil-tooling"
@@ -172,7 +181,9 @@ def test_identity_fields(config_file: Path) -> None:
     ident = cfg.identities["vergil"]
     assert isinstance(ident, Identity)
     assert ident.vm_instance == "vergil-agent"
-    assert ident.github_user == "wphillipmoore-vergil"
+    assert ident.auth_type == "app"
+    assert ident.app_id == "12345"
+    assert ident.installation_id == "67890"
     assert ident.workspaces["vergil-tooling"] == "~/dev/projects/vergil-project/vergil-tooling"
 
 
@@ -194,13 +205,19 @@ def test_resolve_project_ambiguous(tmp_path: Path) -> None:
     p.write_text(textwrap.dedent("""\
         [identities.vergil]
         vm_instance = "vergil-agent"
-        github_user = "user-vergil"
+        auth_type = "app"
+        app_id = 11111
+        installation_id = 22222
+        private_key_path = "~/.config/vergil/keys/vergil.pem"
         [identities.vergil.workspaces]
         shared-repo = "~/dev/shared-repo"
 
         [identities.mimir]
         vm_instance = "mimir-agent"
-        github_user = "user-mimir"
+        auth_type = "app"
+        app_id = 33333
+        installation_id = 44444
+        private_key_path = "~/.config/vergil/keys/mimir.pem"
         [identities.mimir.workspaces]
         shared-repo = "~/dev/shared-repo"
     """))
@@ -238,7 +255,10 @@ else:
 @dataclass
 class Identity:
     vm_instance: str
-    github_user: str
+    auth_type: str = "app"
+    app_id: str = ""
+    installation_id: str = ""
+    private_key_path: str = ""
     workspaces: dict[str, str] = field(default_factory=dict)
 
 
@@ -259,7 +279,10 @@ def load_config(path: Path) -> IdentityConfig:
     for name, data in raw.get("identities", {}).items():
         identities[name] = Identity(
             vm_instance=data["vm_instance"],
-            github_user=data["github_user"],
+            auth_type=data.get("auth_type", "app"),
+            app_id=str(data.get("app_id", "")),
+            installation_id=str(data.get("installation_id", "")),
+            private_key_path=data.get("private_key_path", ""),
             workspaces=data.get("workspaces", {}),
         )
     return IdentityConfig(identities=identities)
@@ -341,7 +364,10 @@ def config_dir(tmp_path: Path) -> Path:
     (cfg / "identities.toml").write_text(textwrap.dedent("""\
         [identities.vergil]
         vm_instance = "vergil-agent"
-        github_user = "wphillipmoore-vergil"
+        auth_type = "app"
+        app_id = 12345
+        installation_id = 67890
+        private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
 
         [identities.vergil.workspaces]
         vergil-tooling = "~/dev/projects/vergil-project/vergil-tooling"
@@ -673,5 +699,9 @@ vrg-session --shell --identity vergil
 - [x] **Type consistency:** Function signatures, config field
   names, and CLI argument names are consistent across all tasks.
 - [x] **Scope boundaries:** This plan does NOT include credential
-  provisioning (Plan 3), egress filtering (Plan 4), or wrapper
-  simplification (Plan 5).
+  provisioning (Plan 3), egress filtering (Plan 4), nerdctl runtime
+  detection (Plan 5), or wrapper simplification (#933 identity plan).
+- [x] **Identity schema consistency:** The `identities.toml` schema
+  uses App credential fields (`auth_type`, `app_id`,
+  `installation_id`, `private_key_path`) consistent with Plan 3
+  and the single-account identity design (#933).

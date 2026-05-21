@@ -7,85 +7,137 @@ with exponential backoff.
 
 from __future__ import annotations
 
-import functools
 import json
 import logging
 import os
-import random
-import re
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import Any
+
+from vergil_tooling.lib import retry
 
 log = logging.getLogger(__name__)
 
-
-def _discover_accounts() -> tuple[str, str]:
-    """Parse ``gh auth status`` to find the human and -vergil accounts."""
-    result = subprocess.run(  # noqa: S603
-        ["gh", "auth", "status"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    output = result.stdout or result.stderr
-    accounts = list(dict.fromkeys(re.findall(r"Logged in to github\.com account (\S+)", output)))
-    vergil = [a for a in accounts if a.endswith("-vergil")]
-    if len(vergil) != 1:
-        print(
-            "vergil-tooling: cannot discover -vergil account in gh auth status. "
-            f"Expected exactly one, found: {vergil}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    agent = vergil[0]
-    human = agent.removesuffix("-vergil")
-    return human, agent
+_cached_token: tuple[str, float] | None = None
 
 
-def resolve_co_author_trailer() -> str:
-    """Discover the agent account and return its ``Co-Authored-By`` trailer.
+def _load_app_config() -> tuple[str, str, Path] | None:
+    """Read GitHub App credentials from env vars or ~/.config/vergil/.
 
-    Workaround: hardcode the noreply trailer while the agent account is
-    flagged by GitHub (#799). The API lookup (gh api users/{agent}) fails
-    for shadow-banned accounts. Revert to the API-based approach when
-    GitHub support unflags the account.
+    Returns ``(app_id, installation_id, key_path)`` or ``None``
+    when App mode is not configured.
     """
-    _human, agent = _discover_accounts()
-    # Workaround (#799/#839): skip API lookup, use known noreply ID.
-    known_noreply: dict[str, int] = {
-        "wphillipmoore-vergil": 285019742,
-    }
-    uid = known_noreply.get(agent)
-    if uid is not None:
-        return f"Co-Authored-By: {agent} <{uid}+{agent}@users.noreply.github.com>"
-    data = read_json("api", f"users/{agent}")
-    if not isinstance(data, dict):
-        msg = f"unexpected API response for users/{agent}"
-        raise GitHubAPIError(1, f"gh api users/{agent}", msg)
-    api_uid = data["id"]
-    return f"Co-Authored-By: {agent} <{api_uid}+{agent}@users.noreply.github.com>"
+    app_id = os.environ.get("VRG_APP_ID", "")
+    installation_id = os.environ.get("VRG_INSTALLATION_ID", "")
+    key_path_str = os.environ.get("VRG_PRIVATE_KEY_PATH", "")
+
+    if app_id and installation_id and key_path_str:
+        return app_id, installation_id, Path(key_path_str).expanduser()
+
+    env_file = Path.home() / ".config" / "vergil" / "app.env"
+    key_file = Path.home() / ".config" / "vergil" / "app.pem"
+    if not env_file.exists() or not key_file.exists():
+        return None
+
+    values: dict[str, str] = {}
+    for line in env_file.read_text().splitlines():
+        stripped = line.strip()
+        if "=" in stripped and not stripped.startswith("#"):
+            k, v = stripped.split("=", 1)
+            values[k.strip()] = v.strip()
+
+    app_id = app_id or values.get("APP_ID", "")
+    installation_id = installation_id or values.get("INSTALLATION_ID", "")
+
+    if not app_id or not installation_id:
+        return None
+
+    return app_id, installation_id, key_file
 
 
-@functools.lru_cache(maxsize=1)
-def _human_token() -> str:
-    """Return the human account's token (cached for the process lifetime)."""
-    human, _agent = _discover_accounts()
+def _generate_jwt(app_id: str, key_path: Path) -> str:
+    """Generate an RS256 JWT for GitHub App authentication.
+
+    Uses ``openssl`` for RSA signing to avoid adding a
+    cryptography dependency.
+    """
+    import base64 as _b64
+
+    def b64url(data: bytes) -> str:
+        return _b64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+    now = int(time.time())
+    header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
+    payload = b64url(json.dumps({"iat": now - 60, "exp": now + 600, "iss": int(app_id)}).encode())
+
+    signing_input = f"{header}.{payload}"
+
     result = subprocess.run(  # noqa: S603
-        ["gh", "auth", "token", "-u", human],  # noqa: S607
+        [  # noqa: S607
+            "openssl",
+            "dgst",
+            "-sha256",
+            "-sign",
+            str(key_path),
+            "-binary",
+        ],
+        input=signing_input.encode(),
+        capture_output=True,
+        check=True,
+    )
+
+    signature = b64url(result.stdout)
+    return f"{header}.{payload}.{signature}"
+
+
+def get_installation_token() -> str | None:
+    """Return a GitHub App installation token, or ``None`` if not in App mode.
+
+    Reads App credentials from ``~/.config/vergil/`` (or env var
+    overrides), generates a JWT, and exchanges it for a 1-hour
+    installation token via the GitHub API. Tokens are cached for
+    55 minutes.
+    """
+    global _cached_token  # noqa: PLW0603
+    if _cached_token is not None:
+        token, expiry = _cached_token
+        if time.time() < expiry:
+            return token
+
+    config = _load_app_config()
+    if config is None:
+        return None
+
+    app_id, installation_id, key_path = config
+    jwt_token = _generate_jwt(app_id, key_path)
+
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "gh",
+            "api",
+            f"/app/installations/{installation_id}/access_tokens",
+            "-X",
+            "POST",
+            "--jq",
+            ".token",
+        ],
+        env={**os.environ, "GH_TOKEN": jwt_token},
         capture_output=True,
         text=True,
         check=True,
     )
-    return result.stdout.strip()
+
+    token = result.stdout.strip()
+    _cached_token = (token, time.time() + 3300)
+    return token
 
 
 def _gh_env() -> dict[str, str] | None:
-    """Return env dict with the human account's GH_TOKEN, or None on failure."""
-    try:
-        token = _human_token()
-    except (subprocess.CalledProcessError, SystemExit):
+    """Return env dict with App installation token, or ``None`` for ambient auth."""
+    token = get_installation_token()
+    if token is None:
         return None
     return {**os.environ, "GH_TOKEN": token}
 
@@ -109,53 +161,28 @@ _NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 60
 
-_MAX_RETRIES = 4
-_BASE_DELAY_SECS = 2.0
-_MAX_DELAY_SECS = 60.0
-_RETRYABLE_PATTERNS = (
-    "http 502",
-    "http 503",
-    "http 504",
-    "http 429",
-    "timed out",
-    "connection reset",
-)
-
-
-def _is_retryable(exc: subprocess.CalledProcessError) -> bool:
-    detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
-    return any(p in detail for p in _RETRYABLE_PATTERNS)
-
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
     if "env" not in kwargs:
         env = _gh_env()
         if env is not None:
             kwargs["env"] = env
-    for attempt in range(_MAX_RETRIES + 1):
-        try:
-            return subprocess.run(*args, **kwargs)  # noqa: S603
-        except subprocess.CalledProcessError as exc:
-            if attempt == _MAX_RETRIES or not _is_retryable(exc):
-                detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
-                if detail:
-                    raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
-                raise
-            delay = min(_BASE_DELAY_SECS * (2**attempt), _MAX_DELAY_SECS)
-            delay *= 0.5 + random.random()  # noqa: S311
-            log.warning(
-                "GitHub API error (attempt %d/%d), retrying in %.1fs",
-                attempt + 1,
-                _MAX_RETRIES + 1,
-                delay,
-            )
-            time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
+    try:
+        return retry.run_with_retry(*args, **kwargs)
+    except subprocess.CalledProcessError as exc:
+        detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
+        if detail:
+            raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
+        raise
 
 
 def run(*args: str) -> None:
     """Run a gh command and raise on failure."""
-    _run_with_retry(("gh", *args), check=True)  # noqa: S607
+    result = _run_with_retry(("gh", *args), check=True, capture_output=True, text=True)  # noqa: S607
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
 
 
 def read_output(*args: str) -> str:

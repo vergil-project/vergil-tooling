@@ -426,3 +426,70 @@ def test_returns_subprocess_exit_code() -> None:
         mock_run.return_value.returncode = 128
         rc = main(["status"])
     assert rc == 128
+
+
+# -- remote token injection ---------------------------------------------------
+
+
+class TestRemoteTokenInjection:
+    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote"])
+    def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.github.get_installation_token",
+                return_value="ghs_token_123",
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main([subcmd, "origin", "main"])
+        assert rc == 0
+        _, kwargs = mock_run.call_args
+        env = kwargs["env"]
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
+        assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+
+    @pytest.mark.parametrize("subcmd", ["status", "log", "diff", "add", "branch"])
+    def test_no_injection_for_local_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.github.get_installation_token",
+                return_value="ghs_token_123",
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            main([subcmd])
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs or kwargs.get("env") is None
+
+    def test_no_injection_when_no_app_token(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            main(["push", "origin", "main"])
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs or kwargs.get("env") is None
+
+    def test_token_encodes_as_basic_auth(self) -> None:
+        import base64
+
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            main(["push", "origin", "main"])
+        _, kwargs = mock_run.call_args
+        header_value = kwargs["env"]["GIT_CONFIG_VALUE_0"]
+        expected = base64.b64encode(b"x-access-token:ghs_test_token").decode()
+        assert expected in header_value

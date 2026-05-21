@@ -43,6 +43,13 @@ def test_orchestrator_runs_all_phases() -> None:
     m_handoff.assert_called_once_with(ctx)
 
 
+def test_format_elapsed_minutes() -> None:
+    from vergil_tooling.lib.release.orchestrator import _format_elapsed
+
+    assert _format_elapsed(90) == "1m30s"
+    assert _format_elapsed(125) == "2m05s"
+
+
 def test_phase_details_includes_ctx_fields() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
@@ -57,7 +64,7 @@ def test_phase_details_includes_ctx_fields() -> None:
 
     ctx.tag = "v2.1.0"
     ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
-    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
+    ctx.cd_run_url = "https://github.com/o/r/actions/runs/123"
     details = _phase_details(ctx, "confirm-publish")
     assert "v2.1.0" in details
     assert "runs/123" in details
@@ -133,7 +140,9 @@ def test_merge_release_calls_wait_and_merge() -> None:
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
     with patch(_MOD + ".wait_and_merge") as m_wm:
         merge_release(ctx)
-    m_wm.assert_called_once_with("https://github.com/o/r/pull/100", phase="merge-release")
+    m_wm.assert_called_once_with(
+        "https://github.com/o/r/pull/100", phase="merge-release", verbose=False
+    )
     assert ctx.release_merge_sha == "merged"
 
 
@@ -181,13 +190,12 @@ def test_phase_details_unknown_phase() -> None:
     assert details == ""
 
 
-def test_phase_details_confirm_docs_workflow() -> None:
+def test_phase_details_confirm_cd_workflow() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
     ctx = _ctx()
     ctx.tag = "v2.1.0"
     ctx.release_url = "https://github.com/o/r/releases/tag/v2.1.0"
-    ctx.publish_run_url = "https://github.com/o/r/actions/runs/123"
-    ctx.docs_run_url = "https://github.com/o/r/actions/runs/456"
+    ctx.cd_run_url = "https://github.com/o/r/actions/runs/123"
     details = _phase_details(ctx, "confirm-publish")
-    assert "docs workflow" in details
+    assert "CD workflow" in details

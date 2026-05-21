@@ -211,6 +211,7 @@ class TestRenderReadme:
         assert "# vergil-vm" in content
         assert "Lima VM image definitions" in content
         assert "GPL-3.0" in content
+        assert "## Table of Contents" in content
 
     def test_pages_url(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -254,8 +255,11 @@ class TestRenderCiWorkflow:
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         assert "ci-quality.yml@v2.0" in content
+        assert "ci-audit.yml@v2.0" in content
+        assert "ci-test.yml@v2.0" in content
         assert "container-suffix: python" in content
         assert "ci-version-bump.yml@v2.0" in content
+        assert "run-codeql: false" not in content
 
     def test_shell_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -264,6 +268,40 @@ class TestRenderCiWorkflow:
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         assert "container-suffix: base" in content
+        assert "run-codeql: false" in content
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
+        assert "ci-version-bump.yml@v2.0" in content
+        assert content.count("container-suffix: base") == 3
+        assert content.count("container-tag: 'latest'") == 3
+
+    def test_shell_no_release_minimal_jobs(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "shell"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "version-bump" not in content
+        assert content.count("container-suffix: base") == 2
+        assert content.count("container-tag: 'latest'") == 2
+
+    def test_claude_plugin_skips_audit_and_test(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "claude-plugin"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "run-codeql: false" in content
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
 
     def test_no_version_bump_when_release_none(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -272,6 +310,15 @@ class TestRenderCiWorkflow:
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
         assert "version-bump" not in content
+
+    def test_integration_tests_emit_test_job_for_shell(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "shell"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.integration_tests = True
+        content = render_ci_workflow(ctx)
+        assert "ci-test.yml@v2.0" in content
 
 
 class TestRenderCdWorkflow:
@@ -282,12 +329,43 @@ class TestRenderCdWorkflow:
         content = render_cd_workflow(ctx)
         assert "cd-docs.yml@v2.0" in content
         assert "cd-release" not in content
+        assert "attestations: write" not in content
 
     def test_no_docs_job(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.publish_docs = False
         content = render_cd_workflow(ctx)
         assert "cd-docs" not in content
+
+    def test_release_job(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        content = render_cd_workflow(ctx)
+        assert "cd-release.yml@v2.0" in content
+        assert "if: github.ref == 'refs/heads/main'" in content
+        assert "language: python" in content
+        assert 'container-tag: "3.14"' in content
+        assert "secrets: inherit" in content
+        assert "attestations: write" in content
+        assert "id-token: write" in content
+        assert "pull-requests: write" in content
+        assert "cd-docs" not in content
+
+    def test_docs_and_release(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = "go"
+        ctx.ci_versions = ["1.22"]
+        content = render_cd_workflow(ctx)
+        assert "cd-docs.yml@v2.0" in content
+        assert "cd-release.yml@v2.0" in content
+        assert "language: go" in content
+        assert 'container-tag: "latest"' in content
+        assert "attestations: write" in content
 
 
 class TestRenderMkdocsYml:
@@ -364,6 +442,7 @@ class TestStepClone:
                 side_effect=mock_subprocess_run,
             ),
             patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx, parent_dir=tmp_path)
 
@@ -375,7 +454,8 @@ class TestStepClone:
         (target / ".git").mkdir()
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
 
-        step_clone(ctx, parent_dir=tmp_path)
+        with patch("vergil_tooling.lib.repo_init.os.chdir"):
+            step_clone(ctx, parent_dir=tmp_path)
         assert ctx.work_dir == target
 
     def test_adopt_uses_cwd(self) -> None:
@@ -399,10 +479,42 @@ class TestStepClone:
             ),
             patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path),
             patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx)
 
         assert ctx.work_dir == target
+
+    def test_clone_changes_cwd(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        target = tmp_path / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir") as mock_chdir,
+        ):
+            step_clone(ctx, parent_dir=tmp_path)
+
+        mock_chdir.assert_called_once_with(target)
+
+    def test_already_cloned_changes_cwd(self, tmp_path: Path) -> None:
+        target = tmp_path / "vergil-vm"
+        target.mkdir()
+        (target / ".git").mkdir()
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        with patch("vergil_tooling.lib.repo_init.os.chdir") as mock_chdir:
+            step_clone(ctx, parent_dir=tmp_path)
+
+        mock_chdir.assert_called_once_with(target)
 
     def test_clone_aborted_by_user(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -436,6 +548,7 @@ class TestStepGenerateConfig:
                 "y",  # publish docs
                 "",  # vergil version (default v2.0)
                 "1",  # license: GPL-3.0
+                "",  # initial version (default 0.1.0)
             ]
         )
 
@@ -490,7 +603,7 @@ class TestStepGenerateConfig:
         (tmp_path / "vergil.toml").write_text(existing)
 
         # All defaults accepted (empty input)
-        inputs = iter([""] * 11)
+        inputs = iter([""] * 12)
 
         calls: list[tuple[str, ...]] = []
 
@@ -523,6 +636,8 @@ class TestStepScaffoldConfigFiles:
         with patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run):
             step_scaffold_config_files(ctx)
 
+        assert (tmp_path / "VERSION").exists()
+        assert (tmp_path / "VERSION").read_text() == "0.1.0\n"
         assert (tmp_path / ".githooks" / "pre-commit").exists()
         assert (tmp_path / ".githooks" / "pre-commit").stat().st_mode & 0o111
         assert (tmp_path / "CLAUDE.md").exists()
@@ -579,7 +694,24 @@ class TestStepCiCdWorkflows:
         assert (tmp_path / ".github" / "workflows" / "ci.yml").exists()
         assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
 
-    def test_skips_cd_when_no_docs(self, tmp_path: Path) -> None:
+    def test_creates_cd_for_release_only(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.work_dir = tmp_path
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = False
+        ctx.publish_release = True
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_ci_cd_workflows(ctx)
+
+        assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
+        content = (tmp_path / ".github" / "workflows" / "cd.yml").read_text()
+        assert "cd-release.yml@v2.0" in content
+        assert "cd-docs" not in content
+
+    def test_skips_cd_when_no_docs_or_release(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.work_dir = tmp_path
         ctx.primary_language = "shell"

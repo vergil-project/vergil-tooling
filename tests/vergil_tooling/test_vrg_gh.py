@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+import subprocess
+from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
+
+
+def _completed(
+    returncode: int = 0, stdout: str = "", stderr: str = ""
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
+
 
 # -- no arguments / missing subcommand ----------------------------------------
 
@@ -53,10 +61,13 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
 @pytest.mark.parametrize(("top", "sub"), _ALLOWED_PAIRS)
 def test_allowed_pair_passes(top: str, sub: str) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main([top, sub])
     assert rc == 0
     args = mock_run.call_args[0][0]
@@ -129,20 +140,26 @@ def test_auth_denied(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_pr_review_comment_allowed() -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "review", "--comment", "-b", "looks good"])
     assert rc == 0
 
 
 def test_pr_review_no_flags_allowed() -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "review"])
     assert rc == 0
 
@@ -153,171 +170,18 @@ def test_pr_review_approve_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert "approve" in err.lower()
 
 
-# -- credential selection: account discovery ----------------------------------
-
-
-_AUTH_STATUS_TWO_ACCOUNTS = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  - Active account: false
-"""
-
-
-def test_discover_accounts() -> None:
-    from vergil_tooling.lib.github import _discover_accounts
-
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_AUTH_STATUS_TWO_ACCOUNTS,
-        )
-        human, agent = _discover_accounts()
-    assert human == "jdoe"
-    assert agent == "jdoe-vergil"
-
-
-_AUTH_STATUS_DUPLICATE_HUMAN = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-  ✓ Logged in to github.com account jdoe (token)
-  - Active account: false
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  - Active account: false
-"""
-
-
-def test_discover_accounts_deduplicates() -> None:
-    from vergil_tooling.lib.github import _discover_accounts
-
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_AUTH_STATUS_DUPLICATE_HUMAN,
-        )
-        human, agent = _discover_accounts()
-    assert human == "jdoe"
-    assert agent == "jdoe-vergil"
-
-
-_AUTH_STATUS_MANY_ACCOUNTS = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  - Active account: false
-  ✓ Logged in to github.com account jdoe-mimir (keyring)
-  - Active account: false
-  ✓ Logged in to github.com account jdoe-agent (keyring)
-  - Active account: false
-"""
-
-
-def test_discover_accounts_ignores_other_accounts() -> None:
-    from vergil_tooling.lib.github import _discover_accounts
-
-    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_AUTH_STATUS_MANY_ACCOUNTS,
-        )
-        human, agent = _discover_accounts()
-    assert human == "jdoe"
-    assert agent == "jdoe-vergil"
-
-
-_AUTH_STATUS_NO_AGENT = """\
-github.com
-  ✓ Logged in to github.com account jdoe (keyring)
-  - Active account: true
-"""
-
-
-def test_discover_accounts_missing_vergil(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from vergil_tooling.lib.github import _discover_accounts
-
-    with (
-        patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
-        pytest.raises(SystemExit),
-    ):
-        mock_run.return_value = MagicMock(
-            returncode=0,
-            stdout=_AUTH_STATUS_NO_AGENT,
-        )
-        _discover_accounts()
-
-
-# -- credential selection: workaround uses human for all (#799) ---------------
-
-
-def test_default_uses_human_token_workaround() -> None:
-    with (
-        patch(
-            "vergil_tooling.bin.vrg_gh._discover_accounts",
-            return_value=("jdoe", "jdoe-vergil"),
-        ),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
-    ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="human-token\n")
-        from vergil_tooling.bin.vrg_gh import _get_token
-
-        token = _get_token(["issue", "list"])
-    assert token == "human-token"  # noqa: S105
-    token_call = mock_run.call_args_list[-1]
-    assert "jdoe" in token_call[0][0]
-    assert "jdoe-vergil" not in token_call[0][0]
-
-
-# -- credential selection: escalation for pr merge ---------------------------
-
-
-def test_issue_close_escalates_to_human() -> None:
-    with (
-        patch(
-            "vergil_tooling.bin.vrg_gh._discover_accounts",
-            return_value=("jdoe", "jdoe-vergil"),
-        ),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
-    ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="human-token\n")
-        from vergil_tooling.bin.vrg_gh import _get_token
-
-        token = _get_token(["issue", "close", "42"])
-    assert token == "human-token"  # noqa: S105
-    token_call = mock_run.call_args_list[-1]
-    assert "jdoe" in token_call[0][0]
-    assert "jdoe-vergil" not in token_call[0][0]
-
-
-def test_pr_merge_release_branch_escalates() -> None:
-    with (
-        patch(
-            "vergil_tooling.bin.vrg_gh._discover_accounts",
-            return_value=("jdoe", "jdoe-vergil"),
-        ),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
-        patch("vergil_tooling.bin.vrg_gh._validate_merge_context"),
-    ):
-        mock_run.return_value = MagicMock(returncode=0, stdout="human-token\n")
-        from vergil_tooling.bin.vrg_gh import _get_token
-
-        token = _get_token(["pr", "merge", "42"])
-    assert token == "human-token"  # noqa: S105
-    token_call = mock_run.call_args_list[-1]
-    assert "jdoe" in token_call[0][0]
-    assert "jdoe-vergil" not in token_call[0][0]
+# -- pr merge ----------------------------------------------------------------
 
 
 def test_pr_merge_allowed_with_valid_context() -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="human-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         rc = main(["pr", "merge", "42"])
     assert rc == 0
 
@@ -330,18 +194,35 @@ def test_pr_merge_denied_without_args(
     assert "denied" in err.lower()
 
 
-# -- GH_TOKEN injection ------------------------------------------------------
+# -- token injection --------------------------------------------------------
 
 
-def test_gh_token_injected_into_env() -> None:
+def test_injects_app_token_when_available() -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="injected-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value="ghs_app_token",
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
-    assert kwargs["env"]["GH_TOKEN"] == "injected-token"  # noqa: S105
+    assert kwargs["env"]["GH_TOKEN"] == "ghs_app_token"  # noqa: S105
+
+
+def test_no_env_injection_when_no_app_token() -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        main(["issue", "list"])
+    _, kwargs = mock_run.call_args
+    assert "env" not in kwargs or kwargs.get("env") is None
 
 
 # -- subprocess passthrough ---------------------------------------------------
@@ -349,20 +230,140 @@ def test_gh_token_injected_into_env() -> None:
 
 def test_subprocess_uses_shell_false() -> None:
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = _completed()
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
     assert kwargs.get("shell") is not True
 
 
 def test_returns_subprocess_exit_code() -> None:
+    err = subprocess.CalledProcessError(128, ["gh", "issue", "list"])
+    err.stdout = ""
+    err.stderr = "fatal\n"
     with (
-        patch("vergil_tooling.bin.vrg_gh._get_token", return_value="fake-token"),
-        patch("vergil_tooling.bin.vrg_gh.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
     ):
-        mock_run.return_value.returncode = 128
         rc = main(["issue", "list"])
     assert rc == 128
+
+
+def test_stdout_and_stderr_replayed_on_success(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed(stdout="output\n", stderr="warning\n")
+        main(["issue", "list"])
+    captured = capsys.readouterr()
+    assert "output" in captured.out
+    assert "warning" in captured.err
+
+
+def test_stdout_and_stderr_replayed_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, ["gh"])
+    err.stdout = "partial\n"
+    err.stderr = "HTTP 404 Not Found\n"
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+    ):
+        rc = main(["issue", "view", "42"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "partial" in captured.out
+    assert "404" in captured.err
+
+
+def test_failure_with_no_output(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, ["gh"])
+    err.stdout = ""
+    err.stderr = ""
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+    ):
+        rc = main(["issue", "view", "42"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+# -- retry behaviour ----------------------------------------------------------
+
+
+def _api_error(
+    returncode: int = 1, stderr: str = "", stdout: str = ""
+) -> subprocess.CalledProcessError:
+    exc = subprocess.CalledProcessError(returncode=returncode, cmd=["gh"])
+    exc.stderr = stderr
+    exc.stdout = stdout
+    return exc
+
+
+class TestVrgGhRetry:
+    def test_retries_on_502_then_succeeds(self) -> None:
+        err = _api_error(stderr="HTTP 502 Bad Gateway")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch(
+                "vergil_tooling.lib.retry.subprocess.run",
+                side_effect=[err, _completed(stdout="ok\n")],
+            ) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            rc = main(["issue", "list"])
+        assert rc == 0
+        assert mock_run.call_count == 2
+
+    def test_gives_up_after_max_retries(self) -> None:
+        err = _api_error(stderr="HTTP 503 Service Unavailable")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.retry.time.sleep"),
+            patch("vergil_tooling.lib.retry.random.random", return_value=0.5),
+        ):
+            rc = main(["issue", "list"])
+        assert rc == 1
+
+    def test_no_retry_on_non_transient_error(self) -> None:
+        err = _api_error(stderr="HTTP 404 Not Found")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err) as mock_run,
+            patch("vergil_tooling.lib.retry.time.sleep") as mock_sleep,
+        ):
+            rc = main(["issue", "view", "42"])
+        assert rc == 1
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()

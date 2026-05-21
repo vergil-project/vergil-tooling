@@ -26,7 +26,7 @@ def merge_bump(ctx: ReleaseContext) -> None:
 
     pr_url = _poll_for_bump_pr(ctx.repo, head)
     _verify_issue_linkage(ctx, pr_url)
-    wait_and_merge(pr_url, phase="merge-bump")
+    wait_and_merge(pr_url, phase="merge-bump", verbose=ctx.verbose)
 
     ctx.bump_pr_url = pr_url
     ctx.next_version = next_patch

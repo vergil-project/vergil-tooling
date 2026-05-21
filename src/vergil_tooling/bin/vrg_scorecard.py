@@ -1,8 +1,8 @@
 """Run OpenSSF Scorecard inside a dev container with GitHub credentials.
 
-Resolves the human account's GitHub token via ``gh auth`` and injects
-it into the container.  All CLI arguments are passed through to the
-``scorecard`` binary.
+Resolves a GitHub token via App installation token exchange and
+injects it into the container.  All CLI arguments are passed through
+to the ``scorecard`` binary.
 """
 
 from __future__ import annotations
@@ -10,12 +10,11 @@ from __future__ import annotations
 import os
 import sys
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.docker import (
     assert_docker_available,
     build_docker_args,
 )
-from vergil_tooling.lib.github import _human_token
 
 _GHCR = "ghcr.io/vergil-project"
 
@@ -70,7 +69,13 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = git.repo_root()
     image = f"{_GHCR}/{prefix}-base:latest"
 
-    token = _human_token()
+    token = github.get_installation_token()
+    if token is None:
+        print(
+            "error: no GitHub App credentials configured; scorecard requires authentication",
+            file=sys.stderr,
+        )
+        return 1
 
     assert_docker_available()
 

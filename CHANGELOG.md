@@ -5,6 +5,61 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.28] - 2026-05-21
+
+### Bug fixes
+
+- remove repository-type gate from vrg-release preflight
+- chdir into cloned repo so git commands in later wizard steps find .git
+- route wait_for_checks and watch_workflow through GitHub retry wrapper
+- emit run-codeql: false for languages CodeQL does not support
+- emit container-suffix and container-tag for audit and test CI jobs
+- include Table of Contents section in generated README
+- add container-suffix to audit and test workflow calls
+- rationalize publish config and confirm-publish phase
+- emit release job in render_cd_workflow when publish_release is true
+- fix validation issues from identity refactor
+- restore sys import dropped during rebase
+- skip CI jobs not required by CI gates ruleset
+- sync stale VERSION file with pyproject.toml and restore 100% coverage
+
+### Chores
+
+- bump version to 2.0.28
+- organize plans into lifecycle subdirectories
+- enumerate VM plan numbers (p1-p6) in filenames
+- use vrg-github-repo-init for vergil-vm bootstrap
+- remove bespoke CI task from vergil-vm plan
+- correct vergil-vm plan: docs=yes, dep=v2.0, bootstrap PR workflow
+
+### Documentation
+
+- reconcile VM plans with single-account identity design
+- canonical VERSION file design for issue #970
+- apply pushback findings to canonical VERSION file design
+- implementation plan for canonical VERSION file (#970)
+
+### Features
+
+- add structured phase logging, --verbose flag, and subprocess output capture
+- GitHub App installation token exchange
+- HTTPS token injection for remote git operations
+- add unrecognized-key warnings to vergil.toml parser
+- show reads from canonical VERSION file with language cross-check
+- bump writes both VERSION and language-specific file
+- add version prompt and VERSION file to init wizard
+
+### Refactoring
+
+- extract shared retry module and wire into vrg-gh
+- remove credential selection from vrg-gh
+- replace account-based co-author with VRG_CO_AUTHOR env var
+- delete multi-account credential functions
+
+### Styling
+
+- apply ruff formatting to version module
+
 ## [2.0.27] - 2026-05-20
 
 ### Bug fixes
@@ -18,6 +73,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Documentation
 
+- agent identity design: GitHub Apps + VM isolation
+- update VM plans and specs for GitHub App credential model
+- implementation plan for vergil-tooling identity changes
 - vrg-release mechanized release workflow design
 - add duplicate tracking issue guard to vrg-release spec
 - clarify resume semantics require explicit --resume flag
