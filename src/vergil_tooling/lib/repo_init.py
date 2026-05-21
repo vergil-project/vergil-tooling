@@ -301,6 +301,8 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         "    with:\n",
         f"      language: {ctx.primary_language}\n",
         f"      versions: '{versions_json}'\n",
+        f"      container-tag: '{tag}'\n",
+        f"      container-suffix: {suffix}\n",
         "\n",
         "  quality:\n",
         "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0\n",
@@ -334,6 +336,8 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "    with:\n",
             f"      language: {ctx.primary_language}\n",
             f"      versions: '{versions_json}'\n",
+            f"      container-tag: '{tag}'\n",
+            f"      container-suffix: {suffix}\n",
         ]
     )
 
