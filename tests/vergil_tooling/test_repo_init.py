@@ -364,6 +364,7 @@ class TestStepClone:
                 side_effect=mock_subprocess_run,
             ),
             patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx, parent_dir=tmp_path)
 
@@ -375,7 +376,8 @@ class TestStepClone:
         (target / ".git").mkdir()
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
 
-        step_clone(ctx, parent_dir=tmp_path)
+        with patch("vergil_tooling.lib.repo_init.os.chdir"):
+            step_clone(ctx, parent_dir=tmp_path)
         assert ctx.work_dir == target
 
     def test_adopt_uses_cwd(self) -> None:
@@ -399,10 +401,42 @@ class TestStepClone:
             ),
             patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path),
             patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx)
 
         assert ctx.work_dir == target
+
+    def test_clone_changes_cwd(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        target = tmp_path / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir") as mock_chdir,
+        ):
+            step_clone(ctx, parent_dir=tmp_path)
+
+        mock_chdir.assert_called_once_with(target)
+
+    def test_already_cloned_changes_cwd(self, tmp_path: Path) -> None:
+        target = tmp_path / "vergil-vm"
+        target.mkdir()
+        (target / ".git").mkdir()
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        with patch("vergil_tooling.lib.repo_init.os.chdir") as mock_chdir:
+            step_clone(ctx, parent_dir=tmp_path)
+
+        mock_chdir.assert_called_once_with(target)
 
     def test_clone_aborted_by_user(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")

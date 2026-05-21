@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -460,6 +461,7 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
 
     if (target / ".git").is_dir():
         ctx.work_dir = target
+        os.chdir(ctx.work_dir)
         print(f"Step 2: {target} already cloned, skipping.")
         return
 
@@ -474,6 +476,7 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
         check=True,
     )
     ctx.work_dir = target
+    os.chdir(ctx.work_dir)
     print(f"  Cloned to {target}.")
 
 
