@@ -255,6 +255,8 @@ class TestRenderCiWorkflow:
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         assert "ci-quality.yml@v2.0" in content
+        assert "ci-audit.yml@v2.0" in content
+        assert "ci-test.yml@v2.0" in content
         assert "container-suffix: python" in content
         assert "ci-version-bump.yml@v2.0" in content
         assert "run-codeql: false" not in content
@@ -267,16 +269,39 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "container-suffix: base" in content
         assert "run-codeql: false" in content
-        assert content.count("container-suffix: base") == 5
-        assert content.count("container-tag: 'latest'") == 5
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
+        assert "ci-version-bump.yml@v2.0" in content
+        assert content.count("container-suffix: base") == 3
+        assert content.count("container-tag: 'latest'") == 3
 
-    def test_codeql_disabled_for_claude_plugin(self) -> None:
+    def test_shell_no_release_minimal_jobs(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "shell"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "version-bump" not in content
+        assert content.count("container-suffix: base") == 2
+        assert content.count("container-tag: 'latest'") == 2
+
+    def test_claude_plugin_skips_audit_and_test(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.primary_language = "claude-plugin"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
         assert "run-codeql: false" in content
+        assert "ci-audit.yml" not in content
+        assert "ci-test.yml" not in content
+        assert "ci-quality.yml@v2.0" in content
+        assert "ci-security.yml@v2.0" in content
 
     def test_no_version_bump_when_release_none(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -285,6 +310,15 @@ class TestRenderCiWorkflow:
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
         assert "version-bump" not in content
+
+    def test_integration_tests_emit_test_job_for_shell(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "shell"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.integration_tests = True
+        content = render_ci_workflow(ctx)
+        assert "ci-test.yml@v2.0" in content
 
 
 class TestRenderCdWorkflow:
