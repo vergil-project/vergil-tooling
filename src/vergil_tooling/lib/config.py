@@ -58,7 +58,6 @@ class PublishConfig:
     release: bool
     docs: bool
     consumer_refresh: str | None
-    docs_workflow: str
 
 
 @dataclass
@@ -122,7 +121,6 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         release=bool(publish_raw.get("release", False)),
         docs=bool(publish_raw.get("docs", True)),
         consumer_refresh=publish_raw.get("consumer-refresh"),
-        docs_workflow=str(publish_raw.get("docs-workflow", "Documentation")),
     )
 
     project = ProjectConfig(

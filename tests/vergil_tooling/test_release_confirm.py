@@ -22,41 +22,110 @@ def _ctx() -> ReleaseContext:
     return ctx
 
 
-def test_confirm_publish_succeeds() -> None:
+def test_confirm_publish_release_and_docs() -> None:
+    """Both release and docs enabled — watches CD, verifies all artifacts."""
     ctx = _ctx()
     with (
         patch(
             _MOD + ".github.read_output",
             side_effect=[
-                "12345",  # publish run id
-                "https://github.com/o/r/actions/runs/12345",  # publish run url
-                "67890",  # docs run id
-                "https://github.com/o/r/actions/runs/67890",  # docs run url
-                "",  # tag check (no error)
-                "",  # develop tag check
+                "12345",  # CD run id
+                "https://github.com/o/r/actions/runs/12345",  # CD run url
                 "https://github.com/o/r/releases/tag/v2.1.0",  # release url
             ],
         ),
         patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", return_value=True),
         patch(_MOD + ".config.read_config") as mock_config,
     ):
-        mock_config.return_value.publish.docs_workflow = "Documentation"
+        mock_config.return_value.publish.release = True
+        mock_config.return_value.publish.docs = True
         confirm_publish(ctx)
 
-    assert ctx.publish_run_id == "12345"
-    assert ctx.docs_run_id == "67890"
+    assert ctx.cd_run_id == "12345"
+    assert ctx.cd_run_url == "https://github.com/o/r/actions/runs/12345"
     assert ctx.tag == "v2.1.0"
+    assert ctx.develop_tag == "develop-v2.1.0"
+    assert ctx.release_url == "https://github.com/o/r/releases/tag/v2.1.0"
 
 
-def test_confirm_publish_fails_if_no_workflow_run() -> None:
+def test_confirm_publish_docs_only() -> None:
+    """release=false, docs=true — watches CD, verifies develop tag only."""
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "12345",  # CD run id
+                "https://github.com/o/r/actions/runs/12345",  # CD run url
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".config.read_config") as mock_config,
+    ):
+        mock_config.return_value.publish.release = False
+        mock_config.return_value.publish.docs = True
+        confirm_publish(ctx)
+
+    assert ctx.cd_run_id == "12345"
+    assert ctx.develop_tag == "develop-v2.1.0"
+    assert ctx.tag is None
+    assert ctx.release_url is None
+
+
+def test_confirm_publish_skips_cd_when_nothing_published() -> None:
+    """release=false, docs=false — skips CD, still verifies develop tag."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output") as mock_gh,
+        patch(_MOD + ".watch_workflow") as mock_watch,
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".config.read_config") as mock_config,
+    ):
+        mock_config.return_value.publish.release = False
+        mock_config.return_value.publish.docs = False
+        confirm_publish(ctx)
+
+    mock_gh.assert_not_called()
+    mock_watch.assert_not_called()
+    assert ctx.cd_run_id is None
+    assert ctx.develop_tag == "develop-v2.1.0"
+
+
+def test_confirm_publish_fails_if_no_cd_run() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".github.read_output", return_value=""),
         patch(_MOD + ".config.read_config") as mock_config,
-        pytest.raises(ReleaseError, match="No publish.yml run"),
+        pytest.raises(ReleaseError, match="No CD workflow run found"),
     ):
-        mock_config.return_value.publish.docs_workflow = "Documentation"
+        mock_config.return_value.publish.release = True
+        mock_config.return_value.publish.docs = True
+        confirm_publish(ctx)
+
+
+def test_confirm_publish_fails_if_tag_missing() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "12345",
+                "https://github.com/o/r/actions/runs/12345",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(_MOD + ".config.read_config") as mock_config,
+        pytest.raises(ReleaseError, match="Tag.*does not exist"),
+    ):
+        mock_config.return_value.publish.release = True
+        mock_config.return_value.publish.docs = True
         confirm_publish(ctx)
 
 
@@ -69,8 +138,7 @@ def test_confirm_publish_fails_if_develop_tag_missing() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "67890",
-                "https://github.com/o/r/actions/runs/67890",
+                "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
         patch(_MOD + ".watch_workflow"),
@@ -79,26 +147,6 @@ def test_confirm_publish_fails_if_develop_tag_missing() -> None:
         patch(_MOD + ".config.read_config") as mock_config,
         pytest.raises(ReleaseError, match="Develop boundary tag"),
     ):
-        mock_config.return_value.publish.docs_workflow = "Documentation"
-        confirm_publish(ctx)
-
-
-def test_confirm_publish_fails_if_tag_missing() -> None:
-    ctx = _ctx()
-    with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "12345",
-                "https://github.com/o/r/actions/runs/12345",
-                "67890",
-                "https://github.com/o/r/actions/runs/67890",
-            ],
-        ),
-        patch(_MOD + ".watch_workflow"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
-        patch(_MOD + ".config.read_config") as mock_config,
-        pytest.raises(ReleaseError, match="Tag.*does not exist"),
-    ):
-        mock_config.return_value.publish.docs_workflow = "Documentation"
+        mock_config.return_value.publish.release = True
+        mock_config.return_value.publish.docs = True
         confirm_publish(ctx)
