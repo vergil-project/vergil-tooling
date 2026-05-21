@@ -10,7 +10,8 @@ from pathlib import Path
 from vergil_tooling.lib.identity import (
     default_config_path,
     load_config,
-    resolve_project,
+    resolve_identity,
+    resolve_workspace,
 )
 
 _default_config_path = default_config_path
@@ -43,9 +44,9 @@ def main(argv: list[str] | None = None) -> None:
         description="Launch a Claude Code session inside an identity VM",
     )
     parser.add_argument(
-        "project",
+        "workspace",
         nargs="?",
-        help="Project short name (from identities.toml workspaces)",
+        help="Workspace path (relative to /projects, or absolute)",
     )
     parser.add_argument(
         "--shell",
@@ -54,7 +55,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--identity",
-        help="Identity name (default: resolved from project)",
+        help="Identity name (default: sole configured identity)",
     )
     parser.add_argument(
         "--config",
@@ -71,23 +72,20 @@ def main(argv: list[str] | None = None) -> None:
 
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
+    identity = resolve_identity(config, args.identity)
 
-    if args.project:
-        identity, workspace = resolve_project(config, args.project)
-    elif args.identity:
-        if args.identity not in config.identities:
-            print(f"ERROR: identity '{args.identity}' not found", file=sys.stderr)
-            raise SystemExit(1)
-        identity = config.identities[args.identity]
-        workspace = None
-    else:
-        print("ERROR: provide a project name or --identity", file=sys.stderr)
+    workspace: str | None = None
+    if args.workspace:
+        workspace = resolve_workspace(args.workspace)
+
+    if not args.workspace and not args.identity and not args.shell:
+        print("ERROR: provide a workspace path or --identity", file=sys.stderr)
         raise SystemExit(1)
 
     cmd = build_command(
         vm_instance=identity.vm_instance,
         workspace=workspace,
-        shell_only=args.shell or not args.project,
+        shell_only=args.shell,
         claude_args=args.claude_args or None,
     )
 

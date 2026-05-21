@@ -23,9 +23,6 @@ def config_dir(tmp_path: Path) -> Path:
         app_id = 12345
         installation_id = 67890
         private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
-
-        [identities.vergil.workspaces]
-        vergil-tooling = "/projects/vergil-project/vergil-tooling"
     """)
     )
     return tmp_path
@@ -112,7 +109,7 @@ def test_build_command_claude_args_ignored_in_shell_mode() -> None:
     ]
 
 
-def test_no_project_or_identity(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_workspace_or_identity(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
@@ -130,7 +127,7 @@ def test_identity_not_found(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -
         main(["--shell", "--identity", "nonexistent"])
 
 
-def test_main_identity_only(
+def test_main_shell_with_identity(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -150,7 +147,7 @@ def test_main_identity_only(
     assert execed[0][1] == ["limactl", "shell", "--start", "vergil-agent"]
 
 
-def test_main_launches_session(
+def test_main_relative_path(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -165,7 +162,7 @@ def test_main_launches_session(
         lambda prog, args: execed.append((prog, args)),
     )
 
-    main(["vergil-tooling"])
+    main(["vergil-project/vergil-tooling"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -174,6 +171,35 @@ def test_main_launches_session(
         "vergil-agent",
         "--workdir",
         "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+    ]
+
+
+def test_main_absolute_path(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session._default_config_path",
+        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+    )
+
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["/custom/absolute/path"])
+    assert len(execed) == 1
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/custom/absolute/path",
         "--",
         "claude",
     ]
@@ -194,7 +220,7 @@ def test_main_passes_claude_args(
         lambda prog, args: execed.append((prog, args)),
     )
 
-    main(["vergil-tooling", "--", "--model", "claude-opus-4-6"])
+    main(["vergil-project/vergil-tooling", "--", "--model", "claude-opus-4-6"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -221,7 +247,7 @@ def test_main_explicit_config(
     )
 
     cfg = str(config_dir / ".config" / "vergil" / "identities.toml")
-    main(["--config", cfg, "vergil-tooling"])
+    main(["--config", cfg, "vergil-project/vergil-tooling"])
     assert len(execed) == 1
     assert execed[0][1] == [
         "limactl",
@@ -232,4 +258,51 @@ def test_main_explicit_config(
         "/projects/vergil-project/vergil-tooling",
         "--",
         "claude",
+    ]
+
+
+def test_main_shell_default_identity(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session._default_config_path",
+        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+    )
+
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["--shell"])
+    assert len(execed) == 1
+    assert execed[0][1] == ["limactl", "shell", "--start", "vergil-agent"]
+
+
+def test_main_shell_with_workspace(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session._default_config_path",
+        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+    )
+
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    main(["--shell", "vergil-project/vergil-tooling"])
+    assert len(execed) == 1
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
     ]
