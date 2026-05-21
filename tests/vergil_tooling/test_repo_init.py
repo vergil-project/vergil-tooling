@@ -211,6 +211,7 @@ class TestRenderReadme:
         assert "# vergil-vm" in content
         assert "Lima VM image definitions" in content
         assert "GPL-3.0" in content
+        assert "## Table of Contents" in content
 
     def test_pages_url(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
