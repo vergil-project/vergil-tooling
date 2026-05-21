@@ -31,7 +31,10 @@ def test_h_flag(capsys: pytest.CaptureFixture[str]) -> None:
 def test_injects_token_and_calls_execvp(tmp_path: Path) -> None:
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="test-token-123"),
+        patch(
+            "vergil_tooling.bin.vrg_scorecard.github.get_installation_token",
+            return_value="test-token-123",
+        ),
         patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp") as mock_exec,
@@ -59,7 +62,7 @@ def test_build_docker_args_receives_correct_image_and_command(tmp_path: Path) ->
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value="tok"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
@@ -85,7 +88,7 @@ def test_no_args_still_runs_scorecard(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value="tok"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
@@ -103,7 +106,7 @@ def test_cli_prefix_used(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/dev-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value="tok"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),
@@ -128,15 +131,16 @@ def test_prefix_missing_value(capsys: pytest.CaptureFixture[str]) -> None:
 # -- error handling -----------------------------------------------------------
 
 
-def test_human_token_failure_propagates(tmp_path: Path) -> None:
-    import pytest as _pytest
-
+def test_no_token_returns_error(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", side_effect=SystemExit(1)),
-        _pytest.raises(SystemExit, match="1"),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value=None),
     ):
-        main([])
+        assert main([]) == 1
+    assert "no GitHub App credentials" in capsys.readouterr().err
 
 
 # -- argv=None default --------------------------------------------------------
@@ -146,7 +150,7 @@ def test_argv_none_uses_sys_argv(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
         patch("vergil_tooling.bin.vrg_scorecard.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_scorecard._human_token", return_value="tok"),
+        patch("vergil_tooling.bin.vrg_scorecard.github.get_installation_token", return_value="tok"),
         patch("vergil_tooling.bin.vrg_scorecard.assert_docker_available"),
         patch("vergil_tooling.bin.vrg_scorecard.build_docker_args") as mock_build,
         patch("vergil_tooling.bin.vrg_scorecard.os.execvp"),

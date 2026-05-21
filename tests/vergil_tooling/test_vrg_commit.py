@@ -96,9 +96,7 @@ def test_parse_args_with_scope_and_body() -> None:
 
 
 def test_parse_args_revert_type() -> None:
-    args = parse_args(
-        ["--type", "revert", "--scope", "auth", "--message", "undo token change"]
-    )
+    args = parse_args(["--type", "revert", "--scope", "auth", "--message", "undo token change"])
     assert args.commit_type == "revert"
 
 
@@ -125,9 +123,7 @@ def test_main_with_staged_changes(tmp_path: Path) -> None:
         _commit_environment(tmp_path),
         patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
     ):
-        result = main(
-            ["--type", "feat", "--scope", "core", "--message", "add feature"]
-        )
+        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
     assert result == 0
     assert commit_file_content.startswith("feat(core): add feature\n")
     assert "Co-Authored-By: test-agent <test-agent@test.com>" in commit_file_content
@@ -215,10 +211,7 @@ def test_co_author_from_env_var(tmp_path: Path) -> None:
     ):
         result = main(_DEFAULT_ARGS)
     assert result == 0
-    assert (
-        "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
-        in commit_file_content
-    )
+    assert "Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>" in commit_file_content
 
 
 def test_no_co_author_when_env_var_unset(tmp_path: Path) -> None:

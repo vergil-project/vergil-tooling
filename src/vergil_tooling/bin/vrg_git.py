@@ -185,12 +185,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-git: {flag_err}", file=sys.stderr)
             return 1
 
-        env = None
-        if subcmd in _REMOTE_SUBCOMMANDS:
-            token = github.get_installation_token()
-            if token is not None:
-                env = _git_auth_env(token)
-        result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
         return result.returncode
 
     if subcmd not in _ALLOWED_SIMPLE:

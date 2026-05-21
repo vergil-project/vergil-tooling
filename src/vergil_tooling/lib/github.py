@@ -12,9 +12,8 @@ import logging
 import os
 import subprocess
 import time
-from typing import Any
-
 from pathlib import Path
+from typing import Any
 
 from vergil_tooling.lib import retry
 
@@ -70,9 +69,7 @@ def _generate_jwt(app_id: str, key_path: Path) -> str:
 
     now = int(time.time())
     header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}).encode())
-    payload = b64url(
-        json.dumps({"iat": now - 60, "exp": now + 600, "iss": int(app_id)}).encode()
-    )
+    payload = b64url(json.dumps({"iat": now - 60, "exp": now + 600, "iss": int(app_id)}).encode())
 
     signing_input = f"{header}.{payload}"
 

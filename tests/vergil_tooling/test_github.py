@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import json
 import subprocess
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _real_gh_env = github._gh_env
 
@@ -714,7 +717,7 @@ class TestGetInstallationToken:
         ):
             mock_run.return_value = _completed(stdout="ghs_install_token_abc\n")
             token = github.get_installation_token()
-        assert token == "ghs_install_token_abc"
+        assert token == "ghs_install_token_abc"  # noqa: S105
         call_args = mock_run.call_args[0][0]
         assert "/app/installations/67890/access_tokens" in " ".join(call_args)
 
@@ -762,4 +765,4 @@ class TestGetInstallationToken:
         ):
             mock_run.return_value = _completed(stdout="new_token\n")
             token = github.get_installation_token()
-        assert token == "new_token"
+        assert token == "new_token"  # noqa: S105
