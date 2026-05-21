@@ -31,7 +31,7 @@ software:
 
 | Plan | Scope | Deliverable |
 |---|---|---|
-| **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test, CI | `limactl start` produces a working identity VM |
+| **1. Repository + Working VM** (this plan) | vergil-vm repo, Lima template, provisioning, build, test | `limactl start` produces a working identity VM |
 | 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM |
 | 3. Credential Provisioning | GitHub App credentials (App ID, private key, installation token exchange), GHCR auth | VM boots with agent identity credentials |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) |
@@ -100,12 +100,12 @@ site, branch structure, GitHub config, GitHub Pages). Steps
 that don't apply (docs site, Pages) are skipped based on the
 configuration above.
 
-**What the init tool creates vs. what this plan replaces:**
+**What the init tool creates vs. what this plan extends:**
 The init tool generates a baseline `.gitignore` and a standard
 CI workflow (`.github/workflows/ci.yml`). Task 1 extends the
-`.gitignore` with Lima-specific entries, and Task 5 replaces
-the standard CI workflow with a VM-specific version. Both
-tasks account for these init-generated files already existing.
+`.gitignore` with Lima-specific entries. The CI workflow is
+used as-is — `vrg-validate` already runs shellcheck and
+yamllint as common checks for shell-language repos.
 
 ### 3. Create the VERSION file
 
@@ -149,7 +149,7 @@ development workflow. The agent can create worktrees, use
 | `.claude/settings.json` | Init wizard | Claude Code settings — created by `vrg-github-repo-init` step 4 |
 | `README.md` | Init wizard | Project README — created by `vrg-github-repo-init` step 4 |
 | `.gitignore` | Init wizard + Extend | Baseline from init; Lima-specific entries added in Task 1 |
-| `.github/workflows/ci.yml` | Init wizard + Replace | Standard CI from init; replaced with VM-specific version in Task 5 |
+| `.github/workflows/ci.yml` | Init wizard | Standard CI from init; used as-is (vrg-validate covers shellcheck + yamllint) |
 | `VERSION` | Prerequisite step 3 | Semver version (2.1.0) — created manually after init wizard |
 | `templates/agent.yaml` | Create | Lima VM template with all provisioning |
 | `tests/run-tests.sh` | Create | Test runner (shells into VM, runs each test) |
@@ -626,62 +626,7 @@ vrg-commit --type feat --scope vm --message "build script for VM creation and te
 
 ---
 
-### Task 5: CI Workflow
-
-Static analysis only — shellcheck for all bash scripts and
-yamllint for the Lima template. Running an actual VM in CI
-requires QEMU on the GitHub Actions runner, which is deferred
-to Plan 6 (Distribution).
-
-The init tool generated a standard CI workflow. This task
-replaces it with a VM-specific version that runs shellcheck
-and yamllint instead of the standard language-based checks.
-
-**Files:**
-- Replace: `.github/workflows/ci.yml` (overwrite init-generated version)
-
-- [ ] **Step 1: Replace the CI workflow with VM-specific version**
-
-```yaml
-# .github/workflows/ci.yml
-name: CI
-
-on:
-  pull_request:
-    branches: [develop, main]
-
-permissions:
-  contents: read
-
-jobs:
-  lint:
-    name: lint
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: shellcheck
-      run: |
-        sudo apt-get update && sudo apt-get install -y shellcheck
-        find . -name '*.sh' -not -path './.git/*' \
-          -exec shellcheck --severity=warning {} +
-
-    - name: yamllint
-      run: |
-        pip install yamllint
-        yamllint --strict templates/
-```
-
-- [ ] **Step 2: Commit**
-
-```bash
-vrg-commit --type ci --scope vm --message "CI workflow for static analysis" \
-  --body "shellcheck for bash scripts, yamllint for Lima templates"
-```
-
----
-
-### Task 6: Manual Validation
+### Task 5: Manual Validation
 
 This task is not automated — it requires a human or agent
 with Lima installed on macOS to run the build and verify the
