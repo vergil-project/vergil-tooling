@@ -256,6 +256,7 @@ class TestRenderCiWorkflow:
         assert "ci-quality.yml@v2.0" in content
         assert "container-suffix: python" in content
         assert "ci-version-bump.yml@v2.0" in content
+        assert "run-codeql: false" not in content
 
     def test_shell_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -264,6 +265,15 @@ class TestRenderCiWorkflow:
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
         assert "container-suffix: base" in content
+        assert "run-codeql: false" in content
+
+    def test_codeql_disabled_for_claude_plugin(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "claude-plugin"
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "run-codeql: false" in content
 
     def test_no_version_bump_when_release_none(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")

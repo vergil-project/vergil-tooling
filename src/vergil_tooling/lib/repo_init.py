@@ -252,6 +252,22 @@ def _container_tag(language: str, versions: list[str]) -> str:
     return "latest"
 
 
+_CODEQL_LANGUAGES = frozenset(
+    {
+        "python",
+        "go",
+        "java",
+        "ruby",
+        "cpp",
+        "csharp",
+        "javascript",
+        "typescript",
+        "swift",
+        "kotlin",
+    }
+)
+
+
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
     suffix = _container_suffix(ctx.primary_language)
@@ -305,13 +321,21 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         "      run-security: ${{ inputs.run-security != 'false' }}\n",
         f"      container-tag: '{tag}'\n",
         f"      container-suffix: {suffix}\n",
-        "\n",
-        "  test:\n",
-        "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
-        "    with:\n",
-        f"      language: {ctx.primary_language}\n",
-        f"      versions: '{versions_json}'\n",
     ]
+
+    if ctx.primary_language not in _CODEQL_LANGUAGES:
+        lines.append("      run-codeql: false\n")
+
+    lines.extend(
+        [
+            "\n",
+            "  test:\n",
+            "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
+            "    with:\n",
+            f"      language: {ctx.primary_language}\n",
+            f"      versions: '{versions_json}'\n",
+        ]
+    )
 
     if ctx.release_model != "none":
         lines.extend(
