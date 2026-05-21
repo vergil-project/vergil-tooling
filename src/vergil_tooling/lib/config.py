@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -27,6 +28,16 @@ _PROJECT_FIELDS = (
     "release-model",
     "primary-language",
 )
+
+_KNOWN_SECTIONS = frozenset({"project", "dependencies", "markdownlint", "ci", "publish"})
+
+_KNOWN_KEYS: dict[str, frozenset[str]] = {
+    "project": frozenset(_PROJECT_FIELDS),
+    "dependencies": frozenset({"vergil"}),
+    "markdownlint": frozenset({"ignore"}),
+    "ci": frozenset({"versions", "integration-tests"}),
+    "publish": frozenset({"release", "docs", "consumer-refresh"}),
+}
 
 
 class ConfigError(Exception):
@@ -69,8 +80,25 @@ class StConfig:
     publish: PublishConfig
 
 
+def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
+    for section in raw:
+        if section not in _KNOWN_SECTIONS:
+            print(f"vergil.toml: unrecognized section [{section}]", file=sys.stderr)
+            continue
+        if not isinstance(raw[section], dict):
+            continue
+        known = _KNOWN_KEYS.get(section, frozenset())
+        for key in raw[section]:
+            if key not in known:
+                print(
+                    f"vergil.toml: unrecognized key '{key}' in [{section}]",
+                    file=sys.stderr,
+                )
+
+
 def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
     """Parse and validate a raw TOML dict into StConfig."""
+    _warn_unrecognized_keys(raw)
     project_raw = raw.get("project", {})
 
     for field in _PROJECT_FIELDS:
