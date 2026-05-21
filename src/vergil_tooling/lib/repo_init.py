@@ -41,6 +41,7 @@ class RepoInitContext:
     publish_docs: bool = True
     vergil_version: str = "v2.0"
     license_type: str = "GPL-3.0"
+    initial_version: str = "0.1.0"
 
     @property
     def repo(self) -> str:
@@ -597,6 +598,8 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     license_options = ["GPL-3.0", "MIT", "Apache-2.0", "none"]
     ctx.license_type = prompt_choice("License", license_options, default="GPL-3.0")
 
+    ctx.initial_version = prompt_free_text("Initial version", default="0.1.0")
+
     content = render_vergil_toml(ctx)
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
@@ -616,6 +619,9 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     if ctx.work_dir is None:  # pragma: no cover
         raise RuntimeError("work_dir not set")
     wd = ctx.work_dir
+
+    # VERSION (canonical version source)
+    (wd / "VERSION").write_text(ctx.initial_version + "\n")
 
     # .githooks/pre-commit
     hooks_dir = wd / ".githooks"
