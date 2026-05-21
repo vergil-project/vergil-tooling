@@ -295,12 +295,43 @@ class TestRenderCdWorkflow:
         content = render_cd_workflow(ctx)
         assert "cd-docs.yml@v2.0" in content
         assert "cd-release" not in content
+        assert "attestations: write" not in content
 
     def test_no_docs_job(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.publish_docs = False
         content = render_cd_workflow(ctx)
         assert "cd-docs" not in content
+
+    def test_release_job(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12", "3.13", "3.14"]
+        content = render_cd_workflow(ctx)
+        assert "cd-release.yml@v2.0" in content
+        assert "if: github.ref == 'refs/heads/main'" in content
+        assert "language: python" in content
+        assert 'container-tag: "3.14"' in content
+        assert "secrets: inherit" in content
+        assert "attestations: write" in content
+        assert "id-token: write" in content
+        assert "pull-requests: write" in content
+        assert "cd-docs" not in content
+
+    def test_docs_and_release(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = True
+        ctx.publish_release = True
+        ctx.primary_language = "go"
+        ctx.ci_versions = ["1.22"]
+        content = render_cd_workflow(ctx)
+        assert "cd-docs.yml@v2.0" in content
+        assert "cd-release.yml@v2.0" in content
+        assert "language: go" in content
+        assert 'container-tag: "latest"' in content
+        assert "attestations: write" in content
 
 
 class TestRenderMkdocsYml:
@@ -626,7 +657,24 @@ class TestStepCiCdWorkflows:
         assert (tmp_path / ".github" / "workflows" / "ci.yml").exists()
         assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
 
-    def test_skips_cd_when_no_docs(self, tmp_path: Path) -> None:
+    def test_creates_cd_for_release_only(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.work_dir = tmp_path
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = False
+        ctx.publish_release = True
+
+        with patch("vergil_tooling.lib.repo_init.git.run"):
+            step_ci_cd_workflows(ctx)
+
+        assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
+        content = (tmp_path / ".github" / "workflows" / "cd.yml").read_text()
+        assert "cd-release.yml@v2.0" in content
+        assert "cd-docs" not in content
+
+    def test_skips_cd_when_no_docs_or_release(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.work_dir = tmp_path
         ctx.primary_language = "shell"
