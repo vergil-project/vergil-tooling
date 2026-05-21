@@ -3,10 +3,7 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
-import shlex
-import subprocess
 import sys
 from pathlib import Path
 
@@ -23,59 +20,21 @@ def build_command(
     *,
     vm_instance: str,
     workspace: str | None,
-    api_key: str,
     shell_only: bool,
+    claude_args: list[str] | None = None,
 ) -> list[str]:
-    cmd = ["limactl", "shell", vm_instance, "--"]
-    env_prefix = f"ANTHROPIC_API_KEY={api_key}"
-    safe_workspace = shlex.quote(workspace) if workspace else None
+    cmd = ["limactl", "shell", "--start", vm_instance]
 
-    if safe_workspace and not shell_only:
-        cmd.extend(
-            [
-                "env",
-                env_prefix,
-                "bash",
-                "-lc",
-                f"cd {safe_workspace} && claude",
-            ]
-        )
-    elif safe_workspace:
-        cmd.extend(
-            [
-                "env",
-                env_prefix,
-                "bash",
-                "-lc",
-                f"cd {safe_workspace} && exec zsh",
-            ]
-        )
-    else:
-        cmd.extend(["env", env_prefix, "zsh", "-l"])
+    if workspace:
+        cmd.extend(["--workdir", workspace])
+
+    if not shell_only:
+        cmd.append("--")
+        cmd.append("claude")
+        if claude_args:
+            cmd.extend(claude_args)
 
     return cmd
-
-
-def check_vm_running(instance: str) -> bool:
-    result = subprocess.run(
-        ["limactl", "list", "--json"],  # noqa: S603, S607
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        return False
-    vms = json.loads(result.stdout)
-    return any(vm["name"] == instance and vm["status"] == "Running" for vm in vms)
-
-
-def ensure_vm_running(instance: str) -> None:
-    if check_vm_running(instance):
-        return
-    print(f"Starting VM '{instance}'...")
-    subprocess.run(  # noqa: S603
-        ["limactl", "start", instance],  # noqa: S607
-        check=True,
-    )
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -102,13 +61,13 @@ def main(argv: list[str] | None = None) -> None:
         type=Path,
         help="Path to identities.toml",
     )
+    parser.add_argument(
+        "claude_args",
+        nargs=argparse.REMAINDER,
+        help="Arguments passed through to Claude Code (after --)",
+    )
 
     args = parser.parse_args(argv)
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set in environment", file=sys.stderr)
-        raise SystemExit(1)
 
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -125,13 +84,11 @@ def main(argv: list[str] | None = None) -> None:
         print("ERROR: provide a project name or --identity", file=sys.stderr)
         raise SystemExit(1)
 
-    ensure_vm_running(identity.vm_instance)
-
     cmd = build_command(
         vm_instance=identity.vm_instance,
         workspace=workspace,
-        api_key=api_key,
         shell_only=args.shell or not args.project,
+        claude_args=args.claude_args or None,
     )
 
     os.execvp(cmd[0], cmd)  # noqa: S606, S607

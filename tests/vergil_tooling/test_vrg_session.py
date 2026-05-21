@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import json
-import subprocess
 import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.bin.vrg_session import build_command, check_vm_running, main
+from vergil_tooling.bin.vrg_session import build_command, main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -37,52 +35,84 @@ def test_build_command_claude_session() -> None:
     cmd = build_command(
         vm_instance="vergil-agent",
         workspace="/projects/vergil-project/vergil-tooling",
-        api_key="sk-test-key",
         shell_only=False,
     )
-    assert cmd[0] == "limactl"
-    assert cmd[1] == "shell"
-    assert cmd[2] == "vergil-agent"
-    joined = " ".join(cmd)
-    assert "ANTHROPIC_API_KEY=sk-test-key" in joined
-    assert "claude" in joined
+    assert cmd == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+    ]
 
 
 def test_build_command_shell_only() -> None:
     cmd = build_command(
         vm_instance="vergil-agent",
         workspace="/projects/vergil-project/vergil-tooling",
-        api_key="sk-test-key",
         shell_only=True,
     )
-    joined = " ".join(cmd)
-    assert "claude" not in joined
-    assert "cd" in joined
+    assert cmd == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+    ]
 
 
 def test_build_command_no_workspace() -> None:
     cmd = build_command(
         vm_instance="vergil-agent",
         workspace=None,
-        api_key="sk-test-key",
         shell_only=True,
     )
-    joined = " ".join(cmd)
-    assert "cd" not in joined
+    assert cmd == ["limactl", "shell", "--start", "vergil-agent"]
 
 
-def test_missing_api_key(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_session._default_config_path",
-        lambda: config_dir / ".config" / "vergil" / "identities.toml",
+def test_build_command_with_claude_args() -> None:
+    cmd = build_command(
+        vm_instance="vergil-agent",
+        workspace="/projects/vergil-project/vergil-tooling",
+        shell_only=False,
+        claude_args=["--model", "claude-opus-4-6"],
     )
-    with pytest.raises(SystemExit):
-        main(["vergil-tooling"])
+    assert cmd == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+        "--model",
+        "claude-opus-4-6",
+    ]
+
+
+def test_build_command_claude_args_ignored_in_shell_mode() -> None:
+    cmd = build_command(
+        vm_instance="vergil-agent",
+        workspace="/projects/vergil-project/vergil-tooling",
+        shell_only=True,
+        claude_args=["--model", "claude-opus-4-6"],
+    )
+    assert cmd == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+    ]
 
 
 def test_no_project_or_identity(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
@@ -92,7 +122,6 @@ def test_no_project_or_identity(config_dir: Path, monkeypatch: pytest.MonkeyPatc
 
 
 def test_identity_not_found(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
@@ -101,72 +130,14 @@ def test_identity_not_found(config_dir: Path, monkeypatch: pytest.MonkeyPatch) -
         main(["--shell", "--identity", "nonexistent"])
 
 
-def test_check_vm_running_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(
-        *args: object,
-        **kwargs: object,  # noqa: ARG001
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps([{"name": "vergil-agent", "status": "Running"}]),
-        )
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert check_vm_running("vergil-agent") is True
-
-
-def test_check_vm_running_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(
-        *args: object,
-        **kwargs: object,  # noqa: ARG001
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps([{"name": "vergil-agent", "status": "Stopped"}]),
-        )
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert check_vm_running("vergil-agent") is False
-
-
-def test_check_vm_running_command_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(
-        *args: object,
-        **kwargs: object,  # noqa: ARG001
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(args=[], returncode=1, stdout="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert check_vm_running("vergil-agent") is False
-
-
-def test_check_vm_running_not_in_list(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fake_run(
-        *args: object,
-        **kwargs: object,  # noqa: ARG001
-    ) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(
-            args=[],
-            returncode=0,
-            stdout=json.dumps([{"name": "other-vm", "status": "Running"}]),
-        )
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    assert check_vm_running("vergil-agent") is False
-
-
 def test_main_identity_only(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.check_vm_running", lambda _: True)
 
     execed: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(
@@ -176,19 +147,17 @@ def test_main_identity_only(
 
     main(["--shell", "--identity", "vergil"])
     assert len(execed) == 1
-    assert execed[0][0] == "limactl"
+    assert execed[0][1] == ["limactl", "shell", "--start", "vergil-agent"]
 
 
 def test_main_launches_session(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.check_vm_running", lambda _: True)
 
     execed: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(
@@ -198,28 +167,69 @@ def test_main_launches_session(
 
     main(["vergil-tooling"])
     assert len(execed) == 1
-    assert "claude" in " ".join(execed[0][1])
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+    ]
 
 
-def test_main_starts_vm_if_not_running(
+def test_main_passes_claude_args(
     config_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_session._default_config_path",
         lambda: config_dir / ".config" / "vergil" / "identities.toml",
     )
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.check_vm_running", lambda _: False)
 
-    started: list[list[str]] = []
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
 
-    def fake_run(cmd: list[str], **_kwargs: object) -> None:
-        started.append(cmd)
+    main(["vergil-tooling", "--", "--model", "claude-opus-4-6"])
+    assert len(execed) == 1
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+        "--model",
+        "claude-opus-4-6",
+    ]
 
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.subprocess.run", fake_run)
-    monkeypatch.setattr("vergil_tooling.bin.vrg_session.os.execvp", lambda *_: None)
 
-    main(["vergil-tooling"])
-    assert len(started) == 1
-    assert started[0] == ["limactl", "start", "vergil-agent"]
+def test_main_explicit_config(
+    config_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execed: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_session.os.execvp",
+        lambda prog, args: execed.append((prog, args)),
+    )
+
+    cfg = str(config_dir / ".config" / "vergil" / "identities.toml")
+    main(["--config", cfg, "vergil-tooling"])
+    assert len(execed) == 1
+    assert execed[0][1] == [
+        "limactl",
+        "shell",
+        "--start",
+        "vergil-agent",
+        "--workdir",
+        "/projects/vergil-project/vergil-tooling",
+        "--",
+        "claude",
+    ]
