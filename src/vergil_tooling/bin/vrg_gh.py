@@ -1,7 +1,7 @@
 """Safe gh wrapper for AI agent sessions.
 
-Enforces a two-level subcommand allowlist, flag deny lists, and selects
-credentials based on command context.
+Enforces a two-level subcommand allowlist and flag deny lists.
+Injects GitHub App installation tokens when available.
 """
 
 from __future__ import annotations
@@ -10,8 +10,7 @@ import os
 import subprocess
 import sys
 
-from vergil_tooling.lib import retry
-from vergil_tooling.lib.github import _discover_accounts
+from vergil_tooling.lib import github, retry
 
 _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "create", "close", "edit", "list", "comment"},
@@ -37,26 +36,6 @@ _DENIED_TOP: dict[str, str] = {
     "api": "gh api is denied by vrg-gh.",
     "auth": "gh auth is denied by vrg-gh.",
 }
-
-_ESCALATED_COMMANDS: set[tuple[str, str]] = {
-    ("pr", "merge"),
-    ("issue", "close"),
-}
-
-
-def _get_token(command: list[str]) -> str:  # noqa: ARG001
-    # Workaround: always use human credentials while agent account is
-    # flagged by GitHub (#799). Revert when the flag is lifted.
-    human, _agent = _discover_accounts()
-    account = human
-
-    result = subprocess.run(  # noqa: S603
-        ["gh", "auth", "token", "-u", account],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return result.stdout.strip()
 
 
 def _validate_merge_context(argv: list[str]) -> str | None:
@@ -121,8 +100,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"vrg-gh: pr merge is denied. {err}", file=sys.stderr)
             return 1
 
-    token = _get_token(argv)
-    env = {**os.environ, "GH_TOKEN": token}
+    token = github.get_installation_token()
+    env: dict[str, str] | None = None
+    if token is not None:
+        env = {**os.environ, "GH_TOKEN": token}
     try:
         result = retry.run_with_retry(
             ["gh", *argv],  # noqa: S607
