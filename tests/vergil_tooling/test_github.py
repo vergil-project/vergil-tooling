@@ -29,7 +29,18 @@ def test_run_delegates_to_subprocess() -> None:
     with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         github.run("pr", "list")
-    mock_run.assert_called_once_with(("gh", "pr", "list"), check=True)
+    mock_run.assert_called_once_with(
+        ("gh", "pr", "list"), check=True, capture_output=True, text=True
+    )
+
+
+def test_run_prints_captured_output(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(stdout="PR merged\n", stderr="warning\n")
+        github.run("pr", "merge")
+    captured = capsys.readouterr()
+    assert "PR merged" in captured.out
+    assert "warning" in captured.err
 
 
 def test_read_output_returns_stripped_stdout() -> None:

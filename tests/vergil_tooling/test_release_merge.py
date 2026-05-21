@@ -13,7 +13,7 @@ _MOD = "vergil_tooling.lib.release.merge"
 def test_merge_succeeds_when_checks_pass() -> None:
     with (
         patch(_MOD + ".github.mergeable", return_value="MERGEABLE"),
-        patch(_MOD + ".github.wait_for_checks"),
+        patch(_MOD + ".wait_for_checks"),
         patch(_MOD + ".github.merge_state_status", return_value="CLEAN"),
         patch(_MOD + ".github.merge") as mock_merge,
     ):
@@ -33,7 +33,7 @@ def test_merge_updates_branch_when_behind() -> None:
     states = iter(["BEHIND", "CLEAN"])
     with (
         patch(_MOD + ".github.mergeable", return_value="MERGEABLE"),
-        patch(_MOD + ".github.wait_for_checks"),
+        patch(_MOD + ".wait_for_checks"),
         patch(_MOD + ".github.merge_state_status", side_effect=states),
         patch(_MOD + ".github.update_branch") as mock_update,
         patch(_MOD + ".github.merge"),
@@ -45,7 +45,7 @@ def test_merge_updates_branch_when_behind() -> None:
 def test_merge_gives_up_after_max_updates() -> None:
     with (
         patch(_MOD + ".github.mergeable", return_value="MERGEABLE"),
-        patch(_MOD + ".github.wait_for_checks"),
+        patch(_MOD + ".wait_for_checks"),
         patch(_MOD + ".github.merge_state_status", return_value="BEHIND"),
         patch(_MOD + ".github.update_branch"),
         pytest.raises(ReleaseError, match="still behind"),

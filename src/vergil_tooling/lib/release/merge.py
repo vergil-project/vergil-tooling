@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.subprocess import wait_for_checks
 
 _MAX_BRANCH_UPDATES = 5
 
 
-def wait_and_merge(pr_url: str, *, phase: str) -> None:
+def wait_and_merge(pr_url: str, *, phase: str, verbose: bool = False) -> None:
     """Wait for checks, handle behind-base, then merge."""
     updates = 0
     while True:
@@ -20,7 +21,7 @@ def wait_and_merge(pr_url: str, *, phase: str) -> None:
             )
 
         print(f"Waiting for checks on {pr_url}...")
-        github.wait_for_checks(pr_url)
+        wait_for_checks(pr_url, verbose=verbose)
 
         if github.merge_state_status(pr_url) != "BEHIND":
             break

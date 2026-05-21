@@ -204,14 +204,19 @@ def test_bump_claude_plugin(tmp_path: Path) -> None:
 
 
 def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
+    import subprocess as _sp
+
     _write_toml(tmp_path, "python")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
-    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
+    cp = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    with patch("vergil_tooling.lib.version.subprocess.run", return_value=cp) as mock_run:
         bump(tmp_path)
         mock_run.assert_called_once_with(
             ["uv", "lock"],
             cwd=tmp_path,
             check=True,
+            capture_output=True,
+            text=True,
         )
 
 
@@ -224,6 +229,8 @@ def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
             ["cargo", "update", "--workspace"],
             cwd=tmp_path,
             check=True,
+            capture_output=True,
+            text=True,
         )
 
 
@@ -238,6 +245,8 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
             ["bundle", "install"],
             cwd=tmp_path,
             check=True,
+            capture_output=True,
+            text=True,
         )
 
 

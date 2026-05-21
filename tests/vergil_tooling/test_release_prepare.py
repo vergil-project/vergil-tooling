@@ -118,6 +118,8 @@ def test_normalize_trailing_newline(tmp_path: Path) -> None:
 
 
 def test_generate_changelog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import subprocess as _sp
+
     monkeypatch.chdir(tmp_path)
     ctx = ReleaseContext(
         repo="owner/repo",
@@ -128,8 +130,9 @@ def test_generate_changelog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n")
     (tmp_path / "releases").mkdir()
     (tmp_path / "releases" / "v2.1.0.md").write_text("notes\n\n")
+    cp = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with (
-        patch(_MOD + ".subprocess.run"),
+        patch(_MOD + ".subprocess.run", return_value=cp),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value="M CHANGELOG.md"),
     ):

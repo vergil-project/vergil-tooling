@@ -43,6 +43,13 @@ def test_orchestrator_runs_all_phases() -> None:
     m_handoff.assert_called_once_with(ctx)
 
 
+def test_format_elapsed_minutes() -> None:
+    from vergil_tooling.lib.release.orchestrator import _format_elapsed
+
+    assert _format_elapsed(90) == "1m30s"
+    assert _format_elapsed(125) == "2m05s"
+
+
 def test_phase_details_includes_ctx_fields() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
@@ -133,7 +140,9 @@ def test_merge_release_calls_wait_and_merge() -> None:
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
     with patch(_MOD + ".wait_and_merge") as m_wm:
         merge_release(ctx)
-    m_wm.assert_called_once_with("https://github.com/o/r/pull/100", phase="merge-release")
+    m_wm.assert_called_once_with(
+        "https://github.com/o/r/pull/100", phase="merge-release", verbose=False
+    )
     assert ctx.release_merge_sha == "merged"
 
 

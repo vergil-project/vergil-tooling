@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, github
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.subprocess import watch_workflow
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -48,14 +49,7 @@ def _watch_workflow(ctx: ReleaseContext, workflow: str, label: str) -> None:
             message=f"No {workflow} run found on main.",
         )
 
-    github.run(
-        "run",
-        "watch",
-        "--repo",
-        ctx.repo,
-        "--exit-status",
-        run_id,
-    )
+    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose)
 
     run_url = github.read_output(
         "run",

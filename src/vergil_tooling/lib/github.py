@@ -155,7 +155,11 @@ def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[st
 
 def run(*args: str) -> None:
     """Run a gh command and raise on failure."""
-    _run_with_retry(("gh", *args), check=True)  # noqa: S607
+    result = _run_with_retry(("gh", *args), check=True, capture_output=True, text=True)  # noqa: S607
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
 
 
 def read_output(*args: str) -> str:
