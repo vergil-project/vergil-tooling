@@ -548,6 +548,7 @@ class TestStepGenerateConfig:
                 "y",  # publish docs
                 "",  # vergil version (default v2.0)
                 "1",  # license: GPL-3.0
+                "",  # initial version (default 0.1.0)
             ]
         )
 
@@ -602,7 +603,7 @@ class TestStepGenerateConfig:
         (tmp_path / "vergil.toml").write_text(existing)
 
         # All defaults accepted (empty input)
-        inputs = iter([""] * 11)
+        inputs = iter([""] * 12)
 
         calls: list[tuple[str, ...]] = []
 
@@ -635,6 +636,8 @@ class TestStepScaffoldConfigFiles:
         with patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run):
             step_scaffold_config_files(ctx)
 
+        assert (tmp_path / "VERSION").exists()
+        assert (tmp_path / "VERSION").read_text() == "0.1.0\n"
         assert (tmp_path / ".githooks" / "pre-commit").exists()
         assert (tmp_path / ".githooks" / "pre-commit").stat().st_mode & 0o111
         assert (tmp_path / "CLAUDE.md").exists()

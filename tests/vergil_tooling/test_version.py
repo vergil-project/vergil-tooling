@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.version import bump, show, show_major_minor
+from vergil_tooling.lib.version import VersionSyncError, bump, show, show_major_minor
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -30,6 +30,7 @@ def _write_toml(tmp_path: Path, language: str) -> None:
 
 def test_show_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.2.3\n")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.2.3"\n')
     assert show(tmp_path) == "1.2.3"
 
@@ -42,12 +43,14 @@ def test_show_generic_version_file(tmp_path: Path) -> None:
 
 def test_show_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.3.7\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
     assert show(tmp_path) == "0.3.7"
 
 
 def test_show_ruby(tmp_path: Path) -> None:
     _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("4.1.0\n")
     version_dir = tmp_path / "lib" / "mq" / "rest" / "admin"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '4.1.0'\n")
@@ -56,6 +59,7 @@ def test_show_ruby(tmp_path: Path) -> None:
 
 def test_show_go(tmp_path: Path) -> None:
     _write_toml(tmp_path, "go")
+    (tmp_path / "VERSION").write_text("1.0.5\n")
     pkg_dir = tmp_path / "mqrestadmin"
     pkg_dir.mkdir()
     (pkg_dir / "version.go").write_text('package mqrestadmin\n\nVersion = "1.0.5"\n')
@@ -64,12 +68,14 @@ def test_show_go(tmp_path: Path) -> None:
 
 def test_show_java(tmp_path: Path) -> None:
     _write_toml(tmp_path, "java")
+    (tmp_path / "VERSION").write_text("3.2.1\n")
     (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
     assert show(tmp_path) == "3.2.1"
 
 
 def test_show_claude_plugin(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
+    (tmp_path / "VERSION").write_text("1.4.19\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.4.19"\n}\n')
@@ -85,47 +91,96 @@ def test_show_major_minor(tmp_path: Path) -> None:
     assert show_major_minor(tmp_path) == "1.5"
 
 
-# -- version_file override ---------------------------------------------------
+# -- cross-check tests -------------------------------------------------------
 
 
-def test_show_with_version_file_override(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text(
-        '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
-        'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        'primary-language = "shell"\nversion-file = "custom/VERSION"\n\n'
-        '[dependencies]\nvergil = "v2.0"\n'
-        '\n[ci]\nversions = ["3.14"]\n'
-    )
-    custom_dir = tmp_path / "custom"
-    custom_dir.mkdir()
-    (custom_dir / "VERSION").write_text("9.8.7\n")
-    assert show(tmp_path) == "9.8.7"
+def test_show_cross_checks_python(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.2.3"\n')
+    assert show(tmp_path) == "1.2.3"
 
 
-# -- error cases --------------------------------------------------------------
-
-
-def test_show_missing_version_file(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
-    with pytest.raises(FileNotFoundError):
+def test_show_mismatch_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "9.9.9"\n')
+    with pytest.raises(
+        VersionSyncError,
+        match="VERSION contains 1.2.3 but pyproject.toml contains 9.9.9",
+    ):
         show(tmp_path)
 
 
-# -- show_ref() tests --------------------------------------------------------
+def test_show_missing_language_file_warns(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
+    result = show(tmp_path)
+    assert result == "0.1.0"
+    err = capsys.readouterr().err
+    assert "not found" in err
 
 
-def test_show_ref_reads_via_git(tmp_path: Path) -> None:
+def test_show_shell_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path, "shell")
-    (tmp_path / "VERSION").write_text("3.0.0\n")
+    (tmp_path / "VERSION").write_text("2.0.1\n")
+    assert show(tmp_path) == "2.0.1"
+    err = capsys.readouterr().err
+    assert err == ""
 
-    with patch("vergil_tooling.lib.version._read_version_from_ref") as mock:
-        mock.return_value = "2.9.0"
+
+def test_show_none_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _write_toml(tmp_path, "none")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    assert show(tmp_path) == "1.0.0"
+    err = capsys.readouterr().err
+    assert err == ""
+
+
+def test_show_missing_version_file_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
+    with pytest.raises(FileNotFoundError, match="VERSION"):
+        show(tmp_path)
+
+
+def test_show_ref_reads_version_file_no_cross_check(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("2.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
+        mock_run.return_value = __import__("subprocess").CompletedProcess(
+            args=[], returncode=0, stdout="1.9.0\n"
+        )
         result = show(tmp_path, ref="origin/main")
-    assert result == "2.9.0"
-    mock.assert_called_once()
+    assert result == "1.9.0"
+    mock_run.assert_called_once_with(
+        ["git", "show", "origin/main:VERSION"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
+def test_show_cross_check_warns_when_discover_raises(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    result = show(tmp_path)
+    assert result == "1.0.0"
+    err = capsys.readouterr().err
+    assert "not found" in err
 
 
 # -- bump() tests ------------------------------------------------------------
+
+
+def test_bump_missing_version_file_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "shell")
+    with pytest.raises(FileNotFoundError, match="VERSION"):
+        bump(tmp_path)
 
 
 def test_bump_generic(tmp_path: Path) -> None:
@@ -138,63 +193,75 @@ def test_bump_generic(tmp_path: Path) -> None:
 
 def test_bump_python(tmp_path: Path) -> None:
     _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("2.0.0\n")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.0.0"\n')
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "2.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "2.0.1"
     text = (tmp_path / "pyproject.toml").read_text()
     assert 'version = "2.0.1"' in text
 
 
 def test_bump_rust(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.3.7\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.3.7"\n')
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "0.3.8"
+    assert (tmp_path / "VERSION").read_text().strip() == "0.3.8"
     text = (tmp_path / "Cargo.toml").read_text()
     assert 'version = "0.3.8"' in text
 
 
 def test_bump_ruby(tmp_path: Path) -> None:
     _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
     with patch("vergil_tooling.lib.version.subprocess.run"):
         result = bump(tmp_path)
     assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
     text = (version_dir / "version.rb").read_text()
     assert "VERSION = '1.0.1'" in text
 
 
 def test_bump_go(tmp_path: Path) -> None:
     _write_toml(tmp_path, "go")
+    (tmp_path / "VERSION").write_text("1.0.5\n")
     pkg_dir = tmp_path / "pkg"
     pkg_dir.mkdir()
     (pkg_dir / "version.go").write_text('package pkg\n\nVersion = "1.0.5"\n')
     result = bump(tmp_path)
     assert result == "1.0.6"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.6"
     text = (pkg_dir / "version.go").read_text()
     assert 'Version = "1.0.6"' in text
 
 
 def test_bump_java(tmp_path: Path) -> None:
     _write_toml(tmp_path, "java")
+    (tmp_path / "VERSION").write_text("3.2.1\n")
     (tmp_path / "pom.xml").write_text("<project>\n  <version>3.2.1</version>\n</project>\n")
     result = bump(tmp_path)
     assert result == "3.2.2"
+    assert (tmp_path / "VERSION").read_text().strip() == "3.2.2"
     text = (tmp_path / "pom.xml").read_text()
     assert "<version>3.2.2</version>" in text
 
 
 def test_bump_claude_plugin(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
+    (tmp_path / "VERSION").write_text("1.4.19\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.4.19"\n}\n')
     result = bump(tmp_path)
     assert result == "1.4.20"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.4.20"
     text = (plugin_dir / "plugin.json").read_text()
     assert '"version": "1.4.20"' in text
     assert '"name": "example"' in text
@@ -207,6 +274,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
     import subprocess as _sp
 
     _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "1.0.0"\n')
     cp = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
     with patch("vergil_tooling.lib.version.subprocess.run", return_value=cp) as mock_run:
@@ -222,6 +290,7 @@ def test_bump_python_runs_uv_lock(tmp_path: Path) -> None:
 
 def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
     _write_toml(tmp_path, "rust")
+    (tmp_path / "VERSION").write_text("0.1.0\n")
     (tmp_path / "Cargo.toml").write_text('[package]\nname = "example"\nversion = "0.1.0"\n')
     with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
@@ -236,6 +305,7 @@ def test_bump_rust_runs_cargo_update(tmp_path: Path) -> None:
 
 def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
     _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     version_dir = tmp_path / "lib" / "mq"
     version_dir.mkdir(parents=True)
     (version_dir / "version.rb").write_text("  VERSION = '1.0.0'\n")
@@ -258,8 +328,28 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
         mock_run.assert_not_called()
 
 
+def test_bump_skips_missing_language_file_discover_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path)
+    assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
+
+
+def test_bump_skips_nonexistent_language_file(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path)
+    assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
+    assert not (tmp_path / "pyproject.toml").exists()
+
+
 def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
     (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "1.0.0"\n}\n')
@@ -321,6 +411,18 @@ def test_read_version_claude_plugin_missing_key() -> None:
 
     with pytest.raises(ValueError, match="No 'version' key"):
         _read_version('{"name": "example"}', "claude-plugin")
+
+
+# -- _write_version fallback ---------------------------------------------------
+
+
+def test_write_version_fallback(tmp_path: Path) -> None:
+    from vergil_tooling.lib.version import _write_version
+
+    f = tmp_path / "VERSION"
+    f.write_text("1.0.0\n")
+    _write_version(f, "shell", "1.0.0", "1.0.1")
+    assert f.read_text() == "1.0.1\n"
 
 
 # -- _read_version_from_ref body -----------------------------------------------

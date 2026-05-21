@@ -37,6 +37,23 @@ _DEFAULT_VERSION_FILES: dict[str, str] = {
     "claude-plugin": ".claude-plugin/plugin.json",
 }
 
+VERSION_FILE = "VERSION"
+
+_LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
+    {
+        "python",
+        "rust",
+        "java",
+        "ruby",
+        "go",
+        "claude-plugin",
+    }
+)
+
+
+class VersionSyncError(Exception):
+    """Raised when VERSION and language-specific file disagree."""
+
 
 def _discover_version_file(repo_root: Path, language: str) -> Path:
     if language in _DEFAULT_VERSION_FILES:
@@ -58,6 +75,31 @@ def _discover_version_file(repo_root: Path, language: str) -> Path:
 
     msg = f"Unsupported language for version discovery: {language}"
     raise ValueError(msg)
+
+
+def _cross_check_language_file(repo_root: Path, language: str, canonical_version: str) -> None:
+    if language not in _LANGUAGES_WITH_SEPARATE_VERSION:
+        return
+    try:
+        lang_file = _discover_version_file(repo_root, language)
+    except (FileNotFoundError, ValueError):
+        print(
+            f"warning: {language} version file not found; sync check skipped",
+            file=sys.stderr,
+        )
+        return
+    if not lang_file.is_file():
+        rel = lang_file.relative_to(repo_root)
+        print(
+            f"warning: {rel} not found; sync check skipped",
+            file=sys.stderr,
+        )
+        return
+    lang_version = _read_version(lang_file.read_text(), language)
+    if lang_version != canonical_version:
+        rel = lang_file.relative_to(repo_root)
+        msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
+        raise VersionSyncError(msg)
 
 
 def _read_version(text: str, language: str) -> str:
@@ -101,28 +143,6 @@ def _read_version(text: str, language: str) -> str:
     return text.strip()
 
 
-def _get_version_file(repo_root: Path) -> tuple[Path, str]:
-    cfg = read_config(repo_root)
-    language = cfg.project.primary_language
-
-    raw_toml = (repo_root / "vergil.toml").read_text()
-    raw = tomllib.loads(raw_toml)
-    override = raw.get("project", {}).get("version-file")
-    if override:
-        return repo_root / override, language
-
-    version_file = _discover_version_file(repo_root, language)
-    if not version_file.is_file():
-        msg = f"Version file not found: {version_file}"
-        raise FileNotFoundError(msg)
-    return version_file, language
-
-
-def _version_file_relative(repo_root: Path) -> tuple[str, str]:
-    version_file, language = _get_version_file(repo_root)
-    return str(version_file.relative_to(repo_root)), language
-
-
 def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
     result = subprocess.run(  # noqa: S603
         ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
@@ -135,11 +155,18 @@ def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
 
 def show(repo_root: Path, *, ref: str | None = None) -> str:
     if ref is not None:
-        rel_path, language = _version_file_relative(repo_root)
-        return _read_version_from_ref(ref, rel_path, language)
+        return _read_version_from_ref(ref, VERSION_FILE, "shell")
 
-    version_file, language = _get_version_file(repo_root)
-    return _read_version(version_file.read_text(), language)
+    version_file = repo_root / VERSION_FILE
+    if not version_file.is_file():
+        msg = f"VERSION file not found at {repo_root}"
+        raise FileNotFoundError(msg)
+    version = version_file.read_text().strip()
+
+    cfg = read_config(repo_root)
+    _cross_check_language_file(repo_root, cfg.project.primary_language, version)
+
+    return version
 
 
 def show_major_minor(repo_root: Path, *, ref: str | None = None) -> str:
@@ -185,9 +212,24 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
 
 
 def bump(repo_root: Path) -> str:
-    version_file, language = _get_version_file(repo_root)
-    old_version = _read_version(version_file.read_text(), language)
+    version_file = repo_root / VERSION_FILE
+    if not version_file.is_file():
+        msg = f"VERSION file not found at {repo_root}"
+        raise FileNotFoundError(msg)
+    old_version = version_file.read_text().strip()
     new_version = _increment_patch(old_version)
-    _write_version(version_file, language, old_version, new_version)
+
+    version_file.write_text(new_version + "\n")
+
+    cfg = read_config(repo_root)
+    language = cfg.project.primary_language
+    if language in _LANGUAGES_WITH_SEPARATE_VERSION:
+        try:
+            lang_file = _discover_version_file(repo_root, language)
+            if lang_file.is_file():
+                _write_version(lang_file, language, old_version, new_version)
+        except (FileNotFoundError, ValueError):
+            pass
+
     _run_lockfile_maintenance(repo_root, language)
     return new_version
