@@ -35,7 +35,7 @@ software:
 | 2. Session Management | vrg-session command, identities.toml, API key forwarding | `vrg-session <project>` launches Claude Code in VM |
 | 3. Credential Provisioning | GitHub App credentials (App ID, private key, installation token exchange), GHCR auth | VM boots with agent identity credentials |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables, allowlists~~ | Deferred to v2.2 (#901) |
-| 5. vergil-tooling Adaptations | nerdctl in vrg-docker-run, wrapper simplification | vergil-tooling works natively inside VM |
+| 5. vergil-tooling Adaptations | nerdctl runtime detection in vrg-docker-run | vergil-tooling works natively inside VM |
 | 6. Distribution + Updates | Pre-built images on GHCR, vrg-vm-update, CD pipeline | Users pull pre-built VM images |
 
 ---

@@ -5,24 +5,29 @@
 > superpowers:executing-plans to implement this plan task-by-task.
 > Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Adapt vergil-tooling to work natively inside the
-identity VM: detect nerdctl as the container runtime, simplify
-`vrg-gh` by removing credential selection logic, and simplify
-`vrg-git` by removing credential-protection guards.
+**Goal:** Adapt vergil-tooling to detect nerdctl as the
+container runtime inside identity VMs, falling back to docker
+for host-side development.
 
-**Architecture:** Three focused changes to vergil-tooling:
-(1) `vrg-docker-run` auto-detects `nerdctl` vs `docker` and
-uses whichever is available, (2) `vrg-gh` drops the two-account
-discovery and credential selection code — inside the VM there is
-exactly one GitHub identity, (3) `vrg-git` drops guards that
-existed for credential protection while keeping workflow
-enforcement guards.
+**Architecture:** One focused change to vergil-tooling:
+`vrg-docker-run` auto-detects `nerdctl` vs `docker` and uses
+whichever is available. This is the only VM-specific adaptation
+needed in vergil-tooling itself.
+
+**Wrapper simplification (vrg-gh, vrg-git) has moved:** The
+credential selection removal from `vrg-gh` and credential-guard
+removal from `vrg-git` are now covered by the single-account
+identity plan
+(`docs/plans/2026-05-20-single-account-identity-tooling.md`,
+#933). That plan implements GitHub App token exchange and
+rewrites both wrappers as part of a broader identity model
+change that applies on both the host and in the VM. This plan
+originally included those changes as Tasks 3-4, but #933
+supersedes them with a more comprehensive approach.
 
 **Tech Stack:** Python (vergil-tooling)
 
 **Specs:**
-- `docs/specs/2026-05-20-identity-vm-isolation-design.md` (#892)
-  — Wrapper Simplification section
 - `docs/specs/2026-05-20-vergil-vm-image-management-design.md`
   (#894) — Impact on vrg-docker-run section
 
@@ -31,17 +36,17 @@ isolation system.
 
 | Plan | Scope | Status |
 |---|---|---|
-| 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
+| 1. Repository + Working VM | vergil-vm repo, Lima template | Planned |
 | 2. Session Management | vrg-session, identities.toml | Planned |
 | 3. Credential Provisioning | GitHub App credentials, GHCR auth | Planned |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
-| **5. vergil-tooling Adaptations** (this plan) | nerdctl, wrapper simplification | This plan |
+| **5. vergil-tooling Adaptations** (this plan) | nerdctl runtime detection | This plan |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
+| — | Wrapper simplification (vrg-gh, vrg-git) | Moved to #933 identity plan |
 
 **Repository:** vergil-tooling
 
-**Depends on:** Plan 1 (working VM with nerdctl), Plan 3
-(single-identity credentials configured)
+**Depends on:** Plan 1 (working VM with nerdctl)
 
 ---
 
@@ -53,8 +58,6 @@ isolation system.
 |---|---|---|
 | `vrg-docker-run` | Auto-detect `nerdctl` or `docker` | All container operations, image building, volume mounts |
 | `lib/docker.py` | Runtime detection function | Existing Docker subprocess helpers |
-| `vrg-gh` | Delete `_discover_accounts()`, credential selection, escalation | Subcommand allowlist, flag denylist, audit logging |
-| `vrg-git` | Delete credential-protection force-push guards | Subcommand allowlist, workflow guards, audit logging |
 
 ### Runtime Detection Logic
 
@@ -76,55 +79,11 @@ The detection is done once at the start of each `vrg-docker-run`
 invocation. The result replaces all `"docker"` literals in
 subprocess calls.
 
-### vrg-gh Simplification
-
-**Current `_get_token()` flow (to be deleted):**
-
-1. Discover accounts via `gh auth status`
-2. Check if current repo matches agent or human account
-3. Select appropriate token
-4. Inject `GH_TOKEN` into subprocess environment
-5. For certain operations (pr merge, issue close), escalate to
-   human credentials
-
-**Simplified flow:**
-
-1. Run `gh` directly — it uses whatever token is configured
-   in the VM's `~/.config/gh/hosts.yml`
-2. No token selection, no escalation, no `_discover_accounts()`
-
-The subcommand allowlist and audit logging remain unchanged.
-Inside the VM, the agent has exactly one GitHub identity. The
-wrapper ensures the agent uses approved operations; the VM
-boundary ensures the agent uses the right credentials.
-
-### vrg-git Simplification
-
-**Guards to remove:**
-- Force-push protection that existed to prevent the agent from
-  pushing with human credentials (the VM boundary handles this)
-
-**Guards to keep:**
-- Subcommand allowlist (workflow enforcement)
-- Flag denylist (workflow enforcement)
-- Protected branch checks (workflow enforcement)
-- Audit logging
-
 ### Migration Strategy
 
-These changes affect all vergil-tooling consumers, not just the
-VM. The adaptations must be **backward compatible**:
-
-- Runtime detection falls back to `docker` if `nerdctl` is not
-  found — existing Docker Desktop users are unaffected.
-- `vrg-gh` simplification can be gated on environment detection
-  (inside VM vs. host). Or: the simplified version works on the
-  host too, since the host also has a configured `gh` token. The
-  wrapper stops managing tokens; it just runs `gh` with whatever
-  auth is ambient.
-- `vrg-git` guard removal is safe on the host too — the
-  credential protection was defense-in-depth, and the VM boundary
-  replaces it.
+Runtime detection falls back to `docker` if `nerdctl` is not
+found — existing Docker Desktop users are unaffected. No
+breaking changes for non-VM users.
 
 ---
 
@@ -134,12 +93,8 @@ VM. The adaptations must be **backward compatible**:
 |---|---|---|
 | `src/vergil_tooling/lib/docker.py` | Modify | Add `detect_runtime()` |
 | `src/vergil_tooling/bin/vrg_docker_run.py` | Modify | Use detected runtime |
-| `src/vergil_tooling/bin/vrg_gh.py` | Modify | Remove credential selection |
-| `src/vergil_tooling/bin/vrg_git.py` | Modify | Remove credential guards |
 | `tests/vergil_tooling/test_docker.py` | Modify | Add runtime detection tests |
 | `tests/vergil_tooling/test_vrg_docker_run.py` | Modify | Update for runtime detection |
-| `tests/vergil_tooling/test_vrg_gh.py` | Modify | Update for simplified auth |
-| `tests/vergil_tooling/test_vrg_git.py` | Modify | Update for removed guards |
 
 ---
 
@@ -297,120 +252,7 @@ vrg-commit --type feat --scope docker \
 
 ---
 
-### Task 3: Simplify vrg-gh Credential Handling
-
-**Files:**
-- Modify: `src/vergil_tooling/bin/vrg_gh.py`
-- Modify: `tests/vergil_tooling/test_vrg_gh.py`
-
-- [ ] **Step 1: Understand current credential flow**
-
-Read `src/vergil_tooling/bin/vrg_gh.py` and identify:
-- `_get_token()` — credential discovery and selection
-- `_discover_accounts()` — if present, multi-account logic
-- Any `GH_TOKEN` injection in subprocess calls
-- Escalation logic for `pr merge`, `issue close`
-
-- [ ] **Step 2: Write tests for simplified behavior**
-
-```python
-# The simplified vrg-gh should:
-# 1. NOT inject GH_TOKEN (use ambient gh auth)
-# 2. NOT discover or select between accounts
-# 3. Still enforce subcommand allowlist
-# 4. Still enforce flag denylist
-# 5. Still log audit trail
-```
-
-- [ ] **Step 3: Remove credential selection logic**
-
-Delete:
-- `_get_token()` function
-- `_discover_accounts()` function (if present)
-- `GH_TOKEN` environment injection in subprocess calls
-- Credential escalation for `pr merge` / `issue close`
-
-Keep:
-- `_ALLOWED` dict (subcommand allowlist)
-- `_DENIED_PAIRS` (operation denylist)
-- `_DENIED_TOP` (top-level command denylist)
-- Audit logging
-
-The subprocess call becomes a simple passthrough:
-
-```python
-result = subprocess.run(  # noqa: S603, S607
-    ["gh", *args],
-    check=False,
-)
-raise SystemExit(result.returncode)
-```
-
-- [ ] **Step 4: Update tests**
-
-Remove tests for credential selection, account discovery, and
-escalation. Add tests confirming `gh` is called without
-`GH_TOKEN` injection.
-
-- [ ] **Step 5: Run full test suite**
-
-Run: `vrg-docker-run -- uv run vrg-validate`
-Expected: PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-vrg-commit --type refactor --scope gh \
-  --message "remove credential selection from vrg-gh" \
-  --body "VM boundary handles credential isolation — vrg-gh is now workflow enforcement only"
-```
-
----
-
-### Task 4: Simplify vrg-git Guards
-
-**Files:**
-- Modify: `src/vergil_tooling/bin/vrg_git.py`
-- Modify: `tests/vergil_tooling/test_vrg_git.py`
-
-- [ ] **Step 1: Identify credential-protection guards**
-
-Read `src/vergil_tooling/bin/vrg_git.py` and identify guards
-that exist for credential protection vs. workflow enforcement.
-
-Credential-protection guards (to remove):
-- Force-push prevention that exists to stop the agent from
-  pushing with human credentials
-
-Workflow-enforcement guards (to keep):
-- Subcommand allowlist (`_ALLOWED_SIMPLE`, `_ALLOWED_COMPOUND`)
-- Flag denylist
-- Protected branch checks
-- Audit logging
-
-- [ ] **Step 2: Remove credential-protection guards**
-
-- [ ] **Step 3: Update tests**
-
-Remove tests for deleted guards. Keep tests for workflow
-enforcement.
-
-- [ ] **Step 4: Run full validation**
-
-Run: `vrg-docker-run -- uv run vrg-validate`
-Expected: PASS
-
-- [ ] **Step 5: Commit**
-
-```bash
-vrg-commit --type refactor --scope git \
-  --message "remove credential-protection guards from vrg-git" \
-  --body "VM boundary handles credential isolation — vrg-git retains workflow enforcement only"
-```
-
----
-
-### Task 5: Full Validation and Manual Testing
+### Task 3: Full Validation and Manual Testing
 
 - [ ] **Step 1: Run full validation**
 
@@ -418,7 +260,7 @@ vrg-commit --type refactor --scope git \
 vrg-docker-run -- uv run vrg-validate
 ```
 
-- [ ] **Step 2: Test inside the VM**
+- [ ] **Step 2: Test inside the VM (requires working VM from Plan 1)**
 
 ```bash
 limactl shell vergil-agent
@@ -428,13 +270,6 @@ uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-t
 
 # Verify nerdctl detection
 vrg-docker-run -- echo "runtime works"
-
-# Verify vrg-gh uses ambient auth
-vrg-gh repo view --json name
-
-# Verify vrg-git workflow enforcement
-vrg-git status
-vrg-git log --oneline -5
 ```
 
 - [ ] **Step 3: Commit any fixes**
@@ -443,17 +278,14 @@ vrg-git log --oneline -5
 
 ## Self-Review Checklist
 
-- [x] **Spec coverage:** Runtime detection, vrg-gh credential
-  removal, vrg-git guard removal — all spec items covered.
+- [x] **Spec coverage:** Runtime detection — the only remaining
+  spec item for this plan. Wrapper simplification (vrg-gh, vrg-git)
+  is now tracked by the single-account identity plan (#933).
 - [x] **Placeholder scan:** No TBD, TODO, or "implement later."
-  Task 3 steps 1-2 are investigative (read current code) rather
-  than placeholders — the exact lines to change depend on the
-  current state of vrg_gh.py at execution time.
 - [x] **Type consistency:** Function names, import paths, and
   test patterns are consistent with the existing codebase.
 - [x] **Scope boundaries:** This plan does NOT include nerdctl
-  image authentication (Plan 3), egress rules (Plan 4), or VM
-  distribution (Plan 6).
+  image authentication (Plan 3), egress rules (Plan 4), VM
+  distribution (Plan 6), or wrapper simplification (#933).
 - [x] **Backward compatibility:** Runtime detection falls back
-  to `docker`. vrg-gh simplification works on host too. No
-  breaking changes for non-VM users.
+  to `docker`. No breaking changes for non-VM users.

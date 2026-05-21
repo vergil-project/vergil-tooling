@@ -6,6 +6,18 @@
 **Related:** #882 (Docker-based isolation exploration), #775
 (credential management), #805 (Vergil/Mimir identity)
 
+> **Credential model update (2026-05-21):** The credential
+> provisioning and wrapper simplification sections of this spec
+> assumed the original multi-account user model
+> (`wphillipmoore-vergil`). Issue #933 replaced this with a
+> single-account GitHub App model — agents authenticate as
+> `<app-name>[bot]` via installation tokens, not via a separate
+> GitHub user account. The implementation plans for credential
+> provisioning (Plan 3) and wrapper changes (#933 identity plan)
+> reflect the updated model. The VM isolation architecture
+> (identity scoping, workspace mounts, egress filtering) is
+> unchanged.
+
 ## Problem
 
 The current agent security model uses four layers of defense: Claude
