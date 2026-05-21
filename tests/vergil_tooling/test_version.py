@@ -123,9 +123,7 @@ def test_show_missing_language_file_warns(
     assert "not found" in err
 
 
-def test_show_shell_skips_cross_check(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_show_shell_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path, "shell")
     (tmp_path / "VERSION").write_text("2.0.1\n")
     assert show(tmp_path) == "2.0.1"
@@ -133,9 +131,7 @@ def test_show_shell_skips_cross_check(
     assert err == ""
 
 
-def test_show_none_skips_cross_check(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_show_none_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     _write_toml(tmp_path, "none")
     (tmp_path / "VERSION").write_text("1.0.0\n")
     assert show(tmp_path) == "1.0.0"
@@ -167,9 +163,24 @@ def test_show_ref_reads_version_file_no_cross_check(tmp_path: Path) -> None:
     )
 
 
+def test_show_cross_check_warns_when_discover_raises(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    result = show(tmp_path)
+    assert result == "1.0.0"
+    err = capsys.readouterr().err
+    assert "not found" in err
 
 
 # -- bump() tests ------------------------------------------------------------
+
+
+def test_bump_missing_version_file_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "shell")
+    with pytest.raises(FileNotFoundError, match="VERSION"):
+        bump(tmp_path)
 
 
 def test_bump_generic(tmp_path: Path) -> None:
@@ -317,6 +328,25 @@ def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
         mock_run.assert_not_called()
 
 
+def test_bump_skips_missing_language_file_discover_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "ruby")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path)
+    assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
+
+
+def test_bump_skips_nonexistent_language_file(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path)
+    assert result == "1.0.1"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.0.1"
+    assert not (tmp_path / "pyproject.toml").exists()
+
+
 def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
     _write_toml(tmp_path, "claude-plugin")
     (tmp_path / "VERSION").write_text("1.0.0\n")
@@ -381,6 +411,18 @@ def test_read_version_claude_plugin_missing_key() -> None:
 
     with pytest.raises(ValueError, match="No 'version' key"):
         _read_version('{"name": "example"}', "claude-plugin")
+
+
+# -- _write_version fallback ---------------------------------------------------
+
+
+def test_write_version_fallback(tmp_path: Path) -> None:
+    from vergil_tooling.lib.version import _write_version
+
+    f = tmp_path / "VERSION"
+    f.write_text("1.0.0\n")
+    _write_version(f, "shell", "1.0.0", "1.0.1")
+    assert f.read_text() == "1.0.1\n"
 
 
 # -- _read_version_from_ref body -----------------------------------------------

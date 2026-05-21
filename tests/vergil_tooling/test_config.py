@@ -11,6 +11,7 @@ from vergil_tooling.lib.config import (
     CiConfig,
     ConfigError,
     MarkdownlintConfig,
+    _warn_unrecognized_keys,
     read_config,
     vrg_install_tag,
 )
@@ -333,9 +334,7 @@ _EXTRA_PROJECT_KEY_TOML = (
 )
 
 
-def test_warns_unrecognized_project_key(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_warns_unrecognized_project_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "vergil.toml").write_text(_EXTRA_PROJECT_KEY_TOML)
     read_config(tmp_path)
     err = capsys.readouterr().err
@@ -355,18 +354,14 @@ def test_warns_unrecognized_top_level_section(
 def test_warns_unrecognized_dependency_key(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    toml = _VALID_TOML.replace(
-        'vergil = "v2.0"', 'vergil = "v2.0"\nother-tool = "v1.0"'
-    )
+    toml = _VALID_TOML.replace('vergil = "v2.0"', 'vergil = "v2.0"\nother-tool = "v1.0"')
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
     err = capsys.readouterr().err
     assert "unrecognized key 'other-tool' in [dependencies]" in err
 
 
-def test_warns_unrecognized_ci_key(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_warns_unrecognized_ci_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     toml = _BASE_TOML + '\n[ci]\nversions = ["3.14"]\nfoo = true\n'
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
@@ -374,9 +369,7 @@ def test_warns_unrecognized_ci_key(
     assert "unrecognized key 'foo' in [ci]" in err
 
 
-def test_warns_unrecognized_publish_key(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_warns_unrecognized_publish_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     toml = _VALID_TOML + "\n[publish]\nrelease = true\nfoo = true\n"
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
@@ -384,9 +377,14 @@ def test_warns_unrecognized_publish_key(
     assert "unrecognized key 'foo' in [publish]" in err
 
 
-def test_no_warnings_for_valid_config(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_skips_non_dict_known_section(capsys: pytest.CaptureFixture[str]) -> None:
+    raw: dict[str, object] = {"ci": "not-a-dict"}
+    _warn_unrecognized_keys(raw)
+    err = capsys.readouterr().err
+    assert err == ""
+
+
+def test_no_warnings_for_valid_config(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     read_config(tmp_path)
     err = capsys.readouterr().err
