@@ -72,17 +72,7 @@ def _check_gh_auth() -> str:
 
 
 def _read_and_validate_config(repo_root: Path) -> config.StConfig:
-    cfg = config.read_config(repo_root)
-    if cfg.project.repository_type not in ("library", "tooling"):
-        raise ReleaseError(
-            phase="preflight",
-            command="read vergil.toml",
-            message=(
-                f"vrg-release requires repository_type 'library' or 'tooling', "
-                f"got '{cfg.project.repository_type}'."
-            ),
-        )
-    return cfg
+    return config.read_config(repo_root)
 
 
 def _check_branch_and_tree() -> None:
