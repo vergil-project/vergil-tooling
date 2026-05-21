@@ -1,22 +1,23 @@
 """Commit wrapper that constructs standards-compliant commit messages.
 
-Resolves Co-Authored-By identities dynamically via the GitHub API.
-Performs branch / context validation (formerly in
-`vergil_tooling.bin.pre_commit_hook`, removed under the host-level-tool
-spec — see docs/specs/host-level-tool.md). Sets VRG_COMMIT_CONTEXT=1
-before invoking `git commit` so the `.githooks/pre-commit` env-var gate
-admits the resulting commit.
+Co-author identity comes from the ``VRG_CO_AUTHOR`` environment variable
+(set by the AI harness). Performs branch / context validation (formerly
+in ``vergil_tooling.bin.pre_commit_hook``, removed under the
+host-level-tool spec — see docs/specs/host-level-tool.md). Sets
+VRG_COMMIT_CONTEXT=1 before invoking ``git commit`` so the
+``.githooks/pre-commit`` env-var gate admits the resulting commit.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import config, git, github
+from vergil_tooling.lib import config, git
 
 ALLOWED_TYPES = (
     "feat",
@@ -75,12 +76,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scope", required=True, help="Conventional commit scope")
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
-    parser.add_argument(
-        "--agent",
-        required=False,
-        default=None,
-        help="Deprecated. Co-author identity is now auto-discovered.",
-    )
     return parser.parse_args(argv)
 
 
@@ -192,18 +187,7 @@ def main(argv: list[str] | None = None) -> int:
             "Issues must remain open until post-merge workflows succeed.",
         )
 
-    if args.agent is not None:
-        print(
-            "WARNING: --agent is deprecated and will be removed in a future release. "
-            "Co-author identity is now auto-discovered from gh auth status.",
-            file=sys.stderr,
-        )
-
-    try:
-        identity = github.resolve_co_author_trailer()
-    except (SystemExit, github.GitHubAPIError) as exc:
-        print(f"ERROR: failed to resolve co-author identity: {exc}", file=sys.stderr)
-        return 1
+    co_author = os.environ.get("VRG_CO_AUTHOR")
 
     if not git.has_staged_changes():
         print(
@@ -218,7 +202,8 @@ def main(argv: list[str] | None = None) -> int:
         f.write(f"{subject}\n")
         if args.body:
             f.write(f"\n{args.body}\n")
-        f.write(f"\n{identity}\n")
+        if co_author:
+            f.write(f"\nCo-Authored-By: {co_author}\n")
         tmp_path = f.name
 
     try:

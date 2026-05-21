@@ -5,8 +5,12 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
+import base64
+import os
 import subprocess
 import sys
+
+from vergil_tooling.lib import github
 
 _ALLOWED_SIMPLE: set[str] = {
     "status",
@@ -56,6 +60,8 @@ _FLAG_DENY: dict[str, set[str]] = {
     "rebase": {"-i", "--interactive"},
 }
 
+
+_REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote"}
 
 _PROTECTED_BRANCHES: set[str] = {"develop", "main"}
 _PROTECTED_PREFIXES: tuple[str, ...] = ("release/",)
@@ -133,6 +139,17 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
     return None
 
 
+def _git_auth_env(token: str) -> dict[str, str]:
+    """Return env dict that authenticates HTTPS git to GitHub."""
+    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
+    return {
+        **os.environ,
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -184,5 +201,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vrg-git: {flag_err}", file=sys.stderr)
         return 1
 
-    result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+    env = None
+    if subcmd in _REMOTE_SUBCOMMANDS:
+        token = github.get_installation_token()
+        if token is not None:
+            env = _git_auth_env(token)
+    result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode
