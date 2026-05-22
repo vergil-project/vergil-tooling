@@ -1,0 +1,196 @@
+"""Lima VM subprocess wrappers."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.identity import Identity
+
+_TEMPLATE_URL = (
+    "https://raw.githubusercontent.com/vergil-project/vergil-vm/{tag}/templates/agent.yaml"
+)
+
+_TOOLING_INSTALL = "vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@{tag}"
+
+
+def _limactl(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        ["limactl", *args],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def shell_run(
+    instance: str,
+    *args: str,
+    workdir: str = "/tmp",  # noqa: S108
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "limactl",
+            "shell",
+            "--workdir",
+            workdir,
+            instance,
+            "--",
+            *args,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+
+def shell_pipe(
+    instance: str,
+    cmd: str,
+    input_data: str,
+    *,
+    workdir: str = "/tmp",  # noqa: S108
+) -> None:
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "limactl",
+            "shell",
+            "--workdir",
+            workdir,
+            instance,
+            "--",
+            "bash",
+            "-c",
+            cmd,
+        ],
+        check=True,
+        input=input_data,
+        capture_output=True,
+        text=True,
+    )
+
+
+def vm_status(instance: str) -> str:
+    """Return VM status: ``Running``, ``Stopped``, or ``""`` if not found."""
+    try:
+        result = _limactl("list", "--json")
+    except subprocess.CalledProcessError:
+        return ""
+    for line in result.stdout.strip().splitlines():
+        entry = json.loads(line)
+        if entry.get("name") == instance:
+            return str(entry.get("status", ""))
+    return ""
+
+
+def list_vms() -> list[dict[str, str]]:
+    """Return all Lima instances as ``[{name, status, ...}]``."""
+    try:
+        result = _limactl("list", "--json")
+    except subprocess.CalledProcessError:
+        return []
+    vms: list[dict[str, str]] = []
+    for line in result.stdout.strip().splitlines():
+        entry = json.loads(line)
+        vms.append({"name": entry.get("name", ""), "status": entry.get("status", "")})
+    return vms
+
+
+def fetch_template(tag: str) -> Path:
+    """Download ``agent.yaml`` from vergil-vm at *tag*. Returns temp file path."""
+    url = _TEMPLATE_URL.format(tag=tag)
+    try:
+        with urllib.request.urlopen(url) as resp:  # noqa: S310
+            content = resp.read()
+    except urllib.error.URLError as exc:
+        print(f"ERROR: failed to fetch template from {url}: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+    tmp = tempfile.NamedTemporaryFile(  # noqa: SIM115
+        suffix=".yaml", prefix="vergil-vm-", delete=False
+    )
+    tmp.write(content)
+    tmp.close()
+    return Path(tmp.name)
+
+
+def create_vm(instance: str, template: Path, projects_dir: str) -> None:
+    _limactl(
+        "create",
+        f"--name={instance}",
+        "--tty=false",
+        f'--set=.mounts[0].location = "{projects_dir}"',
+        str(template),
+    )
+
+
+def start_vm(instance: str) -> None:
+    status = vm_status(instance)
+    if status == "Running":
+        return
+    _limactl("start", instance)
+
+
+def stop_vm(instance: str) -> None:
+    status = vm_status(instance)
+    if status != "Running":
+        return
+    _limactl("stop", instance)
+
+
+def delete_vm(instance: str) -> None:
+    _limactl("delete", "--force", instance)
+
+
+def inject_credentials(instance: str, identity: Identity) -> None:
+    """Inject GitHub App credentials into a running VM."""
+    key_path = Path(identity.private_key_path).expanduser()
+    if not key_path.exists():
+        print(f"ERROR: private key not found: {key_path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    key_content = key_path.read_text()
+
+    print("  Injecting App private key...")
+    shell_run(instance, "mkdir", "-p", "$HOME/.config/vergil")
+    shell_pipe(
+        instance,
+        "cat > ~/.config/vergil/app.pem && chmod 600 ~/.config/vergil/app.pem",
+        key_content,
+    )
+
+    print("  Injecting App configuration...")
+    shell_pipe(
+        instance,
+        "cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env",
+        f"APP_ID={identity.app_id}\n",
+    )
+
+    print("  Configuring git for HTTPS GitHub access...")
+    shell_run(
+        instance,
+        "git",
+        "config",
+        "--global",
+        "url.https://github.com/.insteadOf",
+        "git@github.com:",
+    )
+
+
+def install_tooling(instance: str, tag: str) -> None:
+    """Install vergil-tooling inside the VM."""
+    install_spec = _TOOLING_INSTALL.format(tag=tag)
+    print(f"  Installing vergil-tooling ({tag})...")
+    shell_run(
+        instance,
+        "bash",
+        "-c",
+        f'export PATH="$HOME/.local/bin:$PATH" && uv tool install "{install_spec}"',
+    )
