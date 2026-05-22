@@ -5543,10 +5543,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-install-on-your-organizations" class="md-nav__link">
+  <a href="#step-3-install-on-organizations-and-personal-account" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3: Install on your organizations
+        Step 3: Install on organizations and personal account
       
     </span>
   </a>
@@ -5895,10 +5895,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-install-on-your-organizations" class="md-nav__link">
+  <a href="#step-3-install-on-organizations-and-personal-account" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3: Install on your organizations
+        Step 3: Install on organizations and personal account
       
     </span>
   </a>
@@ -6083,7 +6083,11 @@ authentication. Compared to the legacy multi-account model
 </code></pre></div>
 <p>Keep the original filename — it includes the creation date,
 which is useful metadata for key rotation.</p>
-<h2 id="step-3-install-on-your-organizations">Step 3: Install on your organizations<a class="headerlink" href="#step-3-install-on-your-organizations" title="Permanent link">&para;</a></h2>
+<h2 id="step-3-install-on-organizations-and-personal-account">Step 3: Install on organizations and personal account<a class="headerlink" href="#step-3-install-on-organizations-and-personal-account" title="Permanent link">&para;</a></h2>
+<p>The tooling resolves tokens dynamically based on the repository
+owner (org or user) parsed from the git remote URL. The App
+must be installed on every account that owns repositories the
+agent will operate on.</p>
 <ol>
 <li>From the App settings page, click <strong>Install App</strong> in the
    left sidebar</li>
@@ -6093,8 +6097,13 @@ which is useful metadata for key rotation.</p>
    select specific repos)</li>
 <li>Click <strong>Install</strong></li>
 </ol>
-<p>Repeat for every organization. You can return to this page to
-add more organizations later.</p>
+<p>Repeat for every organization. If you also have personal
+repositories managed by the agent, install the App on your
+personal account the same way — it appears in the same list
+alongside your organizations. Without this installation, the
+tooling cannot acquire tokens for personal repos and will fall
+back to ambient <code>gh</code> auth.</p>
+<p>You can return to this page to add more accounts later.</p>
 <h2 id="step-4-record-the-app-id">Step 4: Record the App ID<a class="headerlink" href="#step-4-record-the-app-id" title="Permanent link">&para;</a></h2>
 <p>The <strong>App ID</strong> is shown near the top of the App's <strong>General</strong>
 settings page (Developer settings &gt; GitHub Apps &gt; your App &gt;
@@ -6116,8 +6125,9 @@ it starts with <code>~</code>) or absolute.</p>
 <ul>
 <li>[ ] Private key file exists in <code>~/.config/vergil/keys/</code></li>
 <li>[ ] <code>identities.toml</code> has the correct App ID and key path</li>
-<li>[ ] The App is installed on all target organizations (check
-      Developer settings &gt; GitHub Apps &gt; your App &gt; Install App)</li>
+<li>[ ] The App is installed on all target organizations and your
+      personal account if needed (check Developer settings &gt;
+      GitHub Apps &gt; your App &gt; Install App)</li>
 <li>[ ] The App shows the correct repository permissions
       (Contents, PRs, Issues — all Read and write)</li>
 </ul>
