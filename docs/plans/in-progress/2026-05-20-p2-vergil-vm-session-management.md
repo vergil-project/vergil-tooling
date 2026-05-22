@@ -72,25 +72,14 @@ limactl shell vergil-agent -- \
 [identities.vergil]
 vm_instance = "vergil-agent"
 auth_type = "app"
-app_id = 12345
-installation_id = 67890
-private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
-
-# Project workspace mappings — maps short names to paths
-# inside the VM. Paths mirror host paths under the mount.
-[identities.vergil.workspaces]
-vergil-tooling = "~/dev/projects/vergil-project/vergil-tooling"
-vergil-actions = "~/dev/projects/vergil-project/vergil-actions"
-vergil-docker  = "~/dev/projects/vergil-project/vergil-docker"
-vergil-vm      = "~/dev/projects/vergil-project/vergil-vm"
-diogenes-core  = "~/dev/projects/diogenes-project/diogenes-core"
+app_id = 3809631
+private_key_path = "~/.config/vergil/keys/wphillipmoore-vergil-agent.2026-05-22.private-key.pem"
 
 # Future: second identity
 # [identities.mimir]
 # vm_instance = "mimir-agent"
 # auth_type = "app"
 # app_id = ...
-# installation_id = ...
 # private_key_path = "~/.config/vergil/keys/mimir-agent.pem"
 ```
 
@@ -160,8 +149,7 @@ def config_file(tmp_path: Path) -> Path:
         vm_instance = "vergil-agent"
         auth_type = "app"
         app_id = 12345
-        installation_id = 67890
-        private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
+                private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
 
         [identities.vergil.workspaces]
         vergil-tooling = "~/dev/projects/vergil-project/vergil-tooling"
@@ -183,7 +171,7 @@ def test_identity_fields(config_file: Path) -> None:
     assert ident.vm_instance == "vergil-agent"
     assert ident.auth_type == "app"
     assert ident.app_id == "12345"
-    assert ident.installation_id == "67890"
+
     assert ident.workspaces["vergil-tooling"] == "~/dev/projects/vergil-project/vergil-tooling"
 
 
@@ -207,7 +195,6 @@ def test_resolve_project_ambiguous(tmp_path: Path) -> None:
         vm_instance = "vergil-agent"
         auth_type = "app"
         app_id = 11111
-        installation_id = 22222
         private_key_path = "~/.config/vergil/keys/vergil.pem"
         [identities.vergil.workspaces]
         shared-repo = "~/dev/shared-repo"
@@ -216,7 +203,6 @@ def test_resolve_project_ambiguous(tmp_path: Path) -> None:
         vm_instance = "mimir-agent"
         auth_type = "app"
         app_id = 33333
-        installation_id = 44444
         private_key_path = "~/.config/vergil/keys/mimir.pem"
         [identities.mimir.workspaces]
         shared-repo = "~/dev/shared-repo"
@@ -257,7 +243,7 @@ class Identity:
     vm_instance: str
     auth_type: str = "app"
     app_id: str = ""
-    installation_id: str = ""
+
     private_key_path: str = ""
     workspaces: dict[str, str] = field(default_factory=dict)
 
@@ -281,7 +267,7 @@ def load_config(path: Path) -> IdentityConfig:
             vm_instance=data["vm_instance"],
             auth_type=data.get("auth_type", "app"),
             app_id=str(data.get("app_id", "")),
-            installation_id=str(data.get("installation_id", "")),
+
             private_key_path=data.get("private_key_path", ""),
             workspaces=data.get("workspaces", {}),
         )
@@ -366,8 +352,7 @@ def config_dir(tmp_path: Path) -> Path:
         vm_instance = "vergil-agent"
         auth_type = "app"
         app_id = 12345
-        installation_id = 67890
-        private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
+                private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
 
         [identities.vergil.workspaces]
         vergil-tooling = "~/dev/projects/vergil-project/vergil-tooling"
@@ -703,5 +688,6 @@ vrg-session --shell --identity vergil
   detection (Plan 5), or wrapper simplification (#933 identity plan).
 - [x] **Identity schema consistency:** The `identities.toml` schema
   uses App credential fields (`auth_type`, `app_id`,
-  `installation_id`, `private_key_path`) consistent with Plan 3
-  and the single-account identity design (#933).
+  `private_key_path`) consistent with Plan 3 and the
+  single-account identity design (#933). Installation IDs are
+  resolved dynamically at runtime (Plan 5).

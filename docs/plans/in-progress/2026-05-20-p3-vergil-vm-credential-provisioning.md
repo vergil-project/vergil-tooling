@@ -10,11 +10,13 @@ credentials, GHCR auth) into the identity VM so the agent
 operates under its own App identity — never the human's.
 
 **Architecture:** A `vrg-vm-init` script runs on the host and
-injects GitHub App credentials (App ID, installation ID, private
-key) into the VM via `limactl shell`. Inside the VM, the tooling
-uses JWT → installation token exchange for all GitHub operations
-over HTTPS. No SSH keys are provisioned — the agent authenticates
-exclusively via App installation tokens.
+injects GitHub App credentials (App ID, private key) into the VM
+via `limactl shell`. Inside the VM, the tooling uses JWT →
+installation token exchange for all GitHub operations over HTTPS.
+Installation IDs are resolved dynamically at runtime by the
+wrapper scripts (`vrg-git`, `vrg-gh`) — not configured statically.
+No SSH keys are provisioned — the agent authenticates exclusively
+via App installation tokens.
 
 **Tech Stack:** Bash (provisioning scripts), Lima CLI, gh CLI,
 nerdctl, PyJWT
@@ -51,9 +53,15 @@ defines which credentials to provision)
 | Credential | Source | Storage inside VM | Purpose |
 |---|---|---|---|
 | App ID | `identities.toml` | `~/.config/vergil/app.env` | Identifies the GitHub App for JWT generation |
-| Installation ID | `identities.toml` | `~/.config/vergil/app.env` | Identifies the App's installation on a specific org |
 | Private key (.pem) | Host filesystem (path in `identities.toml`) | `~/.config/vergil/app.pem` | Signs JWTs for installation token exchange |
 | GHCR token | Derived from installation token | nerdctl login state | Pull vergil-docker images |
+
+Installation IDs are **not** stored in the VM or in
+`identities.toml`. The wrapper scripts (`vrg-git`, `vrg-gh`)
+resolve installation IDs dynamically at runtime via
+`GET /app/installations` using the App JWT, then cache the
+org → installation ID mapping for the session. This enables
+multi-org access from a single VM without per-org configuration.
 
 ### Injection Model
 
@@ -71,8 +79,7 @@ limactl shell vergil-agent -- bash -c \
 
 limactl shell vergil-agent -- bash -c \
   'cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env' \
-  <<< "APP_ID=12345
-INSTALLATION_ID=67890"
+  <<< "APP_ID=3809631"
 ```
 
 ### The vrg-vm-init Script
@@ -97,14 +104,12 @@ The init script reads credentials from `identities.toml`:
 [identities.vergil]
 vm_instance = "vergil-agent"
 auth_type = "app"
-app_id = 12345
-installation_id = 67890
-private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
+app_id = 3809631
+private_key_path = "~/.config/vergil/keys/wphillipmoore-vergil-agent.2026-05-22.private-key.pem"
 ```
 
 For automation, environment variable overrides are supported:
 - `VRG_APP_ID` — GitHub App ID
-- `VRG_INSTALLATION_ID` — Installation ID
 - `VRG_PRIVATE_KEY_PATH` — Path to private key file
 
 ### PAT Fallback Mode
@@ -280,7 +285,6 @@ credentials into the VM.
 #
 # Reads credentials from identities.toml or environment variables:
 #   VRG_APP_ID            — GitHub App ID
-#   VRG_INSTALLATION_ID   — Installation ID
 #   VRG_PRIVATE_KEY_PATH  — Path to App private key (.pem)
 #
 # Example:
@@ -297,14 +301,13 @@ echo ""
 # --- Read credentials from identities.toml or env vars ---
 
 APP_ID="${VRG_APP_ID:-}"
-INSTALLATION_ID="${VRG_INSTALLATION_ID:-}"
 PRIVATE_KEY_PATH="${VRG_PRIVATE_KEY_PATH:-}"
 
-if [ -z "$APP_ID" ] || [ -z "$INSTALLATION_ID" ] || [ -z "$PRIVATE_KEY_PATH" ]; then
+if [ -z "$APP_ID" ] || [ -z "$PRIVATE_KEY_PATH" ]; then
     echo "Reading credentials from identities.toml..."
     # TODO: parse identities.toml for the given identity
     # For now, require env vars
-    echo "ERROR: Set VRG_APP_ID, VRG_INSTALLATION_ID, and VRG_PRIVATE_KEY_PATH" >&2
+    echo "ERROR: Set VRG_APP_ID and VRG_PRIVATE_KEY_PATH" >&2
     exit 1
 fi
 
@@ -325,7 +328,6 @@ limactl shell "$INSTANCE" -- bash -c \
     'cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env' \
     <<EOF
 APP_ID=$APP_ID
-INSTALLATION_ID=$INSTALLATION_ID
 EOF
 
 # --- Configure git for HTTPS ---
@@ -338,11 +340,12 @@ echo ""
 # --- GHCR Authentication ---
 
 echo "Configuring nerdctl GHCR authentication..."
-# Generate an installation token and use it for GHCR login
-# The token exchange uses the App credentials just injected
+# GHCR login uses a token from any installation (all share
+# the same packages:read scope). vrg-app-token resolves the
+# first available installation dynamically via the API.
 limactl shell "$INSTANCE" -- bash -c '
     source ~/.config/vergil/app.env
-    TOKEN=$(vrg-app-token --app-id "$APP_ID" --installation-id "$INSTALLATION_ID" --key ~/.config/vergil/app.pem)
+    TOKEN=$(vrg-app-token --app-id "$APP_ID" --key ~/.config/vergil/app.pem)
     echo "$TOKEN" | nerdctl login ghcr.io -u x-access-token --password-stdin
 '
 echo ""
@@ -350,9 +353,11 @@ echo ""
 # --- Git Identity ---
 
 echo "Configuring git identity..."
+# The App bot identity is derived from the App itself, not
+# from any particular installation.
 limactl shell "$INSTANCE" -- bash -c '
     source ~/.config/vergil/app.env
-    TOKEN=$(vrg-app-token --app-id "$APP_ID" --installation-id "$INSTALLATION_ID" --key ~/.config/vergil/app.pem)
+    TOKEN=$(vrg-app-token --app-id "$APP_ID" --key ~/.config/vergil/app.pem)
     GITHUB_USER=$(GH_TOKEN="$TOKEN" gh api user --jq ".login")
     GITHUB_EMAIL=$(GH_TOKEN="$TOKEN" gh api user --jq ".email // empty")
     if [ -z "$GITHUB_EMAIL" ]; then
@@ -395,9 +400,8 @@ cd ~/dev/projects/vergil-project/vergil-vm
 limactl start vergil-agent
 
 # Run credential init
-VRG_APP_ID=12345 \
-VRG_INSTALLATION_ID=67890 \
-VRG_PRIVATE_KEY_PATH=~/.config/vergil/keys/vergil-agent.pem \
+VRG_APP_ID=3809631 \
+VRG_PRIVATE_KEY_PATH=~/.config/vergil/keys/wphillipmoore-vergil-agent.2026-05-22.private-key.pem \
   ./scripts/vrg-vm-init.sh vergil vergil-agent
 ```
 
@@ -418,9 +422,10 @@ nerdctl pull ghcr.io/vergil-project/dev-python:latest  # Should work
 
 ## Self-Review Checklist
 
-- [x] **Spec coverage:** App ID, installation ID, private key,
-  GHCR auth, git identity, HTTPS configuration — all credential
-  types from the spec (#933) are covered.
+- [x] **Spec coverage:** App ID, private key, GHCR auth, git
+  identity, HTTPS configuration — all credential types from the
+  spec (#933) are covered. Installation IDs are resolved
+  dynamically at runtime (Plan 5), not provisioned statically.
 - [x] **No SSH:** SSH key injection, SSH config, known_hosts
   setup, and SSH verification are all removed. Git uses HTTPS
   with App installation tokens exclusively.

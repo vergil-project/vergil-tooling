@@ -28,6 +28,15 @@ harness.
 
 **Relationship to Plan 5:** This plan supersedes Tasks 3-4 of the
 vergil-tooling VM adaptations plan (`docs/plans/in-progress/2026-05-20-p5-vergil-tooling-vm-adaptations.md`).
+
+> **Update 2026-05-22:** `installation_id` has been removed from
+> `identities.toml` and the `Identity` dataclass (#1004).
+> Installation IDs are now resolved dynamically at runtime by the
+> wrapper scripts via `GET /app/installations`. The embedded code
+> snippets below still reference the static `installation_id` —
+> they reflect the design at the time of writing. The live code
+> in `github.py` will be updated to use dynamic resolution in
+> Plan 5.
 Plan 5 Tasks 1-2 (nerdctl runtime detection) remain
 independent.
 
