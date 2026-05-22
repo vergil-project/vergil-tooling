@@ -5,6 +5,29 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.33] - 2026-05-22
+
+### Bug fixes
+
+- add missing container-tag to audit and test jobs
+- make status comment failures non-fatal in orchestrator
+- decouple status comment from phase error handling in orchestrator
+- raise ReleaseError on comment failure instead of logging warning
+- validate template tag to prevent SSRF in fetch_template
+- handle first release when no prior tags exist
+
+### Chores
+
+- bump version to 2.0.33
+
+### Documentation
+
+- update Plan 3 for dynamic-only token architecture
+
+### Features
+
+- vrg-vm CLI for identity VM lifecycle management
+
 ## [2.0.32] - 2026-05-22
 
 ### Bug fixes
