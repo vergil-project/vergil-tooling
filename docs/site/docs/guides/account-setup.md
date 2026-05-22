@@ -82,7 +82,12 @@ mv ~/Downloads/<app-name>.<date>.private-key.pem \
 Keep the original filename — it includes the creation date,
 which is useful metadata for key rotation.
 
-## Step 3: Install on your organizations
+## Step 3: Install on organizations and personal account
+
+The tooling resolves tokens dynamically based on the repository
+owner (org or user) parsed from the git remote URL. The App
+must be installed on every account that owns repositories the
+agent will operate on.
 
 1. From the App settings page, click **Install App** in the
    left sidebar
@@ -92,8 +97,14 @@ which is useful metadata for key rotation.
    select specific repos)
 4. Click **Install**
 
-Repeat for every organization. You can return to this page to
-add more organizations later.
+Repeat for every organization. If you also have personal
+repositories managed by the agent, install the App on your
+personal account the same way — it appears in the same list
+alongside your organizations. Without this installation, the
+tooling cannot acquire tokens for personal repos and will fall
+back to ambient `gh` auth.
+
+You can return to this page to add more accounts later.
 
 ## Step 4: Record the App ID
 
@@ -125,8 +136,9 @@ After completing all steps, verify:
 
 - [ ] Private key file exists in `~/.config/vergil/keys/`
 - [ ] `identities.toml` has the correct App ID and key path
-- [ ] The App is installed on all target organizations (check
-      Developer settings > GitHub Apps > your App > Install App)
+- [ ] The App is installed on all target organizations and your
+      personal account if needed (check Developer settings >
+      GitHub Apps > your App > Install App)
 - [ ] The App shows the correct repository permissions
       (Contents, PRs, Issues — all Read and write)
 

@@ -20,21 +20,21 @@ from vergil_tooling.lib import retry
 
 log = logging.getLogger(__name__)
 
-_cached_token: tuple[str, float] | None = None
+_token_cache: dict[str, tuple[str, float]] = {}
+_installation_cache: dict[str, str] | None = None
 
 
-def _load_app_config() -> tuple[str, str, Path] | None:
+def _load_app_config() -> tuple[str, Path] | None:
     """Read GitHub App credentials from env vars or ~/.config/vergil/.
 
-    Returns ``(app_id, installation_id, key_path)`` or ``None``
-    when App mode is not configured.
+    Returns ``(app_id, key_path)`` or ``None`` when App mode is
+    not configured.
     """
     app_id = os.environ.get("VRG_APP_ID", "")
-    installation_id = os.environ.get("VRG_INSTALLATION_ID", "")
     key_path_str = os.environ.get("VRG_PRIVATE_KEY_PATH", "")
 
-    if app_id and installation_id and key_path_str:
-        return app_id, installation_id, Path(key_path_str).expanduser()
+    if app_id and key_path_str:
+        return app_id, Path(key_path_str).expanduser()
 
     env_file = Path.home() / ".config" / "vergil" / "app.env"
     key_file = Path.home() / ".config" / "vergil" / "app.pem"
@@ -49,12 +49,63 @@ def _load_app_config() -> tuple[str, str, Path] | None:
             values[k.strip()] = v.strip()
 
     app_id = app_id or values.get("APP_ID", "")
-    installation_id = installation_id or values.get("INSTALLATION_ID", "")
 
-    if not app_id or not installation_id:
+    if not app_id:
         return None
 
-    return app_id, installation_id, key_file
+    return app_id, key_file
+
+
+def _detect_org() -> str | None:
+    """Detect the GitHub org from the current repo's git remote."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "remote", "get-url", "origin"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+    url = result.stdout.strip()
+    # git@github.com:ORG/REPO.git or https://github.com/ORG/REPO.git
+    for prefix in ("git@github.com:", "https://github.com/"):
+        if url.startswith(prefix):
+            remainder = url[len(prefix) :]
+            org = remainder.split("/")[0]
+            if org:
+                return org
+    return None
+
+
+def _resolve_installations(jwt_token: str) -> dict[str, str]:
+    """Fetch all App installations and return an org → installation ID map."""
+    global _installation_cache  # noqa: PLW0603
+    if _installation_cache is not None:
+        return _installation_cache
+
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "gh",
+            "api",
+            "/app/installations",
+            "--jq",
+            r'.[] | "\(.account.login) \(.id)"',
+        ],
+        env={**os.environ, "GH_TOKEN": jwt_token},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    mapping: dict[str, str] = {}
+    for line in result.stdout.strip().splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2:
+            mapping[parts[0]] = parts[1]
+
+    _installation_cache = mapping
+    return mapping
 
 
 def _generate_jwt(app_id: str, key_path: Path) -> str:
@@ -92,17 +143,22 @@ def _generate_jwt(app_id: str, key_path: Path) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-def get_installation_token() -> str | None:
+def get_installation_token(org: str | None = None) -> str | None:
     """Return a GitHub App installation token, or ``None`` if not in App mode.
 
-    Reads App credentials from ``~/.config/vergil/`` (or env var
-    overrides), generates a JWT, and exchanges it for a 1-hour
-    installation token via the GitHub API. Tokens are cached for
-    55 minutes.
+    Resolves the installation ID dynamically by calling
+    ``GET /app/installations`` and matching the org. If *org* is
+    ``None``, detects it from the current repo's git remote.
+    Tokens are cached per-org for 55 minutes.
     """
-    global _cached_token  # noqa: PLW0603
-    if _cached_token is not None:
-        token, expiry = _cached_token
+    if org is None:
+        org = _detect_org()
+    if org is None:
+        return None
+
+    cached = _token_cache.get(org)
+    if cached is not None:
+        token, expiry = cached
         if time.time() < expiry:
             return token
 
@@ -110,8 +166,13 @@ def get_installation_token() -> str | None:
     if config is None:
         return None
 
-    app_id, installation_id, key_path = config
+    app_id, key_path = config
     jwt_token = _generate_jwt(app_id, key_path)
+
+    installations = _resolve_installations(jwt_token)
+    installation_id = installations.get(org)
+    if not installation_id:
+        return None
 
     result = subprocess.run(  # noqa: S603
         [  # noqa: S607
@@ -130,7 +191,7 @@ def get_installation_token() -> str | None:
     )
 
     token = result.stdout.strip()
-    _cached_token = (token, time.time() + 3300)
+    _token_cache[org] = (token, time.time() + 3300)
     return token
 
 

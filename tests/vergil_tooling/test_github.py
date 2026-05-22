@@ -20,7 +20,8 @@ _real_gh_env = github._gh_env
 @pytest.fixture(autouse=True)
 def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("vergil_tooling.lib.github._gh_env", lambda: None)
-    github._cached_token = None
+    github._token_cache.clear()
+    github._installation_cache = None
 
 
 def _completed(
@@ -547,7 +548,6 @@ class TestLoadAppConfig:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         assert github._load_app_config() is None
 
@@ -558,31 +558,28 @@ class TestLoadAppConfig:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
         result = github._load_app_config()
         assert result is not None
-        app_id, installation_id, key_path = result
+        app_id, key_path = result
         assert app_id == "12345"
-        assert installation_id == "67890"
         assert key_path == config_dir / "app.pem"
 
-    def test_returns_none_when_missing_installation_id(
+    def test_returns_none_when_missing_app_id(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.env").write_text("# no app id\n")
         (config_dir / "app.pem").write_text("fake-key\n")
         assert github._load_app_config() is None
 
@@ -595,13 +592,11 @@ class TestLoadAppConfig:
         key_file = tmp_path / "override.pem"
         key_file.write_text("override-key\n")
         monkeypatch.setenv("VRG_APP_ID", "99999")
-        monkeypatch.setenv("VRG_INSTALLATION_ID", "88888")
         monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", str(key_file))
         result = github._load_app_config()
         assert result is not None
-        app_id, installation_id, key_path = result
+        app_id, key_path = result
         assert app_id == "99999"
-        assert installation_id == "88888"
         assert key_path == key_file
 
     def test_ignores_comments_in_env_file(
@@ -611,13 +606,10 @@ class TestLoadAppConfig:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text(
-            "# GitHub App credentials\nAPP_ID=12345\nINSTALLATION_ID=67890\n"
-        )
+        (config_dir / "app.env").write_text("# GitHub App credentials\nAPP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
         result = github._load_app_config()
         assert result is not None
@@ -681,6 +673,59 @@ class TestGenerateJwt:
         assert "exp" in payload
 
 
+class TestDetectOrg:
+    def test_parses_ssh_remote(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout="git@github.com:vergil-project/vergil-tooling.git\n"
+            )
+            assert github._detect_org() == "vergil-project"
+
+    def test_parses_https_remote(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(
+                stdout="https://github.com/vergil-project/vergil-tooling.git\n"
+            )
+            assert github._detect_org() == "vergil-project"
+
+    def test_returns_none_on_git_failure(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+            assert github._detect_org() is None
+
+    def test_returns_none_for_unrecognized_url(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="https://gitlab.com/org/repo.git\n")
+            assert github._detect_org() is None
+
+    def test_returns_none_for_empty_org(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="git@github.com:/repo.git\n")
+            assert github._detect_org() is None
+
+
+class TestResolveInstallations:
+    def test_returns_org_to_id_mapping(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="vergil-project 111\nwphillipmoore 222\n")
+            result = github._resolve_installations("fake-jwt")
+        assert result == {"vergil-project": "111", "wphillipmoore": "222"}
+
+    def test_caches_result(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="org1 100\n")
+            first = github._resolve_installations("jwt1")
+            second = github._resolve_installations("jwt2")
+        assert first is second
+        assert mock_run.call_count == 1
+
+    def test_skips_malformed_lines(self) -> None:
+        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
+            mock_run.return_value = _completed(stdout="good-org 100\nbad line here\n\n")
+            result = github._resolve_installations("jwt")
+        assert result == {"good-org": "100"}
+
+
 class TestGetInstallationToken:
     def test_returns_none_when_no_app_config(
         self,
@@ -689,10 +734,19 @@ class TestGetInstallationToken:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        github._cached_token = None
-        assert github.get_installation_token() is None
+        assert github.get_installation_token(org="some-org") is None
+
+    def test_returns_none_when_no_org_detected(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        with patch("vergil_tooling.lib.github._detect_org", return_value=None):
+            assert github.get_installation_token() is None
 
     def test_exchanges_jwt_for_installation_token(
         self,
@@ -701,47 +755,69 @@ class TestGetInstallationToken:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
-        github._cached_token = None
         with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
             patch(
-                "vergil_tooling.lib.github._generate_jwt",
-                return_value="fake-jwt",
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
             ),
             patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed(stdout="ghs_install_token_abc\n")
-            token = github.get_installation_token()
+            token = github.get_installation_token(org="test-org")
         assert token == "ghs_install_token_abc"  # noqa: S105
         call_args = mock_run.call_args[0][0]
         assert "/app/installations/67890/access_tokens" in " ".join(call_args)
 
-    def test_caches_token(
+    def test_returns_none_when_org_not_in_installations(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
-        github._cached_token = None
         with (
             patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"other-org": "111"},
+            ),
+        ):
+            assert github.get_installation_token(org="missing-org") is None
+
+    def test_caches_token_per_org(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
             patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed(stdout="ghs_token\n")
-            first = github.get_installation_token()
-            second = github.get_installation_token()
+            first = github.get_installation_token(org="test-org")
+            second = github.get_installation_token(org="test-org")
         assert first == second == "ghs_token"
         assert mock_run.call_count == 1
 
@@ -752,17 +828,20 @@ class TestGetInstallationToken:
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
-        monkeypatch.delenv("VRG_INSTALLATION_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
         config_dir = tmp_path / ".config" / "vergil"
         config_dir.mkdir(parents=True)
-        (config_dir / "app.env").write_text("APP_ID=12345\nINSTALLATION_ID=67890\n")
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
-        github._cached_token = ("old_token", 0.0)
+        github._token_cache["test-org"] = ("old_token", 0.0)
         with (
             patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
             patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
         ):
             mock_run.return_value = _completed(stdout="new_token\n")
-            token = github.get_installation_token()
+            token = github.get_installation_token(org="test-org")
         assert token == "new_token"  # noqa: S105
