@@ -190,27 +190,19 @@ def test_phase_details_unknown_phase() -> None:
     assert details == ""
 
 
-def test_comment_failure_does_not_kill_pipeline() -> None:
+def test_comment_failure_raises_with_comment_phase() -> None:
     ctx = _ctx()
     with (
-        patch(_MOD + ".prepare") as m_prepare,
-        patch(_MOD + ".merge_release") as m_merge,
-        patch(_MOD + ".merge_bump") as m_bump,
-        patch(_MOD + ".confirm_publish") as m_confirm,
-        patch(_MOD + ".close_and_finalize") as m_finalize,
-        patch(_MOD + ".consumer_refresh") as m_handoff,
+        patch(_MOD + ".prepare"),
         patch(
             _MOD + ".comment_phase_complete",
             side_effect=Exception("GitHub 502"),
         ),
+        pytest.raises(ReleaseError) as exc_info,
     ):
         run_release(ctx)
-    m_prepare.assert_called_once()
-    m_merge.assert_called_once()
-    m_bump.assert_called_once()
-    m_confirm.assert_called_once()
-    m_finalize.assert_called_once()
-    m_handoff.assert_called_once()
+    assert exc_info.value.phase == "comment(prepare)"
+    assert exc_info.value.command == "comment_phase_complete"
 
 
 def test_phase_details_confirm_cd_workflow() -> None:
