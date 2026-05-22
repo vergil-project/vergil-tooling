@@ -166,7 +166,7 @@ def inject_credentials(instance: str, identity: Identity) -> None:
     key_content = key_path.read_text()
 
     print("  Injecting App private key...")
-    shell_run(instance, "mkdir", "-p", "$HOME/.config/vergil")
+    shell_run(instance, "bash", "-c", "mkdir -p ~/.config/vergil")
     shell_pipe(
         instance,
         "cat > ~/.config/vergil/app.pem && chmod 600 ~/.config/vergil/app.pem",
