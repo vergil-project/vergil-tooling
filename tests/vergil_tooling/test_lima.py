@@ -152,6 +152,26 @@ class TestFetchTemplate:
         with pytest.raises(SystemExit):
             fetch_template("v2.0")
 
+    def test_rejects_invalid_tag(self) -> None:
+        with pytest.raises(SystemExit):
+            fetch_template("../../etc/passwd")
+
+    def test_rejects_arbitrary_string(self) -> None:
+        with pytest.raises(SystemExit):
+            fetch_template("main")
+
+    @patch("vergil_tooling.lib.lima.urllib.request.urlopen")
+    def test_accepts_patch_version(self, mock_urlopen: MagicMock) -> None:
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"cpus: 4\n"
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        mock_urlopen.return_value = mock_resp
+
+        result = fetch_template("v2.0.1")
+        assert result.exists()
+        result.unlink()
+
 
 class TestCreateVm:
     @patch("vergil_tooling.lib.lima._limactl")

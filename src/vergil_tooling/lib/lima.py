@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -103,8 +104,14 @@ def list_vms() -> list[dict[str, str]]:
     return vms
 
 
+_TAG_PATTERN = re.compile(r"^v\d+\.\d+(\.\d+)?$")
+
+
 def fetch_template(tag: str) -> Path:
     """Download ``agent.yaml`` from vergil-vm at *tag*. Returns temp file path."""
+    if not _TAG_PATTERN.fullmatch(tag):
+        print(f"ERROR: invalid template tag '{tag}' (expected vN.N or vN.N.N)", file=sys.stderr)
+        raise SystemExit(1)
     url = _TEMPLATE_URL.format(tag=tag)
     try:
         with urllib.request.urlopen(url) as resp:  # noqa: S310
