@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import logging
 import time
 from typing import TYPE_CHECKING
 
@@ -17,8 +16,6 @@ from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
 )
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -114,5 +111,10 @@ def run_release(ctx: ReleaseContext) -> None:
         print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
         try:
             comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
-        except Exception:
-            logger.warning("Failed to post status comment for %s", phase_name, exc_info=True)
+        except Exception as exc:
+            raise ReleaseError(
+                phase=f"comment({phase_name})",
+                command="comment_phase_complete",
+                message=str(exc),
+                detail=getattr(exc, "stderr", None) or getattr(exc, "stdout", None),
+            ) from exc
