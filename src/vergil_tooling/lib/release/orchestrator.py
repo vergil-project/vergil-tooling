@@ -91,9 +91,6 @@ def run_release(ctx: ReleaseContext) -> None:
         start = time.monotonic()
         try:
             phase_fn(ctx)
-            elapsed = time.monotonic() - start
-            print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
-            comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
         except ReleaseError as exc:
             elapsed = time.monotonic() - start
             print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
@@ -110,3 +107,14 @@ def run_release(ctx: ReleaseContext) -> None:
             )
             comment_phase_failed(ctx, phase_name, wrapped)
             raise wrapped from exc
+        elapsed = time.monotonic() - start
+        print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
+        try:
+            comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
+        except Exception as exc:
+            raise ReleaseError(
+                phase=f"comment({phase_name})",
+                command="comment_phase_complete",
+                message=str(exc),
+                detail=getattr(exc, "stderr", None) or getattr(exc, "stdout", None),
+            ) from exc

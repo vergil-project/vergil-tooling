@@ -190,6 +190,21 @@ def test_phase_details_unknown_phase() -> None:
     assert details == ""
 
 
+def test_comment_failure_raises_with_comment_phase() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".prepare"),
+        patch(
+            _MOD + ".comment_phase_complete",
+            side_effect=Exception("GitHub 502"),
+        ),
+        pytest.raises(ReleaseError) as exc_info,
+    ):
+        run_release(ctx)
+    assert exc_info.value.phase == "comment(prepare)"
+    assert exc_info.value.command == "comment_phase_complete"
+
+
 def test_phase_details_confirm_cd_workflow() -> None:
     from vergil_tooling.lib.release.orchestrator import _phase_details
 
