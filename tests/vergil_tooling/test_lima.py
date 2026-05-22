@@ -241,7 +241,7 @@ class TestInjectCredentials:
 
         assert mock_run.call_count == 2
         mkdir_call = mock_run.call_args_list[0]
-        assert "mkdir" in mkdir_call[0]
+        assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
 
         git_call = mock_run.call_args_list[1]
         assert "git" in git_call[0]
