@@ -6,20 +6,21 @@
 > Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Provision agent identity credentials (GitHub App
-credentials, GHCR auth) into the identity VM so the agent
-operates under its own App identity — never the human's.
+credentials) into the identity VM so the agent operates under
+its own App identity — never the human's.
 
 **Architecture:** A `vrg-vm-init` script runs on the host and
 injects GitHub App credentials (App ID, private key) into the VM
-via `limactl shell`. Inside the VM, the tooling uses JWT →
-installation token exchange for all GitHub operations over HTTPS.
-Installation IDs are resolved dynamically at runtime by the
-wrapper scripts (`vrg-git`, `vrg-gh`) — not configured statically.
-No SSH keys are provisioned — the agent authenticates exclusively
-via App installation tokens.
+via `limactl shell`. Inside the VM, all token acquisition happens
+dynamically at runtime through `vrg-git` / `vrg-gh` — the
+wrappers call `get_installation_token()` in `github.py`, which
+generates a JWT, discovers installation IDs via
+`GET /app/installations`, and exchanges for per-org installation
+tokens cached with 55-minute TTL. No standalone token tool
+(`vrg-app-token`) is needed.
 
-**Tech Stack:** Bash (provisioning scripts), Lima CLI, gh CLI,
-nerdctl, PyJWT
+**Tech Stack:** Bash (provisioning scripts), Lima CLI, yq (TOML
+parsing)
 
 **Specs:**
 - `docs/specs/2026-05-20-identity-vm-isolation-design.md` (#892)
@@ -33,8 +34,8 @@ isolation system.
 | Plan | Scope | Status |
 |---|---|---|
 | 1. Repository + Working VM | vergil-vm repo, Lima template | Complete |
-| 2. Session Management | vrg-session, identities.toml | Planned |
-| **3. Credential Provisioning** (this plan) | GitHub App credentials, GHCR auth | This plan |
+| 2. Session Management | vrg-session, identities.toml | Complete |
+| **3. Credential Provisioning** (this plan) | GitHub App credentials | **Complete** |
 | ~~4. Egress Filtering~~ | ~~HAProxy, pf, iptables~~ | Deferred to v2.2 (#901) |
 | 5. vergil-tooling Adaptations | nerdctl runtime detection | Planned |
 | 6. Distribution + Updates | Pre-built images, vrg-vm-update | Planned |
@@ -43,6 +44,39 @@ isolation system.
 
 **Depends on:** Plan 1 (working VM), Plan 2 (identities.toml
 defines which credentials to provision)
+
+**Prerequisite implemented in vergil-tooling:**
+vergil-tooling PR #1008 (issue #1006) added dynamic per-org
+installation token resolution to `github.py`. This is the runtime
+mechanism that makes static token bootstrapping unnecessary.
+
+---
+
+## Architecture Decision: Dynamic-Only Token Acquisition
+
+All GitHub API access in the VM goes through `vrg-git` or
+`vrg-gh`, which call `get_installation_token()` in
+`vergil_tooling.lib.github`. That function:
+
+1. Detects the org from the current repo's git remote URL
+2. Generates a JWT from the App ID + private key
+3. Discovers installation IDs via `GET /app/installations`
+4. Exchanges for a per-org installation token
+5. Caches the token for 55 minutes
+
+Because every authenticated operation routes through the
+wrappers, there is no need for:
+
+- A standalone `vrg-app-token` CLI tool
+- Init-time GHCR login (nerdctl pulls go through wrappers)
+- Init-time git identity configuration (commits go through
+  `vrg-commit`)
+- A git credential helper for raw `git` commands
+
+Raw `git` / `gh` commands that require auth will fail in the VM
+because no ambient token exists. This is self-correcting — the
+agent learns to use the wrappers. Read-only commands
+(`git status`, `git log`) work without tokens.
 
 ---
 
@@ -54,7 +88,6 @@ defines which credentials to provision)
 |---|---|---|---|
 | App ID | `identities.toml` | `~/.config/vergil/app.env` | Identifies the GitHub App for JWT generation |
 | Private key (.pem) | Host filesystem (path in `identities.toml`) | `~/.config/vergil/app.pem` | Signs JWTs for installation token exchange |
-| GHCR token | Derived from installation token | nerdctl login state | Pull vergil-docker images |
 
 Installation IDs are **not** stored in the VM or in
 `identities.toml`. The wrapper scripts (`vrg-git`, `vrg-gh`)
@@ -77,9 +110,8 @@ limactl shell vergil-agent -- bash -c \
   'mkdir -p ~/.config/vergil && cat > ~/.config/vergil/app.pem && chmod 600 ~/.config/vergil/app.pem' \
   < ~/.config/vergil/keys/vergil-agent.pem
 
-limactl shell vergil-agent -- bash -c \
-  'cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env' \
-  <<< "APP_ID=3809631"
+printf 'APP_ID=3809631\n' | limactl shell vergil-agent -- bash -c \
+  'cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env'
 ```
 
 ### The vrg-vm-init Script
@@ -89,11 +121,12 @@ an identity VM. Run once after VM creation, or re-run to update
 credentials.
 
 ```bash
-vrg-vm-init vergil
+vrg-vm-init vergil vergil-agent
 # Reads identities.toml for the 'vergil' identity
 # Injects App credentials into the VM via limactl shell
-# Configures git HTTPS auth and GHCR login
-# Verifies each credential works
+# Configures git HTTPS URL rewriting
+# Installs vergil-tooling (provides vrg-git, vrg-gh)
+# Runs credential verification
 ```
 
 ### Credential Sources
@@ -142,126 +175,47 @@ This mode does not provide server-side merge control (see #933).
 Configure git inside the VM to authenticate to GitHub via
 installation tokens over HTTPS. No SSH configuration is needed.
 
-**Files:**
-- Modify: `templates/agent.yaml` (optional — git config can be
-  set by vrg-vm-init instead of baked into the template)
+- [x] **Step 1: Configure git to use HTTPS for GitHub**
 
-- [ ] **Step 1: Configure git to use HTTPS for GitHub**
-
-The `vrg-vm-init` script sets git to use HTTPS URLs for GitHub
-and configures a credential helper that retrieves the App
-installation token:
+The `vrg-vm-init` script sets git to use HTTPS URLs for GitHub:
 
 ```bash
 limactl shell "$INSTANCE" -- git config --global \
     url."https://github.com/".insteadOf "git@github.com:"
 ```
 
-The credential helper is provided by vergil-tooling (installed
-in the VM via Plan 1). It reads the App credentials from
-`~/.config/vergil/app.pem` and `app.env`, generates a JWT,
-exchanges it for an installation token, and returns it to git.
+No credential helper is needed — all authenticated git operations
+go through `vrg-git`, which acquires tokens dynamically.
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
-```bash
-vrg-commit --type feat --scope vm \
-  --message "git HTTPS credential configuration" \
-  --body "Configure git to use HTTPS with App installation tokens for GitHub"
-```
+Committed as part of the combined `vrg-vm-init` implementation.
 
 ---
 
 ### Task 2: Credential Verification Script
 
-A script that runs inside the VM and verifies all credentials
-are properly configured.
+A script that runs inside the VM and verifies the credential
+file layout is correct.
 
 **Files:**
 - Create: `scripts/vm-verify-credentials.sh`
 - Create: `tests/test_credentials.sh`
 
-- [ ] **Step 1: Write the credential verification script**
+- [x] **Step 1: Write the credential verification script**
 
-```bash
-#!/bin/bash
-# scripts/vm-verify-credentials.sh
-# Run inside the VM to verify all credentials are configured.
-set -euo pipefail
+Checks: app.pem exists with 600 permissions, app.env exists with
+600 permissions, git HTTPS rewrite is configured.
 
-failures=0
+- [x] **Step 2: Write the test**
 
-check() {
-    local name="$1"
-    shift
-    printf "  %-30s " "$name"
-    if "$@" > /dev/null 2>&1; then
-        echo "OK"
-    else
-        echo "FAIL"
-        failures=$((failures + 1))
-    fi
-}
+Same checks as verification script, wired into the
+`run-tests.sh` harness.
 
-echo "Verifying credentials..."
+- [x] **Step 3: Commit**
 
-# App credentials exist
-check "App private key" test -f ~/.config/vergil/app.pem
-check "App config" test -f ~/.config/vergil/app.env
-
-# GitHub API access (via installation token)
-check "GitHub API access" gh api user --jq '.login'
-
-# nerdctl GHCR auth
-check "nerdctl GHCR login" nerdctl pull --quiet ghcr.io/vergil-project/dev-python:latest
-
-# Git user config
-check "git user.name" git config user.name
-check "git user.email" git config user.email
-
-# Git HTTPS config
-check "git HTTPS rewrite" git config url.https://github.com/.insteadOf
-
-echo ""
-echo "Credential checks: $((7 - failures))/7 passed"
-exit "$failures"
-```
-
-- [ ] **Step 2: Write the test**
-
-```bash
-#!/bin/bash
-# tests/test_credentials.sh — Verify credential configuration.
-# Runs inside the VM after vrg-vm-init has been executed.
-set -euo pipefail
-
-# App credentials exist with correct permissions
-test -f ~/.config/vergil/app.pem
-perms=$(stat -c '%a' ~/.config/vergil/app.pem 2>/dev/null || stat -f '%Lp' ~/.config/vergil/app.pem)
-test "$perms" = "600"
-
-test -f ~/.config/vergil/app.env
-
-# GitHub API is accessible
-gh api user --jq '.login' | grep -q .
-
-# Git identity is configured
-git config user.name | grep -q .
-git config user.email | grep -q .
-
-# Git uses HTTPS for GitHub
-git config url.https://github.com/.insteadOf | grep -q 'git@github.com:'
-
-echo "test_credentials: all checks passed"
-```
-
-- [ ] **Step 3: Commit**
-
-```bash
-vrg-commit --type feat --scope vm \
-  --message "credential verification script" \
-  --body "vm-verify-credentials.sh checks App credentials, GitHub API access, GHCR login, and git identity"
-```
+Committed as part of the combined implementation
+(vergil-vm PR #24).
 
 ---
 
@@ -273,119 +227,15 @@ credentials into the VM.
 **Files:**
 - Create: `scripts/vrg-vm-init.sh`
 
-- [ ] **Step 1: Write vrg-vm-init.sh**
+- [x] **Step 1: Write vrg-vm-init.sh**
 
-```bash
-#!/bin/bash
-# scripts/vrg-vm-init.sh
-# Initialize an identity VM with agent credentials.
-#
-# Usage:
-#   ./scripts/vrg-vm-init.sh <identity-name> <vm-instance>
-#
-# Reads credentials from identities.toml or environment variables:
-#   VRG_APP_ID            — GitHub App ID
-#   VRG_PRIVATE_KEY_PATH  — Path to App private key (.pem)
-#
-# Example:
-#   ./scripts/vrg-vm-init.sh vergil vergil-agent
-set -euo pipefail
+Implemented with `identities.toml` parsing via `yq`, env var
+overrides, credential injection, git HTTPS configuration,
+vergil-tooling installation, and verification.
 
-IDENTITY="${1:?Usage: vrg-vm-init <identity-name> <vm-instance>}"
-INSTANCE="${2:?Usage: vrg-vm-init <identity-name> <vm-instance>}"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+- [x] **Step 2: Make it executable and commit**
 
-echo "=== Initializing identity VM: $INSTANCE (identity: $IDENTITY) ==="
-echo ""
-
-# --- Read credentials from identities.toml or env vars ---
-
-APP_ID="${VRG_APP_ID:-}"
-PRIVATE_KEY_PATH="${VRG_PRIVATE_KEY_PATH:-}"
-
-if [ -z "$APP_ID" ] || [ -z "$PRIVATE_KEY_PATH" ]; then
-    echo "Reading credentials from identities.toml..."
-    # TODO: parse identities.toml for the given identity
-    # For now, require env vars
-    echo "ERROR: Set VRG_APP_ID and VRG_PRIVATE_KEY_PATH" >&2
-    exit 1
-fi
-
-if [ ! -f "$PRIVATE_KEY_PATH" ]; then
-    echo "ERROR: Private key not found: $PRIVATE_KEY_PATH" >&2
-    exit 1
-fi
-
-# --- Inject App Credentials ---
-
-echo "Injecting App private key..."
-limactl shell "$INSTANCE" -- bash -c \
-    'mkdir -p ~/.config/vergil && cat > ~/.config/vergil/app.pem && chmod 600 ~/.config/vergil/app.pem' \
-    < "$PRIVATE_KEY_PATH"
-
-echo "Injecting App configuration..."
-limactl shell "$INSTANCE" -- bash -c \
-    'cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env' \
-    <<EOF
-APP_ID=$APP_ID
-EOF
-
-# --- Configure git for HTTPS ---
-
-echo "Configuring git for HTTPS GitHub access..."
-limactl shell "$INSTANCE" -- \
-    git config --global url."https://github.com/".insteadOf "git@github.com:"
-echo ""
-
-# --- GHCR Authentication ---
-
-echo "Configuring nerdctl GHCR authentication..."
-# GHCR login uses a token from any installation (all share
-# the same packages:read scope). vrg-app-token resolves the
-# first available installation dynamically via the API.
-limactl shell "$INSTANCE" -- bash -c '
-    source ~/.config/vergil/app.env
-    TOKEN=$(vrg-app-token --app-id "$APP_ID" --key ~/.config/vergil/app.pem)
-    echo "$TOKEN" | nerdctl login ghcr.io -u x-access-token --password-stdin
-'
-echo ""
-
-# --- Git Identity ---
-
-echo "Configuring git identity..."
-# The App bot identity is derived from the App itself, not
-# from any particular installation.
-limactl shell "$INSTANCE" -- bash -c '
-    source ~/.config/vergil/app.env
-    TOKEN=$(vrg-app-token --app-id "$APP_ID" --key ~/.config/vergil/app.pem)
-    GITHUB_USER=$(GH_TOKEN="$TOKEN" gh api user --jq ".login")
-    GITHUB_EMAIL=$(GH_TOKEN="$TOKEN" gh api user --jq ".email // empty")
-    if [ -z "$GITHUB_EMAIL" ]; then
-        GITHUB_EMAIL="${GITHUB_USER}@users.noreply.github.com"
-    fi
-    echo "Git identity: $GITHUB_USER <$GITHUB_EMAIL>"
-    git config --global user.name "$GITHUB_USER"
-    git config --global user.email "$GITHUB_EMAIL"
-'
-echo ""
-
-# --- Verify All ---
-
-echo "=== Running credential verification ==="
-limactl shell "$INSTANCE" -- bash -s < "$SCRIPT_DIR/vm-verify-credentials.sh"
-
-echo ""
-echo "=== VM initialization complete ==="
-```
-
-- [ ] **Step 2: Make it executable and commit**
-
-```bash
-chmod +x scripts/vrg-vm-init.sh scripts/vm-verify-credentials.sh
-vrg-commit --type feat --scope vm \
-  --message "host-side credential injection script" \
-  --body "vrg-vm-init injects GitHub App credentials, configures HTTPS git auth, GHCR login, and git identity"
-```
+Committed and merged as vergil-vm PR #24.
 
 ---
 
@@ -400,9 +250,7 @@ cd ~/dev/projects/vergil-project/vergil-vm
 limactl start vergil-agent
 
 # Run credential init
-VRG_APP_ID=3809631 \
-VRG_PRIVATE_KEY_PATH=~/.config/vergil/keys/wphillipmoore-vergil-agent.2026-05-22.private-key.pem \
-  ./scripts/vrg-vm-init.sh vergil vergil-agent
+./scripts/vrg-vm-init.sh vergil vergil-agent
 ```
 
 - [ ] **Step 2: Verify inside the VM**
@@ -410,10 +258,9 @@ VRG_PRIVATE_KEY_PATH=~/.config/vergil/keys/wphillipmoore-vergil-agent.2026-05-22
 ```bash
 limactl shell vergil-agent
 
-# Inside the VM:
-gh api user --jq '.login'   # Should return App identity
-git config user.name         # Should show configured identity
-nerdctl pull ghcr.io/vergil-project/dev-python:latest  # Should work
+# Inside the VM — all authenticated commands use wrappers:
+vrg-git clone https://github.com/vergil-project/vergil-tooling.git
+vrg-gh api user --jq '.login'
 ```
 
 - [ ] **Step 3: Commit any fixes**
@@ -422,16 +269,19 @@ nerdctl pull ghcr.io/vergil-project/dev-python:latest  # Should work
 
 ## Self-Review Checklist
 
-- [x] **Spec coverage:** App ID, private key, GHCR auth, git
-  identity, HTTPS configuration — all credential types from the
-  spec (#933) are covered. Installation IDs are resolved
-  dynamically at runtime (Plan 5), not provisioned statically.
+- [x] **Spec coverage:** App ID, private key, HTTPS
+  configuration — all credential types from the spec (#933) are
+  covered. GHCR auth and git identity are handled dynamically
+  at runtime by the wrappers, not bootstrapped during init.
 - [x] **No SSH:** SSH key injection, SSH config, known_hosts
   setup, and SSH verification are all removed. Git uses HTTPS
   with App installation tokens exclusively.
-- [x] **Placeholder scan:** One TODO remains (parsing
-  identities.toml in vrg-vm-init) — acceptable for v1, env vars
-  are the primary mechanism.
+- [x] **No standalone token tool:** `vrg-app-token` is not
+  needed. All token acquisition is dynamic via `vrg-git` /
+  `vrg-gh` calling `get_installation_token()`.
+- [x] **identities.toml parsing:** vrg-vm-init reads
+  `identities.toml` directly via `yq`, with env var overrides
+  for automation.
 - [x] **Type consistency:** Script names, variable names, and
   VM instance references are consistent across all tasks.
 - [x] **Scope boundaries:** This plan does NOT include API key
