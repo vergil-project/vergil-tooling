@@ -228,13 +228,16 @@ def _detect_version(repo_root: Path) -> str:
 
 
 def _check_version_not_tagged(version: str) -> None:
-    latest_tag = git.read_output(
-        "describe",
-        "--tags",
-        "--abbrev=0",
-        "--match",
-        "v*",
-    )
+    try:
+        latest_tag = git.read_output(
+            "describe",
+            "--tags",
+            "--abbrev=0",
+            "--match",
+            "v*",
+        )
+    except subprocess.CalledProcessError:
+        return
     if latest_tag == f"v{version}":
         raise ReleaseError(
             phase="preflight",
