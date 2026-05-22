@@ -95,6 +95,24 @@ def test_preflight_fails_if_version_matches_tag(_repo: Path) -> None:
         preflight(version_override=None, repo_root=_repo)
 
 
+def test_preflight_succeeds_with_no_prior_tags(_repo: Path) -> None:
+    import subprocess as _sp
+
+    with (
+        patch("shutil.which", return_value="/usr/bin/git-cliff"),
+        patch(_MOD + ".github.read_output", return_value="owner/repo"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + "._audit_repo_config"),
+        patch(
+            _MOD + ".git.read_output",
+            side_effect=_sp.CalledProcessError(128, "git describe"),
+        ),
+        patch(_MOD + ".find_existing_tracking_issue", return_value=None),
+    ):
+        ctx = preflight(version_override=None, repo_root=_repo)
+    assert ctx.version == "2.1.0"
+
+
 def test_preflight_returns_context(_repo: Path) -> None:
     with (
         patch("shutil.which", return_value="/usr/bin/git-cliff"),
