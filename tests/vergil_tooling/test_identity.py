@@ -27,7 +27,6 @@ def config_file(tmp_path: Path) -> Path:
         vm_instance = "vergil-agent"
         auth_type = "app"
         app_id = 12345
-        installation_id = 67890
         private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
     """)
     )
@@ -47,7 +46,6 @@ def test_identity_fields(config_file: Path) -> None:
     assert ident.vm_instance == "vergil-agent"
     assert ident.auth_type == "app"
     assert ident.app_id == "12345"
-    assert ident.installation_id == "67890"
 
 
 def test_missing_config_file(tmp_path: Path) -> None:

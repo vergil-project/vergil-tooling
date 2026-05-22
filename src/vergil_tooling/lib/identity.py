@@ -13,7 +13,6 @@ class Identity:
     vm_instance: str
     auth_type: str = "app"
     app_id: str = ""
-    installation_id: str = ""
     private_key_path: str = ""
 
 
@@ -36,7 +35,6 @@ def load_config(path: Path) -> IdentityConfig:
             vm_instance=data["vm_instance"],
             auth_type=data.get("auth_type", "app"),
             app_id=str(data.get("app_id", "")),
-            installation_id=str(data.get("installation_id", "")),
             private_key_path=data.get("private_key_path", ""),
         )
     return IdentityConfig(identities=identities)

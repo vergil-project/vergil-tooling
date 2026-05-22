@@ -21,7 +21,6 @@ def config_dir(tmp_path: Path) -> Path:
         vm_instance = "vergil-agent"
         auth_type = "app"
         app_id = 12345
-        installation_id = 67890
         private_key_path = "~/.config/vergil/keys/vergil-agent.pem"
     """)
     )
