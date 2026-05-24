@@ -15,12 +15,14 @@ class Identity:
     app_id: str = ""
     private_key_path: str = ""
     projects_dir: str = ""
+    vergil: str = ""
 
 
 @dataclass
 class IdentityConfig:
     identities: dict[str, Identity]
     default_identity: str | None = None
+    vergil: str = ""
 
 
 def load_config(path: Path) -> IdentityConfig:
@@ -32,6 +34,7 @@ def load_config(path: Path) -> IdentityConfig:
         raw = tomllib.load(f)
 
     default_identity = raw.get("default_identity")
+    vergil = raw.get("vergil", "")
 
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
@@ -41,8 +44,9 @@ def load_config(path: Path) -> IdentityConfig:
             app_id=str(data.get("app_id", "")),
             private_key_path=data.get("private_key_path", ""),
             projects_dir=data.get("projects_dir", ""),
+            vergil=data.get("vergil", ""),
         )
-    return IdentityConfig(identities=identities, default_identity=default_identity)
+    return IdentityConfig(identities=identities, default_identity=default_identity, vergil=vergil)
 
 
 def default_config_path() -> Path:
@@ -101,6 +105,16 @@ def resolve_identity_by_name(
         "ERROR: multiple identities configured — use --identity to select one",
         file=sys.stderr,
     )
+    raise SystemExit(1)
+
+
+def resolve_vergil_version(config: IdentityConfig, identity: Identity) -> str:
+    """Return the vergil ecosystem version: identity-level, then config-level."""
+    if identity.vergil:
+        return identity.vergil
+    if config.vergil:
+        return config.vergil
+    print("ERROR: no 'vergil' version configured in identities.toml", file=sys.stderr)
     raise SystemExit(1)
 
 
