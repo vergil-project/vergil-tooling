@@ -256,6 +256,71 @@ class TestInjectCredentials:
         assert "app.env" in env_call[0][1]
         assert "APP_ID=12345" in env_call[0][2]
 
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_injects_claude_token(
+        self, mock_pipe: MagicMock, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        token_file = tmp_path / "claude-oauth-token"
+        token_file.write_text("test-oauth-token-abc123\n")
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            app_id="12345",
+            private_key_path=str(key_file),
+            claude_token_path=str(token_file),
+        )
+
+        inject_credentials("vergil-agent", identity)
+
+        assert mock_run.call_count == 3
+        bashrc_call = mock_run.call_args_list[2]
+        assert "claude.env" in " ".join(str(a) for a in bashrc_call[0])
+
+        assert mock_pipe.call_count == 3
+        claude_call = mock_pipe.call_args_list[2]
+        assert "claude.env" in claude_call[0][1]
+        assert "CLAUDE_CODE_OAUTH_TOKEN=test-oauth-token-abc123" in claude_call[0][2]
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_skips_claude_token_when_not_configured(
+        self, mock_pipe: MagicMock, mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            app_id="12345",
+            private_key_path=str(key_file),
+        )
+
+        inject_credentials("vergil-agent", identity)
+
+        assert mock_run.call_count == 2
+        assert mock_pipe.call_count == 2
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_exits_if_claude_token_missing(
+        self, _mock_pipe: MagicMock, _mock_run: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        bad_path = "/nonexistent/claude-token"  # noqa: S105
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            app_id="12345",
+            private_key_path=str(key_file),
+            claude_token_path=bad_path,
+        )
+        with pytest.raises(SystemExit):
+            inject_credentials("vergil-agent", identity)
+
     def test_exits_if_key_missing(self) -> None:
         identity = Identity(
             vm_instance="vergil-agent",

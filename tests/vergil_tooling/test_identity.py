@@ -356,3 +356,22 @@ def test_resolve_vm_tag_falls_back_to_vergil() -> None:
     identity = Identity(vm_instance="test")
     config = IdentityConfig(identities={"test": identity}, vergil="v2.0")
     assert resolve_vm_tag(config, identity) == "v2.0"
+
+
+def test_claude_token_path_parsed(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        claude_token_path = "~/.config/vergil/keys/claude-oauth-token"
+    """)
+    )
+    cfg = load_config(p)
+    expected = "~/.config/vergil/keys/claude-oauth-token"
+    assert cfg.identities["vergil"].claude_token_path == expected
+
+
+def test_claude_token_path_defaults_empty(config_file: Path) -> None:
+    cfg = load_config(config_file)
+    assert cfg.identities["vergil"].claude_token_path == ""
