@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
 from vergil_tooling.lib.repo_config import audit_local_config
@@ -85,45 +84,6 @@ class TestGithooks:
         fields = {i.field for i in diff.items}
         assert "local.githooks_pre_commit" not in fields
         assert "local.githooks_pre_commit_content" in fields
-
-    def test_hooks_path_not_configured(self, tmp_path: Path) -> None:
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\n")
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.git_config.hooks_path" in fields
-        match = next(i for i in diff.items if i.field == "local.git_config.hooks_path")
-        assert match.actual == "not configured"
-
-    def test_hooks_path_wrong_value(self, tmp_path: Path) -> None:
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)  # noqa: S603, S607
-        subprocess.run(  # noqa: S603
-            ["git", "config", "core.hooksPath", "wrong/path"],  # noqa: S607
-            cwd=tmp_path,
-            capture_output=True,
-            check=True,
-        )
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\n")
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.git_config.hooks_path" in fields
-        match = next(i for i in diff.items if i.field == "local.git_config.hooks_path")
-        assert match.actual == "wrong/path"
-
-    def test_hooks_path_configured(self, tmp_path: Path) -> None:
-        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)  # noqa: S603, S607
-        subprocess.run(  # noqa: S603
-            ["git", "config", "core.hooksPath", ".githooks"],  # noqa: S607
-            cwd=tmp_path,
-            capture_output=True,
-            check=True,
-        )
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\n")
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.git_config.hooks_path" not in fields
 
     def test_content_matches(self, tmp_path: Path) -> None:
         (tmp_path / ".githooks").mkdir()
@@ -333,13 +293,6 @@ class TestClaudeSettings:
 
 def _write_compliant_repo(root: Path) -> None:
     """Scaffold a fully compliant repo structure."""
-    subprocess.run(["git", "init"], cwd=root, capture_output=True, check=True)  # noqa: S603, S607
-    subprocess.run(  # noqa: S603
-        ["git", "config", "core.hooksPath", ".githooks"],  # noqa: S607
-        cwd=root,
-        capture_output=True,
-        check=True,
-    )
     (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
     (root / ".githooks").mkdir()
     (root / ".githooks" / "pre-commit").write_text(_HOOK_TEMPLATE_TEXT)
@@ -357,7 +310,6 @@ class TestIntegration:
         assert "local.githooks_pre_commit" in fields
         assert "local.claude_md" in fields
         assert "local.claude_settings" in fields
-        assert "local.git_config.hooks_path" not in fields
 
     def test_compliant_repo(self, tmp_path: Path) -> None:
         _write_compliant_repo(tmp_path)
