@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.36] - 2026-05-24
+
+### Bug fixes
+
+- remove redundant start_vm from create flow
+
+### Chores
+
+- bump version to 2.0.36
+
 ## [2.0.35] - 2026-05-24
 
 ### Chores
