@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shlex
 import sys
 from pathlib import Path
 
@@ -175,11 +176,11 @@ def _cmd_session(args: argparse.Namespace) -> int:
     cmd = ["limactl", "shell", "--start", identity.vm_instance]
 
     if workspace:
-        cmd.extend(["--workdir", workspace])
-
-    if args.cmd:
-        cmd.append("--")
-        cmd.extend(args.cmd)
+        if args.cmd:
+            inner = f"cd {shlex.quote(workspace)} && exec {shlex.join(args.cmd)}"
+        else:
+            inner = f"cd {shlex.quote(workspace)} && exec bash --login"
+        cmd.extend(["bash", "-c", inner])
 
     os.execvp(cmd[0], cmd)  # noqa: S606, S607
     return 0  # unreachable, keeps mypy happy
