@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.40] - 2026-05-24
+
+### Bug fixes
+
+- remove unenforceable core.hooksPath audit check
+
+### Chores
+
+- bump version to 2.0.40
+
 ## [2.0.39] - 2026-05-24
 
 ### Bug fixes
