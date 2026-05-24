@@ -439,3 +439,61 @@ def test_read_version_from_ref_body(tmp_path: Path) -> None:
     ):
         result = _read_version_from_ref("origin/main", "VERSION", "shell")
     assert result == "1.2.3"
+
+
+# -- bump() part parameter tests ----------------------------------------------
+
+
+def test_bump_minor_generic(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "shell")
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    result = bump(tmp_path, "minor")
+    assert result == "1.3.0"
+    assert (tmp_path / "VERSION").read_text().strip() == "1.3.0"
+
+
+def test_bump_major_generic(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "shell")
+    (tmp_path / "VERSION").write_text("1.2.3\n")
+    result = bump(tmp_path, "major")
+    assert result == "2.0.0"
+    assert (tmp_path / "VERSION").read_text().strip() == "2.0.0"
+
+
+def test_bump_minor_python(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("2.0.5\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.0.5"\n')
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path, "minor")
+    assert result == "2.1.0"
+    assert (tmp_path / "VERSION").read_text().strip() == "2.1.0"
+    text = (tmp_path / "pyproject.toml").read_text()
+    assert 'version = "2.1.0"' in text
+
+
+def test_bump_major_python(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "python")
+    (tmp_path / "VERSION").write_text("2.5.3\n")
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "example"\nversion = "2.5.3"\n')
+    with patch("vergil_tooling.lib.version.subprocess.run"):
+        result = bump(tmp_path, "major")
+    assert result == "3.0.0"
+    assert (tmp_path / "VERSION").read_text().strip() == "3.0.0"
+    text = (tmp_path / "pyproject.toml").read_text()
+    assert 'version = "3.0.0"' in text
+
+
+def test_bump_patch_default(tmp_path: Path) -> None:
+    """Calling bump() with no part argument still increments patch."""
+    _write_toml(tmp_path, "shell")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    result = bump(tmp_path)
+    assert result == "1.0.1"
+
+
+def test_bump_invalid_part_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path, "shell")
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    with pytest.raises(ValueError, match="part must be"):
+        bump(tmp_path, "rc")
