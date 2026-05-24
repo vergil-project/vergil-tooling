@@ -226,6 +226,13 @@ def _inject_claude_token(instance: str, token_path: str) -> None:
         credentials + "\n",
     )
 
+    onboarding = json.dumps({"hasCompletedOnboarding": True})
+    shell_pipe(
+        instance,
+        "cat > ~/.claude.json",
+        onboarding + "\n",
+    )
+
 
 def install_tooling(instance: str, tag: str) -> None:
     """Install vergil-tooling inside the VM."""
