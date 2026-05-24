@@ -152,6 +152,39 @@ class TestCreate:
         mock_fetch.assert_called_once_with("v2.2")
         mock_install.assert_called_once_with("vergil-agent", "v2.2")
 
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_uses_vergil_vm_for_tag(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _inject: MagicMock,
+        mock_install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        p = tmp_path / "identities.toml"
+        p.write_text(
+            textwrap.dedent("""\
+            vergil = "v2.0"
+            vergil-vm = "v2.1"
+
+            [identities.vergil]
+            vm_instance = "vergil-agent"
+            projects_dir = "/home/user/projects"
+        """)
+        )
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+
+        main(["create", "--config", str(p)])
+        mock_fetch.assert_called_once_with("v2.1")
+        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+
 
 class TestStart:
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")

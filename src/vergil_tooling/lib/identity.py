@@ -16,6 +16,7 @@ class Identity:
     private_key_path: str = ""
     projects_dir: str = ""
     vergil: str = ""
+    vergil_vm: str = ""
 
 
 @dataclass
@@ -23,6 +24,7 @@ class IdentityConfig:
     identities: dict[str, Identity]
     default_identity: str | None = None
     vergil: str = ""
+    vergil_vm: str = ""
 
 
 def load_config(path: Path) -> IdentityConfig:
@@ -35,6 +37,7 @@ def load_config(path: Path) -> IdentityConfig:
 
     default_identity = raw.get("default_identity")
     vergil = raw.get("vergil", "")
+    vergil_vm = raw.get("vergil-vm", "")
 
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
@@ -45,8 +48,14 @@ def load_config(path: Path) -> IdentityConfig:
             private_key_path=data.get("private_key_path", ""),
             projects_dir=data.get("projects_dir", ""),
             vergil=data.get("vergil", ""),
+            vergil_vm=data.get("vergil-vm", ""),
         )
-    return IdentityConfig(identities=identities, default_identity=default_identity, vergil=vergil)
+    return IdentityConfig(
+        identities=identities,
+        default_identity=default_identity,
+        vergil=vergil,
+        vergil_vm=vergil_vm,
+    )
 
 
 def default_config_path() -> Path:
@@ -116,6 +125,15 @@ def resolve_vergil_version(config: IdentityConfig, identity: Identity) -> str:
         return config.vergil
     print("ERROR: no 'vergil' version configured in identities.toml", file=sys.stderr)
     raise SystemExit(1)
+
+
+def resolve_vm_tag(config: IdentityConfig, identity: Identity) -> str:
+    """Return the VM template tag: identity vergil-vm, config vergil-vm, then vergil."""
+    if identity.vergil_vm:
+        return identity.vergil_vm
+    if config.vergil_vm:
+        return config.vergil_vm
+    return resolve_vergil_version(config, identity)
 
 
 _PROJECTS_PREFIX = "/projects"

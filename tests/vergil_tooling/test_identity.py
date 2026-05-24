@@ -16,6 +16,7 @@ from vergil_tooling.lib.identity import (
     resolve_identity,
     resolve_identity_by_name,
     resolve_vergil_version,
+    resolve_vm_tag,
     resolve_workspace,
 )
 
@@ -307,3 +308,51 @@ def test_resolve_vergil_version_missing() -> None:
     config = IdentityConfig(identities={"test": identity})
     with pytest.raises(SystemExit):
         resolve_vergil_version(config, identity)
+
+
+def test_vergil_vm_parsed_config_level(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        vergil = "v2.0"
+        vergil-vm = "v2.1"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.vergil_vm == "v2.1"
+
+
+def test_vergil_vm_parsed_identity_level(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        vergil-vm = "v2.1"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["vergil"].vergil_vm == "v2.1"
+
+
+def test_resolve_vm_tag_from_identity() -> None:
+    identity = Identity(vm_instance="test", vergil_vm="v2.1")
+    config = IdentityConfig(identities={"test": identity}, vergil="v2.0", vergil_vm="v1.9")
+    assert resolve_vm_tag(config, identity) == "v2.1"
+
+
+def test_resolve_vm_tag_from_config() -> None:
+    identity = Identity(vm_instance="test")
+    config = IdentityConfig(identities={"test": identity}, vergil="v2.0", vergil_vm="v2.1")
+    assert resolve_vm_tag(config, identity) == "v2.1"
+
+
+def test_resolve_vm_tag_falls_back_to_vergil() -> None:
+    identity = Identity(vm_instance="test")
+    config = IdentityConfig(identities={"test": identity}, vergil="v2.0")
+    assert resolve_vm_tag(config, identity) == "v2.0"
