@@ -14,6 +14,7 @@ class Identity:
     auth_type: str = "app"
     app_id: str = ""
     private_key_path: str = ""
+    claude_token_path: str = ""
     projects_dir: str = ""
     vergil: str = ""
     vergil_vm: str = ""
@@ -46,6 +47,7 @@ def load_config(path: Path) -> IdentityConfig:
             auth_type=data.get("auth_type", "app"),
             app_id=str(data.get("app_id", "")),
             private_key_path=data.get("private_key_path", ""),
+            claude_token_path=data.get("claude_token_path", ""),
             projects_dir=data.get("projects_dir", ""),
             vergil=data.get("vergil", ""),
             vergil_vm=data.get("vergil-vm", ""),
