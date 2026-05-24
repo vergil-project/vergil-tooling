@@ -11,7 +11,7 @@ import os
 import sys
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.container import build_container_args, detect_runtime
+from vergil_tooling.lib.container import build_container_args, detect_runtime, validated_runtime
 
 _VALID_PREFIXES = {"dev", "prod"}
 
@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"URL:     http://localhost:{port}")
     print("---")
 
-    os.execvp(runtime, container_args)  # noqa: S606, S607
+    os.execvp(validated_runtime(runtime), container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 

@@ -17,6 +17,7 @@ from vergil_tooling.lib.container import (
     detect_language,
     detect_runtime,
     docker_platform,
+    validated_runtime,
     worktree_parent_gitdir,
 )
 
@@ -42,6 +43,21 @@ class TestDetectRuntime:
         monkeypatch.setattr("shutil.which", lambda cmd: None)
         with pytest.raises(SystemExit):
             detect_runtime()
+
+
+# -- validated_runtime --------------------------------------------------------
+
+
+class TestValidatedRuntime:
+    def test_accepts_docker(self) -> None:
+        assert validated_runtime("docker") == "docker"
+
+    def test_accepts_nerdctl(self) -> None:
+        assert validated_runtime("nerdctl") == "nerdctl"
+
+    def test_rejects_unknown(self) -> None:
+        with pytest.raises(ValueError, match="invalid container runtime"):
+            validated_runtime("podman")
 
 
 # -- detect_language ----------------------------------------------------------

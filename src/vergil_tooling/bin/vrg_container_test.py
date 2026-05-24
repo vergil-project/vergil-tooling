@@ -19,6 +19,7 @@ from vergil_tooling.lib.container import (
     default_image,
     detect_language,
     detect_runtime,
+    validated_runtime,
 )
 
 if TYPE_CHECKING:
@@ -95,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         )
         return 1
 
-    os.execvp(runtime, container_args)  # noqa: S606, S607
+    os.execvp(validated_runtime(runtime), container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 
