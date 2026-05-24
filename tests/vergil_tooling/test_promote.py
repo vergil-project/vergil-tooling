@@ -37,9 +37,50 @@ def test_promote_strips_v_prefix() -> None:
 
 def test_promote_raises_on_tag_failure() -> None:
     with patch("vergil_tooling.lib.promote.subprocess.run") as mock_run:
-        mock_run.side_effect = _sp.CalledProcessError(1, "git tag")
+        err = _sp.CalledProcessError(1, "git tag")
+        err.stderr = ""
+        err.stdout = ""
+        mock_run.side_effect = err
         with pytest.raises(_sp.CalledProcessError):
             promote("2.0.34")
+
+
+def test_promote_prints_stderr_on_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    err = _sp.CalledProcessError(1, "git tag")
+    err.stderr = "fatal: tag already exists\n"
+    err.stdout = ""
+    with patch("vergil_tooling.lib.promote.subprocess.run") as mock_run:
+        mock_run.side_effect = err
+        with pytest.raises(_sp.CalledProcessError):
+            promote("2.0.34")
+    captured = capsys.readouterr()
+    assert "tag already exists" in captured.err
+
+
+def test_promote_prints_stderr_on_push_failure(capsys: pytest.CaptureFixture[str]) -> None:
+    tag_ok = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    push_err = _sp.CalledProcessError(1, "git push")
+    push_err.stderr = "fatal: could not read remote\n"
+    push_err.stdout = ""
+    with patch("vergil_tooling.lib.promote.subprocess.run") as mock_run:
+        mock_run.side_effect = [tag_ok, push_err]
+        with pytest.raises(_sp.CalledProcessError):
+            promote("2.0.34")
+    captured = capsys.readouterr()
+    assert "could not read remote" in captured.err
+
+
+def test_promote_push_failure_no_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    tag_ok = _sp.CompletedProcess(args=[], returncode=0, stdout="", stderr="")
+    push_err = _sp.CalledProcessError(1, "git push")
+    push_err.stderr = ""
+    push_err.stdout = ""
+    with patch("vergil_tooling.lib.promote.subprocess.run") as mock_run:
+        mock_run.side_effect = [tag_ok, push_err]
+        with pytest.raises(_sp.CalledProcessError):
+            promote("2.0.34")
+    captured = capsys.readouterr()
+    assert captured.err == ""
 
 
 def test_promote_invalid_version_raises() -> None:

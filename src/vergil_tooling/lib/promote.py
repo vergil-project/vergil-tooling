@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import sys
 
 _VERSION_RE = re.compile(r"^v?(\d+\.\d+\.\d+)$")
 
@@ -26,19 +27,29 @@ def promote(version: str, *, dry_run: bool = False) -> None:
         return
 
     print(f"Force-updating {rolling_tag} -> {release_tag}")
-    subprocess.run(  # noqa: S603
-        ["git", "tag", "-f", rolling_tag, release_tag],  # noqa: S607
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(  # noqa: S603
+            ["git", "tag", "-f", rolling_tag, release_tag],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
     print(f"Pushing {rolling_tag} to origin")
-    subprocess.run(  # noqa: S603
-        ["git", "push", "origin", rolling_tag, "--force"],  # noqa: S607
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(  # noqa: S603
+            ["git", "push", "origin", rolling_tag, "--force"],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
     print(f"Promoted: {rolling_tag} -> {release_tag}")

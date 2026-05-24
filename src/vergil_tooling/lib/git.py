@@ -27,13 +27,20 @@ def run(*args: str) -> None:
     env = None
     if args and args[0] == "commit":
         env = {**os.environ, _GATE_ENV_VAR: _GATE_ENABLED_VALUE}
-    result = subprocess.run(  # noqa: S603
-        ("git", *args),  # noqa: S607
-        check=True,
-        env=env,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            ("git", *args),  # noqa: S607
+            check=True,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stdout:
+            print(exc.stdout, end="")
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -42,12 +49,17 @@ def run(*args: str) -> None:
 
 def read_output(*args: str) -> str:
     """Run a git command and return stripped stdout."""
-    result = subprocess.run(  # noqa: S603
-        ("git", *args),  # noqa: S607
-        check=True,
-        text=True,
-        capture_output=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            ("git", *args),  # noqa: S607
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     return result.stdout.strip()
 
 

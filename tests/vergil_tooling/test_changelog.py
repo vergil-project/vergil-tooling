@@ -58,10 +58,57 @@ def test_generate_release_notes_creates_dir_and_file(tmp_path: Path) -> None:
 def test_generate_changelog_raises_on_cliff_failure(tmp_path: Path) -> None:
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text("")
+    err = _sp.CalledProcessError(1, "git-cliff")
+    err.stderr = ""
+    err.stdout = ""
     with patch("vergil_tooling.lib.changelog.subprocess.run") as mock_run:
-        mock_run.side_effect = _sp.CalledProcessError(1, "git-cliff")
+        mock_run.side_effect = err
         with pytest.raises(_sp.CalledProcessError):
             generate_changelog(tmp_path, "1.0.0")
+
+
+def test_generate_changelog_prints_stderr_on_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text("")
+    err = _sp.CalledProcessError(1, "git-cliff")
+    err.stderr = "error: unknown option\n"
+    err.stdout = ""
+    with patch("vergil_tooling.lib.changelog.subprocess.run") as mock_run:
+        mock_run.side_effect = err
+        with pytest.raises(_sp.CalledProcessError):
+            generate_changelog(tmp_path, "1.0.0")
+    captured = capsys.readouterr()
+    assert "unknown option" in captured.err
+
+
+def test_generate_release_notes_raises_on_cliff_failure(tmp_path: Path) -> None:
+    releases_dir = tmp_path / RELEASE_NOTES_DIR
+    releases_dir.mkdir()
+    err = _sp.CalledProcessError(1, "git-cliff")
+    err.stderr = ""
+    err.stdout = ""
+    with patch("vergil_tooling.lib.changelog.subprocess.run") as mock_run:
+        mock_run.side_effect = err
+        with pytest.raises(_sp.CalledProcessError):
+            generate_release_notes(tmp_path, "1.0.0")
+
+
+def test_generate_release_notes_prints_stderr_on_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    releases_dir = tmp_path / RELEASE_NOTES_DIR
+    releases_dir.mkdir()
+    err = _sp.CalledProcessError(1, "git-cliff")
+    err.stderr = "error: unknown flag\n"
+    err.stdout = ""
+    with patch("vergil_tooling.lib.changelog.subprocess.run") as mock_run:
+        mock_run.side_effect = err
+        with pytest.raises(_sp.CalledProcessError):
+            generate_release_notes(tmp_path, "1.0.0")
+    captured = capsys.readouterr()
+    assert "unknown flag" in captured.err
 
 
 def test_generate_changelog_prints_stdout_stderr(
