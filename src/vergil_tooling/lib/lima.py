@@ -157,7 +157,7 @@ def delete_vm(instance: str) -> None:
 
 
 def inject_credentials(instance: str, identity: Identity) -> None:
-    """Inject GitHub App credentials into a running VM."""
+    """Inject GitHub App and Claude Code credentials into a running VM."""
     key_path = Path(identity.private_key_path).expanduser()
     if not key_path.exists():
         print(f"ERROR: private key not found: {key_path}", file=sys.stderr)
@@ -189,6 +189,34 @@ def inject_credentials(instance: str, identity: Identity) -> None:
         "url.https://github.com/.insteadOf",
         "git@github.com:",
     )
+
+    if identity.claude_token_path:
+        _inject_claude_token(instance, identity.claude_token_path)
+
+
+_BASHRC_SOURCE_LINE = "[ -f ~/.config/vergil/claude.env ] && . ~/.config/vergil/claude.env"
+
+
+def _inject_claude_token(instance: str, token_path: str) -> None:
+    path = Path(token_path).expanduser()
+    if not path.exists():
+        print(f"ERROR: Claude token not found: {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    token = path.read_text().strip()
+
+    print("  Injecting Claude Code token...")
+    shell_pipe(
+        instance,
+        "cat > ~/.config/vergil/claude.env && chmod 600 ~/.config/vergil/claude.env",
+        f"export CLAUDE_CODE_OAUTH_TOKEN={token}\n",
+    )
+
+    source_cmd = (
+        f'grep -qF "claude.env" ~/.bashrc 2>/dev/null'
+        f" || echo '{_BASHRC_SOURCE_LINE}' >> ~/.bashrc"
+    )
+    shell_run(instance, "bash", "-c", source_cmd)
 
 
 def install_tooling(instance: str, tag: str) -> None:
