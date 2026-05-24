@@ -43,10 +43,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
 
 
 def _create_bump_pr(ctx: ReleaseContext, next_ver: str) -> str:
-    title = (
-        f"chore(release): back-merge {ctx.version} "
-        f"and bump to {next_ver}"
-    )
+    title = f"chore(release): back-merge {ctx.version} and bump to {next_ver}"
     body = (
         f"## Summary\n\n"
         f"Back-merge main after release {ctx.version} "

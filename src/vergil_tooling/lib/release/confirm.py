@@ -104,19 +104,13 @@ def _verify_jobs(
             raise ReleaseError(
                 phase=phase,
                 command=f"verify job '{job_name}'",
-                message=(
-                    f"Expected job '{job_name}' not found in "
-                    f"workflow run {run_id}."
-                ),
+                message=(f"Expected job '{job_name}' not found in workflow run {run_id}."),
             )
         if conclusion != "success":
             raise ReleaseError(
                 phase=phase,
                 command=f"verify job '{job_name}'",
-                message=(
-                    f"Job '{job_name}' did not succeed "
-                    f"(conclusion: '{conclusion}')."
-                ),
+                message=(f"Job '{job_name}' did not succeed (conclusion: '{conclusion}')."),
             )
         print(f"  Job '{job_name}': success")
 

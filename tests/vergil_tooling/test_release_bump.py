@@ -3,10 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from vergil_tooling.lib.release.bump import back_merge_and_bump
-from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
+from vergil_tooling.lib.release.context import ReleaseContext
 
 _MOD = "vergil_tooling.lib.release.bump"
 
@@ -58,9 +56,7 @@ def test_back_merge_fetches_main_first() -> None:
         back_merge_and_bump(ctx)
 
     fetch_idx = next(i for i, c in enumerate(git_run_calls) if c[0] == "fetch")
-    checkout_idx = next(
-        i for i, c in enumerate(git_run_calls) if c[:2] == ("checkout", "-b")
-    )
+    checkout_idx = next(i for i, c in enumerate(git_run_calls) if c[:2] == ("checkout", "-b"))
     assert fetch_idx < checkout_idx
 
 
@@ -144,7 +140,5 @@ def test_back_merge_pulls_develop_after_merge() -> None:
     develop_checkout_idx = next(
         i for i, c in enumerate(git_run_calls) if c == ("checkout", "develop")
     )
-    pull_idx = next(
-        i for i, c in enumerate(git_run_calls) if c[:2] == ("pull", "origin")
-    )
+    pull_idx = next(i for i, c in enumerate(git_run_calls) if c[:2] == ("pull", "origin"))
     assert pull_idx > develop_checkout_idx
