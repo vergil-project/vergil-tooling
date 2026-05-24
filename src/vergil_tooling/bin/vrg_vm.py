@@ -15,6 +15,7 @@ from vergil_tooling.lib.identity import (
     resolve_identity,
     resolve_identity_by_name,
     resolve_vergil_version,
+    resolve_vm_tag,
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
@@ -42,7 +43,7 @@ def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
 def _cmd_create(args: argparse.Namespace) -> int:
     name, identity, config = _resolve(args)
     vergil_version = resolve_vergil_version(config, identity)
-    tag = args.tag if args.tag else vergil_version
+    tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
     status = vm_status(identity.vm_instance)
     if status:
