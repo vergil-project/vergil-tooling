@@ -5,7 +5,12 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.release.confirm import confirm_publish
+from vergil_tooling.lib.release.confirm import (
+    _DEVELOP_EXPECTED_JOBS,
+    _MAIN_EXPECTED_JOBS,
+    confirm_develop,
+    confirm_main,
+)
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
 _MOD = "vergil_tooling.lib.release.confirm"
@@ -22,26 +27,32 @@ def _ctx() -> ReleaseContext:
     return ctx
 
 
-def test_confirm_publish_release_and_docs() -> None:
-    """Both release and docs enabled — watches CD, verifies all artifacts."""
+def test_main_expected_jobs() -> None:
+    assert _MAIN_EXPECTED_JOBS == ("docs", "release")
+
+
+def test_develop_expected_jobs() -> None:
+    assert _DEVELOP_EXPECTED_JOBS == ("docs",)
+
+
+def test_confirm_main_success() -> None:
     ctx = _ctx()
     with (
         patch(
             _MOD + ".github.read_output",
             side_effect=[
-                "12345",  # CD run id
-                "https://github.com/o/r/actions/runs/12345",  # CD run url
-                "https://github.com/o/r/releases/tag/v2.1.0",  # release url
+                "12345",
+                "https://github.com/o/r/actions/runs/12345",
+                "success",
+                "success",
+                "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", return_value=True),
-        patch(_MOD + ".config.read_config") as mock_config,
     ):
-        mock_config.return_value.publish.release = True
-        mock_config.return_value.publish.docs = True
-        confirm_publish(ctx)
+        confirm_main(ctx)
 
     assert ctx.cd_run_id == "12345"
     assert ctx.cd_run_url == "https://github.com/o/r/actions/runs/12345"
@@ -50,65 +61,16 @@ def test_confirm_publish_release_and_docs() -> None:
     assert ctx.release_url == "https://github.com/o/r/releases/tag/v2.1.0"
 
 
-def test_confirm_publish_docs_only() -> None:
-    """release=false, docs=true — watches CD, verifies develop tag only."""
-    ctx = _ctx()
-    with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "12345",  # CD run id
-                "https://github.com/o/r/actions/runs/12345",  # CD run url
-            ],
-        ),
-        patch(_MOD + ".watch_workflow"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.ref_exists", return_value=True),
-        patch(_MOD + ".config.read_config") as mock_config,
-    ):
-        mock_config.return_value.publish.release = False
-        mock_config.return_value.publish.docs = True
-        confirm_publish(ctx)
-
-    assert ctx.cd_run_id == "12345"
-    assert ctx.develop_tag == "develop-v2.1.0"
-    assert ctx.tag is None
-    assert ctx.release_url is None
-
-
-def test_confirm_publish_skips_cd_when_nothing_published() -> None:
-    """release=false, docs=false — skips CD, still verifies develop tag."""
-    ctx = _ctx()
-    with (
-        patch(_MOD + ".github.read_output") as mock_gh,
-        patch(_MOD + ".watch_workflow") as mock_watch,
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.ref_exists", return_value=True),
-        patch(_MOD + ".config.read_config") as mock_config,
-    ):
-        mock_config.return_value.publish.release = False
-        mock_config.return_value.publish.docs = False
-        confirm_publish(ctx)
-
-    mock_gh.assert_not_called()
-    mock_watch.assert_not_called()
-    assert ctx.cd_run_id is None
-    assert ctx.develop_tag == "develop-v2.1.0"
-
-
-def test_confirm_publish_fails_if_no_cd_run() -> None:
+def test_confirm_main_fails_no_cd_run() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".github.read_output", return_value=""),
-        patch(_MOD + ".config.read_config") as mock_config,
-        pytest.raises(ReleaseError, match="No CD workflow run found"),
+        pytest.raises(ReleaseError, match="No CD workflow run found on main"),
     ):
-        mock_config.return_value.publish.release = True
-        mock_config.return_value.publish.docs = True
-        confirm_publish(ctx)
+        confirm_main(ctx)
 
 
-def test_confirm_publish_fails_if_tag_missing() -> None:
+def test_confirm_main_fails_job_not_found() -> None:
     ctx = _ctx()
     with (
         patch(
@@ -116,20 +78,53 @@ def test_confirm_publish_fails_if_tag_missing() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
+                "",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        pytest.raises(ReleaseError, match="not found in workflow run"),
+    ):
+        confirm_main(ctx)
+
+
+def test_confirm_main_fails_job_not_success() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "12345",
+                "https://github.com/o/r/actions/runs/12345",
+                "failure",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        pytest.raises(ReleaseError, match="did not succeed"),
+    ):
+        confirm_main(ctx)
+
+
+def test_confirm_main_fails_tag_missing() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "12345",
+                "https://github.com/o/r/actions/runs/12345",
+                "success",
+                "success",
             ],
         ),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", return_value=False),
-        patch(_MOD + ".config.read_config") as mock_config,
         pytest.raises(ReleaseError, match="Tag.*does not exist"),
     ):
-        mock_config.return_value.publish.release = True
-        mock_config.return_value.publish.docs = True
-        confirm_publish(ctx)
+        confirm_main(ctx)
 
 
-def test_confirm_publish_fails_if_develop_tag_missing() -> None:
+def test_confirm_main_fails_develop_tag_missing() -> None:
     ctx = _ctx()
     ref_exists_calls = iter([True, False])
     with (
@@ -138,15 +133,59 @@ def test_confirm_publish_fails_if_develop_tag_missing() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
+                "success",
+                "success",
                 "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.ref_exists", side_effect=ref_exists_calls),
-        patch(_MOD + ".config.read_config") as mock_config,
         pytest.raises(ReleaseError, match="Develop boundary tag"),
     ):
-        mock_config.return_value.publish.release = True
-        mock_config.return_value.publish.docs = True
-        confirm_publish(ctx)
+        confirm_main(ctx)
+
+
+def test_confirm_develop_success() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "67890",
+                "https://github.com/o/r/actions/runs/67890",
+                "success",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+    ):
+        confirm_develop(ctx)
+
+    assert ctx.develop_cd_run_id == "67890"
+    assert ctx.develop_cd_run_url == "https://github.com/o/r/actions/runs/67890"
+
+
+def test_confirm_develop_fails_no_cd_run() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".github.read_output", return_value=""),
+        pytest.raises(ReleaseError, match="No CD workflow run found on develop"),
+    ):
+        confirm_develop(ctx)
+
+
+def test_confirm_develop_fails_job_not_success() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "67890",
+                "https://github.com/o/r/actions/runs/67890",
+                "failure",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        pytest.raises(ReleaseError, match="did not succeed"),
+    ):
+        confirm_develop(ctx)
