@@ -302,6 +302,7 @@ class TestSession:
         assert "bash" in cmd
         assert "-c" in cmd
         inner = cmd[cmd.index("-c") + 1]
+        assert "claude.env" in inner
         assert "cd /projects/vergil-tooling" in inner
         assert "exec bash --login" in inner
 
@@ -312,6 +313,7 @@ class TestSession:
         assert "bash" in cmd
         assert "-c" in cmd
         inner = cmd[cmd.index("-c") + 1]
+        assert "claude.env" in inner
         assert "cd /projects/vergil-tooling" in inner
         assert "exec claude" in inner
 
@@ -330,4 +332,5 @@ class TestSession:
         )
         cmd = mock_exec.call_args[0][1]
         inner = cmd[cmd.index("-c") + 1]
+        assert "claude.env" in inner
         assert "exec claude --model opus" in inner
