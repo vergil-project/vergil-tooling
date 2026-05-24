@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.45] - 2026-05-24
+
+### Bug fixes
+
+- write onboarding-complete flag for Claude Code interactive TUI
+
+### Chores
+
+- bump version to 2.0.45
+
 ## [2.0.44] - 2026-05-24
 
 ### Bug fixes
@@ -24,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ### Chores
 
 - bump version to 2.0.43
+
+### Documentation
+
+- add release workflow decomposition spec and implementation plan
 
 ## [2.0.42] - 2026-05-24
 
