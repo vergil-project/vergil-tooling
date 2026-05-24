@@ -12,6 +12,7 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
+vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
 vrg-commit = "vergil_tooling.bin.vrg_commit:main"
 vrg-docker-cache = "vergil_tooling.bin.vrg_docker_cache:main"
 vrg-docker-docs = "vergil_tooling.bin.vrg_docker_docs:main"
