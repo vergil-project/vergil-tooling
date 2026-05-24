@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.35] - 2026-05-24
+
+### Chores
+
+- bump version to 2.0.35
+
+### Features
+
+- derive tooling and template version from identities.toml vergil key
+
 ## [2.0.34] - 2026-05-22
 
 ### Bug fixes

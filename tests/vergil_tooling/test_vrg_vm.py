@@ -18,6 +18,7 @@ def config_file(tmp_path: Path) -> Path:
     p.write_text(
         textwrap.dedent("""\
         default_identity = "vergil"
+        vergil = "v2.0"
 
         [identities.vergil]
         vm_instance = "vergil-agent"
@@ -76,6 +77,8 @@ class TestCreate:
         p = tmp_path / "identities.toml"
         p.write_text(
             textwrap.dedent("""\
+            vergil = "v2.0"
+
             [identities.vergil]
             vm_instance = "vergil-agent"
         """)
@@ -96,7 +99,7 @@ class TestCreate:
         _create: MagicMock,
         _start: MagicMock,
         _inject: MagicMock,
-        _install: MagicMock,
+        mock_install: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -106,6 +109,55 @@ class TestCreate:
 
         main(["create", "--config", str(config_file), "--tag", "v3.0"])
         mock_fetch.assert_called_once_with("v3.0")
+        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_fails_without_vergil_version(self, _status: MagicMock, tmp_path: Path) -> None:
+        p = tmp_path / "identities.toml"
+        p.write_text(
+            textwrap.dedent("""\
+            [identities.vergil]
+            vm_instance = "vergil-agent"
+            projects_dir = "/home/user/projects"
+        """)
+        )
+        with pytest.raises(SystemExit):
+            main(["create", "--config", str(p)])
+
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_uses_identity_vergil_override(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _start: MagicMock,
+        _inject: MagicMock,
+        mock_install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        p = tmp_path / "identities.toml"
+        p.write_text(
+            textwrap.dedent("""\
+            vergil = "v2.0"
+
+            [identities.vergil]
+            vm_instance = "vergil-agent"
+            projects_dir = "/home/user/projects"
+            vergil = "v2.2"
+        """)
+        )
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+
+        main(["create", "--config", str(p)])
+        mock_fetch.assert_called_once_with("v2.2")
+        mock_install.assert_called_once_with("vergil-agent", "v2.2")
 
 
 class TestStart:
