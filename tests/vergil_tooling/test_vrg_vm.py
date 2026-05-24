@@ -292,11 +292,13 @@ class TestSession:
         assert args[0] == "limactl"
         assert "vergil-agent" in args[1]
         assert "--start" in args[1]
+        assert "--workdir=/projects" in args[1]
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     def test_session_with_workspace(self, mock_exec: MagicMock, config_file: Path) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling"])
         cmd = mock_exec.call_args[0][1]
+        assert "--workdir=/projects/vergil-tooling" in cmd
         assert "bash" in cmd
         assert "-c" in cmd
         inner = cmd[cmd.index("-c") + 1]

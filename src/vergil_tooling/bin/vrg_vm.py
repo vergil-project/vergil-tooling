@@ -173,7 +173,8 @@ def _cmd_session(args: argparse.Namespace) -> int:
     if args.workspace:
         workspace = resolve_workspace(args.workspace)
 
-    cmd = ["limactl", "shell", "--start", identity.vm_instance]
+    workdir = workspace if workspace else "/projects"
+    cmd = ["limactl", "shell", "--start", f"--workdir={workdir}", identity.vm_instance]
 
     if workspace:
         if args.cmd:
