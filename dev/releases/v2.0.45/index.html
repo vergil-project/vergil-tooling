@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.39/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.37/">
+        <link rel="next" href="../v2.0.44/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>v2.0.38 - VERGIL Tooling</title>
+        <title>v2.0.45 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2038-2026-05-24" class="md-skip">
+        <a href="#release-2045-2026-05-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              v2.0.38
+              v2.0.45
             
           </span>
         </div>
@@ -802,10 +802,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.0.45/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.45
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -821,6 +848,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -998,37 +1078,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    v2.0.38
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.38/" class="md-nav__link">
         
   
   
@@ -1044,48 +1097,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -6220,6 +6231,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -6237,15 +6259,22 @@
 
 
 
-<h1 id="release-2038-2026-05-24">Release 2.0.38 (2026-05-24)<a class="headerlink" href="#release-2038-2026-05-24" title="Permanent link">&para;</a></h1>
+<h1 id="release-2045-2026-05-24">Release 2.0.45 (2026-05-24)<a class="headerlink" href="#release-2045-2026-05-24" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>restore start_vm in create flow after provisioning</strong>
-limactl create --tty=false provisions the VM but leaves it in Stopped state. The explicit start_vm call is required before credential injection. The earlier removal (PR #1036) was based on a misdiagnosis — the original crash was a timing issue during a mid-transition state, not a redundant start. The start_vm guard (skip if already Running) makes this safe either way. Ref #1035</li>
+<li><strong>write onboarding-complete flag for Claude Code interactive TUI</strong>
+The Claude Code TUI checks ~/.claude.json for hasCompletedOnboarding before respecting stored credentials. Without this flag, the login selection screen always appears regardless of CLAUDE_CODE_OAUTH_TOKEN or .credentials.json. Write the flag during token injection.</li>
 </ul>
 <h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 2.0.38</strong></li>
+<li><strong>bump version to 2.0.45</strong></li>
+</ul>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>add release workflow decomposition spec and implementation plan</strong>
+Design spec and TDD implementation plan for decomposing vrg-release
+into independent tools (vrg-version, vrg-changelog, vrg-promote)
+aligned with standard Git Flow mechanics.</li>
 </ul>
 
 
