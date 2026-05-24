@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.42] - 2026-05-24
+
+### Chores
+
+- bump version to 2.0.42
+
+### Features
+
+- inject Claude Code OAuth token during credential injection
+
 ## [2.0.41] - 2026-05-24
 
 ### Bug fixes
