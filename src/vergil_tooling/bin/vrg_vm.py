@@ -9,10 +9,12 @@ from pathlib import Path
 
 from vergil_tooling.lib.identity import (
     Identity,
+    IdentityConfig,
     default_config_path,
     load_config,
     resolve_identity,
     resolve_identity_by_name,
+    resolve_vergil_version,
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
@@ -27,21 +29,20 @@ from vergil_tooling.lib.lima import (
     vm_status,
 )
 
-_DEFAULT_TAG = "v2.0"
-
 _default_config_path = default_config_path
 
 
-def _resolve(args: argparse.Namespace) -> tuple[str, Identity]:
+def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
     name, identity = resolve_identity_by_name(config, args.identity)
-    return name, identity
+    return name, identity, config
 
 
 def _cmd_create(args: argparse.Namespace) -> int:
-    name, identity = _resolve(args)
-    tag = args.tag
+    name, identity, config = _resolve(args)
+    vergil_version = resolve_vergil_version(config, identity)
+    tag = args.tag if args.tag else vergil_version
 
     status = vm_status(identity.vm_instance)
     if status:
@@ -73,7 +74,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
         print("Injecting credentials...")
         inject_credentials(identity.vm_instance, identity)
 
-        install_tooling(identity.vm_instance, tag)
+        install_tooling(identity.vm_instance, vergil_version)
     finally:
         template.unlink(missing_ok=True)
 
@@ -82,7 +83,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    name, identity = _resolve(args)
+    name, identity, _config = _resolve(args)
 
     status = vm_status(identity.vm_instance)
     if not status:
@@ -103,7 +104,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
-    name, identity = _resolve(args)
+    name, identity, _config = _resolve(args)
 
     print(f"Stopping VM '{identity.vm_instance}' (identity: {name})...")
     stop_vm(identity.vm_instance)
@@ -113,7 +114,7 @@ def _cmd_stop(args: argparse.Namespace) -> int:
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
-    name, identity = _resolve(args)
+    name, identity, _config = _resolve(args)
 
     print(f"Restarting VM '{identity.vm_instance}' (identity: {name})...")
     stop_vm(identity.vm_instance)
@@ -127,7 +128,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
 
 def _cmd_destroy(args: argparse.Namespace) -> int:
-    name, identity = _resolve(args)
+    name, identity, _config = _resolve(args)
 
     status = vm_status(identity.vm_instance)
     if not status:
@@ -198,7 +199,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create = sub.add_parser("create", help="Create and provision a new VM")
     _add_identity_args(p_create)
     p_create.add_argument(
-        "--tag", default=_DEFAULT_TAG, help="Template version tag (default: v2.0)"
+        "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
