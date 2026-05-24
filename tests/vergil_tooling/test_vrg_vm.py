@@ -39,6 +39,7 @@ class TestNoSubcommand:
 class TestCreate:
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -47,6 +48,7 @@ class TestCreate:
         _status: MagicMock,
         mock_fetch: MagicMock,
         mock_create: MagicMock,
+        mock_start: MagicMock,
         mock_inject: MagicMock,
         mock_install: MagicMock,
         config_file: Path,
@@ -61,6 +63,7 @@ class TestCreate:
 
         mock_fetch.assert_called_once_with("v2.0")
         mock_create.assert_called_once()
+        mock_start.assert_called_once()
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
 
@@ -85,6 +88,7 @@ class TestCreate:
 
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -93,6 +97,7 @@ class TestCreate:
         _status: MagicMock,
         mock_fetch: MagicMock,
         _create: MagicMock,
+        _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
         config_file: Path,
@@ -121,6 +126,7 @@ class TestCreate:
 
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -129,6 +135,7 @@ class TestCreate:
         _status: MagicMock,
         mock_fetch: MagicMock,
         _create: MagicMock,
+        _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
         tmp_path: Path,
@@ -154,6 +161,7 @@ class TestCreate:
 
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -162,6 +170,7 @@ class TestCreate:
         _status: MagicMock,
         mock_fetch: MagicMock,
         _create: MagicMock,
+        _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
         tmp_path: Path,
