@@ -144,12 +144,17 @@ def _read_version(text: str, language: str) -> str:
 
 
 def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
-    result = subprocess.run(  # noqa: S603
-        ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     return _read_version(result.stdout, language)
 
 
@@ -215,7 +220,12 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
-    result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+    try:
+        result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:

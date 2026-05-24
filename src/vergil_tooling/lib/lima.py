@@ -23,12 +23,17 @@ _TOOLING_INSTALL = "vergil-tooling @ git+https://github.com/vergil-project/vergi
 
 
 def _limactl(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603
-        ["limactl", *args],  # noqa: S607
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        return subprocess.run(  # noqa: S603
+            ["limactl", *args],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
 
 def shell_run(
@@ -36,20 +41,25 @@ def shell_run(
     *args: str,
     workdir: str = "/tmp",  # noqa: S108
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "limactl",
-            "shell",
-            "--workdir",
-            workdir,
-            instance,
-            "--",
-            *args,
-        ],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        return subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "limactl",
+                "shell",
+                "--workdir",
+                workdir,
+                instance,
+                "--",
+                *args,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
 
 def shell_pipe(
@@ -59,23 +69,28 @@ def shell_pipe(
     *,
     workdir: str = "/tmp",  # noqa: S108
 ) -> None:
-    subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "limactl",
-            "shell",
-            "--workdir",
-            workdir,
-            instance,
-            "--",
-            "bash",
-            "-c",
-            cmd,
-        ],
-        check=True,
-        input=input_data,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "limactl",
+                "shell",
+                "--workdir",
+                workdir,
+                instance,
+                "--",
+                "bash",
+                "-c",
+                cmd,
+            ],
+            check=True,
+            input=input_data,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
 
 
 def vm_status(instance: str) -> str:

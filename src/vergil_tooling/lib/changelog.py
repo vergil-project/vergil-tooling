@@ -18,21 +18,26 @@ def generate_changelog(repo_root: Path, version: str) -> None:
     tag = f"develop-v{version}"
     config_path = files("vergil_tooling.configs") / "cliff.toml"
     output = repo_root / "CHANGELOG.md"
-    result = subprocess.run(  # noqa: S603
-        (  # noqa: S607
-            "git-cliff",
-            "--config",
-            str(config_path),
-            "--tag",
-            tag,
-            "-o",
-            str(output),
-        ),
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            (  # noqa: S607
+                "git-cliff",
+                "--config",
+                str(config_path),
+                "--tag",
+                tag,
+                "-o",
+                str(output),
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
@@ -47,22 +52,27 @@ def generate_release_notes(repo_root: Path, version: str) -> Path:
     releases_dir.mkdir(exist_ok=True)
     output = releases_dir / f"v{version}.md"
     config_path = files("vergil_tooling.configs") / "cliff-release-notes.toml"
-    result = subprocess.run(  # noqa: S603
-        (  # noqa: S607
-            "git-cliff",
-            "--config",
-            str(config_path),
-            "--tag",
-            tag,
-            "--unreleased",
-            "-o",
-            str(output),
-        ),
-        check=True,
-        capture_output=True,
-        text=True,
-        cwd=repo_root,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            (  # noqa: S607
+                "git-cliff",
+                "--config",
+                str(config_path),
+                "--tag",
+                tag,
+                "--unreleased",
+                "-o",
+                str(output),
+            ),
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
