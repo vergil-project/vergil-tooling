@@ -260,6 +260,21 @@ def test_calls_execvp(tmp_path: Path) -> None:
     assert mock_exec.call_args[0][0] == "docker"
 
 
+def test_calls_execvp_nerdctl(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="nerdctl"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "cmd"])
+    mock_exec.assert_called_once()
+    assert mock_exec.call_args[0][0] == "nerdctl"
+
+
 # -- cache-aware image selection ----------------------------------------------
 
 

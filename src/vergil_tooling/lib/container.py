@@ -30,9 +30,6 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
 }
 
 
-_ALLOWED_RUNTIMES = ("nerdctl", "docker")
-
-
 def detect_runtime() -> str:
     """Return 'nerdctl' if available, else 'docker'."""
     if shutil.which("nerdctl"):
@@ -41,18 +38,6 @@ def detect_runtime() -> str:
         return "docker"
     print("ERROR: no container runtime found (need docker or nerdctl)", file=sys.stderr)
     raise SystemExit(1)
-
-
-def validated_runtime(runtime: str) -> str:
-    """Validate *runtime* against the allowlist and return it.
-
-    Guards ``os.execvp`` / ``subprocess.run`` callsites so that only
-    known container runtimes are executed.
-    """
-    if runtime not in _ALLOWED_RUNTIMES:
-        msg = f"invalid container runtime: {runtime!r}"
-        raise ValueError(msg)
-    return runtime
 
 
 def _fallback_image(prefix: str) -> str:

@@ -173,6 +173,20 @@ def test_main_calls_execvp(tmp_path: Path) -> None:
     assert "ghcr.io/vergil-project/prod-python:3.14" in call_args[0][1]
 
 
+def test_main_calls_execvp_nerdctl(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with (
+        patch("vergil_tooling.bin.vrg_container_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="nerdctl"),
+        patch("vergil_tooling.bin.vrg_container_test._runtime_is_available", return_value=True),
+        patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        main()
+    mock_exec.assert_called_once()
+    assert mock_exec.call_args[0][0] == "nerdctl"
+
+
 # -- _runtime_is_available ---------------------------------------------------
 
 

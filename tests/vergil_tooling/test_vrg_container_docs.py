@@ -47,6 +47,29 @@ def test_serve_execvp(tmp_path: Path) -> None:
     assert "mkdocs serve" in args[-1]
 
 
+def test_serve_execvp_nerdctl(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="nerdctl"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = [
+            "nerdctl",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
+            "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
+        ]
+        main(["serve"])
+    mock_exec.assert_called_once()
+    assert mock_exec.call_args[0][0] == "nerdctl"
+
+
 def test_build_execvp(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
