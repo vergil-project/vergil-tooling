@@ -61,11 +61,26 @@ def test_build_summary_omits_none_fields() -> None:
     ctx.develop_tag = None
     ctx.release_url = None
     ctx.cd_run_url = None
+    ctx.develop_cd_run_url = None
     summary = _build_summary(ctx)
     assert "Release tag" not in summary
     assert "Develop boundary tag" not in summary
     assert "GitHub Release" not in summary
     assert "CD workflow" not in summary
+
+
+def test_build_summary_includes_develop_cd() -> None:
+    ctx = _ctx()
+    ctx.develop_cd_run_url = "https://github.com/owner/repo/actions/runs/456"
+    summary = _build_summary(ctx)
+    assert "Develop CD" in summary
+    assert "runs/456" in summary
+
+
+def test_build_summary_labels_back_merge_pr() -> None:
+    ctx = _ctx()
+    summary = _build_summary(ctx)
+    assert "Back-merge PR" in summary
 
 
 def test_close_and_finalize_fails_on_finalize_error() -> None:

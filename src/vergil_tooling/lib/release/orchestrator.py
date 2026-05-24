@@ -5,8 +5,9 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.release.bump import merge_bump
-from vergil_tooling.lib.release.confirm import confirm_publish
+from vergil_tooling.lib.promote import promote
+from vergil_tooling.lib.release.bump import back_merge_and_bump
+from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize
 from vergil_tooling.lib.release.handoff import consumer_refresh
@@ -37,10 +38,22 @@ def merge_release(ctx: ReleaseContext) -> None:
         raise ReleaseError(
             phase="merge-release",
             command="merge_release",
-            message="release_pr_url is not set — prepare phase may not have run.",
+            message=("release_pr_url is not set — prepare phase may not have run."),
         )
-    wait_and_merge(ctx.release_pr_url, phase="merge-release", verbose=ctx.verbose)
+    wait_and_merge(
+        ctx.release_pr_url,
+        phase="merge-release",
+        verbose=ctx.verbose,
+    )
     ctx.release_merge_sha = "merged"
+
+
+def _promote_phase(ctx: ReleaseContext) -> None:
+    """Phase 6: update the vX.Y rolling tag (unless --no-promote)."""
+    if not ctx.promote:
+        print("Skipping promote (--no-promote).")
+        return
+    promote(ctx.version)
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:
@@ -56,18 +69,27 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "merge-release":
         if ctx.release_pr_url:
             lines.append(f"Merged: {ctx.release_pr_url}")
-    elif phase == "merge-bump":
-        if ctx.bump_pr_url:
-            lines.append(f"Bump PR: {ctx.bump_pr_url}")
-        if ctx.next_version:
-            lines.append(f"Next version: {ctx.next_version}")
-    elif phase == "confirm-publish":
+    elif phase == "confirm-main":
         if ctx.tag:
             lines.append(f"Tag: `{ctx.tag}`")
         if ctx.release_url:
             lines.append(f"Release: {ctx.release_url}")
         if ctx.cd_run_url:
             lines.append(f"CD workflow: {ctx.cd_run_url}")
+    elif phase == "back-merge-bump":
+        if ctx.bump_pr_url:
+            lines.append(f"Back-merge PR: {ctx.bump_pr_url}")
+        if ctx.next_version:
+            lines.append(f"Next version: {ctx.next_version}")
+    elif phase == "confirm-develop":
+        if ctx.develop_cd_run_url:
+            lines.append(f"Develop CD: {ctx.develop_cd_run_url}")
+    elif phase == "promote":
+        if ctx.promote:
+            major_minor = ".".join(ctx.version.split(".")[:2])
+            lines.append(f"Promoted v{major_minor} -> v{ctx.version}")
+        else:
+            lines.append("Promote skipped (--no-promote).")
     elif phase == "close-finalize":
         lines.append("Tracking issue closed. Repository finalized.")
     elif phase == "consumer-refresh":
@@ -80,8 +102,10 @@ def run_release(ctx: ReleaseContext) -> None:
     phases: list[tuple[str, Callable[[ReleaseContext], None]]] = [
         ("prepare", prepare),
         ("merge-release", merge_release),
-        ("merge-bump", merge_bump),
-        ("confirm-publish", confirm_publish),
+        ("confirm-main", confirm_main),
+        ("back-merge-bump", back_merge_and_bump),
+        ("confirm-develop", confirm_develop),
+        ("promote", _promote_phase),
         ("close-finalize", close_and_finalize),
         ("consumer-refresh", consumer_refresh),
     ]
@@ -103,18 +127,22 @@ def run_release(ctx: ReleaseContext) -> None:
                 phase=phase_name,
                 command=str(getattr(exc, "cmd", type(exc).__name__)),
                 message=str(exc),
-                detail=getattr(exc, "stderr", None) or getattr(exc, "stdout", None),
+                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, phase_name, wrapped)
             raise wrapped from exc
         elapsed = time.monotonic() - start
         print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
         try:
-            comment_phase_complete(ctx, phase_name, _phase_details(ctx, phase_name))
+            comment_phase_complete(
+                ctx,
+                phase_name,
+                _phase_details(ctx, phase_name),
+            )
         except Exception as exc:
             raise ReleaseError(
                 phase=f"comment({phase_name})",
                 command="comment_phase_complete",
                 message=str(exc),
-                detail=getattr(exc, "stderr", None) or getattr(exc, "stdout", None),
+                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             ) from exc
