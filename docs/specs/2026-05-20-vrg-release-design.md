@@ -229,10 +229,10 @@ The following must be available on the host PATH:
 - **`git-cliff`** — changelog generation (Rust binary, installed
   separately)
 - **`vrg-finalize-repo`** — post-merge cleanup (part of vergil-tooling)
-- **`vrg-docker-run`** — container launcher (part of vergil-tooling)
+- **`vrg-container-run`** — container launcher (part of vergil-tooling)
 - **`vrg-github-repo-config`** — repository config auditing (part of
   vergil-tooling)
-- **Docker** — required by `vrg-docker-run` for validation
+- **Docker** — required by `vrg-container-run` for validation
 
 Preflight verifies `gh` authentication and `git-cliff` availability
 before any work starts.
@@ -477,7 +477,7 @@ pre-commit gate.
 `vrg-release` is a host-side tool. All git, gh, and vrg-* commands run
 directly on the host. The only container invocation is validation via
 `vrg-finalize-repo`, which internally calls
-`vrg-docker-run -- [uv run] vrg-validate`.
+`vrg-container-run -- [uv run] vrg-validate`.
 
 ## Consumer-Refresh Templating
 

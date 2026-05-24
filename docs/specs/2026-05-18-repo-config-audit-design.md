@@ -8,7 +8,7 @@
 
 The rules required for vergil-tooling to function correctly in a
 consuming repository — use `vrg-git` not `git`, use
-`vrg-docker-run -- vrg-validate` not individual linters, use the
+`vrg-container-run -- vrg-validate` not individual linters, use the
 vergil memory management skills — only exist as prose in
 vergil-tooling's own CLAUDE.md. Consuming repos either have stale
 partial copies, copies with drift (wrong skill namespace, extra
@@ -153,7 +153,7 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (vrg-docker-run mounts the current directory).
+  (vrg-container-run mounts the current directory).
 ```
 
 All fields are required.
@@ -180,7 +180,7 @@ human who can run it directly via `! <command>` in the prompt.
 ## Validation
 
 ```bash
-vrg-docker-run -- vrg-validate
+vrg-container-run -- vrg-validate
 ```
 
 This is the **only** validation command. Do not run individual linters,
@@ -203,7 +203,7 @@ vergil-tooling includes the standard block verbatim. Immediately
 after the validation section, it appends an override:
 
 > **Note:** This repository uses
-> `vrg-docker-run -- uv run vrg-validate` because it runs its own
+> `vrg-container-run -- uv run vrg-validate` because it runs its own
 > unreleased code rather than the pre-installed version.
 
 The audit tool does not need special-case logic — it checks for the
@@ -345,7 +345,7 @@ are imported by the new code.
 
 **Phase 1 (this issue):** Build the template, audit library, and
 renamed CLI tool. Update vergil-tooling's own CLAUDE.md. Validate
-with `vrg-docker-run -- uv run vrg-validate`.
+with `vrg-container-run -- uv run vrg-validate`.
 
 **Phase 2 (separate issues):** Sweep all consuming repos:
 - Update CLAUDE.md to include the template block verbatim

@@ -41,7 +41,7 @@ def test_hooks_path_not_configured(self, tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_not_configured -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_not_configured -v`
 
 Expected: FAIL — `local.git_config.hooks_path` is not in the diff because the check doesn't exist yet.
 
@@ -87,7 +87,7 @@ def _check_githooks(repo_root: Path, items: list[DiffItem]) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_not_configured -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_not_configured -v`
 
 Expected: PASS
 
@@ -138,7 +138,7 @@ import subprocess
 
 This test should pass immediately because the implementation from Task 1 already handles wrong values.
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_wrong_value -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_wrong_value -v`
 
 Expected: PASS
 
@@ -181,7 +181,7 @@ def test_hooks_path_configured(self, tmp_path: Path) -> None:
 
 This should also pass immediately — the implementation already handles the matching case.
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_configured -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestGithooks::test_hooks_path_configured -v`
 
 Expected: PASS
 
@@ -202,7 +202,7 @@ The existing `_write_compliant_repo()` helper scaffolds a fully compliant repo, 
 
 - [ ] **Step 1: Run the existing integration test to confirm it fails**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestIntegration::test_compliant_repo -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestIntegration::test_compliant_repo -v`
 
 Expected: FAIL — `local.git_config.hooks_path` will appear in the diff because `_write_compliant_repo()` doesn't set up git.
 
@@ -240,7 +240,7 @@ assert "local.git_config.hooks_path" not in fields
 
 - [ ] **Step 4: Run the full integration test class**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestIntegration -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py::TestIntegration -v`
 
 Expected: PASS — both `test_empty_directory_reports_all_missing` and `test_compliant_repo` pass.
 
@@ -260,12 +260,12 @@ Run the complete validation pipeline to confirm nothing is broken.
 
 - [ ] **Step 1: Run all repo_config tests**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_config.py -v`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_config.py -v`
 
 Expected: All tests pass, including the three new ones and the updated integration tests.
 
 - [ ] **Step 2: Run full validation**
 
-Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-docker-run -- uv run vrg-validate`
+Run: `cd .worktrees/issue-825-hooks-path-audit && vrg-container-run -- uv run vrg-validate`
 
 Expected: All checks pass (lint, typecheck, tests, audit).

@@ -243,7 +243,7 @@ class TestRepoInitContext:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v
 ```
 
 Expected: `ModuleNotFoundError` — `repo_init` doesn't exist yet.
@@ -355,7 +355,7 @@ def prompt_free_text(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v
 ```
 
 Expected: all tests pass.
@@ -409,7 +409,7 @@ class TestDetectCompletedSteps:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestDetectCompletedSteps -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestDetectCompletedSteps -v
 ```
 
 Expected: `ImportError` — `detect_completed_steps` doesn't exist.
@@ -437,7 +437,7 @@ def detect_completed_steps(log_output: str) -> set[int]:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestDetectCompletedSteps -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestDetectCompletedSteps -v
 ```
 
 Expected: all tests pass.
@@ -607,7 +607,7 @@ class TestRenderMkdocsYml:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "Render" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "Render" -v
 ```
 
 Expected: `ImportError` — render functions don't exist.
@@ -678,7 +678,7 @@ def render_claude_md(ctx: RepoInitContext) -> str:
         "## Validation\n"
         "\n"
         "```bash\n"
-        "vrg-docker-run -- vrg-validate\n"
+        "vrg-container-run -- vrg-validate\n"
         "```\n"
         "\n"
     )
@@ -931,7 +931,7 @@ def render_docs_index(ctx: RepoInitContext) -> str:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "Render" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "Render" -v
 ```
 
 Expected: all tests pass.
@@ -1020,7 +1020,7 @@ class TestStepClone:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCreate or StepClone" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCreate or StepClone" -v
 ```
 
 Expected: `ImportError`.
@@ -1084,7 +1084,7 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCreate or StepClone" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCreate or StepClone" -v
 ```
 
 Expected: all tests pass.
@@ -1191,7 +1191,7 @@ class TestStepGenerateConfig:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig -v
 ```
 
 Expected: `ImportError`.
@@ -1294,7 +1294,7 @@ def step_generate_config(ctx: RepoInitContext) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig -v
 ```
 
 Expected: all tests pass.
@@ -1377,7 +1377,7 @@ class TestStepScaffoldConfigFiles:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles -v
 ```
 
 Expected: `ImportError`.
@@ -1442,7 +1442,7 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles -v
 ```
 
 Expected: all tests pass.
@@ -1524,7 +1524,7 @@ class TestStepDocsSite:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCiCd or StepDocsSite" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCiCd or StepDocsSite" -v
 ```
 
 Expected: `ImportError`.
@@ -1587,7 +1587,7 @@ def step_docs_site(ctx: RepoInitContext) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCiCd or StepDocsSite" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepCiCd or StepDocsSite" -v
 ```
 
 Expected: all tests pass.
@@ -1700,7 +1700,7 @@ class TestStepGithubPages:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepBranch or StepGithub" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepBranch or StepGithub" -v
 ```
 
 Expected: `ImportError`.
@@ -1827,7 +1827,7 @@ def step_github_pages(ctx: RepoInitContext) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepBranch or StepGithub" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -k "StepBranch or StepGithub" -v
 ```
 
 Expected: all tests pass.
@@ -1886,7 +1886,7 @@ class TestRunWizard:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestRunWizard -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestRunWizard -v
 ```
 
 Expected: `ImportError`.
@@ -1962,7 +1962,7 @@ def run_wizard(ctx: RepoInitContext) -> None:
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestRunWizard -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestRunWizard -v
 ```
 
 Expected: all tests pass.
@@ -2021,7 +2021,7 @@ class TestParseArgs:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_init.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_init.py -v
 ```
 
 Expected: `ModuleNotFoundError`.
@@ -2139,7 +2139,7 @@ Insert alphabetically after `vrg-github-repo-config`.
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_init.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_init.py -v
 ```
 
 Expected: all tests pass.
@@ -2159,7 +2159,7 @@ vrg-commit --type feat --scope 807 --message "add vrg-github-repo-init CLI entry
 - [ ] **Step 1: Run the full test suite**
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py tests/vergil_tooling/test_vrg_github_repo_init.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py tests/vergil_tooling/test_vrg_github_repo_init.py -v
 ```
 
 Expected: all tests pass.
@@ -2167,7 +2167,7 @@ Expected: all tests pass.
 - [ ] **Step 2: Run vrg-validate**
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 Expected: all checks pass (lint, typecheck, tests, audit).

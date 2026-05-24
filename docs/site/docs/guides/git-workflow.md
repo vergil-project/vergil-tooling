@@ -173,7 +173,7 @@ This:
 - Pulls the latest.
 - Deletes the merged local feature branch.
 - Prunes stale remote-tracking refs.
-- Runs post-merge validation via `vrg-docker-run` to catch any
+- Runs post-merge validation via `vrg-container-run` to catch any
   regression introduced by the merge.
 
 Run this immediately after the PR merges. A Stop hook in the plugin
@@ -258,7 +258,7 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (vrg-docker-run mounts the current directory).
+  (vrg-container-run mounts the current directory).
 ```
 
 ### Cleanup after merge
@@ -354,7 +354,7 @@ The plugin's `validate-on-edit` hook expects those validators on
 PATH. Some are only installed inside the dev container image, not on
 the host. Hook-level PATH discovery is tracked in
 [vergil-tooling#265](https://github.com/vergil-project/vergil-tooling/issues/265).
-Workaround: run the validator explicitly via `vrg-docker-run` to
+Workaround: run the validator explicitly via `vrg-container-run` to
 confirm the file is clean; then proceed.
 
 ## Related

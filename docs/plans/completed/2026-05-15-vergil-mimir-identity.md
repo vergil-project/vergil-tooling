@@ -261,7 +261,7 @@ updates the fixture data to eliminate `-agent` references.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
+Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
 
 Expected: failures in discovery tests (code still checks `-agent`).
 
@@ -293,7 +293,7 @@ def _discover_accounts() -> tuple[str, str]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
+Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
 
 Expected: all tests pass.
 
@@ -366,7 +366,7 @@ def test_pr_merge_escalates_to_human_token() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py::test_default_uses_agent_token -v`
+Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py::test_default_uses_agent_token -v`
 
 Expected: FAIL (code still uses human token for all commands).
 
@@ -391,7 +391,7 @@ def _get_token(command: list[str]) -> str:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
+Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
 
 Expected: all tests pass.
 
@@ -429,7 +429,7 @@ wphillipmoore-vergil = "Co-Authored-By: wphillipmoore-vergil <NOREPLY_ID+wphilli
 
 - [ ] **Step 2: Run full validation**
 
-Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-docker-run -- uv run vrg-validate`
+Run: `cd .worktrees/issue-805-vergil-mimir-identity && vrg-container-run -- uv run vrg-validate`
 
 Expected: all checks pass. The config parser validates the co-author
 trailer format.
@@ -561,7 +561,7 @@ vrg-commit --type docs --scope config \
 
 ```bash
 cd .worktrees/issue-805-vergil-mimir-identity && \
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 Expected: all checks pass (lint, typecheck, tests, audit, common

@@ -58,7 +58,7 @@ Each script follows the same pattern:
 
 1. Set `DOCKER_DEV_IMAGE` (default: `dev-<language>:<latevrg-version>`)
 2. Set `DOCKER_TEST_CMD` (language-specific command)
-3. Delegate to `vrg-docker-test` if available, otherwise run `docker run`
+3. Delegate to `vrg-container-test` if available, otherwise run `docker run`
    directly
 
 Environment overrides:
@@ -70,7 +70,7 @@ Environment overrides:
     Build the dev images locally before first use:
     `cd ../vergil-docker && docker/build.sh`
 
-The `.githooks` pre-commit gate runs `vrg-docker-run -- uv run vrg-validate`
+The `.githooks` pre-commit gate runs `vrg-container-run -- uv run vrg-validate`
 on every commit, which runs common checks and per-language validation. Hook
 bypass (`--no-verify`) is disallowed by policy.
 

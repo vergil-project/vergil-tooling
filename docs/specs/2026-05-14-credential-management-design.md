@@ -302,10 +302,10 @@ logic through every function signature. The calling code changes
 only to set `GH_TOKEN` before its `github.py` calls — the
 library's API surface does not change.
 
-## Section 6: `vrg-docker-run` and Container Credentials
+## Section 6: `vrg-container-run` and Container Credentials
 
-`vrg-docker-run` currently hard-requires `GH_TOKEN` in the
-environment (line 80 of `vrg_docker_run.py`). Under the new model:
+`vrg-container-run` currently hard-requires `GH_TOKEN` in the
+environment (line 80 of `vrg_container_run.py`). Under the new model:
 
 1. **Remove the hard gate.** `GH_TOKEN` in the ambient environment
    is no longer guaranteed or expected. The container launches
@@ -315,7 +315,7 @@ GitHub CLI and git operations are host-side tools by design. The
 container runs tests, linters, and builds — it does not need
 GitHub credentials. `vrg-validate` and other container commands
 do not use `GH_TOKEN`. No credential retrieval logic is added to
-`vrg-docker-run`.
+`vrg-container-run`.
 
 The existing env-var passthrough in `docker.py` (which forwards
 `GH_*`, `GITHUB_*`, and `MQ_*` prefixes into the container) is
@@ -359,7 +359,7 @@ everything. The honor system. This continues to work while
 | Permission model design (#754) | `vrg-gh` wrapper (Section 3) | Gains credential selection responsibility; `pr merge` and `pr review --approve` change from denied to conditionally allowed |
 | Permission model plan | Task 2 (`vrg-gh`) | Updated to include credential selection logic and escalation component |
 | Consuming repo setup guide | Environment setup | Updated to reference `gh auth`, not `GH_TOKEN` export |
-| `vrg_docker_run.py` | Usage text (line 40) | Remove `GH_TOKEN (required)` — no longer required |
+| `vrg_container_run.py` | Usage text (line 40) | Remove `GH_TOKEN (required)` — no longer required |
 | Consuming repo CLAUDE.md files | Development commands | Updated to note `vrg-gh` handles credential selection |
 
 ## Section 8: Credential Lifecycle (Deferred)

@@ -1,6 +1,6 @@
 """Common validation checks.
 
-Runs inside the dev container via ``vrg-docker-run``:
+Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
   2. markdownlint on published markdown (docs/site/, README.md) using
      the bundled canonical config

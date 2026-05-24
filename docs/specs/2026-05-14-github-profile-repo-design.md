@@ -84,7 +84,7 @@ Content outline:
   vergil-tooling via `uv tool install`, enabling git hooks.
 - **Workflow** — branch from `develop`, use `vrg-commit` for commits,
   use `vrg-submit-pr` for PRs, all validation runs via
-  `vrg-docker-run -- uv run vrg-validate`.
+  `vrg-container-run -- uv run vrg-validate`.
 - **For contributors using AI tools** — the identity model
   (`<username>-agent` account), accountability principle, all AI work
   committed under the agent identity, all reviews under the human

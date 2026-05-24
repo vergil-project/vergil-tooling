@@ -43,7 +43,7 @@ Create a new org: **`vergil-project`**
 All console scripts change from `st-*` to `vrg-*`:
 
 `st-commit` → `vrg-commit`, `st-validate` → `vrg-validate`,
-`st-docker-run` → `vrg-docker-run`, etc.
+`st-docker-run` → `vrg-container-run`, etc.
 
 ### Environment variables
 

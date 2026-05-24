@@ -106,7 +106,7 @@ def test_bump_invalid_part_raises(tmp_path: Path) -> None:
 - [ ] Run tests to verify they fail:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -k "bump_minor or bump_major or bump_patch_default or bump_invalid_part" -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -k "bump_minor or bump_major or bump_patch_default or bump_invalid_part" -v
 ```
 
 Expected: FAIL — `bump()` does not accept a `part` argument.
@@ -171,7 +171,7 @@ Remove the old `_increment_patch` function.
 - [ ] Run tests to verify they pass:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v
 ```
 
 Expected: ALL PASS (including all existing tests — `bump(repo_root)` still works because `part` defaults to `"patch"`).
@@ -204,7 +204,7 @@ And update the else branch:
 - [ ] Run the full test suite to verify nothing is broken:
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 Expected: PASS
@@ -312,7 +312,7 @@ def test_generate_changelog_raises_on_cliff_failure(tmp_path: Path) -> None:
 - [ ] Run tests to verify they fail:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_changelog.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_changelog.py -v
 ```
 
 Expected: FAIL — `vergil_tooling.lib.changelog` does not exist.
@@ -399,7 +399,7 @@ def _normalize_trailing_newline(path: Path) -> None:
 - [ ] Run tests to verify they pass:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_changelog.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_changelog.py -v
 ```
 
 Expected: PASS
@@ -475,7 +475,7 @@ vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
 - [ ] Run validation:
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 Expected: PASS
@@ -567,7 +567,7 @@ def test_promote_invalid_version_raises() -> None:
 - [ ] Run tests to verify they fail:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_promote.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_promote.py -v
 ```
 
 Expected: FAIL — `vergil_tooling.lib.promote` does not exist.
@@ -626,7 +626,7 @@ def promote(version: str, *, dry_run: bool = False) -> None:
 - [ ] Run tests to verify they pass:
 
 ```bash
-vrg-docker-run -- uv run pytest tests/vergil_tooling/test_promote.py -v
+vrg-container-run -- uv run pytest tests/vergil_tooling/test_promote.py -v
 ```
 
 Expected: PASS
@@ -701,7 +701,7 @@ vrg-promote = "vergil_tooling.bin.vrg_promote:main"
 - [ ] Run validation:
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 Expected: PASS

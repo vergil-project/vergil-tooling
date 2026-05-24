@@ -10,7 +10,7 @@ container runtime inside identity VMs, falling back to docker
 for host-side development.
 
 **Architecture:** One focused change to vergil-tooling:
-`vrg-docker-run` auto-detects `nerdctl` vs `docker` and uses
+`vrg-container-run` auto-detects `nerdctl` vs `docker` and uses
 whichever is available. This is the only VM-specific adaptation
 needed in vergil-tooling itself.
 
@@ -29,7 +29,7 @@ supersedes them with a more comprehensive approach.
 
 **Specs:**
 - `docs/specs/2026-05-20-vergil-vm-image-management-design.md`
-  (#894) — Impact on vrg-docker-run section
+  (#894) — Impact on vrg-container-run section
 
 **Decomposition:** This is Plan 5 of 6 for the identity VM
 isolation system.
@@ -56,7 +56,7 @@ isolation system.
 
 | Component | What changes | What stays |
 |---|---|---|
-| `vrg-docker-run` | Auto-detect `nerdctl` or `docker` | All container operations, image building, volume mounts |
+| `vrg-container-run` | Auto-detect `nerdctl` or `docker` | All container operations, image building, volume mounts |
 | `lib/docker.py` | Runtime detection function | Existing Docker subprocess helpers |
 
 ### Runtime Detection Logic
@@ -75,7 +75,7 @@ def detect_runtime() -> str:
     raise SystemExit(1)
 ```
 
-The detection is done once at the start of each `vrg-docker-run`
+The detection is done once at the start of each `vrg-container-run`
 invocation. The result replaces all `"docker"` literals in
 subprocess calls.
 
@@ -92,9 +92,9 @@ breaking changes for non-VM users.
 | File | Action | Responsibility |
 |---|---|---|
 | `src/vergil_tooling/lib/docker.py` | Modify | Add `detect_runtime()` |
-| `src/vergil_tooling/bin/vrg_docker_run.py` | Modify | Use detected runtime |
+| `src/vergil_tooling/bin/vrg_container_run.py` | Modify | Use detected runtime |
 | `tests/vergil_tooling/test_docker.py` | Modify | Add runtime detection tests |
-| `tests/vergil_tooling/test_vrg_docker_run.py` | Modify | Update for runtime detection |
+| `tests/vergil_tooling/test_vrg_container_run.py` | Modify | Update for runtime detection |
 
 ---
 
@@ -153,7 +153,7 @@ def test_detect_runtime_none_found(
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
 Expected: FAIL
 
 - [ ] **Step 3: Implement detect_runtime()**
@@ -178,7 +178,7 @@ def detect_runtime() -> str:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_docker.py -k detect_runtime -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -191,19 +191,19 @@ vrg-commit --type feat --scope docker \
 
 ---
 
-### Task 2: Wire Runtime Detection into vrg-docker-run
+### Task 2: Wire Runtime Detection into vrg-container-run
 
 **Files:**
-- Modify: `src/vergil_tooling/bin/vrg_docker_run.py`
-- Modify: `tests/vergil_tooling/test_vrg_docker_run.py`
+- Modify: `src/vergil_tooling/bin/vrg_container_run.py`
+- Modify: `tests/vergil_tooling/test_vrg_container_run.py`
 
 - [ ] **Step 1: Write the failing test**
 
 ```python
-# Add to tests/vergil_tooling/test_vrg_docker_run.py
+# Add to tests/vergil_tooling/test_vrg_container_run.py
 
 def test_uses_detected_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
-    """vrg-docker-run uses detect_runtime() instead of hardcoded 'docker'."""
+    """vrg-container-run uses detect_runtime() instead of hardcoded 'docker'."""
     monkeypatch.setattr(
         "vergil_tooling.lib.docker.detect_runtime",
         lambda: "nerdctl",
@@ -216,7 +216,7 @@ def test_uses_detected_runtime(monkeypatch: pytest.MonkeyPatch) -> None:
 
 - [ ] **Step 3: Replace hardcoded "docker" with detect_runtime()**
 
-In `vrg_docker_run.py`, find all places where `"docker"` is used
+In `vrg_container_run.py`, find all places where `"docker"` is used
 as a command name and replace with `detect_runtime()`. Call it
 once at the top of `main()` and pass the result through.
 
@@ -239,14 +239,14 @@ any other Docker CLI invocations.
 
 - [ ] **Step 4: Run full test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_docker_run.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_container_run.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
 vrg-commit --type feat --scope docker \
-  --message "use detected container runtime in vrg-docker-run" \
+  --message "use detected container runtime in vrg-container-run" \
   --body "Replaces hardcoded 'docker' with detect_runtime() — supports nerdctl inside identity VMs"
 ```
 
@@ -257,7 +257,7 @@ vrg-commit --type feat --scope docker \
 - [ ] **Step 1: Run full validation**
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 - [ ] **Step 2: Test inside the VM (requires working VM from Plan 1)**
@@ -269,7 +269,7 @@ limactl shell vergil-agent
 uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 
 # Verify nerdctl detection
-vrg-docker-run -- echo "runtime works"
+vrg-container-run -- echo "runtime works"
 ```
 
 - [ ] **Step 3: Commit any fixes**

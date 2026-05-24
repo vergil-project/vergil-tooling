@@ -1,4 +1,4 @@
-"""Tests for vergil_tooling.bin.vrg_docker_test."""
+"""Tests for vergil_tooling.bin.vrg_container_test."""
 
 from __future__ import annotations
 
@@ -8,10 +8,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_docker_test import (
+from vergil_tooling.bin.vrg_container_test import (
     _detect_language,
-    _docker_is_available,
-    build_test_docker_args,
+    _runtime_is_available,
+    build_test_container_args,
     main,
 )
 
@@ -65,18 +65,18 @@ def test_detect_ruby_priority(tmp_path: Path) -> None:
     assert _detect_language(tmp_path) == "ruby"
 
 
-# -- build_test_docker_args ---------------------------------------------------
+# -- build_test_container_args ------------------------------------------------
 
 
-def test_build_docker_args_python(tmp_path: Path) -> None:
+def test_build_container_args_python(tmp_path: Path) -> None:
     with patch.dict("os.environ", {}, clear=True):
-        args = build_test_docker_args(tmp_path, "python")
+        args = build_test_container_args(tmp_path, "python", runtime="docker")
     assert "ghcr.io/vergil-project/prod-python:3.14" in args
     assert "uv sync && uv run pytest tests/ -v" in args
     assert "-v" in args
 
 
-def test_build_docker_args_custom_env(tmp_path: Path) -> None:
+def test_build_container_args_custom_env(tmp_path: Path) -> None:
     env = {
         "DOCKER_DEV_IMAGE": "custom:img",
         "DOCKER_TEST_CMD": "echo ok",
@@ -84,7 +84,7 @@ def test_build_docker_args_custom_env(tmp_path: Path) -> None:
         "DOCKER_EXTRA_VOLUMES": "/a:/b:ro;/c:/d",
     }
     with patch.dict("os.environ", env, clear=True):
-        args = build_test_docker_args(tmp_path, "")
+        args = build_test_container_args(tmp_path, "", runtime="docker")
     assert "custom:img" in args
     assert "echo ok" in args
     assert "--network" in args
@@ -93,39 +93,39 @@ def test_build_docker_args_custom_env(tmp_path: Path) -> None:
     assert "/c:/d" in args
 
 
-def test_build_docker_args_mq_env(tmp_path: Path) -> None:
+def test_build_container_args_mq_env(tmp_path: Path) -> None:
     env = {"MQ_HOST": "localhost", "MQ_PORT": "1414"}
     with patch.dict("os.environ", env, clear=True):
-        args = build_test_docker_args(tmp_path, "python")
+        args = build_test_container_args(tmp_path, "python", runtime="docker")
     assert "-e" in args
     assert "MQ_HOST" in args
     assert "MQ_PORT" in args
 
 
-def test_build_docker_args_no_image(tmp_path: Path) -> None:
+def test_build_container_args_no_image(tmp_path: Path) -> None:
     with (
         patch.dict("os.environ", {}, clear=True),
         pytest.raises(SystemExit),
     ):
-        build_test_docker_args(tmp_path, "")
+        build_test_container_args(tmp_path, "", runtime="docker")
 
 
-def test_build_docker_args_no_command(tmp_path: Path) -> None:
+def test_build_container_args_no_command(tmp_path: Path) -> None:
     with (
         patch.dict("os.environ", {"DOCKER_DEV_IMAGE": "img:1"}, clear=True),
         pytest.raises(SystemExit),
     ):
-        build_test_docker_args(tmp_path, "")
+        build_test_container_args(tmp_path, "", runtime="docker")
 
 
-def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
+def test_build_container_args_empty_extra_volumes(tmp_path: Path) -> None:
     fake_home = tmp_path / "home"
     fake_home.mkdir()
     with (
         patch.dict("os.environ", {"DOCKER_EXTRA_VOLUMES": ";"}, clear=True),
-        patch("vergil_tooling.lib.docker.Path.home", return_value=fake_home),
+        patch("vergil_tooling.lib.container.Path.home", return_value=fake_home),
     ):
-        args = build_test_docker_args(tmp_path, "python")
+        args = build_test_container_args(tmp_path, "python", runtime="docker")
     # Should not have extra -v entries beyond the workspace mount
     v_indices = [i for i, a in enumerate(args) if a == "-v"]
     assert len(v_indices) == 1
@@ -136,18 +136,20 @@ def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
 
 def test_main_no_language_no_env(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="docker"),
         patch.dict("os.environ", {}, clear=True),
     ):
         assert main() == 1
 
 
-def test_main_docker_not_available(tmp_path: Path) -> None:
+def test_main_runtime_not_available(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("vergil_tooling.bin.vrg_docker_test.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_test._docker_is_available", return_value=False),
-        patch("vergil_tooling.bin.vrg_docker_test.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_test._runtime_is_available", return_value=False),
+        patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         result = main()
@@ -158,9 +160,10 @@ def test_main_docker_not_available(tmp_path: Path) -> None:
 def test_main_calls_execvp(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("vergil_tooling.bin.vrg_docker_test.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_test._docker_is_available", return_value=True),
-        patch("vergil_tooling.bin.vrg_docker_test.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_test.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_test._runtime_is_available", return_value=True),
+        patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main()
@@ -170,29 +173,31 @@ def test_main_calls_execvp(tmp_path: Path) -> None:
     assert "ghcr.io/vergil-project/prod-python:3.14" in call_args[0][1]
 
 
-# -- _docker_is_available ----------------------------------------------------
+# -- _runtime_is_available ---------------------------------------------------
 
 
-def test_docker_is_available_true() -> None:
+def test_runtime_is_available_true() -> None:
     mock_result = MagicMock(returncode=0)
-    with patch("vergil_tooling.bin.vrg_docker_test.subprocess.run", return_value=mock_result):
-        assert _docker_is_available() is True
+    with patch("vergil_tooling.bin.vrg_container_test.subprocess.run", return_value=mock_result):
+        assert _runtime_is_available("docker") is True
 
 
-def test_docker_is_available_false() -> None:
+def test_runtime_is_available_false() -> None:
     mock_result = MagicMock(returncode=1)
-    with patch("vergil_tooling.bin.vrg_docker_test.subprocess.run", return_value=mock_result):
-        assert _docker_is_available() is False
+    with patch("vergil_tooling.bin.vrg_container_test.subprocess.run", return_value=mock_result):
+        assert _runtime_is_available("docker") is False
 
 
-def test_docker_is_available_not_installed() -> None:
-    with patch("vergil_tooling.bin.vrg_docker_test.subprocess.run", side_effect=FileNotFoundError):
-        assert _docker_is_available() is False
-
-
-def test_docker_is_available_timeout() -> None:
+def test_runtime_is_available_not_installed() -> None:
     with patch(
-        "vergil_tooling.bin.vrg_docker_test.subprocess.run",
+        "vergil_tooling.bin.vrg_container_test.subprocess.run", side_effect=FileNotFoundError
+    ):
+        assert _runtime_is_available("docker") is False
+
+
+def test_runtime_is_available_timeout() -> None:
+    with patch(
+        "vergil_tooling.bin.vrg_container_test.subprocess.run",
         side_effect=subprocess.TimeoutExpired(cmd="docker version", timeout=15),
     ):
-        assert _docker_is_available() is False
+        assert _runtime_is_available("docker") is False

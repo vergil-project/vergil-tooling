@@ -42,7 +42,7 @@ Layer 2 — Docker images (vergil-docker, standardized)
 │   Infrastructure tooling (future: AWS, GCP, etc.)
 │   Pulled into the VM as containers via nerdctl
 │   Same images used in CI on GitHub Actions
-│   vrg-docker-run / vrg-validate consume these
+│   vrg-container-run / vrg-validate consume these
 │
 Layer 3 — macOS host (user's environment, unmanaged)
     IDE, browser, Ollama, personal tools
@@ -66,7 +66,7 @@ If no, it belongs on the macOS host (Layer 3) or nowhere.
 
 - **Yes → Docker image (Layer 2).** Package it in vergil-docker,
   version it, use the same image locally and in CI. Inside the
-  VM, the agent accesses it via `vrg-docker-run` / `nerdctl run`
+  VM, the agent accesses it via `vrg-container-run` / `nerdctl run`
   — never by installing it directly in the VM. This preserves
   Tier 1 / Tier 2 validation parity and avoids duplicating tool
   installations across layers.
@@ -101,8 +101,8 @@ standardize the build/test toolchain.
 
 | Tooling | Agent needs it? | CI needs it? | Decision | Layer |
 |---|---|---|---|---|
-| Python 3.14 + ruff + mypy | Yes (validation) | Yes (lint, typecheck, test) | Docker image, used via vrg-docker-run | 2 |
-| Ruby 3.4 + rubocop | Yes (validation) | Yes (lint, test) | Docker image, used via vrg-docker-run | 2 |
+| Python 3.14 + ruff + mypy | Yes (validation) | Yes (lint, typecheck, test) | Docker image, used via vrg-container-run | 2 |
+| Ruby 3.4 + rubocop | Yes (validation) | Yes (lint, test) | Docker image, used via vrg-container-run | 2 |
 | AWS CLI v2 | Yes (integration tests, deployment scripts) | Yes (CD pipelines) | Docker image, used via container | 2 |
 | AWS CLI v2 | Yes (agent runs AWS commands during development) | No | VM base image | 1 |
 | AWS CLI v2 | No (human explores interactively only) | No | macOS host | 3 |
@@ -436,7 +436,7 @@ runtime). Fast-changing dependencies are managed dynamically.
 | Aspect | Docker (current) | VM (proposed) |
 |---|---|---|
 | Base artifact | vergil-docker image (no tooling pre-installed) | vergil-vm image (no tooling pre-installed) |
-| Tooling installation | `vrg-docker-cache build` installs vergil-tooling into cached image | VM startup hook installs vergil-tooling at boot |
+| Tooling installation | `vrg-container-cache build` installs vergil-tooling into cached image | VM startup hook installs vergil-tooling at boot |
 | Version pinning | `vergil.toml` specifies version tag | VM config specifies version range |
 | Mid-cycle update | Rebuild Docker cache | Run `vrg-vm-update` |
 | CI behavior | Installs tooling dynamically per workflow | N/A (CI uses Docker, not VMs) |
@@ -485,9 +485,9 @@ Docker. This is a deliberate choice:
    daemon, reducing the VM's attack surface and resource
    overhead.
 
-### Impact on vrg-docker-run
+### Impact on vrg-container-run
 
-`vrg-docker-run` currently invokes `docker` as the container
+`vrg-container-run` currently invokes `docker` as the container
 runtime. Inside the identity VM, it needs to invoke `nerdctl`
 instead. This requires a small adaptation:
 
@@ -496,7 +496,7 @@ instead. This requires a small adaptation:
 - No behavioral changes — the commands are compatible
 
 This adaptation belongs in vergil-tooling, not vergil-vm. It's
-a one-time change to `vrg-docker-run` to support runtime
+a one-time change to `vrg-container-run` to support runtime
 detection.
 
 ### Impact on vergil-docker Images

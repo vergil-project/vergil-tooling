@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     if not _in_dev_container():
         print(
             "ERROR: vrg-validate must run inside a dev container.\n"
-            "       Run: vrg-docker-run -- vrg-validate",
+            "       Run: vrg-container-run -- vrg-validate",
             file=sys.stderr,
         )
         return 1

@@ -168,7 +168,7 @@ def render_claude_md(ctx: RepoInitContext) -> str:
         "## Validation\n"
         "\n"
         "```bash\n"
-        "vrg-docker-run -- vrg-validate\n"
+        "vrg-container-run -- vrg-validate\n"
         "```\n"
         "\n"
     )

@@ -80,7 +80,7 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (vrg-docker-run mounts the current directory).
+  (vrg-container-run mounts the current directory).
 ```
 
 All fields are required.
@@ -98,7 +98,7 @@ human who can run it directly via `! <command>` in the prompt.
 ## Validation
 
 ```bash
-vrg-docker-run -- vrg-validate
+vrg-container-run -- vrg-validate
 ```
 
 This is the **only** validation command. Do not run individual linters,
@@ -106,7 +106,7 @@ formatters, or other tools outside of `vrg-validate`. If a tool is not
 invoked by `vrg-validate`, it is not part of the validation pipeline.
 
 > **Note:** This repository uses
-> `vrg-docker-run -- uv run vrg-validate` because it runs its own
+> `vrg-container-run -- uv run vrg-validate` because it runs its own
 > unreleased code rather than the pre-installed version.
 
 ## Project Overview
@@ -147,7 +147,7 @@ export PATH="$(pwd)/.venv-host/bin:$PATH"
 git config core.hooksPath .githooks
 ```
 
-After host tools are available, use `vrg-docker-run` to run all
+After host tools are available, use `vrg-container-run` to run all
 commands inside the dev container. See [Validation](#validation)
 above.
 
@@ -156,7 +156,7 @@ above.
 Testing is split across two tiers with increasing scope and cost:
 
 **Tier 1 — Local pre-commit (seconds):** The single entry point
-`vrg-docker-run -- uv run vrg-validate` runs everything
+`vrg-container-run -- uv run vrg-validate` runs everything
 (lint, typecheck, tests, audit, common checks) inside one dev
 container. Enforced via the `.githooks` pre-commit gate on every commit.
 
@@ -174,7 +174,7 @@ vergil-project/vergil-actions#176 for the parity audit.
 Docker is the only host prerequisite. The validation stack uses
 exactly one container per run:
 
-- **Outer layer**: `vrg-docker-run` launches the dev container once
+- **Outer layer**: `vrg-container-run` launches the dev container once
   and runs `vrg-validate` inside.
 - **Inner layer**: `vrg-validate` reads `primary_language` from
   `vergil.toml` and runs common checks (markdownlint,
@@ -190,7 +190,7 @@ Dev container images are maintained in
 cd ../vergil-docker && docker/build.sh
 
 # Run the full validation pipeline in one container
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 ## Architecture
@@ -207,8 +207,8 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
-- **`vrg-docker-run`** — Run arbitrary commands inside a dev container
-- **`vrg-docker-test`** — Run repo test suite inside a dev container
+- **`vrg-container-run`** — Run arbitrary commands inside a dev container
+- **`vrg-container-test`** — Run repo test suite inside a dev container
 
 Shared libraries under `src/vergil_tooling/lib/`:
 
@@ -223,7 +223,7 @@ Shared libraries under `src/vergil_tooling/lib/`:
 Dev container images (Dockerfiles, build script, publish workflow) are
 maintained in [vergil-docker](https://github.com/vergil-project/vergil-docker).
 
-The `vrg-docker-test` entry point auto-detects the project
+The `vrg-container-test` entry point auto-detects the project
 language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
 suite inside the appropriate container. Consuming repos call it directly or wrap
 it in a thin `scripts/dev/test.sh`. Environment overrides:
@@ -251,8 +251,8 @@ Consumed via `git config core.hooksPath .githooks`:
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-repo` |
-| **Container runtime** (all languages) | `vrg-docker-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
+| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-repo` |
+| **Container runtime** (all languages) | `vrg-container-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
 
 **Host install** (canonical):
 
@@ -269,7 +269,7 @@ git config core.hooksPath .githooks
 ```
 
 **CI (GitHub Actions)**: All repos use the cache-first runtime path
-via `vrg-docker-run`, which reads `vergil.toml` for the
+via `vrg-container-run`, which reads `vergil.toml` for the
 version tag and builds a per-branch cached image with
 vergil-tooling pre-installed.
 

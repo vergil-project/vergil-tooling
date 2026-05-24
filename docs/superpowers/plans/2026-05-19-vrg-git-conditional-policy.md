@@ -82,7 +82,7 @@ Note: add `import subprocess` to the test file imports (alongside the existing `
 
 - [ ] **Step 2: Run the tests — expect FAIL**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_is_protected_branch_develop -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_is_protected_branch_develop -v`
 
 Expected: `ImportError` — `_is_protected_branch` does not exist yet.
 
@@ -110,7 +110,7 @@ def _is_protected_branch() -> bool:
 
 - [ ] **Step 4: Run the tests — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "is_protected_branch" -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "is_protected_branch" -v`
 
 Expected: 4 passed.
 
@@ -190,7 +190,7 @@ def test_is_upstream_gone_branch_not_found() -> None:
 
 - [ ] **Step 2: Run the tests — expect FAIL**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_is_upstream_gone_true -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_is_upstream_gone_true -v`
 
 Expected: `ImportError` — `_is_upstream_gone` does not exist yet.
 
@@ -220,7 +220,7 @@ The function strips the leading `*` (current branch marker) and whitespace, extr
 
 - [ ] **Step 4: Run the tests — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "is_upstream_gone" -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "is_upstream_gone" -v`
 
 Expected: 4 passed.
 
@@ -290,7 +290,7 @@ The existing `test_push_force_denied` and `test_push_force_short_denied` tests r
 
 - [ ] **Step 2: Run the new tests — expect FAIL**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_push_force_with_lease_allowed_on_feature_branch -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_push_force_with_lease_allowed_on_feature_branch -v`
 
 Expected: FAIL — `_check_denied_flags` still unconditionally denies `--force-with-lease`.
 
@@ -333,13 +333,13 @@ The push path explicitly checks `-f`/`--force` first (always denied), then `--fo
 
 - [ ] **Step 4: Run all push-related tests — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "push" -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "push" -v`
 
 Expected: all push tests pass (force denied, force-short denied, force-with-lease conditional, normal allowed).
 
 - [ ] **Step 5: Run full test suite — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
 
 Expected: all tests pass.
 
@@ -406,7 +406,7 @@ The existing `test_branch_force_flag_denied` (line 183) and `test_branch_safe_de
 
 - [ ] **Step 2: Run the new tests — expect FAIL**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_branch_force_delete_allowed_when_upstream_gone -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::test_branch_force_delete_allowed_when_upstream_gone -v`
 
 Expected: FAIL — `_check_denied_flags` still unconditionally denies `-D`.
 
@@ -465,13 +465,13 @@ The branch path checks `--force` (always denied), then `-D` (extracts the branch
 
 - [ ] **Step 4: Run all branch-related tests — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "branch" -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -k "branch" -v`
 
 Expected: all branch tests pass (force denied, safe delete allowed, -D conditional).
 
 - [ ] **Step 5: Run full test suite — expect PASS**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
 
 Expected: all tests pass.
 
@@ -524,7 +524,7 @@ vrg-commit --type docs --scope permission-model --message "update denied-flags t
 
 - [ ] **Step 1: Run full validation pipeline**
 
-Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-docker-run -- uv run vrg-validate`
+Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-827-force-push-policy && vrg-container-run -- uv run vrg-validate`
 
 Expected: all checks pass (lint, typecheck, tests, audit, common checks).
 
