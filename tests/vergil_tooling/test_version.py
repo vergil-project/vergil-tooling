@@ -492,6 +492,75 @@ def test_bump_patch_default(tmp_path: Path) -> None:
     assert result == "1.0.1"
 
 
+def test_read_version_from_ref_error_no_stderr() -> None:
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _read_version_from_ref
+
+    err = _sp.CalledProcessError(1, "git show")
+    err.stderr = ""
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError),
+    ):
+        _read_version_from_ref("nonexistent", "VERSION", "shell")
+
+
+def test_run_lockfile_maintenance_error_no_stderr(tmp_path: Path) -> None:
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _run_lockfile_maintenance
+
+    err = _sp.CalledProcessError(1, "uv lock")
+    err.stderr = ""
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError),
+    ):
+        _run_lockfile_maintenance(tmp_path, "python")
+
+
+def test_read_version_from_ref_prints_stderr_on_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _read_version_from_ref
+
+    err = _sp.CalledProcessError(1, "git show")
+    err.stderr = "fatal: bad revision\n"
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError),
+    ):
+        _read_version_from_ref("nonexistent", "VERSION", "shell")
+    captured = capsys.readouterr()
+    assert "bad revision" in captured.err
+
+
+def test_run_lockfile_maintenance_prints_stderr_on_failure(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess as _sp
+
+    from vergil_tooling.lib.version import _run_lockfile_maintenance
+
+    err = _sp.CalledProcessError(1, "uv lock")
+    err.stderr = "error: could not resolve\n"
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
+        pytest.raises(_sp.CalledProcessError),
+    ):
+        _run_lockfile_maintenance(tmp_path, "python")
+    captured = capsys.readouterr()
+    assert "could not resolve" in captured.err
+
+
 def test_bump_invalid_part_raises(tmp_path: Path) -> None:
     _write_toml(tmp_path, "shell")
     (tmp_path / "VERSION").write_text("1.0.0\n")

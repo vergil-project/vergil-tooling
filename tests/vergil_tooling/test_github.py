@@ -821,6 +821,121 @@ class TestGetInstallationToken:
         assert first == second == "ghs_token"
         assert mock_run.call_count == 1
 
+    def test_returns_none_when_jwt_generation_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        with patch(
+            "vergil_tooling.lib.github._generate_jwt",
+            side_effect=subprocess.CalledProcessError(1, "openssl"),
+        ):
+            assert github.get_installation_token(org="test-org") is None
+
+    def test_returns_none_when_resolve_installations_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        err = subprocess.CalledProcessError(1, "gh")
+        err.stderr = "HTTP 401 Unauthorized"
+        err.stdout = ""
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                side_effect=err,
+            ),
+        ):
+            assert github.get_installation_token(org="test-org") is None
+
+    def test_returns_none_when_token_exchange_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        err = subprocess.CalledProcessError(1, "gh")
+        err.stderr = "HTTP 401 Unauthorized"
+        err.stdout = ""
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"test-org": "67890"},
+            ),
+            patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
+        ):
+            assert github.get_installation_token(org="test-org") is None
+
+    def test_returns_none_when_openssl_not_found(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        with patch(
+            "vergil_tooling.lib.github._generate_jwt",
+            side_effect=FileNotFoundError("openssl"),
+        ):
+            assert github.get_installation_token(org="test-org") is None
+
+    def test_logs_warning_on_app_auth_failure(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import logging
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        err = subprocess.CalledProcessError(1, "gh")
+        err.stderr = "HTTP 401 Unauthorized"
+        err.stdout = ""
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                side_effect=err,
+            ),
+            caplog.at_level(logging.WARNING, logger="vergil_tooling.lib.github"),
+        ):
+            github.get_installation_token(org="test-org")
+        assert "App auth failed" in caplog.text
+        assert "401" in caplog.text
+
     def test_refreshes_expired_cache(
         self,
         tmp_path: Path,

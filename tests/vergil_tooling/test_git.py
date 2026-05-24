@@ -97,6 +97,57 @@ def test_run_error_carries_output() -> None:
     assert exc_info.value.stderr == "err"
 
 
+def test_run_prints_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git push", output="partial\n", stderr="fatal: error\n")
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.run("push", "origin", "main")
+    captured = capsys.readouterr()
+    assert "partial" in captured.out
+    assert "fatal: error" in captured.err
+
+
+def test_run_error_no_output(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git status")
+    err.stderr = ""
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.run("status")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_read_output_prints_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git log", stderr="fatal: not a repo\n")
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.read_output("log")
+    captured = capsys.readouterr()
+    assert "not a repo" in captured.err
+
+
+def test_read_output_error_no_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git log")
+    err.stderr = ""
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.read_output("log")
+    captured = capsys.readouterr()
+    assert captured.err == ""
+
+
 def test_read_output_returns_stripped_stdout() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(stdout="  hello world  \n")
