@@ -177,10 +177,11 @@ def _cmd_session(args: argparse.Namespace) -> int:
     cmd = ["limactl", "shell", "--start", f"--workdir={workdir}", identity.vm_instance]
 
     if workspace:
+        source = ". ~/.config/vergil/claude.env 2>/dev/null;"
         if args.cmd:
-            inner = f"cd {shlex.quote(workspace)} && exec {shlex.join(args.cmd)}"
+            inner = f"{source} cd {shlex.quote(workspace)} && exec {shlex.join(args.cmd)}"
         else:
-            inner = f"cd {shlex.quote(workspace)} && exec bash --login"
+            inner = f"{source} cd {shlex.quote(workspace)} && exec bash --login"
         cmd.extend(["bash", "-c", inner])
 
     os.execvp(cmd[0], cmd)  # noqa: S606, S607

@@ -275,14 +275,21 @@ class TestInjectCredentials:
 
         inject_credentials("vergil-agent", identity)
 
-        assert mock_run.call_count == 3
+        assert mock_run.call_count == 4
         bashrc_call = mock_run.call_args_list[2]
         assert "claude.env" in " ".join(str(a) for a in bashrc_call[0])
+        mkdir_call = mock_run.call_args_list[3]
+        assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
+        assert ".claude" in " ".join(str(a) for a in mkdir_call[0])
 
-        assert mock_pipe.call_count == 3
+        assert mock_pipe.call_count == 4
         claude_call = mock_pipe.call_args_list[2]
         assert "claude.env" in claude_call[0][1]
         assert "CLAUDE_CODE_OAUTH_TOKEN=test-oauth-token-abc123" in claude_call[0][2]
+        creds_call = mock_pipe.call_args_list[3]
+        assert ".credentials.json" in creds_call[0][1]
+        assert "claudeAiOauth" in creds_call[0][2]
+        assert "test-oauth-token-abc123" in creds_call[0][2]
 
     @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima.shell_pipe")

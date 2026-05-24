@@ -218,6 +218,14 @@ def _inject_claude_token(instance: str, token_path: str) -> None:
     )
     shell_run(instance, "bash", "-c", source_cmd)
 
+    credentials = json.dumps({"claudeAiOauth": {"accessToken": token}})
+    shell_run(instance, "bash", "-c", "mkdir -p ~/.claude")
+    shell_pipe(
+        instance,
+        "cat > ~/.claude/.credentials.json && chmod 600 ~/.claude/.credentials.json",
+        credentials + "\n",
+    )
+
 
 def install_tooling(instance: str, tag: str) -> None:
     """Install vergil-tooling inside the VM."""

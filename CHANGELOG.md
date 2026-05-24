@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.44] - 2026-05-24
+
+### Bug fixes
+
+- write .credentials.json for Claude Code interactive TUI auth
+
+### Chores
+
+- bump version to 2.0.44
+
+## [2.0.43] - 2026-05-24
+
+### Bug fixes
+
+- source credential env file in session bash -c wrapper
+
+### Chores
+
+- bump version to 2.0.43
+
 ## [2.0.42] - 2026-05-24
 
 ### Chores
