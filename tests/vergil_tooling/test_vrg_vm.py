@@ -297,13 +297,35 @@ class TestSession:
     def test_session_with_workspace(self, mock_exec: MagicMock, config_file: Path) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling"])
         cmd = mock_exec.call_args[0][1]
-        assert "--workdir" in cmd
-        idx = cmd.index("--workdir")
-        assert cmd[idx + 1] == "/projects/vergil-tooling"
+        assert "bash" in cmd
+        assert "-c" in cmd
+        inner = cmd[cmd.index("-c") + 1]
+        assert "cd /projects/vergil-tooling" in inner
+        assert "exec bash --login" in inner
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     def test_session_with_command(self, mock_exec: MagicMock, config_file: Path) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling", "claude"])
         cmd = mock_exec.call_args[0][1]
-        assert "--" in cmd
-        assert "claude" in cmd
+        assert "bash" in cmd
+        assert "-c" in cmd
+        inner = cmd[cmd.index("-c") + 1]
+        assert "cd /projects/vergil-tooling" in inner
+        assert "exec claude" in inner
+
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    def test_session_command_with_flags(self, mock_exec: MagicMock, config_file: Path) -> None:
+        main(
+            [
+                "session",
+                "--config",
+                str(config_file),
+                "vergil-tooling",
+                "claude",
+                "--model",
+                "opus",
+            ]
+        )
+        cmd = mock_exec.call_args[0][1]
+        inner = cmd[cmd.index("-c") + 1]
+        assert "exec claude --model opus" in inner
