@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import subprocess
-import sys
 import tempfile
-from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import changelog, git, github, version
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.tracking import create_tracking_issue
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
-
-RELEASE_NOTES_DIR = "releases"
 
 
 def prepare(ctx: ReleaseContext) -> None:
@@ -36,16 +31,11 @@ def prepare(ctx: ReleaseContext) -> None:
     print(f"Creating branch: {branch}")
     git.run("checkout", "-b", branch)
 
-    print("Merging main into release branch...")
-    git.run("fetch", "--tags", "--force", "origin", "main")
-    git.run(
-        "merge",
-        "origin/main",
-        "-X",
-        "ours",
-        "-m",
-        f"chore(release): merge main into {branch}",
-    )
+    if ctx.version_override is not None:
+        print(f"Applying version override: {ctx.version_override}")
+        version.bump(ctx.repo_root, ctx.version_override)
+        git.run("add", "-A")
+        git.run("commit", "-m", f"chore(release): bump version to {ctx.version}")
 
     _generate_changelog(ctx)
 
@@ -62,48 +52,12 @@ def prepare(ctx: ReleaseContext) -> None:
 
 
 def _generate_changelog(ctx: ReleaseContext) -> None:
-    tag = f"develop-v{ctx.version}"
-    print(f"Generating changelog with boundary tag: {tag}")
-    config_path = files("vergil_tooling.configs") / "cliff.toml"
-    result = subprocess.run(  # noqa: S603
-        ("git-cliff", "--config", str(config_path), "--tag", tag, "-o", "CHANGELOG.md"),  # noqa: S607
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    _normalize_trailing_newline(Path("CHANGELOG.md"))
+    print(f"Generating changelog for v{ctx.version}")
+    changelog.generate_changelog(ctx.repo_root, ctx.version)
     git.run("add", "CHANGELOG.md")
 
-    releases_dir = Path(RELEASE_NOTES_DIR)
-    releases_dir.mkdir(exist_ok=True)
-    output_file = releases_dir / f"v{ctx.version}.md"
-    print(f"Generating release notes: {output_file}")
-    release_notes_config = files("vergil_tooling.configs") / "cliff-release-notes.toml"
-    result = subprocess.run(  # noqa: S603
-        (  # noqa: S607
-            "git-cliff",
-            "--config",
-            str(release_notes_config),
-            "--tag",
-            tag,
-            "--unreleased",
-            "-o",
-            str(output_file),
-        ),
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
-    _normalize_trailing_newline(output_file)
-    git.run("add", str(releases_dir))
+    notes_path = changelog.generate_release_notes(ctx.repo_root, ctx.version)
+    git.run("add", str(notes_path))
 
     status = git.read_output("status", "--porcelain")
     if not status:
@@ -112,14 +66,11 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
             command="git-cliff",
             message=(
                 f"No publishable changes since the last release. "
-                f"All commits after develop-v{ctx.version} are filtered by git-cliff."
+                f"All commits after develop-v{ctx.version} are filtered "
+                f"by git-cliff."
             ),
         )
     git.run("commit", "-m", f"chore(release): prepare {ctx.version}")
-
-
-def _normalize_trailing_newline(path: Path) -> None:
-    path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
 
 
 def _create_pr(ctx: ReleaseContext) -> str:
