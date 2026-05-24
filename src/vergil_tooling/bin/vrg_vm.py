@@ -68,9 +68,6 @@ def _cmd_create(args: argparse.Namespace) -> int:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
         create_vm(identity.vm_instance, template, identity.projects_dir)
 
-        print("  Starting VM...")
-        start_vm(identity.vm_instance)
-
         print("Injecting credentials...")
         inject_credentials(identity.vm_instance, identity)
 
