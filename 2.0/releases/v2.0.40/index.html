@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.40/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.38/">
+        <link rel="next" href="../v2.0.39/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>v2.0.39 - VERGIL Tooling</title>
+        <title>v2.0.40 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2039-2026-05-24" class="md-skip">
+        <a href="#release-2040-2026-05-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              v2.0.39
+              v2.0.40
             
           </span>
         </div>
@@ -792,34 +792,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../v2.0.40/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    v2.0.40
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -839,7 +811,7 @@
   <span class="md-ellipsis">
     
   
-    v2.0.39
+    v2.0.40
   
 
     
@@ -857,7 +829,7 @@
   <span class="md-ellipsis">
     
   
-    v2.0.39
+    v2.0.40
   
 
     
@@ -908,6 +880,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.0.39/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.39
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -6087,15 +6087,15 @@
 
 
 
-<h1 id="release-2039-2026-05-24">Release 2.0.39 (2026-05-24)<a class="headerlink" href="#release-2039-2026-05-24" title="Permanent link">&para;</a></h1>
+<h1 id="release-2040-2026-05-24">Release 2.0.40 (2026-05-24)<a class="headerlink" href="#release-2040-2026-05-24" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>replace --workdir with bash -c cd wrapper in session</strong>
-limactl shell --workdir is incompatible with command passthrough — it causes bash to receive -- as an invalid option. Replace with bash -c 'cd /workspace &amp;&amp; exec cmd' wrapping, which works reliably with all command forms including flags like --model. Ref #1050</li>
+<li><strong>remove unenforceable core.hooksPath audit check</strong>
+The hooks_path audit checked git config core.hooksPath, which is a post-clone setting that cannot be enforced. AI agents also trivially bypass the pre-commit gate via VRG_COMMIT_CONTEXT=1, making the check doubly ineffective.</li>
 </ul>
 <h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 2.0.39</strong></li>
+<li><strong>bump version to 2.0.40</strong></li>
 </ul>
 
 
