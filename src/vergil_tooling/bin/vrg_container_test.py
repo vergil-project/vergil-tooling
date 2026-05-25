@@ -12,7 +12,10 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
+from collections.abc import Sequence
+
 from vergil_tooling.lib import git
+from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     build_container_args,
@@ -27,7 +30,13 @@ if TYPE_CHECKING:
 _detect_language = detect_language
 
 
-def build_test_container_args(repo_root: Path, lang: str, *, runtime: str = "docker") -> list[str]:
+def build_test_container_args(
+    repo_root: Path,
+    lang: str,
+    *,
+    runtime: str = "docker",
+    env_prefixes: Sequence[str] = (),
+) -> list[str]:
     """Build the container run argument list for test execution."""
     image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(lang)
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
@@ -48,7 +57,9 @@ def build_test_container_args(repo_root: Path, lang: str, *, runtime: str = "doc
         print(f"Network:  {network}")
     print("---")
 
-    return build_container_args(repo_root, image, ["bash", "-c", test_cmd], runtime=runtime)
+    return build_container_args(
+        repo_root, image, ["bash", "-c", test_cmd], runtime=runtime, env_prefixes=env_prefixes
+    )
 
 
 # Keep backward-compatible alias
@@ -86,7 +97,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         print("Set DOCKER_DEV_IMAGE and DOCKER_TEST_CMD explicitly.", file=sys.stderr)
         return 1
 
-    container_args = build_test_container_args(repo_root, lang, runtime=runtime)
+    env_prefixes = container_env_prefixes(repo_root)
+    container_args = build_test_container_args(
+        repo_root, lang, runtime=runtime, env_prefixes=env_prefixes
+    )
 
     if not _runtime_is_available(runtime):
         print(
