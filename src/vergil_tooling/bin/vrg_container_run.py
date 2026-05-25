@@ -12,6 +12,7 @@ import os
 import sys
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     build_container_args,
@@ -36,7 +37,6 @@ options:
   --prefix <dev|prod>     image prefix (default: prod)
 
 environment variables:
-  GH_TOKEN                GitHub token (passed into container when set)
   DOCKER_DEV_IMAGE        override the auto-detected container image
   DOCKER_NETWORK          join a Docker network (e.g. for integration tests)
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
@@ -107,9 +107,15 @@ def main(argv: list[str] | None = None) -> int:
 
     assert_runtime_available(runtime)
 
+    env_prefixes = container_env_prefixes(repo_root)
     pull_policy = "never" if image_source == "cached" else "always"
     container_args = build_container_args(
-        repo_root, image, command, runtime=runtime, pull_policy=pull_policy
+        repo_root,
+        image,
+        command,
+        runtime=runtime,
+        pull_policy=pull_policy,
+        env_prefixes=env_prefixes,
     )
     if runtime == "nerdctl":
         os.execvp("nerdctl", container_args)  # noqa: S606, S607
