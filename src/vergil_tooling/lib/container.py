@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 
 _GHCR = "ghcr.io/vergil-project"
@@ -125,6 +126,7 @@ def build_container_args(
     *,
     runtime: str = "docker",
     pull_policy: str = "always",
+    env_prefixes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container ``run`` argument list."""
     network = os.environ.get("DOCKER_NETWORK", "")
@@ -159,9 +161,11 @@ def build_container_args(
             if vol:
                 container_args.extend(["-v", vol])
 
-    for name in os.environ:
-        if name.startswith(("MQ_", "GH_", "GITHUB_")):
-            container_args.extend(["-e", name])
+    if env_prefixes:
+        prefixes = tuple(env_prefixes)
+        for name in os.environ:
+            if name.startswith(prefixes):
+                container_args.extend(["-e", name])
 
     # Mount host git config so git identity is available in the container.
     gitconfig = Path.home() / ".gitconfig"
@@ -186,10 +190,16 @@ def build_docker_args(
     command: list[str],
     *,
     pull_policy: str = "always",
+    env_prefixes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container ``run`` argument list (legacy alias)."""
     return build_container_args(
-        repo_root, image, command, runtime="docker", pull_policy=pull_policy
+        repo_root,
+        image,
+        command,
+        runtime="docker",
+        pull_policy=pull_policy,
+        env_prefixes=env_prefixes,
     )
 
 
