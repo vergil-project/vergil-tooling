@@ -10,28 +10,21 @@ if command -v vrg-hook-guard &>/dev/null; then
 fi
 
 input=$(cat)
-command=$(echo "$input" | jq -r '.tool_input.command // empty')
+command=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
+bin=$(printf '%s' "$command" | awk '{print $1}')
+base=$(basename "$bin" 2>/dev/null || printf '%s' "$bin")
 
-if echo "$command" | grep -qE '(^|[^-])\bgit\b'; then
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "vergil-tooling is not available. This repository requires a correctly configured environment — all git/gh operations are blocked until resolved."
-    }
-  }'
-  exit 0
-fi
-
-if echo "$command" | grep -qE '(^|[^-])\bgh\b'; then
-  jq -n '{
-    hookSpecificOutput: {
-      hookEventName: "PreToolUse",
-      permissionDecision: "deny",
-      permissionDecisionReason: "vergil-tooling is not available. This repository requires a correctly configured environment — all git/gh operations are blocked until resolved."
-    }
-  }'
-  exit 0
-fi
+case "$base" in
+  git|gh)
+    jq -n '{
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: "vergil-tooling is not available. This repository requires a correctly configured environment — all git/gh operations are blocked until resolved."
+      }
+    }'
+    exit 0
+    ;;
+esac
 
 exit 0
