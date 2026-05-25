@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.46] - 2026-05-25
+
+### Bug fixes
+
+- validate runtime against allowlist before execvp
+- use literal executables in execvp to satisfy Semgrep taint analysis
+- surface subprocess stderr on failure across all lib modules
+- update CLAUDE.md consumer template for vrg-container-run rename
+
+### Chores
+
+- bump version to 2.0.46
+
+### Documentation
+
+- add orchestrator refactor implementation plan
+- move orchestrator refactor plan to docs/specs/
+
+### Features
+
+- add minor and major bump support to vrg-version
+- extract lib/changelog.py and vrg-changelog CLI
+- add lib/promote.py and vrg-promote CLI
+- add promote and develop CD fields to ReleaseContext
+- add --no-promote flag to vrg-release CLI
+
+### Refactoring
+
+- rename vrg-docker-* to vrg-container-* with runtime auto-detection
+- simplify preflight: use version.show(), remove inline version detection and override commit
+- simplify prepare: use lib/changelog, remove -X ours merge, handle version override on release branch
+- rewrite confirm phase: known job expectations, add confirm_develop
+- rewrite bump phase: orchestrator-driven back-merge from main
+- update finalize summary: back-merge PR label, develop CD
+- update orchestrator to new 8-phase sequence with promote and split confirm
+
 ## [2.0.45] - 2026-05-24
 
 ### Bug fixes
