@@ -309,3 +309,22 @@ def vm_age_days(instance: str) -> float | None:
             created = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime
             return (time.time() - created) / 86400
     return None
+
+
+_CLAUDE_CONFIG_FILES = ("CLAUDE.md", "settings.json")
+
+
+def copy_claude_config(instance: str, claude_dir: Path) -> None:
+    """Copy CLAUDE.md and settings.json from host into the VM."""
+    if not claude_dir.is_dir():
+        return
+    shell_run(instance, "bash", "-c", "mkdir -p ~/.claude")
+    for filename in _CLAUDE_CONFIG_FILES:
+        source = claude_dir / filename
+        if source.exists():
+            content = source.read_text()
+            shell_pipe(
+                instance,
+                f"cat > ~/.claude/{filename}",
+                content,
+            )

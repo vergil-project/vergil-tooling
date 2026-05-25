@@ -22,6 +22,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     update_tooling,
+    copy_claude_config,
     vm_age_days,
     vm_status,
 )
@@ -505,3 +506,55 @@ class TestVmAgeDays:
     def test_returns_none_on_error(self, mock: MagicMock) -> None:
         mock.side_effect = subprocess.CalledProcessError(1, "limactl")
         assert vm_age_days("vergil-agent") is None
+
+
+class TestCopyClaudeConfig:
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_copies_existing_files(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# My prefs\n")
+        (claude_dir / "settings.json").write_text('{"key": "val"}\n')
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        assert mock_run.call_count == 1
+        mkdir_call = mock_run.call_args_list[0]
+        assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
+        assert ".claude" in " ".join(str(a) for a in mkdir_call[0])
+
+        assert mock_pipe.call_count == 2
+        md_call = mock_pipe.call_args_list[0]
+        assert "CLAUDE.md" in md_call[0][1]
+        assert "# My prefs" in md_call[0][2]
+        settings_call = mock_pipe.call_args_list[1]
+        assert "settings.json" in settings_call[0][1]
+        assert '"key"' in settings_call[0][2]
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_skips_missing_files(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        mock_run.assert_called_once()
+        mock_pipe.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_skips_if_claude_dir_missing(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        mock_run.assert_not_called()
+        mock_pipe.assert_not_called()
