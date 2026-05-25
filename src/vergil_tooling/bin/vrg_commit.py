@@ -1,11 +1,8 @@
 """Commit wrapper that constructs standards-compliant commit messages.
 
 Co-author identity comes from the ``VRG_CO_AUTHOR`` environment variable
-(set by the AI harness). Performs branch / context validation (formerly
-in ``vergil_tooling.bin.pre_commit_hook``, removed under the
-host-level-tool spec — see docs/specs/host-level-tool.md). Sets
-VRG_COMMIT_CONTEXT=1 before invoking ``git commit`` so the
-``.githooks/pre-commit`` env-var gate admits the resulting commit.
+(set by the AI harness). Performs branch / context validation before
+invoking ``git commit``.
 """
 
 from __future__ import annotations

@@ -2,36 +2,17 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
 
-# Env-var contract with `.githooks/pre-commit`. Any internal caller
-# that runs `git commit` via this helper is by definition an
-# vrg-* tool invocation — admit it via the gate. See
-# docs/specs/host-level-tool.md "Git hooks".
-_GATE_ENV_VAR = "VRG_COMMIT_CONTEXT"
-_GATE_ENABLED_VALUE = "1"
-
 
 def run(*args: str) -> None:
-    """Run a git command and raise on failure.
-
-    When the first positional arg is ``"commit"``, automatically sets
-    ``VRG_COMMIT_CONTEXT=1`` in the subprocess environment so the
-    repository's pre-commit gate admits the commit. This makes the
-    env-var contract a property of the helper rather than something
-    every internal caller has to remember (issue #295).
-    """
-    env = None
-    if args and args[0] == "commit":
-        env = {**os.environ, _GATE_ENV_VAR: _GATE_ENABLED_VALUE}
+    """Run a git command and raise on failure."""
     try:
         result = subprocess.run(  # noqa: S603
             ("git", *args),  # noqa: S607
             check=True,
-            env=env,
             capture_output=True,
             text=True,
         )
