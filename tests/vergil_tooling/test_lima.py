@@ -23,6 +23,7 @@ from vergil_tooling.lib.lima import (
     stop_vm,
     update_tooling,
     copy_claude_config,
+    try_update_tooling,
     vm_age_days,
     vm_status,
 )
@@ -558,3 +559,36 @@ class TestCopyClaudeConfig:
 
         mock_run.assert_not_called()
         mock_pipe.assert_not_called()
+
+
+class TestTryUpdateTooling:
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_true_on_success(self, mock_update: MagicMock) -> None:
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is True
+        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_false_on_subprocess_error(
+        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is False
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_false_on_system_exit(
+        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_update.side_effect = SystemExit(1)
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is False
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
+        try_update_tooling("vergil-agent", tag="v2.1", fallback_tag="v2.0")
+        mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")

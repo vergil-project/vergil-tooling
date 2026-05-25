@@ -328,3 +328,21 @@ def copy_claude_config(instance: str, claude_dir: Path) -> None:
                 f"cat > ~/.claude/{filename}",
                 content,
             )
+
+
+def try_update_tooling(
+    instance: str,
+    tag: str | None = None,
+    *,
+    fallback_tag: str = "",
+) -> bool:
+    """Update vergil-tooling, returning False on failure instead of aborting."""
+    try:
+        update_tooling(instance, tag, fallback_tag=fallback_tag)
+        return True
+    except (subprocess.CalledProcessError, SystemExit):
+        print(
+            "WARNING: vergil-tooling update failed — continuing with installed version",
+            file=sys.stderr,
+        )
+        return False
