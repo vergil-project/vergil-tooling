@@ -459,8 +459,21 @@ class TestUpdateTooling:
         assert "tooling-tag" in mock_pipe.call_args[0][1]
         assert "v2.1" in mock_pipe.call_args[0][2]
 
+    @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")
-    def test_exits_if_no_tag(self, mock_run: MagicMock) -> None:
+    def test_uses_fallback_when_no_marker(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert mock_run.call_count == 2
+        cmd_str = " ".join(str(a) for a in mock_run.call_args_list[1][0])
+        assert "uv tool install --reinstall" in cmd_str
+        assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exits_if_no_tag_and_no_fallback(self, mock_run: MagicMock) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with pytest.raises(SystemExit):
             update_tooling("vergil-agent")
