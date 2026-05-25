@@ -12,7 +12,7 @@ from vergil_tooling.lib.config import (
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
-    StConfig,
+    VergilConfig,
 )
 from vergil_tooling.lib.github_config import (
     DesiredRuleset,
@@ -303,14 +303,14 @@ def test_lang_has_check_returns_false_for_unknown_check() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _st_config(
+def _vergil_config(
     *,
     language: str = "python",
     release_model: str = "tagged-release",
     versions: list[str] | None = None,
     integration_tests: bool = False,
-) -> StConfig:
-    return StConfig(
+) -> VergilConfig:
+    return VergilConfig(
         project=_project(language=language, release_model=release_model),
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
@@ -321,7 +321,7 @@ def _st_config(
 
 
 def test_compute_desired_state_has_three_rulesets() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     assert len(state.rulesets) == 3
     names = [r.name for r in state.rulesets]
     assert "Branch protection" in names
@@ -330,17 +330,17 @@ def test_compute_desired_state_has_three_rulesets() -> None:
 
 
 def test_compute_desired_state_includes_repo_settings() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     assert state.repo_settings.default_branch == "develop"
 
 
 def test_compute_desired_state_includes_security() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     assert state.security.secret_scanning == "enabled"  # noqa: S105
 
 
 def test_compute_desired_state_includes_actions() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     assert state.actions_permissions.allowed_actions == "selected"
     assert "pypa/*" in state.actions_permissions.patterns_allowed
 
@@ -865,15 +865,15 @@ def test_fetch_vulnerability_alerts_disabled() -> None:
 
 
 def test_diff_identical_states_is_empty() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert diff.items == []
 
 
 def test_diff_detects_repo_setting_mismatch() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.repo_settings.allow_auto_merge = True
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -881,8 +881,8 @@ def test_diff_detects_repo_setting_mismatch() -> None:
 
 
 def test_diff_detects_missing_ruleset() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.rulesets = []
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -890,8 +890,8 @@ def test_diff_detects_missing_ruleset() -> None:
 
 
 def test_diff_detects_extra_ruleset() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.rulesets.append(
         DesiredRuleset(
             name="Extra",
@@ -908,8 +908,8 @@ def test_diff_detects_extra_ruleset() -> None:
 
 
 def test_diff_detects_actions_permission_mismatch() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.actions_permissions.default_workflow_permissions = "write"
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -917,8 +917,8 @@ def test_diff_detects_actions_permission_mismatch() -> None:
 
 
 def test_diff_detects_security_mismatch() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.security.vulnerability_alerts = True
     diff = compute_diff(desired=desired, actual=actual)
     assert not diff.is_compliant()
@@ -926,8 +926,8 @@ def test_diff_detects_security_mismatch() -> None:
 
 
 def test_diff_detects_new_repo_setting_drift() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.repo_settings.merge_commit_title = "PR_TITLE"
     actual.repo_settings.web_commit_signoff_required = False
     diff = compute_diff(desired=desired, actual=actual)
@@ -937,8 +937,8 @@ def test_diff_detects_new_repo_setting_drift() -> None:
 
 
 def test_diff_records_skipped_security_fields_for_private_repo() -> None:
-    desired = compute_desired_state(_st_config(), visibility="private", is_org=True)
-    actual = compute_desired_state(_st_config(), visibility="private", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
     actual.security.secret_scanning = "enabled"  # noqa: S105
     actual.security.secret_scanning_push_protection = "enabled"  # noqa: S105
     diff = compute_diff(desired=desired, actual=actual)
@@ -948,7 +948,7 @@ def test_diff_records_skipped_security_fields_for_private_repo() -> None:
 
 
 def test_diff_public_repo_has_no_security_skipped() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert not any(s.startswith("security.") for s in diff.skipped)
@@ -1178,7 +1178,7 @@ def test_ruleset_body_structure() -> None:
 
 
 def test_apply_desired_state_orchestrates_all() -> None:
-    state = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     with (
         patch("vergil_tooling.lib.github_config._apply_repo_settings") as mock_repo,
         patch("vergil_tooling.lib.github_config._apply_security_settings") as mock_sec,
@@ -1315,7 +1315,7 @@ def test_normalize_rules_skips_non_dict_entries() -> None:
 
 
 def test_compute_desired_state_includes_publish() -> None:
-    config = _st_config()
+    config = _vergil_config()
     state = compute_desired_state(config, visibility="public", is_org=True)
     assert state.publish is not None
     assert state.publish.release is False
@@ -1323,7 +1323,7 @@ def test_compute_desired_state_includes_publish() -> None:
 
 
 def test_compute_desired_state_publish_release_true() -> None:
-    config = StConfig(
+    config = VergilConfig(
         project=_project(),
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
@@ -1370,8 +1370,8 @@ def test_apply_repo_settings_includes_allow_forking_for_private_org() -> None:
 
 
 def test_diff_skips_allow_forking_when_desired_is_none() -> None:
-    desired = compute_desired_state(_st_config(), visibility="public", is_org=False)
-    actual = compute_desired_state(_st_config(), visibility="public", is_org=True)
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=False)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     actual.repo_settings.allow_forking = False
     diff = compute_diff(desired=desired, actual=actual)
     assert not any(d.field == "repo_settings.allow_forking" for d in diff.items)

@@ -138,7 +138,7 @@ class ProjectConfig:
     co_authors: dict[str, str]  # agent name -> full trailer string
 
 @dataclass
-class StConfig:
+class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]  # component name -> version tag
 ```
@@ -153,7 +153,7 @@ class StConfig:
 5. Validate co-author trailer format when `[project.co-authors]`
    is present.
 6. Validate `[dependencies]` contains `standard-tooling`.
-7. Return typed `StConfig`. No raw dicts leak to callers.
+7. Return typed `VergilConfig`. No raw dicts leak to callers.
 
 ### Backward compatibility
 
@@ -226,7 +226,7 @@ switch.
 
 ### Unit tests for `config.py`
 
-- Valid config parses into typed `StConfig` dataclass.
+- Valid config parses into typed `VergilConfig` dataclass.
 - Missing required `[project]` field produces an error.
 - Invalid enum value produces an error with diagnostic.
 - Malformed co-author trailer format produces an error.

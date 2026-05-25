@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
-    from vergil_tooling.lib.config import CiConfig, ProjectConfig, StConfig
+    from vergil_tooling.lib.config import CiConfig, ProjectConfig, VergilConfig
 
 from vergil_tooling.lib import github
 
@@ -304,8 +304,8 @@ def desired_ci_gates_ruleset(
     )
 
 
-def compute_desired_state(config: StConfig, *, visibility: str, is_org: bool) -> DesiredState:
-    """Compute the full desired GitHub configuration from a repo's StConfig."""
+def compute_desired_state(config: VergilConfig, *, visibility: str, is_org: bool) -> DesiredState:
+    """Compute the full desired GitHub configuration from a repo's VergilConfig."""
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())

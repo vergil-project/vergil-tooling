@@ -158,8 +158,8 @@ def main(argv: list[str] | None = None) -> int:
     root = git.repo_root()
 
     try:
-        st_config = config.read_config(root)
-        model = st_config.project.branching_model
+        vergil_config = config.read_config(root)
+        model = vergil_config.project.branching_model
     except FileNotFoundError:
         model = ""
     except config.ConfigError as exc:

@@ -14,7 +14,7 @@ import tomllib
 from pathlib import Path
 
 from vergil_tooling.lib import github
-from vergil_tooling.lib.config import StConfig, _parse_raw_config
+from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import (
     ConfigDiff,
     apply_desired_state,
@@ -52,14 +52,14 @@ def _resolve_repo(args: argparse.Namespace) -> str:
     return github.current_repo()
 
 
-def _load_local_config(path: str) -> StConfig:
+def _load_local_config(path: str) -> VergilConfig:
     """Load and parse vergil.toml from a local file path."""
     with Path(path).open("rb") as f:
         raw = tomllib.load(f)
     return _parse_raw_config(raw)
 
 
-def _fetch_remote_config(repo: str) -> StConfig:
+def _fetch_remote_config(repo: str) -> VergilConfig:
     """Fetch and parse vergil.toml from a remote repo."""
     content_data = github.read_json(
         "api",
@@ -77,7 +77,7 @@ def _fetch_remote_config(repo: str) -> StConfig:
     return _parse_raw_config(raw)
 
 
-def _audit_repo(repo: str, config: StConfig) -> ConfigDiff:
+def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
     """Compute diff between desired and actual GitHub state for a repo."""
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
@@ -110,7 +110,7 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
             )
 
 
-def _apply_repo(repo: str, config: StConfig) -> list[str]:
+def _apply_repo(repo: str, config: VergilConfig) -> list[str]:
     """Apply desired state to a repo. Returns branches with legacy protection removed."""
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"

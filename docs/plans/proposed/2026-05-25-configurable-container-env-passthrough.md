@@ -162,11 +162,11 @@ class ContainerConfig:
     env_prefixes: list[str]
 ```
 
-Add `container: ContainerConfig` to `StConfig`:
+Add `container: ContainerConfig` to `VergilConfig`:
 
 ```python
 @dataclass
-class StConfig:
+class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
@@ -213,10 +213,10 @@ Add `[container]` parsing in `_parse_raw_config`, after the `publish` block and 
         container = ContainerConfig(env_prefixes=[])
 ```
 
-Add `container=container` to the `StConfig(...)` return:
+Add `container=container` to the `VergilConfig(...)` return:
 
 ```python
-    return StConfig(
+    return VergilConfig(
         project=project,
         dependencies=dict(deps),
         markdownlint=markdownlint,

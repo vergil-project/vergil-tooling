@@ -80,7 +80,7 @@ class ContainerConfig:
 
 
 @dataclass
-class StConfig:
+class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
@@ -105,8 +105,8 @@ def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
                 )
 
 
-def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
-    """Parse and validate a raw TOML dict into StConfig."""
+def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
+    """Parse and validate a raw TOML dict into VergilConfig."""
     _warn_unrecognized_keys(raw)
     project_raw = raw.get("project", {})
 
@@ -180,7 +180,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         release_model=project_raw["release-model"],
         primary_language=project_raw["primary-language"],
     )
-    return StConfig(
+    return VergilConfig(
         project=project,
         dependencies=dict(deps),
         markdownlint=markdownlint,
@@ -190,7 +190,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
     )
 
 
-def read_config(repo_root: Path) -> StConfig:
+def read_config(repo_root: Path) -> VergilConfig:
     """Parse, validate, and return ``vergil.toml``."""
     config_path = repo_root / CONFIG_FILE
     if not config_path.is_file():
