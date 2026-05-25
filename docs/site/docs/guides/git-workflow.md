@@ -69,16 +69,15 @@ mechanisms. Both exist; they complement each other.
 
 | Layer | Where it runs | Catches |
 |---|---|---|
-| **Pre-commit git hook** | `.githooks/pre-commit` checked into each repo; enabled via `git config core.hooksPath .githooks`. The hook is an env-var gate that admits `vrg-commit`-driven commits and rejects raw `git commit`. The five branch/context checks live in `vrg-commit` itself. | Detached HEAD • direct commits to protected branches • wrong branch prefix • missing issue number in branch name |
+| **Claude Code hook guard** | `.claude/hooks/guard.sh` checked into each repo; wired via `.claude/settings.json` as a `PreToolUse` hook on the `Bash` matcher. Delegates to `vrg-hook-guard` (regex-based detection of raw `git`/`gh` commands). The five branch/context checks live in `vrg-commit` itself. | Raw `git` commands blocked • raw `gh` commands blocked • `vrg-commit` additionally checks: detached HEAD, protected branches, branch prefix, issue number |
 | **Plugin PreToolUse hooks** | Delivered by the [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin). Fires on Claude Code's `Bash`/`Write`/`Edit` tool invocations. | Raw `git commit` (forces `vrg-commit`) • Raw `gh pr create` (forces `vrg-submit-pr`) • commits originating from outside `.worktrees/*` on repos that have adopted the worktree convention • heredoc syntax in CLI args • associative-array bashisms |
 
-**Why both?** The pre-commit hook catches anyone (human or agent)
-running git directly. The plugin catches patterns at the
-Claude-Code-tool level — some of which never reach a `git commit`
-(like `gh pr create`, or heredocs in gh commands). Together they
-close the loop.
+**Why both?** The hook guard catches all raw `git`/`gh` commands
+at the Claude Code tool level. The plugin catches additional
+patterns (heredocs, worktree convention enforcement) that the
+hook guard does not cover. Together they close the loop.
 
-For the pre-commit-hook detail, see
+For the hook guard detail, see
 [Git Hooks and Validation][hooks-doc].
 For the plugin hook detail, see
 [vergil-claude-plugin/docs → Hooks](https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md).
@@ -94,7 +93,7 @@ git fetch origin develop
 git checkout -b feature/42-add-caching origin/develop
 ```
 
-The pre-commit hook enforces the prefix and issue-number rule when
+`vrg-commit` enforces the prefix and issue-number rule when
 you try to commit, so name the branch correctly now.
 
 ### 2. Commit with `vrg-commit`
@@ -115,8 +114,7 @@ vrg-commit \
   `build`).
 - Resolves the AI agent's `Co-Authored-By` trailer from
   `docs/repository-standards.md`.
-- Invokes `git commit` under the hood — triggering the pre-commit
-  git hook, which checks the branching rules.
+- Invokes `git commit` under the hood after all checks pass.
 
 **Multi-line bodies go in a file**, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:
@@ -303,10 +301,10 @@ At a minimum, a new repo needs:
 
 1. `docs/repository-standards.md` with the six required attributes
    (see the existing setup guide).
-2. A `.githooks/pre-commit` env-var gate checked into the repo, plus
-   `git config core.hooksPath .githooks` (once per clone).
-3. `.claude/settings.json` enabling the `vergil-tooling` plugin
-   so the plugin hooks fire in Claude Code sessions.
+2. `.claude/hooks/guard.sh` and `.claude/settings.json` wiring
+   the Claude Code hook guard to block raw `git`/`gh` commands.
+3. `.claude/settings.json` also enabling the `vergil-tooling`
+   plugin so the plugin hooks fire in Claude Code sessions.
 4. `.worktrees/` in `.gitignore` and a Parallel-AI-agent-development
    section in CLAUDE.md so the worktree convention applies.
 
@@ -322,11 +320,11 @@ The hook that fired will print a reason. Common signals:
 | `"Raw gh pr create is blocked. Use vrg-submit-pr"` | plugin | Use `vrg-submit-pr` |
 | `"Heredoc syntax (<<EOF) is blocked"` | plugin | Write your multi-line content to a `/tmp/…` file, pass it via `$(cat <file>)` or `--body-file` |
 | `"Commits must originate from inside .worktrees/<name>/"` | plugin (on repos that have adopted the worktree convention) | Create a worktree for your work and `cd` into it |
-| `"Commits on protected branch \"develop\" are blocked"` | plugin or pre-commit | Create a feature branch with the issue number in its name |
-| `"direct commits to protected branches are forbidden"` | pre-commit git hook | Same — you're on `develop`/`release`/`main` directly |
-| `"branch name must use {prefixes}"` | pre-commit | Rename the branch to `feature/42-<slug>` or similar |
-| `"branch name must include a repo issue number"` | pre-commit | Add the issue number to the branch name |
-| `"detached HEAD is not allowed for commits"` | pre-commit | Create a named branch before committing |
+| `"Commits on protected branch \"develop\" are blocked"` | plugin or vrg-commit | Create a feature branch with the issue number in its name |
+| `"direct commits to protected branches are forbidden"` | vrg-commit | Same — you're on `develop`/`release`/`main` directly |
+| `"branch name must use {prefixes}"` | vrg-commit | Rename the branch to `feature/42-<slug>` or similar |
+| `"branch name must include a repo issue number"` | vrg-commit | Add the issue number to the branch name |
+| `"detached HEAD is not allowed for commits"` | vrg-commit | Create a named branch before committing |
 
 ### My plugin cache is stale
 

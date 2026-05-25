@@ -1,7 +1,7 @@
 """Audit, diff, and apply repository configuration for managed repos.
 
 Combines local filesystem checks (vergil.toml, CLAUDE.md,
-.claude/settings.json, .githooks) with GitHub API configuration
+.claude/settings.json, .claude/hooks/) with GitHub API configuration
 auditing.
 """
 

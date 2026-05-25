@@ -667,17 +667,6 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # VERSION (canonical version source)
     (wd / "VERSION").write_text(ctx.initial_version + "\n")
 
-    # .githooks/pre-commit
-    hooks_dir = wd / ".githooks"
-    hooks_dir.mkdir(exist_ok=True)
-    hook_content = _load_data_file("githooks_pre_commit.sh")
-    hook_path = hooks_dir / "pre-commit"
-    hook_path.write_text(hook_content)
-    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    # Activate hooks
-    git.run("config", "core.hooksPath", ".githooks")
-
     # CLAUDE.md
     claude_md = render_claude_md(ctx)
     (wd / "CLAUDE.md").write_text(claude_md)
@@ -687,6 +676,14 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     claude_dir.mkdir(exist_ok=True)
     settings = _load_data_file("claude_settings.json")
     (claude_dir / "settings.json").write_text(settings)
+
+    # .claude/hooks/guard.sh
+    hooks_dir = claude_dir / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    shim_content = _load_data_file("hook_guard_shim.sh")
+    shim_path = hooks_dir / "guard.sh"
+    shim_path.write_text(shim_content)
+    shim_path.chmod(shim_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
     # README.md
     readme = render_readme(ctx)
