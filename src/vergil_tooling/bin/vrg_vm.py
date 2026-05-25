@@ -217,8 +217,25 @@ def _cmd_session(args: argparse.Namespace) -> int:
     config = load_config(config_path)
     identity = resolve_identity(config, args.identity)
 
+    allow_stale = getattr(args, "allow_stale_vm", False)
+    if not allow_stale:
+        age = vm_age_days(identity.vm_instance)
+        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+            name = args.identity or config.default_identity or "default"
+            print(
+                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
+                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
+                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
+                f"Override with: vrg-vm session --allow-stale-vm --identity {name}",
+                file=sys.stderr,
+            )
+            return 1
+
     fallback = resolve_vergil_version(config, identity)
-    update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+
+    claude_dir = Path.home() / ".claude"
+    copy_claude_config(identity.vm_instance, claude_dir)
 
     workspace: str | None = None
     if args.workspace:
@@ -285,6 +302,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_session = sub.add_parser("session", help="Shell into a VM")
     _add_identity_args(p_session)
+    p_session.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Connect even if the VM exceeds the staleness threshold",
+    )
     p_session.add_argument(
         "workspace", nargs="?", help="Workspace path (relative to /projects or absolute)"
     )

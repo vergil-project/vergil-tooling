@@ -424,11 +424,68 @@ class TestUpdate:
         assert result == 1
 
 
+class TestSessionStaleness:
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    def test_session_rejects_stale_vm(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _update: MagicMock,
+        _exec: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        result = main(["session", "--config", str(config_file)])
+        assert result == 1
+        captured = capsys.readouterr()
+        assert "--allow-stale-vm" in captured.err
+
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    def test_session_allows_stale_with_override(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _update: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file), "--allow-stale-vm"])
+        mock_exec.assert_called_once()
+
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    def test_session_passes_fresh_vm(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _update: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file)])
+        mock_exec.assert_called_once()
+
+
 class TestSession:
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_basic(
-        self, mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+        self,
+        _age: MagicMock,
+        mock_update: MagicMock,
+        _copy: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file)])
         mock_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
@@ -440,9 +497,16 @@ class TestSession:
         assert "--workdir=/projects" in args[1]
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_with_workspace(
-        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+        self,
+        _age: MagicMock,
+        _mock_update: MagicMock,
+        _copy: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling"])
         cmd = mock_exec.call_args[0][1]
@@ -455,9 +519,16 @@ class TestSession:
         assert "exec bash --login" in inner
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_with_command(
-        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+        self,
+        _age: MagicMock,
+        _mock_update: MagicMock,
+        _copy: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling", "claude"])
         cmd = mock_exec.call_args[0][1]
@@ -469,9 +540,16 @@ class TestSession:
         assert "exec claude" in inner
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_command_with_flags(
-        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+        self,
+        _age: MagicMock,
+        _mock_update: MagicMock,
+        _copy: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
     ) -> None:
         main(
             [
