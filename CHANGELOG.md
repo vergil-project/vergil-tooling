@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.54] - 2026-05-25
+
+### Documentation
+
+- stateless VM lifecycle design spec
+- stateless VM lifecycle implementation plan
+
+### Features
+
+- vm_age_days reads VM creation time from Lima metadata
+- copy_claude_config copies CLAUDE.md and settings.json into VM
+- try_update_tooling wraps update with graceful fallback
+- staleness enforcement and auto-update in vrg-vm start
+- staleness enforcement in vrg-vm session
+- vrg-vm rebuild command for stateless VM lifecycle
+
 ## [2.0.53] - 2026-05-25
 
 ### Bug fixes

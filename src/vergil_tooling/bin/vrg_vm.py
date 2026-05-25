@@ -20,6 +20,7 @@ from vergil_tooling.lib.identity import (
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
+    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
@@ -28,11 +29,15 @@ from vergil_tooling.lib.lima import (
     list_vms,
     start_vm,
     stop_vm,
+    try_update_tooling,
     update_tooling,
+    vm_age_days,
     vm_status,
 )
 
 _default_config_path = default_config_path
+
+_DEFAULT_STALENESS_DAYS = 3
 
 
 def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
@@ -86,7 +91,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, identity, config = _resolve(args)
 
     status = vm_status(identity.vm_instance)
     if not status:
@@ -96,11 +101,32 @@ def _cmd_start(args: argparse.Namespace) -> int:
         )
         return 1
 
+    allow_stale = getattr(args, "allow_stale_vm", False)
+    if not allow_stale:
+        age = vm_age_days(identity.vm_instance)
+        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+            print(
+                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
+                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
+                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
+                f"Override with: vrg-vm start --allow-stale-vm --identity {name}",
+                file=sys.stderr,
+            )
+            return 1
+
     print(f"Starting VM '{identity.vm_instance}' (identity: {name})...")
     start_vm(identity.vm_instance)
 
     print("Injecting credentials...")
     inject_credentials(identity.vm_instance, identity)
+
+    claude_dir = Path.home() / ".claude"
+    print("Copying Claude Code config...")
+    copy_claude_config(identity.vm_instance, claude_dir)
+
+    fallback = resolve_vergil_version(config, identity)
+    print("Updating vergil-tooling...")
+    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
 
     print(f"VM '{identity.vm_instance}' is running.")
     return 0
@@ -169,6 +195,57 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rebuild(args: argparse.Namespace) -> int:
+    name, identity, config = _resolve(args)
+
+    status = vm_status(identity.vm_instance)
+    if not status:
+        print(
+            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not identity.projects_dir:
+        print(
+            f"ERROR: identity '{name}' has no projects_dir configured",
+            file=sys.stderr,
+        )
+        return 1
+
+    vergil_version = resolve_vergil_version(config, identity)
+    tag = args.tag if args.tag else resolve_vm_tag(config, identity)
+
+    print(f"Rebuilding VM '{identity.vm_instance}' (identity: {name})...")
+
+    print("  Destroying old VM...")
+    delete_vm(identity.vm_instance)
+
+    print(f"  Fetching template ({tag})...")
+    template = fetch_template(tag)
+
+    try:
+        print(f"  Creating VM with projects mount: {identity.projects_dir}")
+        create_vm(identity.vm_instance, template, identity.projects_dir)
+
+        print("  Starting VM...")
+        start_vm(identity.vm_instance)
+
+        print("  Injecting credentials...")
+        inject_credentials(identity.vm_instance, identity)
+
+        install_tooling(identity.vm_instance, vergil_version)
+
+        claude_dir = Path.home() / ".claude"
+        print("  Copying Claude Code config...")
+        copy_claude_config(identity.vm_instance, claude_dir)
+    finally:
+        template.unlink(missing_ok=True)
+
+    print(f"\nVM '{identity.vm_instance}' rebuilt and ready.")
+    return 0
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -191,8 +268,25 @@ def _cmd_session(args: argparse.Namespace) -> int:
     config = load_config(config_path)
     identity = resolve_identity(config, args.identity)
 
+    allow_stale = getattr(args, "allow_stale_vm", False)
+    if not allow_stale:
+        age = vm_age_days(identity.vm_instance)
+        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+            name = args.identity or config.default_identity or "default"
+            print(
+                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
+                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
+                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
+                f"Override with: vrg-vm session --allow-stale-vm --identity {name}",
+                file=sys.stderr,
+            )
+            return 1
+
     fallback = resolve_vergil_version(config, identity)
-    update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+
+    claude_dir = Path.home() / ".claude"
+    copy_claude_config(identity.vm_instance, claude_dir)
 
     workspace: str | None = None
     if args.workspace:
@@ -233,6 +327,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
+    p_start.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Start even if the VM exceeds the staleness threshold",
+    )
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
@@ -249,11 +348,22 @@ def main(argv: list[str] | None = None) -> int:
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
 
+    p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
+    _add_identity_args(p_rebuild)
+    p_rebuild.add_argument(
+        "--tag", default="", help="VM template version tag (default: vergil version from config)"
+    )
+
     p_list = sub.add_parser("list", help="List all identity VMs and their status")
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
 
     p_session = sub.add_parser("session", help="Shell into a VM")
     _add_identity_args(p_session)
+    p_session.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Connect even if the VM exceeds the staleness threshold",
+    )
     p_session.add_argument(
         "workspace", nargs="?", help="Workspace path (relative to /projects or absolute)"
     )
@@ -271,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         "restart": _cmd_restart,
         "update": _cmd_update,
         "destroy": _cmd_destroy,
+        "rebuild": _cmd_rebuild,
         "list": _cmd_list,
         "session": _cmd_session,
     }
