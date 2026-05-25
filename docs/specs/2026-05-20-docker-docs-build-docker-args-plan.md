@@ -1,10 +1,10 @@
-# vrg-docker-docs build_docker_args Refactor — Implementation Plan
+# vrg-container-docs build_docker_args Refactor — Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Eliminate the hardcoded `mq-rest-admin-common` mount in `vrg-docker-docs` by delegating to the shared `build_docker_args()` function, bringing it in line with every other `vrg-docker-*` command.
+**Goal:** Eliminate the hardcoded `mq-rest-admin-common` mount in `vrg-container-docs` by delegating to the shared `build_docker_args()` function, bringing it in line with every other `vrg-docker-*` command.
 
-**Architecture:** Replace the hand-built `docker run` argument list in `vrg_docker_docs.py` with a call to `build_docker_args()` from `vergil_tooling.lib.docker`. Port mapping for `serve` is spliced into the returned list before the image entry, using the same `index(image)` pattern as `vrg_scorecard.py`. The hardcoded `mq-rest-admin-common` mount is deleted.
+**Architecture:** Replace the hand-built `docker run` argument list in `vrg_container_docs.py` with a call to `build_docker_args()` from `vergil_tooling.lib.docker`. Port mapping for `serve` is spliced into the returned list before the image entry, using the same `index(image)` pattern as `vrg_scorecard.py`. The hardcoded `mq-rest-admin-common` mount is deleted.
 
 **Tech Stack:** Python 3.14, pytest, unittest.mock
 
@@ -16,8 +16,8 @@
 
 | File | Action | Responsibility |
 |------|--------|---------------|
-| `src/vergil_tooling/bin/vrg_docker_docs.py` | Modify | Replace hand-built args with `build_docker_args()`, splice port mapping, remove hardcoded mount |
-| `tests/vergil_tooling/test_vrg_docker_docs.py` | Modify | Update tests for new arg structure, delete sibling mount test, add extra-volumes and worktree tests |
+| `src/vergil_tooling/bin/vrg_container_docs.py` | Modify | Replace hand-built args with `build_docker_args()`, splice port mapping, remove hardcoded mount |
+| `tests/vergil_tooling/test_vrg_container_docs.py` | Modify | Update tests for new arg structure, delete sibling mount test, add extra-volumes and worktree tests |
 
 No new files. No changes to `docker.py` or other commands.
 
@@ -25,10 +25,10 @@ No new files. No changes to `docker.py` or other commands.
 
 ### Task 1: Update tests to mock `build_docker_args`
 
-The existing tests call `main()` with a real `build_docker_args`-free code path. After the refactor, `main()` will call `build_docker_args()`. We need tests that mock it (like the scorecard tests do) and verify `vrg_docker_docs`'s own logic: port splicing, `uv sync` wrapping, prefix handling, and the removal of the sibling mount.
+The existing tests call `main()` with a real `build_docker_args`-free code path. After the refactor, `main()` will call `build_docker_args()`. We need tests that mock it (like the scorecard tests do) and verify `vrg_container_docs`'s own logic: port splicing, `uv sync` wrapping, prefix handling, and the removal of the sibling mount.
 
 **Files:**
-- Modify: `tests/vergil_tooling/test_vrg_docker_docs.py`
+- Modify: `tests/vergil_tooling/test_vrg_container_docs.py`
 
 - [ ] **Step 1: Write the failing test for `build_docker_args` delegation**
 
@@ -38,9 +38,9 @@ Add a test that mocks `build_docker_args` and verifies `main(["build"])` passes 
 def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -57,9 +57,9 @@ def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_docker_docs.py::test_build_delegates_to_build_docker_args -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_container_docs.py::test_build_delegates_to_build_docker_args -v`
 
-Expected: FAIL — `build_docker_args` is not imported in `vrg_docker_docs`, so the patch target doesn't exist.
+Expected: FAIL — `build_docker_args` is not imported in `vrg_container_docs`, so the patch target doesn't exist.
 
 - [ ] **Step 3: Write the failing test for serve port splicing**
 
@@ -67,9 +67,9 @@ Expected: FAIL — `build_docker_args` is not imported in `vrg_docker_docs`, so 
 def test_serve_splices_port_before_image(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -91,9 +91,9 @@ def test_serve_splices_port_before_image(tmp_path: Path) -> None:
 def test_serve_custom_port(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {"DOCS_PORT": "9000"}, clear=True),
     ):
         mock_build.return_value = [
@@ -112,9 +112,9 @@ def test_serve_custom_port(tmp_path: Path) -> None:
 def test_build_no_port_splice(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -134,9 +134,9 @@ def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -154,9 +154,9 @@ def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
 def test_prefix_passed_to_image(tmp_path: Path) -> None:
     dev_image = "ghcr.io/vergil-project/dev-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", dev_image, "bash", "-c", "x"]
@@ -167,14 +167,14 @@ def test_prefix_passed_to_image(tmp_path: Path) -> None:
 
 - [ ] **Step 8: Commit new tests (they will fail until Task 2)**
 
-Commit message: `test(638): add tests for build_docker_args delegation in vrg-docker-docs`
+Commit message: `test(638): add tests for build_docker_args delegation in vrg-container-docs`
 
 ---
 
-### Task 2: Refactor `vrg_docker_docs.py` to use `build_docker_args`
+### Task 2: Refactor `vrg_container_docs.py` to use `build_docker_args`
 
 **Files:**
-- Modify: `src/vergil_tooling/bin/vrg_docker_docs.py:14,93-113`
+- Modify: `src/vergil_tooling/bin/vrg_container_docs.py:14,93-113`
 
 - [ ] **Step 1: Update the import**
 
@@ -212,13 +212,13 @@ The `index(image)` splice pattern is the same one `vrg_scorecard.py:78-79` uses.
 
 - [ ] **Step 3: Run new tests from Task 1 to verify they pass**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_docker_docs.py::test_build_delegates_to_build_docker_args tests/vergil_tooling/test_vrg_docker_docs.py::test_serve_splices_port_before_image tests/vergil_tooling/test_vrg_docker_docs.py::test_build_no_port_splice tests/vergil_tooling/test_vrg_docker_docs.py::test_python_repo_uv_sync_in_command tests/vergil_tooling/test_vrg_docker_docs.py::test_prefix_passed_to_image tests/vergil_tooling/test_vrg_docker_docs.py::test_serve_custom_port -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_container_docs.py::test_build_delegates_to_build_docker_args tests/vergil_tooling/test_vrg_container_docs.py::test_serve_splices_port_before_image tests/vergil_tooling/test_vrg_container_docs.py::test_build_no_port_splice tests/vergil_tooling/test_vrg_container_docs.py::test_python_repo_uv_sync_in_command tests/vergil_tooling/test_vrg_container_docs.py::test_prefix_passed_to_image tests/vergil_tooling/test_vrg_container_docs.py::test_serve_custom_port -v`
 
 Expected: all PASS.
 
 - [ ] **Step 4: Commit implementation**
 
-Commit message: `feat(638): replace hand-built docker args with build_docker_args in vrg-docker-docs`
+Commit message: `feat(638): replace hand-built docker args with build_docker_args in vrg-container-docs`
 
 ---
 
@@ -227,7 +227,7 @@ Commit message: `feat(638): replace hand-built docker args with build_docker_arg
 The original tests mock at a lower level (`os.execvp` and `os.environ`) and assert on the raw arg list. Some will break because the arg structure changed (e.g., `--pull=always` is now present, `docker_platform` is no longer imported directly). Update them to either mock `build_docker_args` or adjust assertions.
 
 **Files:**
-- Modify: `tests/vergil_tooling/test_vrg_docker_docs.py`
+- Modify: `tests/vergil_tooling/test_vrg_container_docs.py`
 
 - [ ] **Step 1: Delete `test_common_sibling_mount`**
 
@@ -240,8 +240,8 @@ The test patches `os.execvp` and checks raw args. After the refactor, `build_doc
 ```python
 def test_serve_execvp(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["serve"])
@@ -259,9 +259,9 @@ with:
 def test_serve_execvp(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -284,8 +284,8 @@ Replace:
 ```python
 def test_build_execvp(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -301,9 +301,9 @@ with:
 def test_build_execvp(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -324,8 +324,8 @@ Replace:
 ```python
 def test_serve_with_extra_args(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["serve", "--strict"])
@@ -339,9 +339,9 @@ with:
 def test_serve_with_extra_args(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -362,8 +362,8 @@ def test_custom_env_vars(tmp_path: Path) -> None:
         "DOCS_PORT": "9000",
     }
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         main(["serve"])
@@ -383,9 +383,9 @@ def test_custom_env_vars(tmp_path: Path) -> None:
         "DOCS_PORT": "9000",
     }
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         mock_build.return_value = [
@@ -407,8 +407,8 @@ Replace:
 def test_python_repo_uv_sync(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -423,9 +423,9 @@ def test_python_repo_uv_sync(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -441,8 +441,8 @@ Replace:
 ```python
 def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["build"])
@@ -456,9 +456,9 @@ with:
 def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -474,8 +474,8 @@ Replace:
 ```python
 def test_cli_prefix_used(tmp_path: Path) -> None:
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         main(["--prefix", "dev", "serve"])
@@ -489,9 +489,9 @@ with:
 def test_cli_prefix_used(tmp_path: Path) -> None:
     dev_image = "ghcr.io/vergil-project/dev-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.build_docker_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", dev_image, "bash", "-c", "x"]
@@ -501,7 +501,7 @@ def test_cli_prefix_used(tmp_path: Path) -> None:
 
 - [ ] **Step 9: Run the full test suite**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_docker_docs.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_container_docs.py -v`
 
 Expected: all tests PASS, no test references `mq-rest-admin-common`.
 
@@ -517,7 +517,7 @@ Commit message: `test(638): update existing tests to mock build_docker_args, rem
 
 - [ ] **Step 1: Run vrg-validate**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run vrg-validate`
+Run: `cd <worktree> && vrg-container-run -- uv run vrg-validate`
 
 Expected: all checks pass (lint, typecheck, tests, audit, common checks).
 

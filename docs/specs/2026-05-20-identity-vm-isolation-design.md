@@ -331,7 +331,7 @@ Human launches: vrg-session vergil-tooling
     └── Claude Code runs
         └── Agent works on vergil-tooling
             └── vrg-commit triggers pre-commit hook
-                └── vrg-docker-run -- vrg-validate
+                └── vrg-container-run -- vrg-validate
                     └── nerdctl run (rootless container)
                         └── Same dev image as CI
                             └── vrg-validate runs all checks
@@ -342,10 +342,10 @@ uses on GitHub Actions. Tier 1 / Tier 2 parity is preserved. The
 agent's commits pass through identical checks locally and in CI.
 
 Corral's VM image includes rootless containerd with nerdctl, which
-provides Docker-compatible container operations. `vrg-docker-run`
+provides Docker-compatible container operations. `vrg-container-run`
 would use `nerdctl` instead of `docker` as the container runtime
 inside the VM. This may require a small adaptation in
-`vrg-docker-run` to detect the available runtime.
+`vrg-container-run` to detect the available runtime.
 
 ### Agent Memory
 
@@ -409,7 +409,7 @@ the proof-of-concept phase.
 - `vrg-commit`: Conventional commits, branch naming, issue linking,
   co-author headers
 - `vrg-submit-pr`: PR structure and standards
-- `vrg-validate`: Full validation pipeline via `vrg-docker-run`
+- `vrg-validate`: Full validation pipeline via `vrg-container-run`
 - Git hooks: Pre-commit gate requiring `vrg-commit`
 - `vrg-git` subcommand allowlist and audit logging
 - `vrg-gh` subcommand allowlist and audit logging
@@ -498,7 +498,7 @@ agent work through it to validate assumptions:
    - UX friction of SSH-based Claude Code sessions
    - Resource consumption (RAM, CPU, disk) under real workloads
    - virtiofs performance with workspace mounts
-   - `vrg-docker-run` behavior inside the VM (nerdctl compatibility)
+   - `vrg-container-run` behavior inside the VM (nerdctl compatibility)
    - Egress filter false positives
    - Snapshot/reset utility in practice
    - `claude-mem` behavior with concurrent sessions
@@ -565,12 +565,12 @@ When the Mimir identity (#805) is implemented:
   tree) need real-world benchmarking. File-heavy operations
   (git status on large repos, npm install, compilation) may show
   latency differences.
-- **Concurrent validation containers.** Multiple `vrg-docker-run`
+- **Concurrent validation containers.** Multiple `vrg-container-run`
   invocations inside one VM create memory pressure from overlapping
   containers. May need container-level memory limits.
 - **VM stability under sustained load.** Lima VMs under continuous
   agent workloads for hours/days need endurance testing.
-- **nerdctl compatibility.** `vrg-docker-run` currently targets
+- **nerdctl compatibility.** `vrg-container-run` currently targets
   Docker. Adapting to nerdctl may surface minor incompatibilities
   in volume mounting, networking, or image pulling.
 

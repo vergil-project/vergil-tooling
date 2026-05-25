@@ -133,7 +133,7 @@ def test_no_warnings_for_valid_config(
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py -v -k "warns_unrecognized or no_warnings_for_valid"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -v -k "warns_unrecognized or no_warnings_for_valid"`
 
 Expected: All new tests FAIL (no warnings emitted yet).
 
@@ -180,7 +180,7 @@ Add a call to `_warn_unrecognized_keys(raw)` as the first line of
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
 
 Expected: ALL tests pass (existing + new). Verify no regressions in
 existing config tests.
@@ -286,7 +286,7 @@ def test_show_ref_reads_version_file_no_cross_check(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run new tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "cross_check or mismatch or missing_language or shell_skips or none_skips or missing_version_file_raises or ref_reads_version"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "cross_check or mismatch or missing_language or shell_skips or none_skips or missing_version_file_raises or ref_reads_version"`
 
 Expected: All FAIL — `VersionSyncError` doesn't exist yet, `show()`
 reads from language file not VERSION.
@@ -365,7 +365,7 @@ Remove these functions (no longer needed):
 
 - [ ] **Step 4: Run new tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "cross_check or mismatch or missing_language or shell_skips or none_skips or missing_version_file_raises or ref_reads_version"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "cross_check or mismatch or missing_language or shell_skips or none_skips or missing_version_file_raises or ref_reads_version"`
 
 Expected: All PASS.
 
@@ -405,7 +405,7 @@ in Step 1 — remove the old one).
 
 - [ ] **Step 6: Run all show tests to verify everything passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "show"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "show"`
 
 Expected: All PASS.
 
@@ -465,7 +465,7 @@ def test_bump_missing_language_file_still_bumps_version(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run new tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump_writes_both or bump_shell_writes or bump_missing_language"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump_writes_both or bump_shell_writes or bump_missing_language"`
 
 Expected: FAIL — `bump()` still reads from language file, not VERSION.
 
@@ -501,7 +501,7 @@ def bump(repo_root: Path) -> str:
 
 - [ ] **Step 4: Run new bump tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump_writes_both or bump_shell_writes or bump_missing_language"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump_writes_both or bump_shell_writes or bump_missing_language"`
 
 Expected: All PASS.
 
@@ -547,7 +547,7 @@ No change needed.
 
 - [ ] **Step 6: Run all bump tests to verify everything passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py -v -k "bump"`
 
 Expected: All PASS.
 
@@ -611,7 +611,7 @@ def test_read_version_from_ref_body(tmp_path: Path) -> None:
 
 - [ ] **Step 3: Run all tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py tests/vergil_tooling/test_vrg_version.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py tests/vergil_tooling/test_vrg_version.py -v`
 
 Expected: All PASS.
 
@@ -633,7 +633,7 @@ removed if you followed Task 2 Step 3, but verify):
 
 - [ ] **Step 5: Run full test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_version.py tests/vergil_tooling/test_vrg_version.py tests/vergil_tooling/test_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_version.py tests/vergil_tooling/test_vrg_version.py tests/vergil_tooling/test_config.py -v`
 
 Expected: All PASS.
 
@@ -689,7 +689,7 @@ Add to `tests/vergil_tooling/test_repo_init.py` inside
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig::test_prompts_for_initial_version -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig::test_prompts_for_initial_version -v`
 
 Expected: FAIL — `StopIteration` because `step_generate_config`
 doesn't consume the 12th input yet, or `initial_version` attribute
@@ -717,7 +717,7 @@ the `license_type` prompt but before writing vergil.toml:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig::test_prompts_for_initial_version -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepGenerateConfig::test_prompts_for_initial_version -v`
 
 Expected: PASS.
 
@@ -745,7 +745,7 @@ Add to `tests/vergil_tooling/test_repo_init.py` inside
 
 - [ ] **Step 6: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles::test_creates_version_file -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles::test_creates_version_file -v`
 
 Expected: FAIL — VERSION file not created yet.
 
@@ -762,7 +762,7 @@ In `src/vergil_tooling/lib/repo_init.py`, inside
 
 - [ ] **Step 8: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles::test_creates_version_file -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py::TestStepScaffoldConfigFiles::test_creates_version_file -v`
 
 Expected: PASS.
 
@@ -782,7 +782,7 @@ choice `"1"`).
 
 - [ ] **Step 10: Run all repo_init tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_repo_init.py -v`
 
 Expected: All PASS.
 
@@ -809,7 +809,7 @@ Write `2.0.28\n` to `VERSION`.
 
 - [ ] **Step 2: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 
 Expected: All checks pass — lint, typecheck, tests, audit.
 
@@ -824,8 +824,8 @@ vrg-commit --type fix --scope version --message "sync stale VERSION file with py
 ## Execution Notes
 
 **Test runner:** All tests run inside the dev container via
-`vrg-docker-run -- uv run pytest <path> -v`. Final validation
-before each commit: `vrg-docker-run -- uv run vrg-validate`.
+`vrg-container-run -- uv run pytest <path> -v`. Final validation
+before each commit: `vrg-container-run -- uv run vrg-validate`.
 
 **Commit tool:** Use `vrg-commit` (not `git commit`) for all
 commits. It enforces conventional commit format and the pre-commit

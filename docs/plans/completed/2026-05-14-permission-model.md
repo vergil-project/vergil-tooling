@@ -295,7 +295,7 @@ in the spec (Section 4, pattern matching note).
 
 **Files:** `pyproject.toml` (version bump if needed)
 
-- [ ] Run `vrg-docker-run -- uv run vrg-validate` — full pipeline
+- [ ] Run `vrg-container-run -- uv run vrg-validate` — full pipeline
       must pass with the new wrappers and tests
 - [ ] Verify `uv tool install` installs both `vrg-git` and `vrg-gh`
       as available console scripts

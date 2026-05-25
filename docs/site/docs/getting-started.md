@@ -18,7 +18,7 @@ Install these on your host:
 
 Everything else — language runtimes, linters, test frameworks, and
 most `vrg-*` tools — lives inside the dev container. The host-side
-`vrg-*` tools (`vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
+`vrg-*` tools (`vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, etc.)
 are installed via `uv tool install`.
 
 ## 1. Install vergil-tooling on the host
@@ -31,8 +31,8 @@ This installs all `vrg-*` console scripts into `~/.local/bin/`,
 which `uv`'s installer already puts on `PATH`.
 
 ```bash
-which vrg-docker-run    # should resolve to ~/.local/bin/vrg-docker-run
-vrg-docker-run --help   # should print usage
+which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
+vrg-container-run --help   # should print usage
 ```
 
 ## 2. Configure git hooks in your consuming repo
@@ -121,10 +121,10 @@ can copy from; the canonical source is
 
 ```bash
 # Host tooling reachable
-vrg-docker-run --help
+vrg-container-run --help
 
 # Repo profile validates (runs inside the container)
-vrg-docker-run -- uv run vrg-repo-profile
+vrg-container-run -- uv run vrg-repo-profile
 
 # Git hook blocks raw git commit
 git commit --allow-empty -m "test"    # should be blocked by the gate

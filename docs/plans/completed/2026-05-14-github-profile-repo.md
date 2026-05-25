@@ -120,7 +120,7 @@ workflow as the other four repos.
       config (identical to other repos)
 - [ ] Create `CLAUDE.md` — minimal agent guidance: docs-only repo,
       no Python, use `vrg-commit`, validation via
-      `vrg-docker-run -- uv run vrg-validate`
+      `vrg-container-run -- uv run vrg-validate`
 - [ ] Create `LICENSE` — GPL-3 (matching other VERGIL repos)
 - [ ] Verify: `git config core.hooksPath .githooks` works, raw
       `git commit` is rejected, `vrg-commit` works
@@ -179,7 +179,7 @@ Section 5) and the existing development workflow documentation.
       hooks via `git config core.hooksPath .githooks`
 - [ ] Write "Workflow" section — branch from `develop`, use
       `vrg-commit`, use `vrg-submit-pr`, validate via
-      `vrg-docker-run -- uv run vrg-validate`
+      `vrg-container-run -- uv run vrg-validate`
 - [ ] Write "For contributors using AI tools" section — identity
       model (`<username>-agent`), accountability principle, agent
       identity for commits, human identity for reviews

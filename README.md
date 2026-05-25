@@ -47,7 +47,7 @@ git config core.hooksPath .githooks
 - `vrg-submit-pr` — Standards-compliant PR creation with auto-merge
 - `vrg-prepare-release` — Automated release preparation
 - `vrg-finalize-repo` — Post-merge cleanup
-- `vrg-validate` — Unified validation driver (via vrg-docker-run)
+- `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
 
 ## Git hooks

@@ -30,7 +30,7 @@ Env-var gate that admits `vrg-commit` and blocks raw `git commit`
 
 1. `vergil-tooling` is installed on the developer's host via
    `uv tool install`, placing `vrg-*` scripts in `~/.local/bin/`.
-2. `vrg-docker-run` bridges host commands into dev container images
+2. `vrg-container-run` bridges host commands into dev container images
    where language runtimes and validators live.
 3. Python consumers also declare `vergil-tooling` as a dev dep
    via `[tool.uv.sources]` so `uv run vrg-*` inside the container

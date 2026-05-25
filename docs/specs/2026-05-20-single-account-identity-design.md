@@ -332,7 +332,7 @@ cannot perform.
 | Component | Why |
 |---|---|
 | `vrg-commit` workflow | Conventional commits, branch naming, issue linking — none depends on credential type |
-| `vrg-validate` | Full validation pipeline via `vrg-docker-run` |
+| `vrg-validate` | Full validation pipeline via `vrg-container-run` |
 | Git hooks | Pre-commit gate requiring `vrg-commit` |
 | `vrg-git` | Subcommand allowlist and audit logging |
 | VM architecture | Lima, mounts, egress filtering — all unchanged |

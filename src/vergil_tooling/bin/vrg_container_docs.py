@@ -11,13 +11,13 @@ import os
 import sys
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.docker import build_docker_args
+from vergil_tooling.lib.container import build_container_args, detect_runtime
 
 _VALID_PREFIXES = {"dev", "prod"}
 
 
 def _usage(port: str) -> None:
-    print("Usage: docker-docs [--prefix <dev|prod>] <serve|build> [mkdocs args...]")
+    print("Usage: vrg-container-docs [--prefix <dev|prod>] <serve|build> [mkdocs args...]")
     print()
     print("Commands:")
     print(f"  serve   Start a live-reloading preview server (port {port})")
@@ -27,7 +27,7 @@ def _usage(port: str) -> None:
     print("  --prefix <dev|prod>  image prefix (default: prod)")
     print()
     print("Environment variables:")
-    print("  DOCKER_DOCS_IMAGE  Docker image (override; ignores --prefix)")
+    print("  DOCKER_DOCS_IMAGE  Container image (override; ignores --prefix)")
     print("  MKDOCS_CONFIG      Path to mkdocs.yml (default: docs/site/mkdocs.yml)")
     print("  DOCS_PORT          Host port for serve (default: 8000)")
 
@@ -83,6 +83,7 @@ def main(argv: list[str] | None = None) -> int:
     if extra_args:
         mkdocs_cmd += " " + " ".join(extra_args)
 
+    runtime = detect_runtime()
     repo_root = git.repo_root()
     image = _docs_image(prefix)
 
@@ -90,15 +91,16 @@ def main(argv: list[str] | None = None) -> int:
     if (repo_root / "pyproject.toml").is_file():
         container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
 
-    docker_args = build_docker_args(
+    container_args = build_container_args(
         repo_root,
         image,
         ["bash", "-c", container_cmd],
+        runtime=runtime,
     )
 
     if command == "serve":
-        idx = docker_args.index(image)
-        docker_args[idx:idx] = ["-p", f"{port}:8000"]
+        idx = container_args.index(image)
+        container_args[idx:idx] = ["-p", f"{port}:8000"]
 
     print(f"Image:   {image}")
     print(f"Config:  {config}")
@@ -107,7 +109,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"URL:     http://localhost:{port}")
     print("---")
 
-    os.execvp("docker", docker_args)  # noqa: S606, S607
+    if runtime == "nerdctl":
+        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+    else:
+        os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 

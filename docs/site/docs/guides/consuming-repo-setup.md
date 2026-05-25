@@ -12,8 +12,8 @@ The setup steps below wire up each one:
 
 | Surface | What it is | How you consume it |
 |---|---|---|
-| **Host tools** | `vrg-docker-run`, `vrg-commit`, `vrg-submit-pr`, and other host-side CLI tools. | `uv tool install` from the vergil-tooling git URL; scripts land in `~/.local/bin/`. |
-| **Dev container** | `ghcr.io/vergil-project/dev-<lang>:<version>` — pre-baked images with language runtimes, validators, and every other `vrg-*` tool installed. | Pulled automatically by `vrg-docker-run`; nothing to install manually. |
+| **Host tools** | `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, and other host-side CLI tools. | `uv tool install` from the vergil-tooling git URL; scripts land in `~/.local/bin/`. |
+| **Dev container** | `ghcr.io/vergil-project/dev-<lang>:<version>` — pre-baked images with language runtimes, validators, and every other `vrg-*` tool installed. | Pulled automatically by `vrg-container-run`; nothing to install manually. |
 | **Claude Code plugin** | `vergil-claude-plugin` — hooks, skills, agents, and slash commands that enforce the workflow at the Claude-Code-tool level. | Declared in `.claude/settings.json`; Claude Code loads on session start. |
 
 Plus two layers that aren't installed as packages but are expected
@@ -70,8 +70,8 @@ sibling checkout, no custom PATH entries, no venv bootstrapping.
 Verify:
 
 ```bash
-which vrg-docker-run    # should resolve to ~/.local/bin/vrg-docker-run
-vrg-docker-run --help   # should print usage
+which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
+vrg-container-run --help   # should print usage
 ```
 
 !!! note "Dev-tree override for vergil-tooling development"
@@ -280,15 +280,15 @@ per-language test/lint/audit tiers.
 Once the above is in place, sanity-check each layer:
 
 ```bash
-# 1. Host tools — should print vrg-docker-run help
-vrg-docker-run --help
+# 1. Host tools — should print vrg-container-run help
+vrg-container-run --help
 
 # 2. Dev container — pulls an image on first run and runs a
 #    tiny command inside it
-vrg-docker-run -- echo "container ok"
+vrg-container-run -- echo "container ok"
 
 # 3. Repo profile — runs vrg-repo-profile inside the container
-vrg-docker-run -- uv run vrg-repo-profile
+vrg-container-run -- uv run vrg-repo-profile
 
 # 4. Git hook — raw git commit should be blocked by the gate
 git commit --allow-empty -m "test"     # expected: blocked
@@ -316,7 +316,7 @@ uv tool upgrade vergil-tooling
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.
 
-The dev container images auto-update on `vrg-docker-run` pulls — the
+The dev container images auto-update on `vrg-container-run` pulls — the
 tag is a minor version (`3.12`, `1.26`, etc.) that tracks upstream
 releases. If you need a fresh image, `docker pull
 ghcr.io/vergil-project/dev-<lang>:<version>` forces a refresh.
@@ -331,9 +331,9 @@ git -C ~/.claude/plugins/marketplaces/vergil-tooling-marketplace pull
 
 ## Troubleshooting
 
-- **`vrg-docker-run: command not found`** — `uv tool install` has
+- **`vrg-container-run: command not found`** — `uv tool install` has
   not been run, or `~/.local/bin` is not on PATH. Re-run the install
-  command from Step 2 and confirm `which vrg-docker-run` resolves.
+  command from Step 2 and confirm `which vrg-container-run` resolves.
 - **`manifest unknown` when pulling a container image** — the tag
   you're asking for doesn't exist on GHCR. Older docs referenced
   `ghcr.io/vergil-project/dev-docs:latest` (renamed to `dev-base` in

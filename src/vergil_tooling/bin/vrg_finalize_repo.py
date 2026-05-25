@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config, git
-from vergil_tooling.lib.docker_cache import clean_branch_images
+from vergil_tooling.lib.container_cache import clean_branch_images
 
 _CD_WORKFLOW_NAME = "CD"
 
@@ -215,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
         if not args.dry_run:
             removed = clean_branch_images(branch)
             if removed:
-                print(f"  Cleaned {removed} cached Docker image(s) for {branch}")
+                print(f"  Cleaned {removed} cached container image(s) for {branch}")
 
     print("Pruning stale remote-tracking references...")
     if args.dry_run:
@@ -248,18 +248,18 @@ def main(argv: list[str] | None = None) -> int:
     validation_failed = False
     if not args.dry_run:
         print()
-        print("Running post-finalization validation via vrg-docker-run...")
+        print("Running post-finalization validation via vrg-container-run...")
         repo_root = Path(git.repo_root())
         if (repo_root / "pyproject.toml").is_file():
-            cmd: tuple[str, ...] = ("vrg-docker-run", "--", "uv", "run", "vrg-validate")
+            cmd: tuple[str, ...] = ("vrg-container-run", "--", "uv", "run", "vrg-validate")
         else:
-            cmd = ("vrg-docker-run", "--", "vrg-validate")
+            cmd = ("vrg-container-run", "--", "vrg-validate")
 
         result = subprocess.run(cmd, check=False)  # noqa: S603
         if result.returncode != 0:
             validation_failed = True
     else:
-        print("  [dry-run] vrg-docker-run -- [uv run] vrg-validate")
+        print("  [dry-run] vrg-container-run -- [uv run] vrg-validate")
 
     # Docs-publish sanity check (issue #303). Runs after validation
     # so a real validation failure stays the headline; a docs failure

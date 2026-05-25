@@ -41,7 +41,7 @@ def test_merge_status_with_empty_review_decision() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::test_merge_status_returns_both_fields tests/vergil_tooling/test_github.py::test_merge_status_with_empty_review_decision -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::test_merge_status_returns_both_fields tests/vergil_tooling/test_github.py::test_merge_status_with_empty_review_decision -v`
 Expected: FAIL — `module 'vergil_tooling.lib.github' has no attribute 'merge_status'`
 
 - [ ] **Step 3: Implement `merge_status()` in `github.py`**
@@ -69,7 +69,7 @@ def merge_status(pr: str) -> dict[str, str]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::test_merge_status_returns_both_fields tests/vergil_tooling/test_github.py::test_merge_status_with_empty_review_decision -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::test_merge_status_returns_both_fields tests/vergil_tooling/test_github.py::test_merge_status_with_empty_review_decision -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -108,7 +108,7 @@ def test_main_happy_path_not_behind() -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py::test_main_happy_path_not_behind -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py::test_main_happy_path_not_behind -v`
 Expected: FAIL — `merge_status` not patched / not called in the code yet
 
 - [ ] **Step 3: Write the failing tests — non-CLEAN states exit 1**
@@ -225,7 +225,7 @@ def test_main_fails_for_unknown(
 
 - [ ] **Step 4: Run the new tests to confirm they fail**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -k "blocked or dirty or unstable or unknown or succeeds_only" -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -k "blocked or dirty or unstable or unknown or succeeds_only" -v`
 Expected: FAIL — the current code exits 0 for all non-BEHIND states
 
 - [ ] **Step 5: Implement the merge-state check in `vrg_wait_until_green.py`**
@@ -263,7 +263,7 @@ Replace lines 40–52 (from `if github.merge_state_status` through `return 0`) i
 
 - [ ] **Step 6: Run all wait-until-green tests**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -v`
 Expected: PASS for all tests
 
 - [ ] **Step 7: Update tests that now need `merge_status` mocked**
@@ -287,7 +287,7 @@ In `test_main_updates_branch_multiple_times`, add the same mock.
 
 - [ ] **Step 8: Run full test suite to verify everything passes**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -v`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_wait_until_green.py -v`
 Expected: All tests PASS
 
 - [ ] **Step 9: Commit**
@@ -304,7 +304,7 @@ cd .worktrees/issue-806-merge-state && vrg-commit -m "fix(wait-until-green): exi
 
 - [ ] **Step 1: Run `vrg-validate`**
 
-Run: `cd .worktrees/issue-806-merge-state && vrg-docker-run -- uv run vrg-validate`
+Run: `cd .worktrees/issue-806-merge-state && vrg-container-run -- uv run vrg-validate`
 Expected: All checks pass, 100% coverage maintained
 
 - [ ] **Step 2: Fix any issues**

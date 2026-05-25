@@ -1,11 +1,11 @@
-"""Tests for vergil_tooling.bin.vrg_docker_docs."""
+"""Tests for vergil_tooling.bin.vrg_container_docs."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_docker_docs import main
+from vergil_tooling.bin.vrg_container_docs import main
 
 
 def test_no_args() -> None:
@@ -13,16 +13,20 @@ def test_no_args() -> None:
 
 
 def test_unknown_command() -> None:
-    with patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=Path("/repo")):
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=Path("/repo")),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+    ):
         assert main(["unknown"]) == 1
 
 
 def test_serve_execvp(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -43,12 +47,36 @@ def test_serve_execvp(tmp_path: Path) -> None:
     assert "mkdocs serve" in args[-1]
 
 
+def test_serve_execvp_nerdctl(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="nerdctl"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = [
+            "nerdctl",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
+            "mkdocs serve -f docs/site/mkdocs.yml -a 0.0.0.0:8000",
+        ]
+        main(["serve"])
+    mock_exec.assert_called_once()
+    assert mock_exec.call_args[0][0] == "nerdctl"
+
+
 def test_build_execvp(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -70,9 +98,10 @@ def test_build_execvp(tmp_path: Path) -> None:
 def test_serve_with_extra_args(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -88,9 +117,10 @@ def test_custom_env_vars(tmp_path: Path) -> None:
         "DOCS_PORT": "9000",
     }
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", env, clear=True),
     ):
         mock_build.return_value = [
@@ -114,9 +144,10 @@ def test_python_repo_uv_sync(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -128,9 +159,10 @@ def test_python_repo_uv_sync(tmp_path: Path) -> None:
 def test_non_python_repo_no_uv(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -142,9 +174,10 @@ def test_non_python_repo_no_uv(tmp_path: Path) -> None:
 def test_cli_prefix_used(tmp_path: Path) -> None:
     dev_image = "ghcr.io/vergil-project/dev-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", dev_image, "bash", "-c", "x"]
@@ -160,12 +193,13 @@ def test_prefix_missing_value() -> None:
     assert main(["--prefix"]) == 1
 
 
-def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
+def test_build_delegates_to_build_container_args(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -188,9 +222,10 @@ def test_build_delegates_to_build_docker_args(tmp_path: Path) -> None:
 def test_serve_splices_port_before_image(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -214,9 +249,10 @@ def test_serve_splices_port_before_image(tmp_path: Path) -> None:
 def test_serve_custom_port(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {"DOCS_PORT": "9000"}, clear=True),
     ):
         mock_build.return_value = [
@@ -237,9 +273,10 @@ def test_serve_custom_port(tmp_path: Path) -> None:
 def test_build_no_port_splice(tmp_path: Path) -> None:
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp") as mock_exec,
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = [
@@ -261,9 +298,10 @@ def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     image = "ghcr.io/vergil-project/prod-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", image, "bash", "-c", "placeholder"]
@@ -278,9 +316,10 @@ def test_python_repo_uv_sync_in_command(tmp_path: Path) -> None:
 def test_prefix_passed_to_image(tmp_path: Path) -> None:
     dev_image = "ghcr.io/vergil-project/dev-base:latest"
     with (
-        patch("vergil_tooling.bin.vrg_docker_docs.git.repo_root", return_value=tmp_path),
-        patch("vergil_tooling.bin.vrg_docker_docs.build_docker_args") as mock_build,
-        patch("vergil_tooling.bin.vrg_docker_docs.os.execvp"),
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
         patch.dict("os.environ", {}, clear=True),
     ):
         mock_build.return_value = ["docker", "run", "--rm", dev_image, "bash", "-c", "x"]

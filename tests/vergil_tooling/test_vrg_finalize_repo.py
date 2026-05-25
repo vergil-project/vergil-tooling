@@ -242,11 +242,11 @@ def test_main_calls_docker_run(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     cmd = mock_sub.call_args[0][0]
-    assert cmd[0] == "vrg-docker-run"
+    assert cmd[0] == "vrg-container-run"
     assert cmd[1:] == ("--", "vrg-validate")
 
 
-def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
+def test_main_container_run_uses_uv_for_python(tmp_path: Path) -> None:
     _make_profile(tmp_path, "library-release")
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
     with (
@@ -260,7 +260,7 @@ def test_main_docker_run_uses_uv_for_python(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     cmd = mock_sub.call_args[0][0]
-    assert cmd == ("vrg-docker-run", "--", "uv", "run", "vrg-validate")
+    assert cmd == ("vrg-container-run", "--", "uv", "run", "vrg-validate")
 
 
 # -- _check_cd_workflow_status (issue #303) --------------------------------
@@ -600,7 +600,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
         result = main([])
     assert result == 0
     mock_clean.assert_called_once_with("feature/x")
-    assert "Cleaned 2 cached Docker image(s)" in capsys.readouterr().out
+    assert "Cleaned 2 cached container image(s)" in capsys.readouterr().out
 
 
 # -- working-tree cleanliness gate (issue #472) -------------------------------
