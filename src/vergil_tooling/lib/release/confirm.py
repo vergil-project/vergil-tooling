@@ -112,7 +112,7 @@ def _verify_jobs(
             "--json",
             "jobs",
             "--jq",
-            f'.jobs[] | select(.name | startswith("{job_name}")) | .conclusion',
+            f'.jobs[] | select(.name | contains("{job_name}")) | .conclusion',
         )
         if not conclusion:
             raise ReleaseError(
