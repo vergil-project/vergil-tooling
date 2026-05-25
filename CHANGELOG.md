@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.49] - 2026-05-25
+
+### Chores
+
+- temporarily point vergil-actions refs to @develop
+- bump version to 2.0.49
+
 ## [2.0.47] - 2026-05-25
 
 ### Bug fixes
