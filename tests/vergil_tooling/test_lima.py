@@ -21,6 +21,7 @@ from vergil_tooling.lib.lima import (
     shell_run,
     start_vm,
     stop_vm,
+    update_tooling,
     vm_status,
 )
 
@@ -408,11 +409,58 @@ class TestInjectCredentials:
 
 
 class TestInstallTooling:
+    @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")
-    def test_installs_with_tag(self, mock_run: MagicMock) -> None:
+    def test_installs_with_tag(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
         install_tooling("vergil-agent", "v2.0")
         mock_run.assert_called_once()
         args = mock_run.call_args[0]
         cmd_str = " ".join(str(a) for a in args)
         assert "uv tool install" in cmd_str
         assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_writes_tag_marker(self, _mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        install_tooling("vergil-agent", "v2.0")
+        mock_pipe.assert_called_once()
+        assert "tooling-tag" in mock_pipe.call_args[0][1]
+        assert "v2.0" in mock_pipe.call_args[0][2]
+
+
+class TestUpdateTooling:
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_updates_with_explicit_tag(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        update_tooling("vergil-agent", "v2.0")
+        mock_run.assert_called_once()
+        cmd_str = " ".join(str(a) for a in mock_run.call_args[0])
+        assert "uv tool install --reinstall" in cmd_str
+        assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_reads_tag_from_marker(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="v2.0\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        update_tooling("vergil-agent")
+        assert mock_run.call_count == 2
+        cmd_str = " ".join(str(a) for a in mock_run.call_args_list[1][0])
+        assert "uv tool install --reinstall" in cmd_str
+        assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_writes_tag_marker(self, _mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        update_tooling("vergil-agent", "v2.1")
+        mock_pipe.assert_called_once()
+        assert "tooling-tag" in mock_pipe.call_args[0][1]
+        assert "v2.1" in mock_pipe.call_args[0][2]
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exits_if_no_tag(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with pytest.raises(SystemExit):
+            update_tooling("vergil-agent")

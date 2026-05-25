@@ -28,6 +28,7 @@ from vergil_tooling.lib.lima import (
     list_vms,
     start_vm,
     stop_vm,
+    update_tooling,
     vm_status,
 )
 
@@ -129,6 +130,26 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_update(args: argparse.Namespace) -> int:
+    name, identity, _config = _resolve(args)
+
+    status = vm_status(identity.vm_instance)
+    if status != "Running":
+        effective = status or "Not Created"
+        print(
+            f"ERROR: VM '{identity.vm_instance}' is not running (status: {effective})",
+            file=sys.stderr,
+        )
+        return 1
+
+    tag = args.tag if args.tag else None
+    print(f"Updating vergil-tooling in VM '{identity.vm_instance}' (identity: {name})...")
+    update_tooling(identity.vm_instance, tag)
+
+    print("Update complete.")
+    return 0
+
+
 def _cmd_destroy(args: argparse.Namespace) -> int:
     name, identity, _config = _resolve(args)
 
@@ -168,6 +189,8 @@ def _cmd_session(args: argparse.Namespace) -> int:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
     identity = resolve_identity(config, args.identity)
+
+    update_tooling(identity.vm_instance)
 
     workspace: str | None = None
     if args.workspace:
@@ -215,6 +238,12 @@ def main(argv: list[str] | None = None) -> int:
     p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
     _add_identity_args(p_restart)
 
+    p_update = sub.add_parser("update", help="Reinstall vergil-tooling inside a running VM")
+    _add_identity_args(p_update)
+    p_update.add_argument(
+        "--tag", default="", help="Override version tag (default: tag from initial install)"
+    )
+
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
 
@@ -238,6 +267,7 @@ def main(argv: list[str] | None = None) -> int:
         "start": _cmd_start,
         "stop": _cmd_stop,
         "restart": _cmd_restart,
+        "update": _cmd_update,
         "destroy": _cmd_destroy,
         "list": _cmd_list,
         "session": _cmd_session,

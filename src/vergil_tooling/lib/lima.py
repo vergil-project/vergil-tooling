@@ -249,8 +249,11 @@ def _inject_claude_token(instance: str, token_path: str) -> None:
     )
 
 
+_TOOLING_TAG_FILE = "~/.config/vergil/tooling-tag"
+
+
 def install_tooling(instance: str, tag: str) -> None:
-    """Install vergil-tooling inside the VM."""
+    """Install vergil-tooling inside the VM and record the tag."""
     install_spec = _TOOLING_INSTALL.format(tag=tag)
     print(f"  Installing vergil-tooling ({tag})...")
     shell_run(
@@ -259,3 +262,27 @@ def install_tooling(instance: str, tag: str) -> None:
         "-c",
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install "{install_spec}"',
     )
+    shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
+
+
+def update_tooling(instance: str, tag: str | None = None) -> None:
+    """Reinstall vergil-tooling inside the VM.
+
+    Uses *tag* if given, otherwise reads the tag from the marker file
+    written by ``install_tooling``.
+    """
+    if tag is None:
+        result = shell_run(instance, "bash", "-c", f"cat {_TOOLING_TAG_FILE} 2>/dev/null || true")
+        tag = result.stdout.strip()
+    if not tag:
+        print("ERROR: no tooling tag found — run 'vrg-vm create' first", file=sys.stderr)
+        raise SystemExit(1)
+    install_spec = _TOOLING_INSTALL.format(tag=tag)
+    print(f"  Updating vergil-tooling ({tag})...")
+    shell_run(
+        instance,
+        "bash",
+        "-c",
+        f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
+    )
+    shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
