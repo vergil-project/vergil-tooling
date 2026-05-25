@@ -88,7 +88,7 @@ vergil-tooling changes.
   class ContainerConfig:
       env_prefixes: list[str]
   ```
-- Add `container: ContainerConfig` to `StConfig`, defaulting to
+- Add `container: ContainerConfig` to `VergilConfig`, defaulting to
   `ContainerConfig(env_prefixes=[])` when the section is absent.
 - Validation: if `[container]` is present, `env-prefixes` must be a
   list of strings. Same validation pattern as `[markdownlint].ignore`.

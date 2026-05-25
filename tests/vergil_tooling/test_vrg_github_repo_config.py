@@ -26,7 +26,7 @@ from vergil_tooling.lib.config import (
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
-    StConfig,
+    VergilConfig,
 )
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
@@ -372,8 +372,8 @@ def test_load_local_config_success(tmp_path: Path) -> None:
 # -- _audit_repo --------------------------------------------------------------
 
 
-def _make_config() -> StConfig:
-    return StConfig(
+def _make_config() -> VergilConfig:
+    return VergilConfig(
         project=ProjectConfig(
             repository_type="library",
             versioning_scheme="semver",
