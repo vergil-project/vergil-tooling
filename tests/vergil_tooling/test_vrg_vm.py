@@ -283,10 +283,44 @@ class TestList:
         assert "Not Created" in output
 
 
+class TestUpdate:
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_default_tag(
+        self, _status: MagicMock, mock_update: MagicMock, config_file: Path
+    ) -> None:
+        result = main(["update", "--config", str(config_file)])
+        assert result == 0
+        mock_update.assert_called_once_with("vergil-agent", None)
+
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_explicit_tag(
+        self, _status: MagicMock, mock_update: MagicMock, config_file: Path
+    ) -> None:
+        result = main(["update", "--config", str(config_file), "--tag", "v2.1"])
+        assert result == 0
+        mock_update.assert_called_once_with("vergil-agent", "v2.1")
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_update_fails_if_not_running(self, _status: MagicMock, config_file: Path) -> None:
+        result = main(["update", "--config", str(config_file)])
+        assert result == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_update_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
+        result = main(["update", "--config", str(config_file)])
+        assert result == 1
+
+
 class TestSession:
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    def test_session_basic(self, mock_exec: MagicMock, config_file: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    def test_session_basic(
+        self, mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+    ) -> None:
         main(["session", "--config", str(config_file)])
+        mock_update.assert_called_once_with("vergil-agent")
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "limactl"
@@ -295,7 +329,10 @@ class TestSession:
         assert "--workdir=/projects" in args[1]
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    def test_session_with_workspace(self, mock_exec: MagicMock, config_file: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    def test_session_with_workspace(
+        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+    ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling"])
         cmd = mock_exec.call_args[0][1]
         assert "--workdir=/projects/vergil-tooling" in cmd
@@ -307,7 +344,10 @@ class TestSession:
         assert "exec bash --login" in inner
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    def test_session_with_command(self, mock_exec: MagicMock, config_file: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    def test_session_with_command(
+        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+    ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling", "claude"])
         cmd = mock_exec.call_args[0][1]
         assert "bash" in cmd
@@ -318,7 +358,10 @@ class TestSession:
         assert "exec claude" in inner
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    def test_session_command_with_flags(self, mock_exec: MagicMock, config_file: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    def test_session_command_with_flags(
+        self, _mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
+    ) -> None:
         main(
             [
                 "session",
