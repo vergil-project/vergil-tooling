@@ -5,12 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.51] - 2026-05-25
+
+### Bug fixes
+
+- poll for CD run matching branch HEAD instead of taking most recent
+
+### Chores
+
+- bump version to 2.0.51
+
+## [2.0.50] - 2026-05-25
+
+### Chores
+
+- bump version to 2.0.50
+
 ## [2.0.49] - 2026-05-25
 
 ### Chores
 
 - temporarily point vergil-actions refs to @develop
 - bump version to 2.0.49
+
+### Features
+
+- add vrg-vm update and auto-update on session entry
 
 ## [2.0.47] - 2026-05-25
 
