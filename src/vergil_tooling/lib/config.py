@@ -29,7 +29,9 @@ _PROJECT_FIELDS = (
     "primary-language",
 )
 
-_KNOWN_SECTIONS = frozenset({"project", "dependencies", "markdownlint", "ci", "publish", "container"})
+_KNOWN_SECTIONS = frozenset(
+    {"project", "dependencies", "markdownlint", "ci", "publish", "container"},
+)
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
@@ -164,9 +166,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         if env_prefixes is None:
             msg = f"{CONFIG_FILE}: [container] missing required field 'env-prefixes'"
             raise ConfigError(msg)
-        if not isinstance(env_prefixes, list) or not all(
-            isinstance(p, str) for p in env_prefixes
-        ):
+        if not isinstance(env_prefixes, list) or not all(isinstance(p, str) for p in env_prefixes):
             msg = f"{CONFIG_FILE}: [container].env-prefixes must be a list of strings"
             raise ConfigError(msg)
         container = ContainerConfig(env_prefixes=env_prefixes)

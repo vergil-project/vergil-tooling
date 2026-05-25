@@ -7,8 +7,11 @@ import platform
 import shutil
 import subprocess
 import sys
-from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 _GHCR = "ghcr.io/vergil-project"
 

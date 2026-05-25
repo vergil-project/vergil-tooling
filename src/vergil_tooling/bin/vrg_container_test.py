@@ -12,8 +12,6 @@ import subprocess
 import sys
 from typing import TYPE_CHECKING
 
-from collections.abc import Sequence
-
 from vergil_tooling.lib import git
 from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import (
@@ -25,6 +23,7 @@ from vergil_tooling.lib.container import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
 _detect_language = detect_language
