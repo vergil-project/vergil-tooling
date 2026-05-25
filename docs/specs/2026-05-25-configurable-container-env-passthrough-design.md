@@ -60,6 +60,15 @@ env-prefixes = ["MQ_"]
   not supported as a separate mechanism; a narrow prefix serves the same
   purpose.
 
+### Breaking change
+
+Removing the hardcoded prefixes is a breaking change for any consumer
+repo that relies on implicit `MQ_*`, `GH_*`, or `GITHUB_*` passthrough.
+The only known consumer is mq-rest-admin. This is accepted — the project
+is pre-release with a single human operator. The mq-rest-admin repos
+will be updated as part of a broader follow-up sweep of recent
+vergil-tooling changes.
+
 ### Out of scope
 
 - `DOCKER_NETWORK` and `DOCKER_EXTRA_VOLUMES` remain env-var-driven
@@ -100,8 +109,11 @@ The three callers of `build_container_args()`:
 - `vrg_container_test.py`
 - `vrg_container_docs.py`
 
-Each already reads `vergil.toml` for other config. They will read
-`config.container.env_prefixes` and pass it to `build_container_args()`.
+Only `vrg_container_run.py` reads `vergil.toml` today (indirectly via
+`ensure_cached_image`). `vrg_container_test.py` and
+`vrg_container_docs.py` will need to add `read_config()` calls. When
+`vergil.toml` is missing or has no `[container]` section, the default is
+no passthrough — matching current behavior for repos without the config.
 
 ### Legacy alias `build_docker_args()`
 
