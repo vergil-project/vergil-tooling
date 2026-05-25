@@ -20,7 +20,7 @@ def test_help_flag(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["--help"]) == 0
     out = capsys.readouterr().out
     assert "usage: vrg-container-run" in out
-    assert "GH_TOKEN" in out
+    assert "GH_TOKEN" not in out
 
 
 def test_h_flag(capsys: pytest.CaptureFixture[str]) -> None:
