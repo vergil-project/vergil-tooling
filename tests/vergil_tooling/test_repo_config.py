@@ -61,51 +61,20 @@ _TEMPLATE_PATH = (
 )
 _TEMPLATE_TEXT = _TEMPLATE_PATH.read_text(encoding="utf-8")
 
-_HOOK_TEMPLATE_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "src"
-    / "vergil_tooling"
-    / "data"
-    / "githooks_pre_commit.sh"
-)
-_HOOK_TEMPLATE_TEXT = _HOOK_TEMPLATE_PATH.read_text(encoding="utf-8")
 
-
-class TestGithooks:
+class TestHookGuardShim:
     def test_missing(self, tmp_path: Path) -> None:
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
-        assert "local.githooks_pre_commit" in fields
+        assert "local.hook_guard_shim" in fields
 
     def test_present(self, tmp_path: Path) -> None:
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\n")
+        hooks_dir = tmp_path / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
-        assert "local.githooks_pre_commit" not in fields
-        assert "local.githooks_pre_commit_content" in fields
-
-    def test_content_matches(self, tmp_path: Path) -> None:
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text(_HOOK_TEMPLATE_TEXT)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.githooks_pre_commit_content" not in fields
-
-    def test_content_differs(self, tmp_path: Path) -> None:
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.githooks_pre_commit_content" in fields
-
-    def test_stale_st_commit_context(self, tmp_path: Path) -> None:
-        stale = _HOOK_TEMPLATE_TEXT.replace("VRG_COMMIT_CONTEXT", "ST_COMMIT_CONTEXT")
-        (tmp_path / ".githooks").mkdir()
-        (tmp_path / ".githooks" / "pre-commit").write_text(stale)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.githooks_pre_commit_content" in fields
+        assert "local.hook_guard_shim" not in fields
 
 
 class TestClaudeMd:
@@ -152,14 +121,6 @@ _MINIMAL_SETTINGS = {
     },
     "enabledPlugins": {
         "vergil@vergil-marketplace": True,
-    },
-    "permissions": {
-        "deny": [
-            "Bash(git *)",
-            "Bash(*/git *)",
-            "Bash(gh *)",
-            "Bash(*/gh *)",
-        ]
     },
 }
 
@@ -224,26 +185,6 @@ class TestClaudeSettings:
         fields = {i.field for i in diff.items}
         assert "local.claude_settings.plugin" in fields
 
-    def test_missing_deny_rules(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "permissions": {"deny": []}}
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.deny_rules" in fields
-
-    def test_partial_deny_rules(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "permissions": {"deny": ["Bash(git *)"]}}
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        matches = [i for i in diff.items if i.field == "local.claude_settings.deny_rules"]
-        assert len(matches) == 1
-
-    def test_all_four_deny_rules(self, tmp_path: Path) -> None:
-        _write_settings(tmp_path, _MINIMAL_SETTINGS)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.deny_rules" not in fields
-
     def test_marketplace_not_an_object(self, tmp_path: Path) -> None:
         settings = {**_MINIMAL_SETTINGS, "extraKnownMarketplaces": "wrong type"}
         _write_settings(tmp_path, settings)
@@ -268,20 +209,6 @@ class TestClaudeSettings:
         fields = {i.field for i in diff.items}
         assert "local.claude_settings.plugin" in fields
 
-    def test_permissions_not_an_object(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "permissions": "wrong type"}
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.deny_rules" in fields
-
-    def test_deny_not_a_list(self, tmp_path: Path) -> None:
-        settings = {**_MINIMAL_SETTINGS, "permissions": {"deny": "wrong type"}}
-        _write_settings(tmp_path, settings)
-        diff = audit_local_config(tmp_path)
-        fields = {i.field for i in diff.items}
-        assert "local.claude_settings.deny_rules" in fields
-
     def test_compliant_settings(self, tmp_path: Path) -> None:
         _write_settings(tmp_path, _MINIMAL_SETTINGS)
         diff = audit_local_config(tmp_path)
@@ -294,10 +221,10 @@ class TestClaudeSettings:
 def _write_compliant_repo(root: Path) -> None:
     """Scaffold a fully compliant repo structure."""
     (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
-    (root / ".githooks").mkdir()
-    (root / ".githooks" / "pre-commit").write_text(_HOOK_TEMPLATE_TEXT)
+    hooks_dir = root / ".claude" / "hooks"
+    hooks_dir.mkdir(parents=True)
+    (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
     (root / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
-    (root / ".claude").mkdir()
     (root / ".claude" / "settings.json").write_text(json.dumps(_MINIMAL_SETTINGS))
 
 
@@ -307,7 +234,7 @@ class TestIntegration:
         assert not diff.is_compliant()
         fields = {i.field for i in diff.items}
         assert "local.vergil_toml" in fields
-        assert "local.githooks_pre_commit" in fields
+        assert "local.hook_guard_shim" in fields
         assert "local.claude_md" in fields
         assert "local.claude_settings" in fields
 

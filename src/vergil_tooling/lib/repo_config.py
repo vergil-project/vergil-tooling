@@ -1,7 +1,7 @@
 """Local repository configuration audit checks.
 
-Checks files on disk — vergil.toml, .githooks/pre-commit,
-CLAUDE.md, .claude/settings.json — without making any API calls.
+Checks files on disk — vergil.toml, CLAUDE.md, .claude/settings.json,
+.claude/hooks/guard.sh — without making any API calls.
 """
 
 from __future__ import annotations
@@ -16,13 +16,6 @@ from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 if TYPE_CHECKING:
     from pathlib import Path
 
-_REQUIRED_DENY_RULES: set[str] = {
-    "Bash(git *)",
-    "Bash(*/git *)",
-    "Bash(gh *)",
-    "Bash(*/gh *)",
-}
-
 
 def _load_template() -> str:
     return (
@@ -32,19 +25,11 @@ def _load_template() -> str:
     )
 
 
-def _load_hook_template() -> str:
-    return (
-        importlib.resources.files("vergil_tooling.data")
-        .joinpath("githooks_pre_commit.sh")
-        .read_text(encoding="utf-8")
-    )
-
-
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
     _check_vergil_toml(repo_root, items)
-    _check_githooks(repo_root, items)
+    _check_hook_guard_shim(repo_root, items)
     _check_claude_md(repo_root, items)
     _check_claude_settings(repo_root, items)
     return ConfigDiff(items=items)
@@ -97,26 +82,14 @@ def _check_claude_md(repo_root: Path, items: list[DiffItem]) -> None:
         )
 
 
-def _check_githooks(repo_root: Path, items: list[DiffItem]) -> None:
-    hook_path = repo_root / ".githooks" / "pre-commit"
-    if not hook_path.is_file():
+def _check_hook_guard_shim(repo_root: Path, items: list[DiffItem]) -> None:
+    shim_path = repo_root / ".claude" / "hooks" / "guard.sh"
+    if not shim_path.is_file():
         items.append(
             DiffItem(
-                field="local.githooks_pre_commit",
+                field="local.hook_guard_shim",
                 expected="present",
                 actual="missing",
-            )
-        )
-        return
-
-    local_content = hook_path.read_text(encoding="utf-8")
-    expected_content = _load_hook_template()
-    if local_content.rstrip() != expected_content.rstrip():
-        items.append(
-            DiffItem(
-                field="local.githooks_pre_commit_content",
-                expected="matches canonical template",
-                actual="content differs",
             )
         )
 
@@ -157,7 +130,6 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
 
     _check_marketplace(raw, items)
     _check_plugin_enabled(raw, items)
-    _check_deny_rules(raw, items)
 
 
 def _check_marketplace(raw: dict[str, Any], items: list[DiffItem]) -> None:
@@ -223,40 +195,5 @@ def _check_plugin_enabled(raw: dict[str, Any], items: list[DiffItem]) -> None:
                 field="local.claude_settings.plugin",
                 expected="vergil@vergil-marketplace enabled",
                 actual="not enabled",
-            )
-        )
-
-
-def _check_deny_rules(raw: dict[str, Any], items: list[DiffItem]) -> None:
-    permissions = raw.get("permissions", {})
-    if not isinstance(permissions, dict):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.deny_rules",
-                expected="deny rules for raw git/gh",
-                actual="permissions is not an object",
-            )
-        )
-        return
-
-    deny = permissions.get("deny", [])
-    if not isinstance(deny, list):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.deny_rules",
-                expected="deny rules for raw git/gh",
-                actual="deny is not a list",
-            )
-        )
-        return
-
-    deny_set = set(deny)
-    missing = _REQUIRED_DENY_RULES - deny_set
-    if missing:
-        items.append(
-            DiffItem(
-                field="local.claude_settings.deny_rules",
-                expected=f"deny rules: {sorted(_REQUIRED_DENY_RULES)}",
-                actual=f"missing: {sorted(missing)}",
             )
         )

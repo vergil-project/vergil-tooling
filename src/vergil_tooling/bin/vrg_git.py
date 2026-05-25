@@ -9,6 +9,7 @@ import base64
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 from vergil_tooling.lib import github
 
@@ -34,10 +35,6 @@ _ALLOWED_SIMPLE: set[str] = {
 
 _ALLOWED_COMPOUND: dict[str, set[str]] = {
     "worktree": {"add", "list", "remove"},
-}
-
-_ALLOWED_EXACT: set[tuple[str, ...]] = {
-    ("config", "core.hooksPath", ".githooks"),
 }
 
 _DENIED: dict[str, str] = {
@@ -139,6 +136,65 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
     return None
 
 
+_BRANCH_SWITCH_SUBCOMMANDS: set[str] = {"checkout", "switch"}
+
+
+def _is_main_worktree() -> bool:
+    git_path = Path(".git")
+    return git_path.is_dir()
+
+
+def _worktree_convention_active() -> bool:
+    return Path(".worktrees").is_dir()
+
+
+def _parse_branch_target(subcmd: str, args: list[str]) -> str | None:
+    if subcmd == "checkout":
+        after_separator = False
+        for arg in args:
+            if arg == "--":
+                after_separator = True
+                continue
+            if after_separator:
+                return None
+            if arg.startswith("-"):
+                continue
+            return arg
+        return None
+
+    if subcmd == "switch":
+        skip_next = False
+        for arg in args:
+            if skip_next:
+                skip_next = False
+                return arg
+            if arg in ("-c", "-C"):
+                skip_next = True
+                continue
+            if arg.startswith("-"):
+                continue
+            return arg
+        return None
+
+    return None
+
+
+def _check_worktree_convention(subcmd: str, args: list[str]) -> str | None:
+    if subcmd not in _BRANCH_SWITCH_SUBCOMMANDS:
+        return None
+    if not _is_main_worktree() or not _worktree_convention_active():
+        return None
+    target = _parse_branch_target(subcmd, args)
+    if target is None:
+        return None
+    if target in _PROTECTED_BRANCHES:
+        return None
+    return (
+        "Branch switches in the main worktree are blocked. "
+        "Use a worktree under .worktrees/ instead."
+    )
+
+
 def _git_auth_env(token: str) -> dict[str, str]:
     """Return env dict that authenticates HTTPS git to GitHub."""
     credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
@@ -159,10 +215,6 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     subcmd = argv[0]
-
-    if tuple(argv) in _ALLOWED_EXACT:
-        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
-        return result.returncode
 
     if subcmd in _DENIED:
         msg = _DENIED[subcmd]
@@ -199,6 +251,11 @@ def main(argv: list[str] | None = None) -> int:
     flag_err = _check_denied_flags(subcmd, argv[1:])
     if flag_err:
         print(f"vrg-git: {flag_err}", file=sys.stderr)
+        return 1
+
+    worktree_err = _check_worktree_convention(subcmd, argv[1:])
+    if worktree_err:
+        print(f"vrg-git: {worktree_err}", file=sys.stderr)
         return 1
 
     env = None
