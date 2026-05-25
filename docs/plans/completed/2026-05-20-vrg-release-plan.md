@@ -93,7 +93,7 @@ def test_publish_docs_workflow_default(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py -v -k "consumer_refresh or docs_workflow"`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -v -k "consumer_refresh or docs_workflow"`
 Expected: FAIL — `PublishConfig` has no `consumer_refresh` or `docs_workflow` attributes
 
 - [ ] **Step 3: Extend PublishConfig dataclass**
@@ -125,7 +125,7 @@ In `src/vergil_tooling/lib/config.py`, update the `publish` parsing block (aroun
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 6: Commit**
@@ -176,12 +176,12 @@ Remove `src/vergil_tooling/lib/release.py`.
 
 - [ ] **Step 3: Verify test imports still resolve**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release.py -v`
 Expected: ALL PASS — the import `from vergil_tooling.lib.release import is_release_branch` resolves to the package's `__init__.py` identically.
 
 - [ ] **Step 4: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -275,7 +275,7 @@ def test_release_error_is_exception() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_context.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_context.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement context.py**
@@ -337,7 +337,7 @@ class ReleaseError(Exception):
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_context.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_context.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -490,7 +490,7 @@ def test_close_tracking_issue() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_tracking.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_tracking.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement tracking.py**
@@ -621,7 +621,7 @@ def _comment(ctx: ReleaseContext, body: str) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_tracking.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_tracking.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -784,7 +784,7 @@ def test_preflight_fails_if_tracking_issue_exists(_repo: Path) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_preflight.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_preflight.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement preflight.py**
@@ -1102,12 +1102,12 @@ def _bump_version_in_manifest(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_preflight.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_preflight.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1232,7 +1232,7 @@ def test_prepare_fails_if_no_changes(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_prepare.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_prepare.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement prepare.py**
@@ -1373,7 +1373,7 @@ def _create_pr(ctx: ReleaseContext) -> str:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_prepare.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_prepare.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -1452,7 +1452,7 @@ def test_merge_gives_up_after_max_updates() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_merge.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_merge.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement merge.py**
@@ -1504,7 +1504,7 @@ def wait_and_merge(pr_url: str, *, phase: str) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_merge.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_merge.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -1595,7 +1595,7 @@ def test_merge_bump_fails_on_missing_linkage() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_bump.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_bump.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement bump.py**
@@ -1686,7 +1686,7 @@ def _verify_issue_linkage(ctx: ReleaseContext, pr_url: str) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_bump.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_bump.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -1783,7 +1783,7 @@ def test_confirm_publish_fails_if_tag_missing() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_confirm.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_confirm.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement confirm.py**
@@ -1912,7 +1912,7 @@ def _verify_artifacts(ctx: ReleaseContext) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_confirm.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_confirm.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -1995,7 +1995,7 @@ def test_close_and_finalize_fails_on_finalize_error() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_finalize.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_finalize.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement finalize.py**
@@ -2064,7 +2064,7 @@ def _build_summary(ctx: ReleaseContext) -> str:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_finalize.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_finalize.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -2130,7 +2130,7 @@ def test_consumer_refresh_none(capsys: pytest.CaptureFixture[str]) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_handoff.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_handoff.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement handoff.py**
@@ -2171,7 +2171,7 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_handoff.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_handoff.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -2315,7 +2315,7 @@ def test_orchestrator_does_not_run_later_phases_on_failure() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_orchestrator.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_orchestrator.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement orchestrator.py**
@@ -2417,7 +2417,7 @@ def run_release(ctx: ReleaseContext) -> None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_release_orchestrator.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_release_orchestrator.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Commit**
@@ -2498,7 +2498,7 @@ def test_main_returns_one_on_release_error() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_release.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_release.py -v`
 Expected: FAIL — module does not exist
 
 - [ ] **Step 3: Implement vrg_release.py**
@@ -2563,7 +2563,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_release.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_release.py -v`
 Expected: ALL PASS
 
 - [ ] **Step 5: Update pyproject.toml**
@@ -2582,7 +2582,7 @@ vrg-release = "vergil_tooling.bin.vrg_release:main"
 
 - [ ] **Step 6: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS
 
 - [ ] **Step 7: Commit**
@@ -2621,7 +2621,7 @@ rm tests/vergil_tooling/test_vrg_check_pr_merge.py
 
 - [ ] **Step 3: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS — no remaining imports of deleted modules
 
 - [ ] **Step 4: Commit**
@@ -2641,7 +2641,7 @@ Removed: vrg-prepare-release, vrg-merge-when-green, vrg-check-pr-merge"
 
 - [ ] **Step 1: Run full validation**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS
 
 - [ ] **Step 2: Update CLAUDE.md Architecture section**
@@ -2653,7 +2653,7 @@ In the CLI tools list under "Python Package (`src/vergil_tooling/`)":
 
 - [ ] **Step 3: Run validation again**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: PASS
 
 - [ ] **Step 4: Commit**

@@ -1,7 +1,7 @@
 """Run a repository's test suite inside a dev container.
 
 Auto-detects the project language from package manager files and selects
-a default Docker image and test command.  All defaults can be overridden
+a default container image and test command.  All defaults can be overridden
 via environment variables.
 """
 
@@ -13,11 +13,12 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.docker import (
+from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
-    build_docker_args,
+    build_container_args,
     default_image,
     detect_language,
+    detect_runtime,
 )
 
 if TYPE_CHECKING:
@@ -26,14 +27,14 @@ if TYPE_CHECKING:
 _detect_language = detect_language
 
 
-def build_test_docker_args(repo_root: Path, lang: str) -> list[str]:
-    """Build the docker run argument list for test execution."""
+def build_test_container_args(repo_root: Path, lang: str, *, runtime: str = "docker") -> list[str]:
+    """Build the container run argument list for test execution."""
     image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(lang)
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
     network = os.environ.get("DOCKER_NETWORK", "")
 
     if not image:
-        print(f"ERROR: no Docker image configured for language: {lang}", file=sys.stderr)
+        print(f"ERROR: no container image configured for language: {lang}", file=sys.stderr)
         sys.exit(1)
 
     if not test_cmd:
@@ -47,14 +48,18 @@ def build_test_docker_args(repo_root: Path, lang: str) -> list[str]:
         print(f"Network:  {network}")
     print("---")
 
-    return build_docker_args(repo_root, image, ["bash", "-c", test_cmd])
+    return build_container_args(repo_root, image, ["bash", "-c", test_cmd], runtime=runtime)
 
 
-def _docker_is_available() -> bool:
-    """Check whether the Docker daemon is reachable."""
+# Keep backward-compatible alias
+build_test_docker_args = build_test_container_args
+
+
+def _runtime_is_available(runtime: str) -> bool:
+    """Check whether the container runtime is reachable."""
     try:
-        result = subprocess.run(
-            ["docker", "version"],  # noqa: S603, S607
+        result = subprocess.run(  # noqa: S603, S607
+            [runtime, "version"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=15,
@@ -64,7 +69,12 @@ def _docker_is_available() -> bool:
         return False
 
 
+# Keep backward-compatible alias
+_docker_is_available = _runtime_is_available
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
+    runtime = detect_runtime()
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
 
@@ -76,16 +86,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         print("Set DOCKER_DEV_IMAGE and DOCKER_TEST_CMD explicitly.", file=sys.stderr)
         return 1
 
-    docker_args = build_test_docker_args(repo_root, lang)
+    container_args = build_test_container_args(repo_root, lang, runtime=runtime)
 
-    if not _docker_is_available():
+    if not _runtime_is_available(runtime):
         print(
-            "ERROR: Docker is not available. Ensure the Docker daemon is running.",
+            f"ERROR: {runtime} is not available. Ensure the container runtime is running.",
             file=sys.stderr,
         )
         return 1
 
-    os.execvp("docker", docker_args)  # noqa: S606, S607
+    if runtime == "nerdctl":
+        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+    else:
+        os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 

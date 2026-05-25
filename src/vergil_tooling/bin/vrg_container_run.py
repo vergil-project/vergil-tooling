@@ -1,6 +1,6 @@
 """Run an arbitrary command inside a dev container.
 
-Auto-detects the project language to select a default Docker image.
+Auto-detects the project language to select a default container image.
 Falls back to dev-base:latest when no language is detected and
 DOCKER_DEV_IMAGE is not set.  The command to run is taken from CLI
 arguments after ``--``.
@@ -12,22 +12,23 @@ import os
 import sys
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.docker import (
-    assert_docker_available,
-    build_docker_args,
+from vergil_tooling.lib.container import (
+    assert_runtime_available,
+    build_container_args,
     default_image,
     detect_language,
+    detect_runtime,
 )
-from vergil_tooling.lib.docker_cache import ensure_cached_image
+from vergil_tooling.lib.container_cache import ensure_cached_image
 
 _VALID_PREFIXES = {"dev", "prod"}
 
 _USAGE = """\
-usage: vrg-docker-run [--prefix <dev|prod>] [--] <command> [args...]
+usage: vrg-container-run [--prefix <dev|prod>] [--] <command> [args...]
 
 Run a command inside the project's dev container.
 
-The project language is auto-detected to select the right Docker image;
+The project language is auto-detected to select the right container image;
 falls back to dev-base:latest when detection fails.
 
 options:
@@ -41,10 +42,10 @@ environment variables:
   VRG_DOCKER_INSTALL_TAG   override the vergil-tooling version tag from vergil.toml
 
 examples:
-  vrg-docker-run -- uv run vrg-validate
-  vrg-docker-run --prefix dev -- vrg-validate
-  vrg-docker-run -- uv run pytest tests/
-  DOCKER_DEV_IMAGE=custom:img vrg-docker-run -- make build
+  vrg-container-run -- uv run vrg-validate
+  vrg-container-run --prefix dev -- vrg-validate
+  vrg-container-run -- uv run pytest tests/
+  DOCKER_DEV_IMAGE=custom:img vrg-container-run -- make build
 """
 
 
@@ -80,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         print("error: no command specified", file=sys.stderr)
         return 1
 
+    runtime = detect_runtime()
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
 
@@ -89,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         image_source = "env"
     else:
         base = default_image(lang, fallback=True, prefix=prefix)
-        image = ensure_cached_image(repo_root, lang, base)
+        image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
         image_source = "cached" if image != base else "default"
 
     print(f"Language: {lang or '<none>'}")
@@ -103,11 +105,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Network:  {network}")
     print("---")
 
-    assert_docker_available()
+    assert_runtime_available(runtime)
 
     pull_policy = "never" if image_source == "cached" else "always"
-    docker_args = build_docker_args(repo_root, image, command, pull_policy=pull_policy)
-    os.execvp("docker", docker_args)  # noqa: S606, S607
+    container_args = build_container_args(
+        repo_root, image, command, runtime=runtime, pull_policy=pull_policy
+    )
+    if runtime == "nerdctl":
+        os.execvp("nerdctl", container_args)  # noqa: S606, S607
+    else:
+        os.execvp("docker", container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 

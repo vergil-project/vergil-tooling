@@ -11,9 +11,10 @@ import os
 import sys
 
 from vergil_tooling.lib import git, github
-from vergil_tooling.lib.docker import (
-    assert_docker_available,
-    build_docker_args,
+from vergil_tooling.lib.container import (
+    assert_runtime_available,
+    build_container_args,
+    detect_runtime,
 )
 
 _GHCR = "ghcr.io/vergil-project"
@@ -77,13 +78,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    assert_docker_available()
+    runtime = detect_runtime()
+    assert_runtime_available(runtime)
 
-    docker_args = build_docker_args(repo_root, image, ["scorecard", *args])
-    idx = docker_args.index(image)
-    docker_args[idx:idx] = ["-e", f"GH_TOKEN={token}"]
+    container_args = build_container_args(repo_root, image, ["scorecard", *args], runtime=runtime)
+    idx = container_args.index(image)
+    container_args[idx:idx] = ["-e", f"GH_TOKEN={token}"]
 
-    os.execvp("docker", docker_args)  # noqa: S606, S607
+    os.execvp(runtime, container_args)  # noqa: S606, S607
     return 0  # pragma: no cover
 
 

@@ -43,7 +43,7 @@ def _build_summary(ctx: ReleaseContext) -> str:
         "",
         "### Pull Requests",
         f"- Release PR: {ctx.release_pr_url}",
-        f"- Bump PR: {ctx.bump_pr_url}",
+        f"- Back-merge PR: {ctx.bump_pr_url}",
         "",
         "### Tags",
     ]
@@ -56,5 +56,7 @@ def _build_summary(ctx: ReleaseContext) -> str:
     if ctx.release_url:
         lines.append(f"- GitHub Release: {ctx.release_url}")
     if ctx.cd_run_url:
-        lines.append(f"- CD workflow: {ctx.cd_run_url}")
+        lines.append(f"- CD workflow (main): {ctx.cd_run_url}")
+    if ctx.develop_cd_run_url:
+        lines.append(f"- Develop CD workflow: {ctx.develop_cd_run_url}")
     return "\n".join(lines)

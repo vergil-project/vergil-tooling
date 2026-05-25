@@ -222,7 +222,7 @@ from pathlib import Path
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestLoadAppConfig -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestLoadAppConfig -v`
 Expected: FAIL — `_load_app_config` does not exist
 
 - [ ] **Step 3: Implement `_load_app_config`**
@@ -272,7 +272,7 @@ def _load_app_config() -> tuple[str, str, Path] | None:
 
 - [ ] **Step 4: Run `_load_app_config` tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestLoadAppConfig -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestLoadAppConfig -v`
 Expected: PASS
 
 - [ ] **Step 5: Write failing tests for `_generate_jwt`**
@@ -337,7 +337,7 @@ class TestGenerateJwt:
 
 - [ ] **Step 6: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGenerateJwt -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGenerateJwt -v`
 Expected: FAIL — `_generate_jwt` does not exist
 
 - [ ] **Step 7: Implement `_generate_jwt`**
@@ -384,7 +384,7 @@ def _generate_jwt(app_id: str, key_path: Path) -> str:
 
 - [ ] **Step 8: Run `_generate_jwt` tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGenerateJwt -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGenerateJwt -v`
 Expected: PASS
 
 - [ ] **Step 9: Write failing tests for `get_installation_token`**
@@ -481,7 +481,7 @@ class TestGetInstallationToken:
 
 - [ ] **Step 10: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGetInstallationToken -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestGetInstallationToken -v`
 Expected: FAIL — `get_installation_token` does not exist
 
 - [ ] **Step 11: Implement `get_installation_token`**
@@ -533,7 +533,7 @@ def get_installation_token() -> str | None:
 
 - [ ] **Step 12: Run all token exchange tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py -k "LoadAppConfig or GenerateJwt or GetInstallationToken" -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py -k "LoadAppConfig or GenerateJwt or GetInstallationToken" -v`
 Expected: PASS
 
 - [ ] **Step 13: Update autouse fixture to clear token cache**
@@ -551,7 +551,7 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
 
 - [ ] **Step 14: Run full github.py test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
 Expected: PASS (existing tests unaffected)
 
 - [ ] **Step 15: Commit**
@@ -614,7 +614,7 @@ def test_no_env_injection_when_no_app_token() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -k "app_token" -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -k "app_token" -v`
 Expected: FAIL
 
 - [ ] **Step 3: Update existing tests to remove `_get_token` mocking**
@@ -823,7 +823,7 @@ def main(argv: list[str] | None = None) -> int:
 
 - [ ] **Step 5: Run full vrg-gh test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -938,7 +938,7 @@ def test_no_co_author_when_env_var_unset(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -k "co_author" -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -k "co_author" -v`
 Expected: FAIL
 
 - [ ] **Step 3: Rewrite co-author resolution in vrg-commit**
@@ -1045,7 +1045,7 @@ no longer needed since the fixture now uses `co_author` parameter.
 
 - [ ] **Step 5: Run full vrg-commit test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1158,7 +1158,7 @@ def _no_credential_injection(monkeypatch: pytest.MonkeyPatch) -> None:
 
 - [ ] **Step 5: Run full github.py test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -1264,7 +1264,7 @@ class TestRemoteTokenInjection:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::TestRemoteTokenInjection -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::TestRemoteTokenInjection -v`
 Expected: FAIL
 
 - [ ] **Step 3: Implement token injection**
@@ -1332,12 +1332,12 @@ Apply the same change to the compound-command path (the
 
 - [ ] **Step 4: Run remote token injection tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::TestRemoteTokenInjection -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py::TestRemoteTokenInjection -v`
 Expected: PASS
 
 - [ ] **Step 5: Run full vrg-git test suite**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_git.py -v`
 Expected: PASS (existing tests unaffected — they don't mock
 `github.get_installation_token` so it returns `None` and no env
 is injected)
@@ -1357,7 +1357,7 @@ vrg-commit --type feat --scope git \
 - [ ] **Step 1: Run full validation**
 
 ```bash
-cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-933-single-account-identity && vrg-docker-run -- uv run vrg-validate
+cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-933-single-account-identity && vrg-container-run -- uv run vrg-validate
 ```
 
 - [ ] **Step 2: Fix any lint, typecheck, or test failures**

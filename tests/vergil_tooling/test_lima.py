@@ -72,6 +72,72 @@ class TestLimactl:
         assert "-c" in args
         assert "cat > /tmp/out" in args
 
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_limactl_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, "limactl")
+        err.stderr = "FATA[0000] instance not found\n"
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            _limactl("start", "nonexistent")
+        captured = capsys.readouterr()
+        assert "instance not found" in captured.err
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_shell_run_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, "limactl shell")
+        err.stderr = "command failed\n"
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            shell_run("vergil-agent", "false")
+        captured = capsys.readouterr()
+        assert "command failed" in captured.err
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_shell_pipe_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, "limactl shell")
+        err.stderr = "pipe error\n"
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            shell_pipe("vergil-agent", "cat > /tmp/out", "data")
+        captured = capsys.readouterr()
+        assert "pipe error" in captured.err
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_limactl_error_no_stderr(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "limactl")
+        err.stderr = ""
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            _limactl("start", "nonexistent")
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_shell_run_error_no_stderr(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "limactl shell")
+        err.stderr = ""
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            shell_run("vergil-agent", "false")
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_shell_pipe_error_no_stderr(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "limactl shell")
+        err.stderr = ""
+        err.stdout = ""
+        mock_run.side_effect = err
+        with pytest.raises(subprocess.CalledProcessError):
+            shell_pipe("vergil-agent", "cat > /tmp/out", "data")
+
 
 class TestVmStatus:
     @patch("vergil_tooling.lib.lima._limactl")

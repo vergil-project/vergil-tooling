@@ -5,7 +5,7 @@
 > superpowers:executing-plans to implement this plan task-by-task. Steps
 > use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Remove the `GH_TOKEN` hard gate from `vrg-docker-run`,
+**Goal:** Remove the `GH_TOKEN` hard gate from `vrg-container-run`,
 update documentation to reflect the new credential management model
 (classic PATs via `gh auth`, credential selection by `vrg-gh`), and
 create tracking issues for deferred work.
@@ -41,7 +41,7 @@ here.
 
 ---
 
-## Task 1: Remove `GH_TOKEN` Hard Gate from `vrg-docker-run`
+## Task 1: Remove `GH_TOKEN` Hard Gate from `vrg-container-run`
 
 **Requirement:** Spec Section 6 — remove the hard gate; the
 container launches regardless of whether `GH_TOKEN` is set.
@@ -52,14 +52,14 @@ left as-is. Cleanup of the hardcoded prefix list is tracked
 separately in #777.
 
 **Files:**
-- Modify: `src/vergil_tooling/bin/vrg_docker_run.py:40,80-86`
-- Modify: `tests/vergil_tooling/test_vrg_docker_run.py:77-82`
+- Modify: `src/vergil_tooling/bin/vrg_container_run.py:40,80-86`
+- Modify: `tests/vergil_tooling/test_vrg_container_run.py:77-82`
 
 #### RED — Container launches without `GH_TOKEN`
 
 - [ ] **Step 1: Update the existing test to expect success**
 
-  In `tests/vergil_tooling/test_vrg_docker_run.py`, replace
+  In `tests/vergil_tooling/test_vrg_container_run.py`, replace
   `test_missing_gh_token` (lines 77-82) with a test that verifies
   the container launches without `GH_TOKEN`:
 
@@ -67,10 +67,10 @@ separately in #777.
   def test_launches_without_gh_token(tmp_path: Path) -> None:
       (tmp_path / "pyproject.toml").write_text("[project]\n")
       with (
-          patch("vergil_tooling.bin.vrg_docker_run.git.repo_root", return_value=tmp_path),
-          patch("vergil_tooling.bin.vrg_docker_run.assert_docker_available"),
-          patch("vergil_tooling.bin.vrg_docker_run.ensure_cached_image") as mock_cache,
-          patch("vergil_tooling.bin.vrg_docker_run.os.execvp") as mock_exec,
+          patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+          patch("vergil_tooling.bin.vrg_container_run.assert_docker_available"),
+          patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image") as mock_cache,
+          patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
           patch.dict("os.environ", {}, clear=True),
       ):
           mock_cache.return_value = "ghcr.io/vergil-project/prod-python:3.14"
@@ -81,8 +81,8 @@ separately in #777.
 - [ ] **Step 2: Run the test to verify it fails**
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run pytest \
-    tests/vergil_tooling/test_vrg_docker_run.py::test_launches_without_gh_token -v
+  cd <worktree> && vrg-container-run -- uv run pytest \
+    tests/vergil_tooling/test_vrg_container_run.py::test_launches_without_gh_token -v
   ```
 
   Expected: FAIL — `main()` returns 1 because the `GH_TOKEN` gate
@@ -90,7 +90,7 @@ separately in #777.
 
 #### GREEN — Remove the gate
 
-- [ ] **Step 3: Remove the `GH_TOKEN` check from `vrg_docker_run.py`**
+- [ ] **Step 3: Remove the `GH_TOKEN` check from `vrg_container_run.py`**
 
   Delete lines 80-86:
 
@@ -99,7 +99,7 @@ separately in #777.
   if not os.environ.get("GH_TOKEN"):
       print(
           "ERROR: GH_TOKEN is not set. Set GH_TOKEN in your environment before\n"
-          "running vrg-docker-run. See docs/development/environment-setup.md.",
+          "running vrg-container-run. See docs/development/environment-setup.md.",
           file=sys.stderr,
       )
       return 1
@@ -122,8 +122,8 @@ separately in #777.
 - [ ] **Step 5: Run the new test to verify it passes**
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run pytest \
-    tests/vergil_tooling/test_vrg_docker_run.py::test_launches_without_gh_token -v
+  cd <worktree> && vrg-container-run -- uv run pytest \
+    tests/vergil_tooling/test_vrg_container_run.py::test_launches_without_gh_token -v
   ```
 
   Expected: PASS
@@ -135,8 +135,8 @@ separately in #777.
   (it's optional now, not removed). Verify this test still passes:
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run pytest \
-    tests/vergil_tooling/test_vrg_docker_run.py::test_help_flag -v
+  cd <worktree> && vrg-container-run -- uv run pytest \
+    tests/vergil_tooling/test_vrg_container_run.py::test_help_flag -v
   ```
 
   Expected: PASS
@@ -144,8 +144,8 @@ separately in #777.
 - [ ] **Step 7: Run the full test file**
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run pytest \
-    tests/vergil_tooling/test_vrg_docker_run.py -v
+  cd <worktree> && vrg-container-run -- uv run pytest \
+    tests/vergil_tooling/test_vrg_container_run.py -v
   ```
 
   Expected: all tests pass. Many existing tests use
@@ -156,7 +156,7 @@ separately in #777.
 - [ ] **Step 8: Run full validation**
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run vrg-validate
+  cd <worktree> && vrg-container-run -- uv run vrg-validate
   ```
 
   Expected: all checks pass.
@@ -165,7 +165,7 @@ separately in #777.
 
   ```bash
   cd <worktree> && vrg-commit --type refactor --scope docker-run \
-    --message "remove GH_TOKEN hard gate from vrg-docker-run" \
+    --message "remove GH_TOKEN hard gate from vrg-container-run" \
     --body "The container now launches regardless of whether GH_TOKEN is set. GitHub credentials are not needed for validation, linting, or testing. When GH_TOKEN is present it is still passed through to the container. Ref #775." \
     --agent wphillipmoore-agent
   ```
@@ -486,7 +486,7 @@ must have tracking issues.
 - [ ] **Step 1: Run full validation**
 
   ```bash
-  cd <worktree> && vrg-docker-run -- uv run vrg-validate
+  cd <worktree> && vrg-container-run -- uv run vrg-validate
   ```
 
   Expected: all checks pass.
@@ -499,7 +499,7 @@ must have tracking issues.
 
   Create PR targeting `develop` with title and body summarizing
   all changes:
-  - Removed `GH_TOKEN` hard gate from `vrg-docker-run`
+  - Removed `GH_TOKEN` hard gate from `vrg-container-run`
   - Added supersession notices to org governance design and plan
   - Added credential selection cross-references to permission model
   - Updated consuming repo setup guide

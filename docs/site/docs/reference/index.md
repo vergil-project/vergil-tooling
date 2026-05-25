@@ -18,14 +18,14 @@ the dev-tree override venv.
 | [vrg-prepare-release](dev/prepare-release.md) | Automated release preparation |
 | [vrg-finalize-repo](dev/finalize-repo.md) | Post-merge repository cleanup |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
-| [vrg-docker-run](cli-tools-overview.md#vrg-docker-run) | Run commands inside a dev container |
-| [vrg-docker-test](cli-tools-overview.md#vrg-docker-test) | Run test suite inside a dev container |
-| [vrg-docker-docs](cli-tools-overview.md#vrg-docker-docs) | Preview/build MkDocs in a dev container |
+| [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
+| [vrg-container-test](cli-tools-overview.md#vrg-container-test) | Run test suite inside a dev container |
+| [vrg-container-docs](cli-tools-overview.md#vrg-container-docs) | Preview/build MkDocs in a dev container |
 | [vrg-generate-commands](cli-tools-overview.md#vrg-generate-commands) | Generate MQSC command methods |
 
 ## Container tools
 
-Run inside dev containers launched by `vrg-docker-run`.
+Run inside dev containers launched by `vrg-container-run`.
 
 | Tool | Purpose |
 | ---- | ------- |

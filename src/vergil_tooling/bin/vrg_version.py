@@ -27,7 +27,14 @@ def main() -> None:
         help="Read version from a git ref (e.g., origin/main) via git show",
     )
 
-    sub.add_parser("bump", help="Increment patch version")
+    bump_parser = sub.add_parser("bump", help="Increment version")
+    bump_parser.add_argument(
+        "part",
+        nargs="?",
+        choices=("patch", "minor", "major"),
+        default="patch",
+        help="Version component to bump (default: patch)",
+    )
 
     args = parser.parse_args()
     repo_root = Path.cwd()
@@ -38,7 +45,7 @@ def main() -> None:
         else:
             print(show(repo_root, ref=args.ref))  # noqa: T201
     else:
-        new_version = bump(repo_root)
+        new_version = bump(repo_root, args.part)
         print(new_version)  # noqa: T201
 
 

@@ -81,7 +81,7 @@ runs validation, and checks the Documentation workflow status.
 |---|---|
 | Source | `vergil_tooling.bin.vrg_finalize_repo` |
 | Args | `--target-branch` (default: develop), `--dry-run` |
-| Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `vrg-docker-run` on PATH |
+| Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `vrg-container-run` on PATH |
 | Failure mode | Validation failures return exit 1; docs workflow failure is a soft warning (exit 0) |
 | Exit codes | 0 success, 1 validation failure or unrecognized branching model |
 | Status | Active |
@@ -101,7 +101,7 @@ and project (discover repos via a GitHub Project and sync each).
 | Exit codes | 0 success |
 | Status | Active |
 
-### vrg-docker-run
+### vrg-container-run
 
 Run arbitrary commands inside a dev container. Auto-detects the
 project language to select the Docker image; falls back to
@@ -109,28 +109,28 @@ project language to select the Docker image; falls back to
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_docker_run` |
+| Source | `vergil_tooling.bin.vrg_container_run` |
 | Args | `[--prefix <dev\|prod>] [--] <command> [args...]` (manual parsing, `--` separator) |
 | Preconditions | Git repo, `GH_TOKEN` set, Docker daemon running |
 | Failure mode | Explicit error message for missing `GH_TOKEN`; `assert_docker_available()` exits with message for Docker; `git.repo_root()` raises on non-git directory |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
-### vrg-docker-test
+### vrg-container-test
 
 Run a repository's test suite inside a dev container. Auto-detects
 language and selects appropriate image and test command.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_docker_test` |
+| Source | `vergil_tooling.bin.vrg_container_test` |
 | Args | None |
 | Preconditions | Git repo, Docker daemon running, language detection or `DOCKER_DEV_IMAGE` + `DOCKER_TEST_CMD` |
 | Failure mode | Explicit error for undetected language and unavailable Docker; `git.repo_root()` raises on non-git directory |
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
-### vrg-docker-docs
+### vrg-container-docs
 
 Preview or build MkDocs documentation inside a dev container.
 Supports `serve` (live-reload) and `build` subcommands. For Python
@@ -138,7 +138,7 @@ repos, wraps with `uv sync --group docs`.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_docker_docs` |
+| Source | `vergil_tooling.bin.vrg_container_docs` |
 | Args | `<serve\|build> [mkdocs args...]` (manual parsing) |
 | Preconditions | Git repo, Docker daemon |
 | Failure mode | Usage message on missing/unknown subcommand |
@@ -162,7 +162,7 @@ between `BEGIN/END GENERATED MQSC METHODS` markers.
 
 ## Container tools
 
-Container tools run inside dev containers launched by `vrg-docker-run`.
+Container tools run inside dev containers launched by `vrg-container-run`.
 They assume language toolchain dependencies (ruff, mypy, shellcheck,
 markdownlint, yamllint) are available on PATH.
 
@@ -242,7 +242,7 @@ messages. Notable gaps:
 - `vrg-submit-pr` does not validate that `gh` is on PATH before
   attempting `git push` and `gh pr create`. Failure surfaces as a
   subprocess error rather than a clear precondition message.
-- `vrg-docker-run` checks `GH_TOKEN` explicitly; `vrg-docker-test`
+- `vrg-container-run` checks `GH_TOKEN` explicitly; `vrg-container-test`
   does not (it will fail inside the container when `gh` commands
   run without a token, but the error is less clear).
 
@@ -250,11 +250,11 @@ messages. Notable gaps:
 
 Most tools use `argparse`. Two exceptions:
 
-- `vrg-docker-run` parses `sys.argv` manually with a `--` separator.
-- `vrg-docker-docs` parses `sys.argv` manually with subcommands.
+- `vrg-container-run` parses `sys.argv` manually with a `--` separator.
+- `vrg-container-docs` parses `sys.argv` manually with subcommands.
 
-Both are intentional: `vrg-docker-run` passes everything after `--`
-through to `docker run`, and `vrg-docker-docs` has a simpler
+Both are intentional: `vrg-container-run` passes everything after `--`
+through to `docker run`, and `vrg-container-docs` has a simpler
 interface than argparse would provide. No alignment needed.
 
 ### Exit code contract

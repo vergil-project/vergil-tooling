@@ -61,7 +61,7 @@ Git, GHCR (container registry), GitHub Actions workflows
 | `src/vergil_tooling/lib/docker.py` | `_GHCR = "ghcr.io/wphillipmoore"` → `"ghcr.io/vergil-project"` |
 | `src/vergil_tooling/lib/docker_cache.py` | Import `vrg_install_tag` |
 | All `.py` files | `from standard_tooling` → `from vergil_tooling`; `import standard_tooling` → `import vergil_tooling` |
-| All `.py` bin files | String refs: `st-validate` → `vrg-validate`, `st-docker-run` → `vrg-docker-run`, etc. |
+| All `.py` bin files | String refs: `st-validate` → `vrg-validate`, `st-docker-run` → `vrg-container-run`, etc. |
 | `.githooks/pre-commit` | `st-commit` → `vrg-commit`, `ST_COMMIT_CONTEXT` → `VRG_COMMIT_CONTEXT` |
 | `standard-tooling.toml` | Rename → `vergil.toml`; update fields |
 | `.github/workflows/*.yml` | `wphillipmoore/standard-actions` → `vergil-project/vergil-actions` |
@@ -493,10 +493,10 @@ cd ../../..
 This renames:
 - `st_check_pr_merge.py` → `vrg_check_pr_merge.py`
 - `st_commit.py` → `vrg_commit.py`
-- `st_docker_cache.py` → `vrg_docker_cache.py`
-- `st_docker_docs.py` → `vrg_docker_docs.py`
-- `st_docker_run.py` → `vrg_docker_run.py`
-- `st_docker_test.py` → `vrg_docker_test.py`
+- `st_docker_cache.py` → `vrg_container_cache.py`
+- `st_docker_docs.py` → `vrg_container_docs.py`
+- `st_docker_run.py` → `vrg_container_run.py`
+- `st_docker_test.py` → `vrg_container_test.py`
 - `st_ensure_label.py` → `vrg_ensure_label.py`
 - `st_finalize_repo.py` → `vrg_finalize_repo.py`
 - `st_generate_commands.py` → `vrg_generate_commands.py`
@@ -555,10 +555,10 @@ Replace the entire `[project.scripts]` section:
 [project.scripts]
 vrg-check-pr-merge = "vergil_tooling.bin.vrg_check_pr_merge:main"
 vrg-commit = "vergil_tooling.bin.vrg_commit:main"
-vrg-docker-cache = "vergil_tooling.bin.vrg_docker_cache:main"
-vrg-docker-docs = "vergil_tooling.bin.vrg_docker_docs:main"
-vrg-docker-run = "vergil_tooling.bin.vrg_docker_run:main"
-vrg-docker-test = "vergil_tooling.bin.vrg_docker_test:main"
+vrg-container-cache = "vergil_tooling.bin.vrg_container_cache:main"
+vrg-container-docs = "vergil_tooling.bin.vrg_container_docs:main"
+vrg-container-run = "vergil_tooling.bin.vrg_container_run:main"
+vrg-container-test = "vergil_tooling.bin.vrg_container_test:main"
 vrg-ensure-label = "vergil_tooling.bin.vrg_ensure_label:main"
 vrg-finalize-repo = "vergil_tooling.bin.vrg_finalize_repo:main"
 vrg-generate-commands = "vergil_tooling.bin.vrg_generate_commands:main"
@@ -696,10 +696,10 @@ Commit message: `refactor!: update imports, constants, and env vars for vergil r
 find src/vergil_tooling/bin -name '*.py' -exec sed -i '' \
   -e 's/st-validate-custom/vrg-validate-custom/g' \
   -e 's/st-validate/vrg-validate/g' \
-  -e 's/st-docker-run/vrg-docker-run/g' \
-  -e 's/st-docker-test/vrg-docker-test/g' \
-  -e 's/st-docker-cache/vrg-docker-cache/g' \
-  -e 's/st-docker-docs/vrg-docker-docs/g' \
+  -e 's/st-docker-run/vrg-container-run/g' \
+  -e 's/st-docker-test/vrg-container-test/g' \
+  -e 's/st-docker-cache/vrg-container-cache/g' \
+  -e 's/st-docker-docs/vrg-container-docs/g' \
   -e 's/st-commit/vrg-commit/g' \
   -e 's/st-submit-pr/vrg-submit-pr/g' \
   -e 's/st-prepare-release/vrg-prepare-release/g' \
@@ -730,12 +730,12 @@ find src/vergil_tooling -name '*.py' -exec sed -i '' \
 Review these files manually to confirm string references are correct:
 - `src/vergil_tooling/bin/vrg_validate.py` — help text, error
   messages, `prog=` argument
-- `src/vergil_tooling/bin/vrg_docker_run.py` — usage string, help
+- `src/vergil_tooling/bin/vrg_container_run.py` — usage string, help
   text
 - `src/vergil_tooling/bin/vrg_commit.py` — docstring referencing
   config file
 - `src/vergil_tooling/bin/vrg_finalize_repo.py` — subprocess calls to
-  `vrg-docker-run` and `vrg-validate`
+  `vrg-container-run` and `vrg-validate`
 
 - [ ] **Step 4: Update dependency-key references in test fixtures**
 
@@ -763,7 +763,7 @@ find src/vergil_tooling/lib tests/vergil_tooling -name '*.py' -exec sed -i '' \
   -e 's/standard-tooling/vergil-tooling/g' \
   -e 's/st-commit/vrg-commit/g' \
   -e 's/st-validate/vrg-validate/g' \
-  -e 's/st-docker-run/vrg-docker-run/g' \
+  -e 's/st-docker-run/vrg-container-run/g' \
   -e 's/st-finalize-repo/vrg-finalize-repo/g' \
   -e 's/ST_COMMIT_CONTEXT/VRG_COMMIT_CONTEXT/g' \
   -e 's/ST_DOCKER_INSTALL_TAG/VRG_DOCKER_INSTALL_TAG/g' \
@@ -866,8 +866,8 @@ sed -i '' \
   -e 's|wphillipmoore/vergil|vergil-project/vergil|g' \
   -e 's/st-commit/vrg-commit/g' \
   -e 's/st-validate/vrg-validate/g' \
-  -e 's/st-docker-run/vrg-docker-run/g' \
-  -e 's/st-docker-test/vrg-docker-test/g' \
+  -e 's/st-docker-run/vrg-container-run/g' \
+  -e 's/st-docker-test/vrg-container-test/g' \
   -e 's/st-submit-pr/vrg-submit-pr/g' \
   -e 's/st-prepare-release/vrg-prepare-release/g' \
   -e 's/st-merge-when-green/vrg-merge-when-green/g' \
@@ -898,8 +898,8 @@ find docs -name '*.md' -exec sed -i '' \
   -e 's|wphillipmoore/vergil|vergil-project/vergil|g' \
   -e 's/st-commit/vrg-commit/g' \
   -e 's/st-validate/vrg-validate/g' \
-  -e 's/st-docker-run/vrg-docker-run/g' \
-  -e 's/st-docker-test/vrg-docker-test/g' \
+  -e 's/st-docker-run/vrg-container-run/g' \
+  -e 's/st-docker-test/vrg-container-test/g' \
   -e 's/st-submit-pr/vrg-submit-pr/g' \
   -e 's/st-prepare-release/vrg-prepare-release/g' \
   -e 's/st-merge-when-green/vrg-merge-when-green/g' \
@@ -944,14 +944,14 @@ export PATH="$(pwd)/.venv-host/bin:$PATH"
 - [ ] **Step 2: Run validation**
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 If this fails because the host tools are still named `st-*`, use the
 dev-tree override:
 
 ```bash
-python -m vergil_tooling.bin.vrg_docker_run -- uv run python -m vergil_tooling.bin.vrg_validate
+python -m vergil_tooling.bin.vrg_container_run -- uv run python -m vergil_tooling.bin.vrg_validate
 ```
 
 Or simply run tests directly:
@@ -1078,7 +1078,7 @@ find skills -name 'SKILL.md' -exec sed -i '' \
   -e 's|wphillipmoore/vergil|vergil-project/vergil|g' \
   -e 's/st-commit/vrg-commit/g' \
   -e 's/st-validate/vrg-validate/g' \
-  -e 's/st-docker-run/vrg-docker-run/g' \
+  -e 's/st-docker-run/vrg-container-run/g' \
   -e 's/st-submit-pr/vrg-submit-pr/g' \
   -e 's/st-prepare-release/vrg-prepare-release/g' \
   -e 's/st-merge-when-green/vrg-merge-when-green/g' \
@@ -1308,7 +1308,7 @@ uv tool install --python 3.14 \
 Verify the tools are available:
 
 ```bash
-which vrg-commit vrg-validate vrg-docker-run
+which vrg-commit vrg-validate vrg-container-run
 ```
 
 - [ ] **Step 4: Update local git remotes**
@@ -1338,7 +1338,7 @@ Pick one consumer repo and verify the full workflow:
 
 ```bash
 cd ~/dev/github/<consumer-repo>
-vrg-docker-run -- uv run vrg-validate  # or language-appropriate command
+vrg-container-run -- uv run vrg-validate  # or language-appropriate command
 ```
 
 This proves: host tools installed correctly, config file parsed,

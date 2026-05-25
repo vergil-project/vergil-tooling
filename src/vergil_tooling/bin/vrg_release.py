@@ -31,6 +31,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Show full subprocess output (default: summarized).",
     )
+    parser.add_argument(
+        "--no-promote",
+        action="store_true",
+        default=False,
+        help="Skip rolling-tag promotion after release.",
+    )
     return parser.parse_args(argv)
 
 
@@ -46,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
             repo_root=repo_root,
             verbose=args.verbose,
         )
+        ctx.promote = not args.no_promote
         elapsed = time.monotonic() - start
         print(f"=== preflight: done ({_format_elapsed(elapsed)}) ===")
         run_release(ctx)

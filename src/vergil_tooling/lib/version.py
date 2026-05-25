@@ -144,12 +144,17 @@ def _read_version(text: str, language: str) -> str:
 
 
 def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
-    result = subprocess.run(  # noqa: S603
-        ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "show", f"{ref}:{relative_path}"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     return _read_version(result.stdout, language)
 
 
@@ -175,9 +180,20 @@ def show_major_minor(repo_root: Path, *, ref: str | None = None) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def _increment_patch(version: str) -> str:
+_VALID_PARTS = frozenset({"patch", "minor", "major"})
+
+
+def _increment_version(version: str, part: str) -> str:
     parts = version.split(".")
-    parts[2] = str(int(parts[2]) + 1)
+    if part == "patch":
+        parts[2] = str(int(parts[2]) + 1)
+    elif part == "minor":
+        parts[1] = str(int(parts[1]) + 1)
+        parts[2] = "0"
+    else:
+        parts[0] = str(int(parts[0]) + 1)
+        parts[1] = "0"
+        parts[2] = "0"
     return ".".join(parts)
 
 
@@ -204,20 +220,29 @@ def _run_lockfile_maintenance(repo_root: Path, language: str) -> None:
     cmd = _LOCKFILE_COMMANDS.get(language)
     if cmd is None:
         return
-    result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+    try:
+        result = subprocess.run(cmd, cwd=repo_root, check=True, capture_output=True, text=True)  # noqa: S603
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
 
 
-def bump(repo_root: Path) -> str:
+def bump(repo_root: Path, part: str = "patch") -> str:
+    if part not in _VALID_PARTS:
+        msg = f"part must be one of {sorted(_VALID_PARTS)}, got '{part}'"
+        raise ValueError(msg)
+
     version_file = repo_root / VERSION_FILE
     if not version_file.is_file():
         msg = f"VERSION file not found at {repo_root}"
         raise FileNotFoundError(msg)
     old_version = version_file.read_text().strip()
-    new_version = _increment_patch(old_version)
+    new_version = _increment_version(old_version, part)
 
     version_file.write_text(new_version + "\n")
 

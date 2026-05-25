@@ -46,6 +46,27 @@ def test_context_fields_are_mutable() -> None:
     assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
 
 
+def test_context_promote_defaults_true() -> None:
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+    )
+    assert ctx.promote is True
+
+
+def test_context_develop_cd_fields_default_none() -> None:
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+    )
+    assert ctx.develop_cd_run_id is None
+    assert ctx.develop_cd_run_url is None
+
+
 def test_release_error_carries_diagnostics() -> None:
     err = ReleaseError(
         phase="merge-release",

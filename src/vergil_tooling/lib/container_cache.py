@@ -1,4 +1,4 @@
-"""Per-branch Docker image caching with vergil-tooling pre-installed."""
+"""Per-branch container image caching with vergil-tooling pre-installed."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
-from vergil_tooling.lib.docker import docker_platform
+from vergil_tooling.lib.container import container_platform, detect_runtime
 from vergil_tooling.lib.validate_commands import CheckKind, language_commands
 
 if TYPE_CHECKING:
@@ -77,18 +77,19 @@ def cache_image_tag(base_image: str, branch: str, cache_hash: str) -> str:
     return f"{base_repo}:{base_tag}--{sanitized}--{cache_hash}"
 
 
-def find_cached_image(base_image: str, branch: str) -> tuple[str, str] | None:
+def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tuple[str, str] | None:
     """Find an existing cached image for *base_image* and *branch*.
 
     Returns ``(full_tag, hash_suffix)`` or ``None``.
     """
+    rt = runtime or detect_runtime()
     sanitized = _sanitize_branch(branch)
     base_tag = base_image.split(":")[-1] if ":" in base_image else "latest"
     base_repo = base_image.split(":")[0]
     pattern = f"{base_repo}:{base_tag}--{sanitized}--"
 
     result = subprocess.run(  # noqa: S603
-        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
+        [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
         capture_output=True,
         text=True,
     )
@@ -107,8 +108,11 @@ def _build_cached_image(
     lang: str,
     base_image: str,
     target_tag: str,
+    *,
+    runtime: str = "",
 ) -> str:
     """Build a cached image with vergil-tooling installed."""
+    rt = runtime or detect_runtime()
     self_repo = _is_self_repo(repo_root)
     warmup = _warmup_command(lang)
 
@@ -130,9 +134,9 @@ def _build_cached_image(
 
     cid_result = subprocess.run(  # noqa: S603
         [  # noqa: S607
-            "docker",
+            rt,
             "create",
-            f"--platform={docker_platform()}",
+            f"--platform={container_platform()}",
             "-v",
             f"{repo_root}:/workspace",
             "-w",
@@ -153,20 +157,20 @@ def _build_cached_image(
 
     try:
         run_result = subprocess.run(  # noqa: S603
-            ["docker", "start", "-a", container_id],  # noqa: S607
+            [rt, "start", "-a", container_id],  # noqa: S607
         )
         if run_result.returncode != 0:
             msg = "Cache build failed"
             raise RuntimeError(msg)
 
         subprocess.run(  # noqa: S603
-            ["docker", "commit", container_id, target_tag],  # noqa: S607
+            [rt, "commit", container_id, target_tag],  # noqa: S607
             capture_output=True,
             check=True,
         )
     finally:
         subprocess.run(  # noqa: S603
-            ["docker", "rm", container_id],  # noqa: S607
+            [rt, "rm", container_id],  # noqa: S607
             capture_output=True,
         )
 
@@ -178,11 +182,14 @@ def ensure_cached_image(
     repo_root: Path,
     lang: str,
     base_image: str,
+    *,
+    runtime: str = "",
 ) -> str:
     """Return a cached image tag, building one if needed.
 
     Returns *base_image* unchanged if no cache-sensitive files are found.
     """
+    rt = runtime or detect_runtime()
     files = cache_sensitive_files(repo_root, lang)
     if not files:
         return base_image
@@ -191,7 +198,7 @@ def ensure_cached_image(
 
     branch = _git.current_branch()
     current_hash = compute_cache_hash(files, salt=repo_root.name)
-    existing = find_cached_image(base_image, branch)
+    existing = find_cached_image(base_image, branch, runtime=rt)
 
     if existing is not None:
         existing_tag, existing_hash = existing
@@ -199,21 +206,22 @@ def ensure_cached_image(
             return existing_tag
         # Stale cache — remove it.
         subprocess.run(  # noqa: S603
-            ["docker", "rmi", existing_tag],  # noqa: S607
+            [rt, "rmi", existing_tag],  # noqa: S607
             capture_output=True,
         )
 
     target_tag = cache_image_tag(base_image, branch, current_hash)
-    return _build_cached_image(repo_root, lang, base_image, target_tag)
+    return _build_cached_image(repo_root, lang, base_image, target_tag, runtime=rt)
 
 
-def clean_branch_images(branch: str) -> int:
+def clean_branch_images(branch: str, *, runtime: str = "") -> int:
     """Remove all cached images for *branch*. Returns count removed."""
+    rt = runtime or detect_runtime()
     sanitized = _sanitize_branch(branch)
     pattern = f"--{sanitized}--"
 
     result = subprocess.run(  # noqa: S603
-        ["docker", "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
+        [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
         capture_output=True,
         text=True,
     )
@@ -224,7 +232,7 @@ def clean_branch_images(branch: str) -> int:
     for line in result.stdout.splitlines():
         if pattern in line:
             subprocess.run(  # noqa: S603
-                ["docker", "rmi", line],  # noqa: S607
+                [rt, "rmi", line],  # noqa: S607
                 capture_output=True,
             )
             removed += 1

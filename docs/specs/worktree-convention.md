@@ -137,7 +137,7 @@ Rules for this session:
   read-only — all changes flow through your worktree on your
   feature branch.
 - When you need to run validation, run it from inside your worktree
-  (vrg-docker-run mounts the current directory).
+  (vrg-container-run mounts the current directory).
 ```
 
 All fields are required. The template is intended as a copy-paste

@@ -219,7 +219,7 @@ def test_missing_config_file(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
 Expected: FAIL (module not found)
 
 - [ ] **Step 3: Implement the identity config parser**
@@ -306,7 +306,7 @@ def resolve_project(
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_identity.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -409,7 +409,7 @@ def test_missing_api_key(
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: FAIL (module not found)
 
 - [ ] **Step 3: Implement vrg-session**
@@ -540,7 +540,7 @@ vrg-session = "vergil_tooling.bin.vrg_session:main"
 
 - [ ] **Step 5: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: PASS
 
 - [ ] **Step 6: Commit**
@@ -597,7 +597,7 @@ def test_check_vm_running_false(monkeypatch: pytest.MonkeyPatch) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py::test_check_vm_running_true -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py::test_check_vm_running_true -v`
 Expected: FAIL
 
 - [ ] **Step 3: Implement check_vm_running and auto-start**
@@ -635,7 +635,7 @@ building the command.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_session.py -v`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
@@ -655,7 +655,7 @@ Run the full test suite and validate manually.
 - [ ] **Step 1: Run full validation**
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 - [ ] **Step 2: Manual validation (requires working VM from Plan 1)**

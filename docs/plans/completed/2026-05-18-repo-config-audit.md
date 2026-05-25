@@ -167,7 +167,7 @@ Each cycle below adds one check. Use `tmp_path` fixtures throughout
 
 #### Phase 1 validation
 
-- [ ] Run `vrg-docker-run -- uv run vrg-validate`. All tests must
+- [ ] Run `vrg-container-run -- uv run vrg-validate`. All tests must
   pass. 100% coverage on `repo_config.py`.
 
 ---
@@ -251,7 +251,7 @@ calls — only local audit logic is tested against real filesystems.
 
 #### CLI validation
 
-- [ ] Run `vrg-docker-run -- uv run vrg-validate`. All tests must
+- [ ] Run `vrg-container-run -- uv run vrg-validate`. All tests must
   pass. 100% coverage on both new files.
 
 ### Task 4: Delete `vrg-github-config`
@@ -298,7 +298,7 @@ replace the existing equivalent sections.
 Immediately after the validation section, add:
 
 > **Note:** This repository uses
-> `vrg-docker-run -- uv run vrg-validate` because it runs its own
+> `vrg-container-run -- uv run vrg-validate` because it runs its own
 > unreleased code rather than the pre-installed version.
 
 - [ ] **Step 3: Verify self-audit passes**
@@ -312,7 +312,7 @@ GitHub checks.
 - [ ] **Step 1: Full validation**
 
 ```bash
-vrg-docker-run -- uv run vrg-validate
+vrg-container-run -- uv run vrg-validate
 ```
 
 All checks must pass. 100% coverage across all new and modified

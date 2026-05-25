@@ -42,7 +42,7 @@ def test_desired_security_settings_private_skips_ghas_features() -> None:
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_public tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_private_skips_ghas_features -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_public tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_private_skips_ghas_features -v`
 
 Expected: Both fail because `desired_security_settings()` does not accept a `visibility` parameter.
 
@@ -88,7 +88,7 @@ security=desired_security_settings(visibility=visibility),
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_public tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_private_skips_ghas_features -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_public tests/vergil_tooling/test_github_config_lib.py::test_desired_security_settings_private_skips_ghas_features -v`
 
 Expected: Both PASS.
 
@@ -100,7 +100,7 @@ Other tests that reference security settings construct `DesiredSecuritySettings`
 
 - [ ] **Step 8: Run the full test suite to check for regressions**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py tests/vergil_tooling/test_vrg_github_repo_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py tests/vergil_tooling/test_vrg_github_repo_config.py -v`
 
 Expected: All tests PASS.
 
@@ -147,7 +147,7 @@ def test_diff_identical_states_has_no_skipped() -> None:
 
 - [ ] **Step 3: Run tests to verify they fail**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_diff_records_skipped_security_fields_for_private_repo tests/vergil_tooling/test_github_config_lib.py::test_diff_identical_states_has_no_skipped -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_diff_records_skipped_security_fields_for_private_repo tests/vergil_tooling/test_github_config_lib.py::test_diff_identical_states_has_no_skipped -v`
 
 Expected: Both fail — `ConfigDiff` has no `skipped` attribute.
 
@@ -215,13 +215,13 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
 
 - [ ] **Step 7: Run tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_diff_records_skipped_security_fields_for_private_repo tests/vergil_tooling/test_github_config_lib.py::test_diff_identical_states_has_no_skipped -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_diff_records_skipped_security_fields_for_private_repo tests/vergil_tooling/test_github_config_lib.py::test_diff_identical_states_has_no_skipped -v`
 
 Expected: Both PASS.
 
 - [ ] **Step 8: Run full test suite for regressions**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py tests/vergil_tooling/test_vrg_github_repo_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py tests/vergil_tooling/test_vrg_github_repo_config.py -v`
 
 Expected: All tests PASS. The `skipped` field defaults to `[]` so existing `ConfigDiff()` construction in CLI test helpers is unaffected.
 
@@ -270,7 +270,7 @@ def test_apply_security_settings_skips_none_fields() -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_skips_none_fields -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_skips_none_fields -v`
 
 Expected: FAIL — the current code unconditionally includes all fields.
 
@@ -301,13 +301,13 @@ def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> No
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_skips_none_fields -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_skips_none_fields -v`
 
 Expected: PASS.
 
 - [ ] **Step 5: Run existing apply security tests to check for regressions**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_enables_vuln_alerts tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_disables_vuln_alerts -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_enables_vuln_alerts tests/vergil_tooling/test_github_config_lib.py::test_apply_security_settings_disables_vuln_alerts -v`
 
 Expected: Both PASS — they construct `DesiredSecuritySettings` with string values, so the conditional includes them.
 
@@ -354,7 +354,7 @@ def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_prints_skipped_fields -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_prints_skipped_fields -v`
 
 Expected: FAIL — `_print_diff` does not render skipped fields.
 
@@ -377,7 +377,7 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_prints_skipped_fields -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_prints_skipped_fields -v`
 
 Expected: PASS.
 
@@ -398,7 +398,7 @@ def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[st
 
 - [ ] **Step 6: Run to verify it passes immediately**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_compliant_public_repo_no_skipped -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_github_repo_config.py::test_audit_compliant_public_repo_no_skipped -v`
 
 Expected: PASS — `_mock_github_compliant()` returns `ConfigDiff(items=[])`, whose `skipped` defaults to `[]`.
 
@@ -420,7 +420,7 @@ messages for GHAS-gated features on private repos.
 
 - [ ] **Step 1: Run full validation pipeline**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 
 Expected: All checks pass (lint, typecheck, tests, audit).
 
@@ -432,7 +432,7 @@ If typecheck or lint failures arise (e.g., from the `str | None` type change), f
 
 - [ ] **Step 3: Run validation again to confirm clean**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 
 Expected: Clean pass.
 

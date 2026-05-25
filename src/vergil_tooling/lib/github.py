@@ -167,28 +167,38 @@ def get_installation_token(org: str | None = None) -> str | None:
         return None
 
     app_id, key_path = config
-    jwt_token = _generate_jwt(app_id, key_path)
+    try:
+        jwt_token = _generate_jwt(app_id, key_path)
 
-    installations = _resolve_installations(jwt_token)
-    installation_id = installations.get(org)
-    if not installation_id:
+        installations = _resolve_installations(jwt_token)
+        installation_id = installations.get(org)
+        if not installation_id:
+            return None
+
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "gh",
+                "api",
+                f"/app/installations/{installation_id}/access_tokens",
+                "-X",
+                "POST",
+                "--jq",
+                ".token",
+            ],
+            env={**os.environ, "GH_TOKEN": jwt_token},
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, OSError) as exc:
+        detail = ""
+        if isinstance(exc, subprocess.CalledProcessError):
+            detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
+        if detail:
+            log.warning("GitHub App auth failed, falling back to ambient auth: %s", detail)
+        else:
+            log.warning("GitHub App auth failed, falling back to ambient auth: %s", exc)
         return None
-
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "api",
-            f"/app/installations/{installation_id}/access_tokens",
-            "-X",
-            "POST",
-            "--jq",
-            ".token",
-        ],
-        env={**os.environ, "GH_TOKEN": jwt_token},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
 
     token = result.stdout.strip()
     _token_cache[org] = (token, time.time() + 3300)

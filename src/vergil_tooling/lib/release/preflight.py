@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import json
-import os
-import re
 import shutil
 import subprocess
-import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import config, git, github
+from vergil_tooling.lib import config, git, github, version
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _VERSION_OVERRIDE_FIELDS = ("minor", "major")
 
@@ -26,24 +25,43 @@ def preflight(
     """Run all preflight checks and return an initialized ReleaseContext."""
     _check_host_prerequisites()
     repo = _check_gh_auth()
-    cfg = _read_and_validate_config(repo_root)
+    _read_and_validate_config(repo_root)
     _check_branch_and_tree()
     _audit_repo_config(repo)
-    version = _detect_version(repo_root)
-    _check_version_not_tagged(version)
-    _check_no_existing_tracking_issue(repo, version)
+
+    try:
+        current_version = version.show(repo_root)
+    except (FileNotFoundError, version.VersionSyncError) as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command="version.show",
+            message=str(exc),
+        ) from exc
 
     if version_override in _VERSION_OVERRIDE_FIELDS:
-        version = _apply_version_override(repo_root, version, version_override, cfg)
+        release_version = _compute_release_version(current_version, version_override)
+    else:
+        release_version = current_version
 
-    print(f"Preflight passed: {repo} v{version}")
+    _check_version_not_tagged(release_version)
+    _check_no_existing_tracking_issue(repo, release_version)
+
+    print(f"Preflight passed: {repo} v{release_version}")
     return ReleaseContext(
         repo=repo,
-        version=version,
+        version=release_version,
         repo_root=repo_root,
         version_override=version_override,
         verbose=verbose,
     )
+
+
+def _compute_release_version(current: str, override: str) -> str:
+    """Compute the target release version without modifying any files."""
+    parts = current.split(".")
+    if override == "minor":
+        return f"{parts[0]}.{int(parts[1]) + 1}.0"
+    return f"{int(parts[0]) + 1}.0.0"
 
 
 def _check_host_prerequisites() -> None:
@@ -74,8 +92,8 @@ def _check_gh_auth() -> str:
         ) from exc
 
 
-def _read_and_validate_config(repo_root: Path) -> config.StConfig:
-    return config.read_config(repo_root)
+def _read_and_validate_config(repo_root: Path) -> None:
+    config.read_config(repo_root)
 
 
 def _check_branch_and_tree() -> None:
@@ -124,110 +142,7 @@ def _audit_repo_config(repo: str) -> None:
         )
 
 
-# -- version detection (absorbed from vrg-prepare-release) --
-
-
-def _detect_python() -> str | None:
-    path = Path("pyproject.toml")
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    return match.group(1) if match else None
-
-
-def _detect_maven() -> str | None:
-    path = Path("pom.xml")
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r"<artifactId>[^<]+</artifactId>\s*<version>([^<]+)</version>", text)
-    return match.group(1) if match else None
-
-
-def _detect_go() -> str | None:
-    if not Path("go.mod").is_file():
-        return None
-    for path in Path().rglob("version.go"):
-        text = path.read_text(encoding="utf-8")
-        match = re.search(r'(?:const\s+)?Version\s*=\s*"([^"]+)"', text)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _detect_ruby() -> str | None:
-    if not Path("Gemfile").is_file():
-        return None
-    for path in Path().rglob("version.rb"):
-        text = path.read_text(encoding="utf-8")
-        match = re.search(r"VERSION\s*=\s*['\"]([^'\"]+)['\"]", text)
-        if match:
-            return match.group(1)
-    return None
-
-
-def _detect_cargo() -> str | None:
-    path = Path("Cargo.toml")
-    if not path.is_file():
-        return None
-    text = path.read_text(encoding="utf-8")
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
-    return match.group(1) if match else None
-
-
-def _detect_claude_plugin() -> str | None:
-    path = Path(".claude-plugin/plugin.json")
-    if not path.is_file():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    version: str | None = data.get("version")
-    return version
-
-
-def _detect_version_file() -> str | None:
-    path = Path("VERSION")
-    if not path.is_file():
-        return None
-    version = path.read_text(encoding="utf-8").strip()
-    if not re.fullmatch(r"\d+\.\d+\.\d+", version):
-        raise ReleaseError(
-            phase="preflight",
-            command="read VERSION",
-            message=f"VERSION file contains '{version}' — not valid semver (MAJOR.MINOR.PATCH).",
-        )
-    return version
-
-
-_DETECTORS = [
-    _detect_python,
-    _detect_maven,
-    _detect_go,
-    _detect_ruby,
-    _detect_cargo,
-    _detect_claude_plugin,
-    _detect_version_file,
-]
-
-
-def _detect_version(repo_root: Path) -> str:
-    prev = Path.cwd()
-    os.chdir(repo_root)
-    try:
-        for detector in _DETECTORS:
-            version = detector()
-            if version is not None:
-                return version
-    finally:
-        os.chdir(prev)
-    raise ReleaseError(
-        phase="preflight",
-        command="detect version",
-        message="Could not detect project version from any supported manifest.",
-    )
-
-
-def _check_version_not_tagged(version: str) -> None:
+def _check_version_not_tagged(ver: str) -> None:
     try:
         latest_tag = git.read_output(
             "describe",
@@ -238,76 +153,25 @@ def _check_version_not_tagged(version: str) -> None:
         )
     except subprocess.CalledProcessError:
         return
-    if latest_tag == f"v{version}":
+    if latest_tag == f"v{ver}":
         raise ReleaseError(
             phase="preflight",
             command="git describe --tags --match v*",
             message=(
-                f"Version {version} is already tagged as {latest_tag}. "
+                f"Version {ver} is already tagged as {latest_tag}. "
                 f"The post-publish version bump may not have run."
             ),
         )
 
 
-def _check_no_existing_tracking_issue(repo: str, version: str) -> None:
-    existing = find_existing_tracking_issue(repo, version)
+def _check_no_existing_tracking_issue(repo: str, ver: str) -> None:
+    existing = find_existing_tracking_issue(repo, ver)
     if existing is not None:
         raise ReleaseError(
             phase="preflight",
-            command=f"gh issue list --search 'release: {version}'",
+            command=f"gh issue list --search 'release: {ver}'",
             message=(
-                f"A tracking issue already exists for version {version}: {existing}\n"
+                f"A tracking issue already exists for version {ver}: {existing}\n"
                 f"Close the stale issue or investigate before re-running."
             ),
         )
-
-
-def _apply_version_override(
-    repo_root: Path,
-    current: str,
-    override: str,
-    cfg: config.StConfig,
-) -> str:
-    parts = current.split(".")
-    if len(parts) != 3:
-        raise ReleaseError(
-            phase="preflight",
-            command="version override",
-            message=f"Version '{current}' is not valid semver for override.",
-        )
-    major, minor, _patch = int(parts[0]), int(parts[1]), int(parts[2])
-    target = f"{major}.{minor + 1}.0" if override == "minor" else f"{major + 1}.0.0"
-
-    _bump_version_in_manifest(repo_root, current, target, cfg)
-    print(f"Version override: {current} -> {target}")
-    return target
-
-
-def _bump_version_in_manifest(repo_root: Path, old: str, new: str, cfg: config.StConfig) -> None:
-    if cfg.project.primary_language == "python":
-        path = repo_root / "pyproject.toml"
-        text = path.read_text(encoding="utf-8")
-        text = text.replace(f'version = "{old}"', f'version = "{new}"')
-        path.write_text(text, encoding="utf-8")
-        result = subprocess.run(  # noqa: S603
-            ("uv", "lock"),  # noqa: S607
-            check=True,
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-        )
-        if result.stdout:
-            print(result.stdout, end="")
-        if result.stderr:
-            print(result.stderr, end="", file=sys.stderr)
-    else:
-        raise ReleaseError(
-            phase="preflight",
-            command="version override",
-            message=(
-                f"Version override not yet implemented for "
-                f"language '{cfg.project.primary_language}'."
-            ),
-        )
-    git.run("add", "-A")
-    git.run("commit", "-m", f"chore(release): bump version to {new}")

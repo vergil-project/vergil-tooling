@@ -35,6 +35,11 @@ class ReleaseContext:
     develop_tag: str | None = None
     release_url: str | None = None
 
+    develop_cd_run_id: str | None = None
+    develop_cd_run_url: str | None = None
+
+    promote: bool = True
+
 
 class ReleaseError(Exception):
     """Raised when a release phase fails."""

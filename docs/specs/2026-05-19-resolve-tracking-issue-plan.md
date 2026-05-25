@@ -83,7 +83,7 @@ def test_autoclose_keyword_not_matched() -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_linkage.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_linkage.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'vergil_tooling.lib.linkage'`
 
 - [ ] **Step 3: Implement `lib/linkage.py`**
@@ -130,7 +130,7 @@ def extract_tracking_issue(text: str) -> int | None:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_linkage.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_linkage.py -v`
 Expected: All PASS
 
 - [ ] **Step 5: Commit**
@@ -151,7 +151,7 @@ Commit message: `feat(linkage): add shared issue-linkage regex module`
 
 - [ ] **Step 1: Run existing tests to confirm baseline**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_pr_issue_linkage.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_pr_issue_linkage.py -v`
 Expected: All PASS
 
 - [ ] **Step 2: Refactor `vrg_pr_issue_linkage.py` to import from `lib/linkage`**
@@ -228,7 +228,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 3: Run existing tests to verify refactor preserves behavior**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_pr_issue_linkage.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_pr_issue_linkage.py -v`
 Expected: All PASS (identical results to Step 1)
 
 - [ ] **Step 4: Commit**
@@ -401,7 +401,7 @@ def test_git_failure(capsys: pytest.CaptureFixture[str]) -> None:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'vergil_tooling.bin.vrg_resolve_tracking_issue'`
 
 - [ ] **Step 3: Implement `vrg_resolve_tracking_issue.py`**
@@ -513,7 +513,7 @@ if __name__ == "__main__":
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py -v`
 Expected: All PASS
 
 - [ ] **Step 5: Commit**
@@ -568,7 +568,7 @@ def test_integration_fixture_merge_commit(capsys: pytest.CaptureFixture[str]) ->
 
 - [ ] **Step 3: Run all tests for this tool**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py tests/vergil_tooling/test_linkage.py -v`
+Run: `cd <worktree> && vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_resolve_tracking_issue.py tests/vergil_tooling/test_linkage.py -v`
 Expected: All PASS
 
 - [ ] **Step 4: Commit**
@@ -588,7 +588,7 @@ Commit message: `feat(resolve-tracking-issue): register console script and add i
 
 - [ ] **Step 1: Run full validation**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run vrg-validate`
+Run: `cd <worktree> && vrg-container-run -- uv run vrg-validate`
 Expected: All checks pass
 
 - [ ] **Step 2: Add tool to CLAUDE.md CLI tool list**
@@ -601,7 +601,7 @@ In the `### Python Package (src/vergil_tooling/)` section of `CLAUDE.md`, add th
 
 - [ ] **Step 3: Run full validation again**
 
-Run: `cd <worktree> && vrg-docker-run -- uv run vrg-validate`
+Run: `cd <worktree> && vrg-container-run -- uv run vrg-validate`
 Expected: All checks pass
 
 - [ ] **Step 4: Commit**

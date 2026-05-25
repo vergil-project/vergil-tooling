@@ -39,7 +39,7 @@ class TestResolveCoAuthorTrailer:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_constructs_trailer_from_api -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_constructs_trailer_from_api -v`
 Expected: FAIL with `AttributeError: module 'vergil_tooling.lib.github' has no attribute 'resolve_co_author_trailer'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -61,7 +61,7 @@ def resolve_co_author_trailer() -> str:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_constructs_trailer_from_api -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_constructs_trailer_from_api -v`
 Expected: PASS
 
 - [ ] **Step 5: Write failing test for API 404 (flagged account)**
@@ -91,7 +91,7 @@ Add to the `TestResolveCoAuthorTrailer` class:
 
 This test passes without code changes — `read_json` already raises `GitHubAPIError` for non-retryable errors, and `resolve_co_author_trailer` doesn't catch it.
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_api_404_raises_github_api_error -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_api_404_raises_github_api_error -v`
 Expected: PASS
 
 - [ ] **Step 7: Write failing test for discovery failure**
@@ -112,12 +112,12 @@ Add to the `TestResolveCoAuthorTrailer` class:
 
 - [ ] **Step 8: Run test to verify it passes**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_discovery_failure_propagates -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py::TestResolveCoAuthorTrailer::test_discovery_failure_propagates -v`
 Expected: PASS
 
 - [ ] **Step 9: Run all github tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
 Expected: All tests pass (existing + 3 new)
 
 - [ ] **Step 10: Commit**
@@ -173,12 +173,12 @@ to:
 
 - [ ] **Step 3: Run vrg_gh tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py -v`
 Expected: All tests pass
 
 - [ ] **Step 4: Run github tests to confirm no regressions**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_github.py -v`
 Expected: All tests pass
 
 - [ ] **Step 5: Commit**
@@ -227,7 +227,7 @@ def test_main_auto_discovery(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py::test_main_auto_discovery -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py::test_main_auto_discovery -v`
 Expected: FAIL — `--agent` is still required by argparse
 
 - [ ] **Step 3: Write failing test for deprecated --agent flag**
@@ -324,7 +324,7 @@ to:
 
 - [ ] **Step 5: Run the new tests to verify they pass**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py::test_main_auto_discovery tests/vergil_tooling/test_vrg_commit.py::test_main_agent_flag_prints_deprecation_warning -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py::test_main_auto_discovery tests/vergil_tooling/test_vrg_commit.py::test_main_agent_flag_prints_deprecation_warning -v`
 Expected: PASS
 
 - [ ] **Step 6: Update existing tests to mock `resolve_co_author_trailer`**
@@ -435,7 +435,7 @@ def test_main_missing_config(tmp_path: Path) -> None:
 
 - [ ] **Step 7: Run all vrg_commit tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_commit.py -v`
 Expected: All tests pass
 
 - [ ] **Step 8: Commit**
@@ -468,7 +468,7 @@ def test_read_config_ignores_leftover_co_authors(tmp_path: Path) -> None:
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py::test_read_config_ignores_leftover_co_authors -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py::test_read_config_ignores_leftover_co_authors -v`
 Expected: FAIL — `ProjectConfig` still has `co_authors` attribute
 
 - [ ] **Step 3: Remove co-author code from `config.py`**
@@ -523,7 +523,7 @@ to:
 
 - [ ] **Step 4: Run the backward compatibility test**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py::test_read_config_ignores_leftover_co_authors -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py::test_read_config_ignores_leftover_co_authors -v`
 Expected: PASS
 
 - [ ] **Step 5: Update test fixtures and assertions**
@@ -592,7 +592,7 @@ wphillipmoore-vergil = "Co-Authored-By: wphillipmoore-vergil <285019742+wphillip
 
 - [ ] **Step 7: Run all config tests**
 
-Run: `vrg-docker-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -v`
 Expected: All tests pass
 
 - [ ] **Step 8: Commit**
@@ -608,7 +608,7 @@ vrg-commit --type refactor --scope config --message "remove co-author config fro
 
 - [ ] **Step 1: Run the full validation pipeline**
 
-Run: `vrg-docker-run -- uv run vrg-validate`
+Run: `vrg-container-run -- uv run vrg-validate`
 Expected: All checks pass (lint, typecheck, tests, audit)
 
 - [ ] **Step 2: Fix any validation failures**

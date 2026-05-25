@@ -264,7 +264,7 @@ local override.
 
 The project layer is the primary enforcement point. It allowlists
 all VRG tools via a single wildcard (`vrg-commit`, `vrg-submit-pr`,
-`vrg-validate`, `vrg-docker-run`, `vrg-git`, `vrg-gh`, and any
+`vrg-validate`, `vrg-container-run`, `vrg-git`, `vrg-gh`, and any
 future `vrg-*` tools run without prompting) and hard-denies raw
 `git` and `gh`.
 
