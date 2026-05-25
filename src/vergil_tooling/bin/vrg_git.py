@@ -21,6 +21,7 @@ _ALLOWED_SIMPLE: set[str] = {
     "ls-remote",
     "rev-parse",
     "add",
+    "mv",
     "push",
     "fetch",
     "pull",
