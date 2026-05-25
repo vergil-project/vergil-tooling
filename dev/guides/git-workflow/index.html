@@ -6902,7 +6902,7 @@ UI (squash merge for feature PRs). No automated merge will happen.</p>
 <li>Pulls the latest.</li>
 <li>Deletes the merged local feature branch.</li>
 <li>Prunes stale remote-tracking refs.</li>
-<li>Runs post-merge validation via <code>vrg-docker-run</code> to catch any
+<li>Runs post-merge validation via <code>vrg-container-run</code> to catch any
   regression introduced by the merge.</li>
 </ul>
 <p>Run this immediately after the PR merges. A Stop hook in the plugin
@@ -6971,7 +6971,7 @@ contract"):</p>
 <a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>  read-only — all changes flow through your worktree on your
 <a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  feature branch.
 <a id="__codelineno-9-15" name="__codelineno-9-15" href="#__codelineno-9-15"></a>- When you need to run validation, run it from inside your worktree
-<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-docker-run mounts the current directory).
+<a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-container-run mounts the current directory).
 </code></pre></div>
 <h3 id="cleanup-after-merge">Cleanup after merge<a class="headerlink" href="#cleanup-after-merge" title="Permanent link">&para;</a></h3>
 <p><code>vrg-finalize-repo</code> will handle worktree removal once
@@ -7093,7 +7093,7 @@ for the planned fix.</p>
 PATH. Some are only installed inside the dev container image, not on
 the host. Hook-level PATH discovery is tracked in
 <a href="https://github.com/vergil-project/vergil-tooling/issues/265">vergil-tooling#265</a>.
-Workaround: run the validator explicitly via <code>vrg-docker-run</code> to
+Workaround: run the validator explicitly via <code>vrg-container-run</code> to
 confirm the file is clean; then proceed.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
