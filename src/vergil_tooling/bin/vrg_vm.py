@@ -195,6 +195,57 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_rebuild(args: argparse.Namespace) -> int:
+    name, identity, config = _resolve(args)
+
+    status = vm_status(identity.vm_instance)
+    if not status:
+        print(
+            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            file=sys.stderr,
+        )
+        return 1
+
+    if not identity.projects_dir:
+        print(
+            f"ERROR: identity '{name}' has no projects_dir configured",
+            file=sys.stderr,
+        )
+        return 1
+
+    vergil_version = resolve_vergil_version(config, identity)
+    tag = args.tag if args.tag else resolve_vm_tag(config, identity)
+
+    print(f"Rebuilding VM '{identity.vm_instance}' (identity: {name})...")
+
+    print("  Destroying old VM...")
+    delete_vm(identity.vm_instance)
+
+    print(f"  Fetching template ({tag})...")
+    template = fetch_template(tag)
+
+    try:
+        print(f"  Creating VM with projects mount: {identity.projects_dir}")
+        create_vm(identity.vm_instance, template, identity.projects_dir)
+
+        print("  Starting VM...")
+        start_vm(identity.vm_instance)
+
+        print("  Injecting credentials...")
+        inject_credentials(identity.vm_instance, identity)
+
+        install_tooling(identity.vm_instance, vergil_version)
+
+        claude_dir = Path.home() / ".claude"
+        print("  Copying Claude Code config...")
+        copy_claude_config(identity.vm_instance, claude_dir)
+    finally:
+        template.unlink(missing_ok=True)
+
+    print(f"\nVM '{identity.vm_instance}' rebuilt and ready.")
+    return 0
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -297,6 +348,12 @@ def main(argv: list[str] | None = None) -> int:
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
 
+    p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
+    _add_identity_args(p_rebuild)
+    p_rebuild.add_argument(
+        "--tag", default="", help="VM template version tag (default: vergil version from config)"
+    )
+
     p_list = sub.add_parser("list", help="List all identity VMs and their status")
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
 
@@ -324,6 +381,7 @@ def main(argv: list[str] | None = None) -> int:
         "restart": _cmd_restart,
         "update": _cmd_update,
         "destroy": _cmd_destroy,
+        "rebuild": _cmd_rebuild,
         "list": _cmd_list,
         "session": _cmd_session,
     }

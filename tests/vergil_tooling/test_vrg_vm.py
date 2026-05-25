@@ -368,6 +368,60 @@ class TestDestroy:
         assert result == 1
 
 
+class TestRebuild:
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_rebuild_destroys_and_creates(
+        self,
+        _status: MagicMock,
+        mock_delete: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        mock_start: MagicMock,
+        mock_inject: MagicMock,
+        mock_install: MagicMock,
+        _copy: MagicMock,
+        config_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+
+        result = main(["rebuild", "--config", str(config_file)])
+        assert result == 0
+        mock_delete.assert_called_once_with("vergil-agent")
+        mock_create.assert_called_once()
+        mock_start.assert_called_once()
+        mock_inject.assert_called_once()
+        mock_install.assert_called_once()
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_rebuild_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
+        result = main(["rebuild", "--config", str(config_file)])
+        assert result == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_rebuild_fails_without_projects_dir(self, _status: MagicMock, tmp_path: Path) -> None:
+        p = tmp_path / "identities.toml"
+        p.write_text(
+            textwrap.dedent("""\
+            vergil = "v2.0"
+
+            [identities.vergil]
+            vm_instance = "vergil-agent"
+        """)
+        )
+        result = main(["rebuild", "--config", str(p)])
+        assert result == 1
+
+
 class TestList:
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(

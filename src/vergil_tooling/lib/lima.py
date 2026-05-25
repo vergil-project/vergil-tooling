@@ -306,7 +306,7 @@ def vm_age_days(instance: str) -> float | None:
             if not dir_path.exists():
                 return None
             st = dir_path.stat()
-            created = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime
+            created = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime  # type: ignore[attr-defined]
             return (time.time() - created) / 86400
     return None
 

@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.lima import (
     _limactl,
+    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
@@ -21,9 +22,8 @@ from vergil_tooling.lib.lima import (
     shell_run,
     start_vm,
     stop_vm,
-    update_tooling,
-    copy_claude_config,
     try_update_tooling,
+    update_tooling,
     vm_age_days,
     vm_status,
 )
@@ -499,13 +499,31 @@ class TestVmAgeDays:
     @patch("vergil_tooling.lib.lima._limactl")
     def test_returns_none_when_vm_not_found(self, mock: MagicMock) -> None:
         mock.return_value = subprocess.CompletedProcess(
-            [], 0, stdout=json.dumps({"name": "other-vm", "dir": "/tmp/other"}) + "\n"
+            [],
+            0,
+            stdout=json.dumps({"name": "other-vm", "dir": "/tmp/other"}) + "\n",  # noqa: S108
         )
         assert vm_age_days("vergil-agent") is None
 
     @patch("vergil_tooling.lib.lima._limactl")
     def test_returns_none_on_error(self, mock: MagicMock) -> None:
         mock.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_dir_empty(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"name": "vergil-agent", "dir": ""}) + "\n"
+        )
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_dir_not_exists(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"name": "vergil-agent", "dir": "/nonexistent/path"}) + "\n",
+        )
         assert vm_age_days("vergil-agent") is None
 
 
