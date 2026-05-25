@@ -22,6 +22,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     update_tooling,
+    vm_age_days,
     vm_status,
 )
 
@@ -477,3 +478,30 @@ class TestUpdateTooling:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with pytest.raises(SystemExit):
             update_tooling("vergil-agent")
+
+
+class TestVmAgeDays:
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_age_in_days(self, mock: MagicMock, tmp_path: Path) -> None:
+        vm_dir = tmp_path / "vergil-agent"
+        vm_dir.mkdir()
+
+        mock.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"name": "vergil-agent", "dir": str(vm_dir)}) + "\n"
+        )
+
+        age = vm_age_days("vergil-agent")
+        assert age is not None
+        assert age >= 0
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_vm_not_found(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"name": "other-vm", "dir": "/tmp/other"}) + "\n"
+        )
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_on_error(self, mock: MagicMock) -> None:
+        mock.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_age_days("vergil-agent") is None

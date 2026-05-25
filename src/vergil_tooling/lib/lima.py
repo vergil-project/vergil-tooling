@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -287,3 +288,24 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
     )
     shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
+
+
+def vm_age_days(instance: str) -> float | None:
+    """Return VM age in fractional days, or None if not found."""
+    try:
+        result = _limactl("list", "--json")
+    except subprocess.CalledProcessError:
+        return None
+    for line in result.stdout.strip().splitlines():
+        entry = json.loads(line)
+        if entry.get("name") == instance:
+            vm_dir = entry.get("dir", "")
+            if not vm_dir:
+                return None
+            dir_path = Path(vm_dir)
+            if not dir_path.exists():
+                return None
+            st = dir_path.stat()
+            created = st.st_birthtime if hasattr(st, "st_birthtime") else st.st_mtime
+            return (time.time() - created) / 86400
+    return None
