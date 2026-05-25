@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.lima import (
     _limactl,
+    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
@@ -21,7 +22,9 @@ from vergil_tooling.lib.lima import (
     shell_run,
     start_vm,
     stop_vm,
+    try_update_tooling,
     update_tooling,
+    vm_age_days,
     vm_status,
 )
 
@@ -477,3 +480,133 @@ class TestUpdateTooling:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with pytest.raises(SystemExit):
             update_tooling("vergil-agent")
+
+
+class TestVmAgeDays:
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_age_in_days(self, mock: MagicMock, tmp_path: Path) -> None:
+        vm_dir = tmp_path / "vergil-agent"
+        vm_dir.mkdir()
+
+        mock.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"name": "vergil-agent", "dir": str(vm_dir)}) + "\n"
+        )
+
+        age = vm_age_days("vergil-agent")
+        assert age is not None
+        assert age >= 0
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_vm_not_found(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"name": "other-vm", "dir": "/tmp/other"}) + "\n",  # noqa: S108
+        )
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_on_error(self, mock: MagicMock) -> None:
+        mock.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_dir_empty(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [], 0, stdout=json.dumps({"name": "vergil-agent", "dir": ""}) + "\n"
+        )
+        assert vm_age_days("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_returns_none_when_dir_not_exists(self, mock: MagicMock) -> None:
+        mock.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout=json.dumps({"name": "vergil-agent", "dir": "/nonexistent/path"}) + "\n",
+        )
+        assert vm_age_days("vergil-agent") is None
+
+
+class TestCopyClaudeConfig:
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_copies_existing_files(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+        (claude_dir / "CLAUDE.md").write_text("# My prefs\n")
+        (claude_dir / "settings.json").write_text('{"key": "val"}\n')
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        assert mock_run.call_count == 1
+        mkdir_call = mock_run.call_args_list[0]
+        assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
+        assert ".claude" in " ".join(str(a) for a in mkdir_call[0])
+
+        assert mock_pipe.call_count == 2
+        md_call = mock_pipe.call_args_list[0]
+        assert "CLAUDE.md" in md_call[0][1]
+        assert "# My prefs" in md_call[0][2]
+        settings_call = mock_pipe.call_args_list[1]
+        assert "settings.json" in settings_call[0][1]
+        assert '"key"' in settings_call[0][2]
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_skips_missing_files(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        mock_run.assert_called_once()
+        mock_pipe.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_skips_if_claude_dir_missing(
+        self, mock_run: MagicMock, mock_pipe: MagicMock, tmp_path: Path
+    ) -> None:
+        claude_dir = tmp_path / ".claude"
+
+        copy_claude_config("vergil-agent", claude_dir)
+
+        mock_run.assert_not_called()
+        mock_pipe.assert_not_called()
+
+
+class TestTryUpdateTooling:
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_true_on_success(self, mock_update: MagicMock) -> None:
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is True
+        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_false_on_subprocess_error(
+        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is False
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_returns_false_on_system_exit(
+        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_update.side_effect = SystemExit(1)
+        result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        assert result is False
+        captured = capsys.readouterr()
+        assert "WARNING" in captured.err
+
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
+        try_update_tooling("vergil-agent", tag="v2.1", fallback_tag="v2.0")
+        mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
