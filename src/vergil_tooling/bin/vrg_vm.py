@@ -131,7 +131,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, identity, config = _resolve(args)
 
     status = vm_status(identity.vm_instance)
     if status != "Running":
@@ -143,8 +143,9 @@ def _cmd_update(args: argparse.Namespace) -> int:
         return 1
 
     tag = args.tag if args.tag else None
+    fallback = resolve_vergil_version(config, identity)
     print(f"Updating vergil-tooling in VM '{identity.vm_instance}' (identity: {name})...")
-    update_tooling(identity.vm_instance, tag)
+    update_tooling(identity.vm_instance, tag, fallback_tag=fallback)
 
     print("Update complete.")
     return 0
@@ -190,7 +191,8 @@ def _cmd_session(args: argparse.Namespace) -> int:
     config = load_config(config_path)
     identity = resolve_identity(config, args.identity)
 
-    update_tooling(identity.vm_instance)
+    fallback = resolve_vergil_version(config, identity)
+    update_tooling(identity.vm_instance, fallback_tag=fallback)
 
     workspace: str | None = None
     if args.workspace:

@@ -291,7 +291,7 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None)
+        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
 
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
@@ -300,7 +300,7 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file), "--tag", "v2.1"])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", "v2.1")
+        mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_update_fails_if_not_running(self, _status: MagicMock, config_file: Path) -> None:
@@ -320,7 +320,7 @@ class TestSession:
         self, mock_update: MagicMock, mock_exec: MagicMock, config_file: Path
     ) -> None:
         main(["session", "--config", str(config_file)])
-        mock_update.assert_called_once_with("vergil-agent")
+        mock_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "limactl"

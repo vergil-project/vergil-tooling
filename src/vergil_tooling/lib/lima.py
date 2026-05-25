@@ -265,15 +265,16 @@ def install_tooling(instance: str, tag: str) -> None:
     shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
-def update_tooling(instance: str, tag: str | None = None) -> None:
+def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str = "") -> None:
     """Reinstall vergil-tooling inside the VM.
 
     Uses *tag* if given, otherwise reads the tag from the marker file
-    written by ``install_tooling``.
+    written by ``install_tooling``.  Falls back to *fallback_tag* when
+    no marker exists (pre-existing VMs created before marker support).
     """
     if tag is None:
         result = shell_run(instance, "bash", "-c", f"cat {_TOOLING_TAG_FILE} 2>/dev/null || true")
-        tag = result.stdout.strip()
+        tag = result.stdout.strip() or fallback_tag
     if not tag:
         print("ERROR: no tooling tag found — run 'vrg-vm create' first", file=sys.stderr)
         raise SystemExit(1)
