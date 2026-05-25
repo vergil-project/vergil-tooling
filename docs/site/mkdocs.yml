@@ -65,8 +65,8 @@ nav:
   - Script Reference:
       - Overview: reference/index.md
       - CLI Tools Overview: reference/cli-tools-overview.md
-      - Git Hooks:
-          - pre-commit: reference/hooks/pre-commit.md
+      - Hook Guard:
+          - Claude Code Hook Guard: reference/hooks/pre-commit.md
       - Validators:
           - repo-profile: reference/lint/repo-profile.md
           - markdown-validation: reference/lint/markdown-standards.md

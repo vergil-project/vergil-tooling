@@ -4,15 +4,15 @@
 > [Git Workflow](site/docs/guides/git-workflow.md) for the
 > big-picture guide covering branching, commit/PR/finalize cycle,
 > worktrees, and both enforcement layers together. This page is the
-> detailed reference for the pre-commit git hook and the local
+> detailed reference for the Claude Code hook guard and the local
 > validators only.
 
 ## Table of Contents
 
 - [Overview](#overview)
-- [Git Hooks](#git-hooks)
-  - [Enabling Hooks](#enabling-hooks)
-  - [pre-commit](#pre-commit)
+- [Claude Code Hook Guard](#claude-code-hook-guard)
+  - [Setup](#setup)
+  - [How It Works](#how-it-works)
 - [Validators](#validators)
   - [repo-profile](#repo-profile)
   - [markdown-standards](#markdown-standards)
@@ -27,8 +27,9 @@
 This repository enforces code quality through three complementary
 entry points that share a common set of validators:
 
-- **Git hooks** run locally on every commit, providing
-  immediate feedback before code reaches the remote.
+- **Claude Code hook guard** fires on every `Bash` tool
+  invocation in Claude Code, blocking raw `git` and `gh`
+  commands before they execute.
 - **CI workflows** run the same validators on pull requests,
   ensuring standards are enforced even when hooks are not
   installed.
@@ -45,29 +46,31 @@ Consuming repositories resolve host-side `vrg-*` tools via
 `uv tool install` and in-container validators via the dev
 container image's pre-bake or a Python dev-dep declaration.
 
-## Git Hooks
+## Claude Code Hook Guard
 
-### Enabling Hooks
+### Setup
 
-Point Git at the repo's hooks directory:
+Every managed repo ships two files that work together:
 
-```bash
-git config core.hooksPath .githooks
-```
+- **`.claude/hooks/guard.sh`** — a shell shim that delegates to
+  `vrg-hook-guard` (when vergil-tooling is installed) or falls
+  back to a `jq`-based hard deny for raw `git`/`gh` commands.
+- **`.claude/settings.json`** — wires `guard.sh` as a
+  `PreToolUse` hook on the `Bash` matcher.
 
-This must be run once per clone. It is not persisted across
-fresh clones. Every managed repo checks in a `.githooks/pre-commit`
-env-var gate that admits `vrg-commit`-driven commits and rejects
-raw `git commit`.
+No per-clone configuration is required. The hook fires
+automatically in every Claude Code session that opens the repo.
 
-### pre-commit
+### How It Works
 
-The pre-commit hook is an env-var gate: it admits commits
-driven by `vrg-commit` (which sets `VRG_COMMIT_CONTEXT=1`) and
-derived workflows (`amend`, `cherry-pick`, `revert`, `rebase`,
-`merge`), and rejects everything else. The five commit-context
-checks below live in `vrg-commit` itself and run before `git
-commit` is invoked.
+The hook guard intercepts every `Bash` tool invocation in
+Claude Code. It uses regex matching to detect raw `git` and
+`gh` commands and blocks them, while allowing `vrg-git`,
+`vrg-gh`, and other `vrg-*` wrappers through. The guard is
+only active in repos that contain a `vergil.toml`.
+
+The five commit-context checks below live in `vrg-commit`
+itself and run before `git commit` is invoked.
 
 **1. Detached HEAD check** — Commits on a detached HEAD are
 blocked unconditionally. Create a named branch first.
@@ -171,34 +174,38 @@ as a list item.
 
 The following table shows where each validation runs:
 
-- **pre-commit**: runs locally on every `git commit`
+- **vrg-commit**: checks run by `vrg-commit` before invoking
+  `git commit`
+- **hook guard**: the Claude Code `PreToolUse` hook
+  (`.claude/hooks/guard.sh` → `vrg-hook-guard`) that blocks raw
+  `git` and `gh` commands
 - **plugin**: PreToolUse/PostToolUse hooks from
   [`vergil-claude-plugin`](https://github.com/vergil-project/vergil-claude-plugin)
   fire when Claude Code invokes Bash / Write / Edit tools. Catches
-  patterns earlier than a `git commit` would — including ones that
-  never reach git (e.g., raw `gh pr create`, heredoc escaping bugs).
+  patterns that the hook guard does not cover (e.g., heredoc
+  escaping bugs, worktree convention).
 - **CI**: runs in GitHub Actions on pull requests
 
-| Validation                          | pre-commit | plugin | CI  |
-|-------------------------------------|:----------:|:------:|:---:|
-| Detached HEAD                       | yes        |        |     |
-| Protected branch (commit on `develop`/`main`) | yes | yes | |
-| Branch prefix                       | yes        |        |     |
-| Issue number in branch              | yes        |        |     |
-| Raw `git commit` forbidden          |            | yes    |     |
-| Raw `gh pr create` forbidden        |            | yes    |     |
-| Heredoc in CLI args forbidden       |            | yes    |     |
-| Commit must originate from `.worktrees/*` | | yes (adopted repos) | |
-| MEMORY.md writes                    |            | *(removed 2026-04-23; formerly plugin)* | |
-| Repository profile                  |            |        | yes |
-| Markdown standards                  |            |        | yes |
-| PR issue linkage                    |            |        | yes |
+| Validation                          | vrg-commit | hook guard | plugin | CI  |
+|-------------------------------------|:----------:|:----------:|:------:|:---:|
+| Detached HEAD                       | yes        |            |        |     |
+| Protected branch (commit on `develop`/`main`) | yes | | yes | |
+| Branch prefix                       | yes        |            |        |     |
+| Issue number in branch              | yes        |            |        |     |
+| Raw `git` commands forbidden        |            | yes        | yes    |     |
+| Raw `gh` commands forbidden         |            | yes        | yes    |     |
+| Heredoc in CLI args forbidden       |            |            | yes    |     |
+| Commit must originate from `.worktrees/*` | | | yes (adopted repos) | |
+| MEMORY.md writes                    |            | | *(removed 2026-04-23; formerly plugin)* | |
+| Repository profile                  |            |            |        | yes |
+| Markdown standards                  |            |            |        | yes |
+| PR issue linkage                    |            |            |        | yes |
 
-The pre-commit hook and plugin hook for protected-branch commits
-overlap deliberately: the plugin catches the case where Claude Code
-tries to invoke `git commit`/`vrg-commit` at all, and the pre-commit
-hook catches everything else (direct human `git commit`, scripts,
-etc.). Their rules are similar but not identical — see
+The hook guard and plugin hooks for raw `git`/`gh` commands overlap
+deliberately: the hook guard (`.claude/hooks/guard.sh`) catches all
+raw `git`/`gh` invocations via regex matching, while the plugin
+provides additional pattern-specific blocks (heredocs, worktree
+convention enforcement). Together they close the loop. See
 [Git Workflow → Two enforcement layers](site/docs/guides/git-workflow.md#two-enforcement-layers)
 for the coordinated view.
 
@@ -208,7 +215,7 @@ for the coordinated view.
 is the primary configuration surface. It controls:
 
 - **`branching_model`**: Determines which branch prefixes
-  the pre-commit hook allows.
+  `vrg-commit` allows.
 - **`Co-Authored-By` entries**: Defines approved AI agent
   identities for co-author trailer resolution.
 - **Six required attributes**: Validated by `repo-profile`
@@ -233,11 +240,11 @@ scheme:
 ## Error Reference
 
 **`"ERROR: detached HEAD is not allowed for commits."`**
-— The pre-commit hook blocks commits on a detached HEAD.
+— `vrg-commit` blocks commits on a detached HEAD.
 Create a named branch before committing.
 
 **`"ERROR: direct commits to protected branches are
-forbidden"`** — The pre-commit hook blocks commits to
+forbidden"`** — `vrg-commit` blocks commits to
 `develop`, `release`, or `main`. Create a feature branch
 and open a pull request.
 

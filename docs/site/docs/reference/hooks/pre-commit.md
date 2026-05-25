@@ -1,10 +1,11 @@
-# pre-commit
+# Claude Code Hook Guard
 
-**Path:** `.githooks/pre-commit`
+**Path:** `.claude/hooks/guard.sh`
 
-The pre-commit hook is an env-var gate that admits `vrg-commit`-driven
-commits (via `VRG_COMMIT_CONTEXT=1`) and derived workflows (amend,
-cherry-pick, revert, rebase, merge), and rejects raw `git commit`.
+The hook guard is a Claude Code `PreToolUse` hook that blocks raw
+`git` and `gh` commands in agent sessions. It delegates to
+`vrg-hook-guard` (when vergil-tooling is installed) or falls back
+to a `jq`-based hard deny.
 
 The five branch/context checks below live in `vrg-commit` itself and
 run before `git commit` is invoked:
@@ -59,5 +60,6 @@ because they are created by automated workflows.
 
 ## Configuration
 
-The hook reads `branching_model` from
+The hook guard is wired via `.claude/settings.json` and requires
+no per-clone setup. `vrg-commit` reads `branching_model` from
 `docs/repository-standards.md`. No other configuration is required.

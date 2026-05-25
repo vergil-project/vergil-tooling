@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
         print(
             "WARNING: This will overwrite all Vergil-managed files to canonical state.\n"
             "Files affected: vergil.toml, CLAUDE.md, .claude/settings.json,\n"
-            ".githooks/pre-commit, LICENSE, README.md, .gitignore, CI/CD workflows,\n"
+            ".claude/hooks/guard.sh, LICENSE, README.md, .gitignore, CI/CD workflows,\n"
             "docs site config, GitHub settings, rulesets, and labels."
         )
         if not prompt_yes_no("Continue?", default=False):

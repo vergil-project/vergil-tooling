@@ -26,7 +26,7 @@ Hard gates (required status checks on `develop`):
 
 Local hard gates (pre-commit hooks):
 
-- Branch naming enforcement (`.githooks/pre-commit` gate + `vrg-commit`):
+- Branch naming enforcement (`vrg-commit`):
   branching-model-aware prefix validation.
 
 ## Commit and PR scripts
