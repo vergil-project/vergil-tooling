@@ -20,6 +20,7 @@ from vergil_tooling.lib.identity import (
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
+    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
@@ -28,11 +29,15 @@ from vergil_tooling.lib.lima import (
     list_vms,
     start_vm,
     stop_vm,
+    try_update_tooling,
     update_tooling,
+    vm_age_days,
     vm_status,
 )
 
 _default_config_path = default_config_path
+
+_DEFAULT_STALENESS_DAYS = 3
 
 
 def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
@@ -86,7 +91,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, identity, config = _resolve(args)
 
     status = vm_status(identity.vm_instance)
     if not status:
@@ -96,11 +101,32 @@ def _cmd_start(args: argparse.Namespace) -> int:
         )
         return 1
 
+    allow_stale = getattr(args, "allow_stale_vm", False)
+    if not allow_stale:
+        age = vm_age_days(identity.vm_instance)
+        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+            print(
+                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
+                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
+                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
+                f"Override with: vrg-vm start --allow-stale-vm --identity {name}",
+                file=sys.stderr,
+            )
+            return 1
+
     print(f"Starting VM '{identity.vm_instance}' (identity: {name})...")
     start_vm(identity.vm_instance)
 
     print("Injecting credentials...")
     inject_credentials(identity.vm_instance, identity)
+
+    claude_dir = Path.home() / ".claude"
+    print("Copying Claude Code config...")
+    copy_claude_config(identity.vm_instance, claude_dir)
+
+    fallback = resolve_vergil_version(config, identity)
+    print("Updating vergil-tooling...")
+    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
 
     print(f"VM '{identity.vm_instance}' is running.")
     return 0
@@ -233,6 +259,11 @@ def main(argv: list[str] | None = None) -> int:
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
+    p_start.add_argument(
+        "--allow-stale-vm",
+        action="store_true",
+        help="Start even if the VM exceeds the staleness threshold",
+    )
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
