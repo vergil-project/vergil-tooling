@@ -835,7 +835,7 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.0.47"
+version = "2.0.48"
 source = { editable = "." }
 
 [package.dev-dependencies]
