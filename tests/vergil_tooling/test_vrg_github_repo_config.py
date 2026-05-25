@@ -22,10 +22,11 @@ from vergil_tooling.bin.vrg_github_repo_config import (
 )
 from vergil_tooling.lib.config import (
     CiConfig,
+    ContainerConfig,
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
-    StConfig,
+    VergilConfig,
 )
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
@@ -371,8 +372,8 @@ def test_load_local_config_success(tmp_path: Path) -> None:
 # -- _audit_repo --------------------------------------------------------------
 
 
-def _make_config() -> StConfig:
-    return StConfig(
+def _make_config() -> VergilConfig:
+    return VergilConfig(
         project=ProjectConfig(
             repository_type="library",
             versioning_scheme="semver",
@@ -384,6 +385,7 @@ def _make_config() -> StConfig:
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=CiConfig(versions=["3.14"], integration_tests=False),
         publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
+        container=ContainerConfig(env_prefixes=[]),
     )
 
 

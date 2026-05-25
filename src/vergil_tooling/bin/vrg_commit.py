@@ -164,10 +164,10 @@ def main(argv: list[str] | None = None) -> int:
     root = git.repo_root()
 
     try:
-        st_config = config.read_config(root)
-        branching_model = st_config.project.branching_model
+        vergil_config = config.read_config(root)
+        branching_model = vergil_config.project.branching_model
     except FileNotFoundError:
-        st_config = None
+        vergil_config = None
         branching_model = ""
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

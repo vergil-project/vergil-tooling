@@ -326,3 +326,29 @@ def test_prefix_passed_to_image(tmp_path: Path) -> None:
         main(["--prefix", "dev", "serve"])
 
     assert mock_build.call_args[0][1] == dev_image
+
+
+def test_env_prefixes_passed_to_build_container_args(tmp_path: Path) -> None:
+    image = "ghcr.io/vergil-project/prod-base:latest"
+    with (
+        patch("vergil_tooling.bin.vrg_container_docs.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_docs.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_docs.build_container_args") as mock_build,
+        patch("vergil_tooling.bin.vrg_container_docs.os.execvp"),
+        patch(
+            "vergil_tooling.bin.vrg_container_docs.container_env_prefixes",
+            return_value=["MQ_"],
+        ),
+        patch.dict("os.environ", {}, clear=True),
+    ):
+        mock_build.return_value = [
+            "docker",
+            "run",
+            "--rm",
+            image,
+            "bash",
+            "-c",
+            "mkdocs build -f docs/site/mkdocs.yml",
+        ]
+        main(["build"])
+    assert mock_build.call_args[1]["env_prefixes"] == ["MQ_"]

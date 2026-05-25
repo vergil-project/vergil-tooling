@@ -229,8 +229,10 @@ it in a thin `scripts/dev/test.sh`. Environment overrides:
 
 - `DOCKER_DEV_IMAGE` — override the container image
 - `DOCKER_TEST_CMD` — override the test command
-- `DOCKER_NETWORK` — join a Docker network (e.g., for MQ integration tests)
-- `MQ_*` env vars are automatically passed through to the container
+- `DOCKER_NETWORK` — join a Docker network (e.g., for integration tests)
+
+Env-var passthrough is configured per-repo via `[container].env-prefixes`
+in `vergil.toml` (see `docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`).
 
 ### Claude Code Hook Guard
 

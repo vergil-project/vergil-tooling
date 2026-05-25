@@ -42,6 +42,7 @@ _ALLOWED_SIMPLE = [
     "ls-remote",
     "rev-parse",
     "add",
+    "mv",
     "push",
     "fetch",
     "pull",

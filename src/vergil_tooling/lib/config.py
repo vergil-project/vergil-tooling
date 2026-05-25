@@ -29,7 +29,9 @@ _PROJECT_FIELDS = (
     "primary-language",
 )
 
-_KNOWN_SECTIONS = frozenset({"project", "dependencies", "markdownlint", "ci", "publish"})
+_KNOWN_SECTIONS = frozenset(
+    {"project", "dependencies", "markdownlint", "ci", "publish", "container"},
+)
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "project": frozenset(_PROJECT_FIELDS),
@@ -37,6 +39,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
+    "container": frozenset({"env-prefixes"}),
 }
 
 
@@ -72,12 +75,18 @@ class PublishConfig:
 
 
 @dataclass
-class StConfig:
+class ContainerConfig:
+    env_prefixes: list[str]
+
+
+@dataclass
+class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
     markdownlint: MarkdownlintConfig
     ci: CiConfig
     publish: PublishConfig
+    container: ContainerConfig
 
 
 def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
@@ -96,8 +105,8 @@ def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
                 )
 
 
-def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
-    """Parse and validate a raw TOML dict into StConfig."""
+def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
+    """Parse and validate a raw TOML dict into VergilConfig."""
     _warn_unrecognized_keys(raw)
     project_raw = raw.get("project", {})
 
@@ -151,6 +160,19 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         consumer_refresh=publish_raw.get("consumer-refresh"),
     )
 
+    container_raw = raw.get("container")
+    if container_raw is not None:
+        env_prefixes = container_raw.get("env-prefixes")
+        if env_prefixes is None:
+            msg = f"{CONFIG_FILE}: [container] missing required field 'env-prefixes'"
+            raise ConfigError(msg)
+        if not isinstance(env_prefixes, list) or not all(isinstance(p, str) for p in env_prefixes):
+            msg = f"{CONFIG_FILE}: [container].env-prefixes must be a list of strings"
+            raise ConfigError(msg)
+        container = ContainerConfig(env_prefixes=env_prefixes)
+    else:
+        container = ContainerConfig(env_prefixes=[])
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -158,16 +180,17 @@ def _parse_raw_config(raw: dict[str, Any]) -> StConfig:
         release_model=project_raw["release-model"],
         primary_language=project_raw["primary-language"],
     )
-    return StConfig(
+    return VergilConfig(
         project=project,
         dependencies=dict(deps),
         markdownlint=markdownlint,
         ci=ci,
         publish=publish,
+        container=container,
     )
 
 
-def read_config(repo_root: Path) -> StConfig:
+def read_config(repo_root: Path) -> VergilConfig:
     """Parse, validate, and return ``vergil.toml``."""
     config_path = repo_root / CONFIG_FILE
     if not config_path.is_file():
@@ -194,3 +217,12 @@ def vrg_install_tag(repo_root: Path) -> str:
         return override
     cfg = read_config(repo_root)
     return cfg.dependencies["vergil"]
+
+
+def container_env_prefixes(repo_root: Path) -> list[str]:
+    """Return ``[container].env-prefixes`` from vergil.toml, or ``[]``."""
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return []
+    return cfg.container.env_prefixes
