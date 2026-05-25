@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github
@@ -14,6 +15,8 @@ if TYPE_CHECKING:
 _CD_WORKFLOW = "cd.yml"
 _MAIN_EXPECTED_JOBS = ("docs", "release")
 _DEVELOP_EXPECTED_JOBS = ("docs",)
+_CD_POLL_INTERVAL = 10
+_CD_POLL_ATTEMPTS = 30
 
 
 def confirm_main(ctx: ReleaseContext) -> None:
@@ -40,28 +43,10 @@ def confirm_develop(ctx: ReleaseContext) -> None:
 
 def _watch_cd(ctx: ReleaseContext, *, branch: str) -> tuple[str, str]:
     print(f"Waiting for {_CD_WORKFLOW} on {branch}...")
-    run_id = github.read_output(
-        "run",
-        "list",
-        "--repo",
-        ctx.repo,
-        "--workflow",
-        _CD_WORKFLOW,
-        "--branch",
-        branch,
-        "--limit",
-        "1",
-        "--json",
-        "databaseId",
-        "--jq",
-        ".[0].databaseId",
-    )
-    if not run_id:
-        raise ReleaseError(
-            phase=f"confirm-{branch}",
-            command=f"gh run list --workflow {_CD_WORKFLOW}",
-            message=f"No CD workflow run found on {branch}.",
-        )
+    git.run("fetch", "origin", branch)
+    head_sha = git.read_output("rev-parse", f"origin/{branch}")
+
+    run_id = _poll_for_run(ctx.repo, branch, head_sha)
 
     watch_workflow(ctx.repo, run_id, verbose=ctx.verbose)
 
@@ -79,6 +64,35 @@ def _watch_cd(ctx: ReleaseContext, *, branch: str) -> tuple[str, str]:
 
     print(f"  CD workflow succeeded: {run_url}")
     return run_id, run_url
+
+
+def _poll_for_run(repo: str, branch: str, head_sha: str) -> str:
+    for _ in range(_CD_POLL_ATTEMPTS):
+        run_id = github.read_output(
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--workflow",
+            _CD_WORKFLOW,
+            "--branch",
+            branch,
+            "--limit",
+            "5",
+            "--json",
+            "databaseId,headSha",
+            "--jq",
+            f'[.[] | select(.headSha == "{head_sha}")][0].databaseId // empty',
+        )
+        if run_id:
+            return run_id
+        time.sleep(_CD_POLL_INTERVAL)
+
+    raise ReleaseError(
+        phase=f"confirm-{branch}",
+        command=f"gh run list --workflow {_CD_WORKFLOW}",
+        message=f"No CD workflow run found on {branch} for commit {head_sha[:12]}.",
+    )
 
 
 def _verify_jobs(
