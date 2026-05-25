@@ -823,6 +823,8 @@
       
         
       
+        
+      
     
     
     
@@ -875,6 +877,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.0.46/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.46
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6295,7 +6325,7 @@ Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit
 <ol>
 <li><code>vergil-tooling</code> is installed on the developer's host via
    <code>uv tool install</code>, placing <code>vrg-*</code> scripts in <code>~/.local/bin/</code>.</li>
-<li><code>vrg-docker-run</code> bridges host commands into dev container images
+<li><code>vrg-container-run</code> bridges host commands into dev container images
    where language runtimes and validators live.</li>
 <li>Python consumers also declare <code>vergil-tooling</code> as a dev dep
    via <code>[tool.uv.sources]</code> so <code>uv run vrg-*</code> inside the container

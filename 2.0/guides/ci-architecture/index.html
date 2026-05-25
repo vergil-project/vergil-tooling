@@ -734,6 +734,8 @@
       
         
       
+        
+      
     
     
     
@@ -786,6 +788,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.46/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.46
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6736,7 +6766,7 @@ host prerequisite.</p>
 <ol>
 <li>Set <code>DOCKER_DEV_IMAGE</code> (default: <code>dev-&lt;language&gt;:&lt;latevrg-version&gt;</code>)</li>
 <li>Set <code>DOCKER_TEST_CMD</code> (language-specific command)</li>
-<li>Delegate to <code>vrg-docker-test</code> if available, otherwise run <code>docker run</code>
+<li>Delegate to <code>vrg-container-test</code> if available, otherwise run <code>docker run</code>
    directly</li>
 </ol>
 <p>Environment overrides:</p>
@@ -6749,7 +6779,7 @@ host prerequisite.</p>
 <p>Build the dev images locally before first use:
 <code>cd ../vergil-docker &amp;&amp; docker/build.sh</code></p>
 </div>
-<p>The <code>.githooks</code> pre-commit gate runs <code>vrg-docker-run -- uv run vrg-validate</code>
+<p>The <code>.githooks</code> pre-commit gate runs <code>vrg-container-run -- uv run vrg-validate</code>
 on every commit, which runs common checks and per-language validation. Hook
 bypass (<code>--no-verify</code>) is disallowed by policy.</p>
 <h2 id="tier-2-pr-ci">Tier 2: PR CI<a class="headerlink" href="#tier-2-pr-ci" title="Permanent link">&para;</a></h2>

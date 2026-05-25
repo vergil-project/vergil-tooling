@@ -734,6 +734,8 @@
       
         
       
+        
+      
     
     
     
@@ -786,6 +788,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.46/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.46
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6471,13 +6501,13 @@ The setup steps below wire up each one:</p>
 <tbody>
 <tr>
 <td><strong>Host tools</strong></td>
-<td><code>vrg-docker-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, and other host-side CLI tools.</td>
+<td><code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, and other host-side CLI tools.</td>
 <td><code>uv tool install</code> from the vergil-tooling git URL; scripts land in <code>~/.local/bin/</code>.</td>
 </tr>
 <tr>
 <td><strong>Dev container</strong></td>
 <td><code>ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> — pre-baked images with language runtimes, validators, and every other <code>vrg-*</code> tool installed.</td>
-<td>Pulled automatically by <code>vrg-docker-run</code>; nothing to install manually.</td>
+<td>Pulled automatically by <code>vrg-container-run</code>; nothing to install manually.</td>
 </tr>
 <tr>
 <td><strong>Claude Code plugin</strong></td>
@@ -6526,8 +6556,8 @@ live inside the container.</p>
 which <code>uv</code>'s official installer already configures on <code>PATH</code>. No
 sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
 <p>Verify:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-docker-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-docker-run</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-docker-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-container-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-container-run</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-container-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
 </code></pre></div>
 <div class="admonition note">
 <p class="admonition-title">Dev-tree override for vergil-tooling development</p>
@@ -6731,15 +6761,15 @@ no further setup is needed in the workflow.</p>
 per-language test/lint/audit tiers.</p>
 <h2 id="step-8-verify-end-to-end">Step 8: Verify end-to-end<a class="headerlink" href="#step-8-verify-end-to-end" title="Permanent link">&para;</a></h2>
 <p>Once the above is in place, sanity-check each layer:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># 1. Host tools — should print vrg-docker-run help</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-docker-run<span class="w"> </span>--help
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="c1"># 1. Host tools — should print vrg-container-run help</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>vrg-container-run<span class="w"> </span>--help
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a><span class="c1"># 2. Dev container — pulls an image on first run and runs a</span>
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a><span class="c1">#    tiny command inside it</span>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>vrg-docker-run<span class="w"> </span>--<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;container ok&quot;</span>
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;container ok&quot;</span>
 <a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># 3. Repo profile — runs vrg-repo-profile inside the container</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>vrg-docker-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
+<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
 <a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
 <a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># 4. Git hook — raw git commit should be blocked by the gate</span>
 <a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="w">     </span><span class="c1"># expected: blocked</span>
@@ -6760,7 +6790,7 @@ Code session loaded.</p>
 <p><code>uv tool upgrade</code> re-resolves the git reference, pulls the current
 tip of the rolling minor tag, and rebuilds the isolated tool venv.
 No need to repeat the full git URL.</p>
-<p>The dev container images auto-update on <code>vrg-docker-run</code> pulls — the
+<p>The dev container images auto-update on <code>vrg-container-run</code> pulls — the
 tag is a minor version (<code>3.12</code>, <code>1.26</code>, etc.) that tracks upstream
 releases. If you need a fresh image, <code>docker pull
 ghcr.io/vergil-project/dev-&lt;lang&gt;:&lt;version&gt;</code> forces a refresh.</p>
@@ -6771,9 +6801,9 @@ refresh:</p>
 </code></pre></div>
 <h2 id="troubleshooting">Troubleshooting<a class="headerlink" href="#troubleshooting" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong><code>vrg-docker-run: command not found</code></strong> — <code>uv tool install</code> has
+<li><strong><code>vrg-container-run: command not found</code></strong> — <code>uv tool install</code> has
   not been run, or <code>~/.local/bin</code> is not on PATH. Re-run the install
-  command from Step 2 and confirm <code>which vrg-docker-run</code> resolves.</li>
+  command from Step 2 and confirm <code>which vrg-container-run</code> resolves.</li>
 <li><strong><code>manifest unknown</code> when pulling a container image</strong> — the tag
   you're asking for doesn't exist on GHCR. Older docs referenced
   <code>ghcr.io/vergil-project/dev-docs:latest</code> (renamed to <code>dev-base</code> in

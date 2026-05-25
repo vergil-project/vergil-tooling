@@ -734,6 +734,8 @@
       
         
       
+        
+      
     
     
     
@@ -786,6 +788,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../releases/v2.0.46/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.46
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6376,15 +6406,15 @@ CI config, and troubleshooting, see
 </ul>
 <p>Everything else — language runtimes, linters, test frameworks, and
 most <code>vrg-*</code> tools — lives inside the dev container. The host-side
-<code>vrg-*</code> tools (<code>vrg-docker-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, etc.)
+<code>vrg-*</code> tools (<code>vrg-container-run</code>, <code>vrg-commit</code>, <code>vrg-submit-pr</code>, etc.)
 are installed via <code>uv tool install</code>.</p>
 <h2 id="1-install-vergil-tooling-on-the-host">1. Install vergil-tooling on the host<a class="headerlink" href="#1-install-vergil-tooling-on-the-host" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4&#39;</span>
 </code></pre></div>
 <p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>,
 which <code>uv</code>'s installer already puts on <code>PATH</code>.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-docker-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-docker-run</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-docker-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>which<span class="w"> </span>vrg-container-run<span class="w">    </span><span class="c1"># should resolve to ~/.local/bin/vrg-container-run</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-container-run<span class="w"> </span>--help<span class="w">   </span><span class="c1"># should print usage</span>
 </code></pre></div>
 <h2 id="2-configure-git-hooks-in-your-consuming-repo">2. Configure git hooks in your consuming repo<a class="headerlink" href="#2-configure-git-hooks-in-your-consuming-repo" title="Permanent link">&para;</a></h2>
 <p>Every managed repo checks in a <code>.githooks/pre-commit</code> env-var gate
@@ -6452,10 +6482,10 @@ can copy from; the canonical source is
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/specs/worktree-convention.md">the worktree convention spec</a>.</p>
 <h2 id="6-verify">6. Verify<a class="headerlink" href="#6-verify" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="c1"># Host tooling reachable</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-docker-run<span class="w"> </span>--help
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-container-run<span class="w"> </span>--help
 <a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a>
 <a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="c1"># Repo profile validates (runs inside the container)</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>vrg-docker-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
 <a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="c1"># Git hook blocks raw git commit</span>
 <a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="w">    </span><span class="c1"># should be blocked by the gate</span>
