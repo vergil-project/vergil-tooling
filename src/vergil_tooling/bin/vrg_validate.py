@@ -34,7 +34,17 @@ _LANGUAGE_CHECK_ORDER = [
 
 
 def _in_dev_container() -> bool:
-    return Path("/.dockerenv").exists() or bool(os.environ.get("ST_IN_DEV_CONTAINER"))
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        with Path("/proc/1/mountinfo").open() as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 5 and parts[4] == "/" and "overlay" in parts:
+                    return True
+    except OSError:
+        pass
+    return False
 
 
 def _run_commands(cmds: list[list[str]], label: str, *, fail_fast: bool = False) -> int:
