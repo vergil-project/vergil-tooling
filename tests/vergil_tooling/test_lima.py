@@ -10,7 +10,9 @@ import pytest
 
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.lima import (
+    _inject_host_git_identity,
     _limactl,
+    _read_host_git_config,
     copy_claude_config,
     create_vm,
     delete_vm,
@@ -346,10 +348,11 @@ class TestDeleteVm:
 
 
 class TestInjectCredentials:
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima.shell_pipe")
     def test_injects_all_credentials(
-        self, mock_pipe: MagicMock, mock_run: MagicMock, tmp_path: Path
+        self, mock_pipe: MagicMock, mock_run: MagicMock, _mock_id: MagicMock, tmp_path: Path
     ) -> None:
         key_file = tmp_path / "app.pem"
         key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
@@ -379,10 +382,11 @@ class TestInjectCredentials:
         assert "app.env" in env_call[0][1]
         assert "APP_ID=12345" in env_call[0][2]
 
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima.shell_pipe")
     def test_injects_claude_token(
-        self, mock_pipe: MagicMock, mock_run: MagicMock, tmp_path: Path
+        self, mock_pipe: MagicMock, mock_run: MagicMock, _mock_id: MagicMock, tmp_path: Path
     ) -> None:
         key_file = tmp_path / "app.pem"
         key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
@@ -417,10 +421,11 @@ class TestInjectCredentials:
         assert ".claude.json" in onboarding_call[0][1]
         assert "hasCompletedOnboarding" in onboarding_call[0][2]
 
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima.shell_pipe")
     def test_skips_claude_token_when_not_configured(
-        self, mock_pipe: MagicMock, mock_run: MagicMock, tmp_path: Path
+        self, mock_pipe: MagicMock, mock_run: MagicMock, _mock_id: MagicMock, tmp_path: Path
     ) -> None:
         key_file = tmp_path / "app.pem"
         key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
@@ -436,10 +441,11 @@ class TestInjectCredentials:
         assert mock_run.call_count == 2
         assert mock_pipe.call_count == 2
 
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima.shell_pipe")
     def test_exits_if_claude_token_missing(
-        self, _mock_pipe: MagicMock, _mock_run: MagicMock, tmp_path: Path
+        self, _mock_pipe: MagicMock, _mock_run: MagicMock, _mock_id: MagicMock, tmp_path: Path
     ) -> None:
         key_file = tmp_path / "app.pem"
         key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
@@ -462,6 +468,95 @@ class TestInjectCredentials:
         )
         with pytest.raises(SystemExit):
             inject_credentials("vergil-agent", identity)
+
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_calls_inject_host_git_identity(
+        self, _mock_pipe: MagicMock, _mock_run: MagicMock, mock_id: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        identity = Identity(
+            vm_instance="vergil-agent",
+            app_id="12345",
+            private_key_path=str(key_file),
+        )
+        inject_credentials("vergil-agent", identity)
+        mock_id.assert_called_once_with("vergil-agent")
+
+
+class TestReadHostGitConfig:
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_returns_value(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Phillip Moore\n"
+        )
+        assert _read_host_git_config("user.name") == "Phillip Moore"
+        mock_run.assert_called_once_with(
+            ["git", "config", "--global", "user.name"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_returns_none_on_missing_key(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.CalledProcessError(1, "git")
+        assert _read_host_git_config("user.name") is None
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    def test_returns_none_when_git_not_found(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = FileNotFoundError("git")
+        assert _read_host_git_config("user.name") is None
+
+
+class TestInjectHostGitIdentity:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima._read_host_git_config")
+    def test_injects_name_and_email(self, mock_config: MagicMock, mock_run: MagicMock) -> None:
+        values = {
+            "user.name": "Test User",
+            "user.email": "test@example.com",
+        }
+        mock_config.side_effect = lambda k: values[k]
+        _inject_host_git_identity("vergil-agent")
+        assert mock_run.call_count == 2
+        name_call = mock_run.call_args_list[0]
+        assert name_call[0] == (
+            "vergil-agent",
+            "git",
+            "config",
+            "--global",
+            "user.name",
+            "Test User",
+        )
+        email_call = mock_run.call_args_list[1]
+        assert email_call[0] == (
+            "vergil-agent",
+            "git",
+            "config",
+            "--global",
+            "user.email",
+            "test@example.com",
+        )
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima._read_host_git_config")
+    def test_skips_when_not_configured(self, mock_config: MagicMock, mock_run: MagicMock) -> None:
+        mock_config.return_value = None
+        _inject_host_git_identity("vergil-agent")
+        mock_run.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima._read_host_git_config")
+    def test_injects_only_name_when_email_missing(
+        self, mock_config: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_config.side_effect = lambda k: "Test User" if k == "user.name" else None
+        _inject_host_git_identity("vergil-agent")
+        assert mock_run.call_count == 1
+        assert "user.name" in mock_run.call_args[0]
 
 
 class TestInstallTooling:

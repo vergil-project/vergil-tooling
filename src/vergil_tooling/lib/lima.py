@@ -187,6 +187,33 @@ def delete_vm(instance: str) -> None:
     _limactl("delete", "--force", instance)
 
 
+def _read_host_git_config(key: str) -> str | None:
+    """Read a single value from the host's global git config."""
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["git", "config", "--global", key],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return result.stdout.strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def _inject_host_git_identity(instance: str) -> None:
+    """Copy user.name and user.email from host git config into the VM."""
+    name = _read_host_git_config("user.name")
+    email = _read_host_git_config("user.email")
+
+    if name:
+        print(f"  Setting git user.name: {name}")
+        shell_run(instance, "git", "config", "--global", "user.name", name)
+    if email:
+        print(f"  Setting git user.email: {email}")
+        shell_run(instance, "git", "config", "--global", "user.email", email)
+
+
 def inject_credentials(instance: str, identity: Identity) -> None:
     """Inject GitHub App and Claude Code credentials into a running VM."""
     key_path = Path(identity.private_key_path).expanduser()
@@ -210,6 +237,8 @@ def inject_credentials(instance: str, identity: Identity) -> None:
         "cat > ~/.config/vergil/app.env && chmod 600 ~/.config/vergil/app.env",
         f"APP_ID={identity.app_id}\n",
     )
+
+    _inject_host_git_identity(instance)
 
     print("  Configuring git for HTTPS GitHub access...")
     shell_run(
