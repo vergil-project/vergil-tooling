@@ -140,5 +140,6 @@ def test_back_merge_pulls_develop_after_merge() -> None:
     develop_checkout_idx = next(
         i for i, c in enumerate(git_run_calls) if c == ("checkout", "develop")
     )
-    pull_idx = next(i for i, c in enumerate(git_run_calls) if c[:2] == ("pull", "origin"))
+    pull_idx = next(i for i, c in enumerate(git_run_calls) if c[:2] == ("pull", "--ff-only"))
+    assert git_run_calls[pull_idx] == ("pull", "--ff-only", "origin", "develop")
     assert pull_idx > develop_checkout_idx
