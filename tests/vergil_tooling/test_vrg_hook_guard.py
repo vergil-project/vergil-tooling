@@ -202,6 +202,51 @@ class TestWrapperExclusion:
         assert out == ""
 
 
+# -- quoted argument text must not trigger false positives --------------------
+
+
+class TestQuotedArgumentExclusion:
+    def test_vrg_submit_pr_with_git_in_summary(self) -> None:
+        rc, out = _run('vrg-submit-pr --summary "Add git rm to allowlist"')
+        assert rc == 0
+        assert out == ""
+
+    def test_vrg_submit_pr_with_gh_in_notes(self) -> None:
+        rc, out = _run('vrg-submit-pr --notes "Use gh api for checks"')
+        assert rc == 0
+        assert out == ""
+
+    def test_vrg_commit_with_git_in_message(self) -> None:
+        rc, out = _run('vrg-commit --message "fix git hook detection"')
+        assert rc == 0
+        assert out == ""
+
+    def test_echo_with_git_in_quotes(self) -> None:
+        rc, out = _run('echo "git push origin main"')
+        assert rc == 0
+        assert out == ""
+
+    def test_single_quoted_git_arg(self) -> None:
+        rc, out = _run("vrg-submit-pr --title 'fix git allowlist'")
+        assert rc == 0
+        assert out == ""
+
+    def test_bash_c_git_still_blocked(self) -> None:
+        rc, out = _run('bash -c "git push origin main"')
+        result = json.loads(out)
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_sh_c_gh_still_blocked(self) -> None:
+        rc, out = _run("sh -c 'gh pr create --title test'")
+        result = json.loads(out)
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+
+    def test_bash_c_vrg_git_allowed(self) -> None:
+        rc, out = _run('bash -c "vrg-git push origin main"')
+        assert rc == 0
+        assert out == ""
+
+
 # -- non-git/gh commands must be allowed --------------------------------------
 
 

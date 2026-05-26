@@ -28,6 +28,10 @@ _RAW_GH_RE = re.compile(
     r"(?:\s|$)",
 )
 
+_QUOTED_STR_RE = re.compile(r""""[^"]*"|'[^']*'""")
+
+_SH_EXEC_RE = re.compile(r"(?:^|\s)(?:bash|sh)\s+-c\s")
+
 
 def _find_vergil_toml(start: Path) -> Path | None:
     current = start.resolve()
@@ -69,7 +73,9 @@ def main() -> int:
     if not command:
         return 0
 
-    if _RAW_GIT_RE.search(command):
+    stripped = _QUOTED_STR_RE.sub('""', command)
+
+    if _RAW_GIT_RE.search(stripped):
         _deny(
             "Raw git is blocked in Vergil-managed repos. "
             "Use vrg-git instead. All git operations must go "
@@ -77,12 +83,29 @@ def main() -> int:
         )
         return 0
 
-    if _RAW_GH_RE.search(command):
+    if _RAW_GH_RE.search(stripped):
         _deny(
             "Raw gh is blocked in Vergil-managed repos. "
             "Use vrg-gh instead. All GitHub CLI operations must "
             "go through the vrg-gh wrapper."
         )
         return 0
+
+    if _SH_EXEC_RE.search(stripped):
+        if _RAW_GIT_RE.search(command):
+            _deny(
+                "Raw git is blocked in Vergil-managed repos. "
+                "Use vrg-git instead. All git operations must go "
+                "through the vrg-git wrapper."
+            )
+            return 0
+
+        if _RAW_GH_RE.search(command):
+            _deny(
+                "Raw gh is blocked in Vergil-managed repos. "
+                "Use vrg-gh instead. All GitHub CLI operations must "
+                "go through the vrg-gh wrapper."
+            )
+            return 0
 
     return 0
