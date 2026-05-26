@@ -36,12 +36,11 @@ class IdentityConfig:
 
 def _validate_identity_resources(name: str, identity: Identity) -> None:
     if identity.cpus is not None and (not isinstance(identity.cpus, int) or identity.cpus < 1):
-            print(
-                f"ERROR: identity '{name}': cpus must be a positive integer,"
-                f" got {identity.cpus!r}",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
+        print(
+            f"ERROR: identity '{name}': cpus must be a positive integer, got {identity.cpus!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
     for field in ("memory", "disk"):
         value = getattr(identity, field)
         if value is not None and not _SIZE_PATTERN.fullmatch(value):

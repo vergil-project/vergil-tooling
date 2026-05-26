@@ -298,8 +298,12 @@ class TestCreateVm:
     def test_passes_all_overrides(self, mock: MagicMock) -> None:
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm(
-            "vergil-agent", tpl, "/home/user/projects",
-            cpus=8, memory="24GiB", disk="100GiB",
+            "vergil-agent",
+            tpl,
+            "/home/user/projects",
+            cpus=8,
+            memory="24GiB",
+            disk="100GiB",
         )
         args = mock.call_args[0]
         assert "--set=.cpus = 8" in args
