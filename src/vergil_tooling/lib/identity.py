@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import re
 import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+_SIZE_PATTERN = re.compile(r"^\d+GiB$")
 
 
 @dataclass
@@ -18,6 +21,9 @@ class Identity:
     projects_dir: str = ""
     vergil: str = ""
     vergil_vm: str = ""
+    cpus: int | None = None
+    memory: str | None = None
+    disk: str | None = None
 
 
 @dataclass
@@ -26,6 +32,24 @@ class IdentityConfig:
     default_identity: str | None = None
     vergil: str = ""
     vergil_vm: str = ""
+
+
+def _validate_identity_resources(name: str, identity: Identity) -> None:
+    if identity.cpus is not None and (not isinstance(identity.cpus, int) or identity.cpus < 1):
+        print(
+            f"ERROR: identity '{name}': cpus must be a positive integer, got {identity.cpus!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    for field in ("memory", "disk"):
+        value = getattr(identity, field)
+        if value is not None and not _SIZE_PATTERN.fullmatch(value):
+            print(
+                f"ERROR: identity '{name}': {field} must be '<number>GiB'"
+                f' (e.g., "32GiB"), got {value!r}',
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
 
 
 def load_config(path: Path) -> IdentityConfig:
@@ -51,7 +75,11 @@ def load_config(path: Path) -> IdentityConfig:
             projects_dir=data.get("projects_dir", ""),
             vergil=data.get("vergil", ""),
             vergil_vm=data.get("vergil-vm", ""),
+            cpus=data.get("cpus"),
+            memory=data.get("memory"),
+            disk=data.get("disk"),
         )
+        _validate_identity_resources(name, identities[name])
     return IdentityConfig(
         identities=identities,
         default_identity=default_identity,
