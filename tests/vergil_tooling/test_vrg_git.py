@@ -43,6 +43,7 @@ _ALLOWED_SIMPLE = [
     "rev-parse",
     "add",
     "mv",
+    "rm",
     "push",
     "fetch",
     "pull",

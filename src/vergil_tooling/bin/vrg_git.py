@@ -23,6 +23,7 @@ _ALLOWED_SIMPLE: set[str] = {
     "rev-parse",
     "add",
     "mv",
+    "rm",
     "push",
     "fetch",
     "pull",
