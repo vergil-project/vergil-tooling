@@ -11,6 +11,7 @@ import os
 import sys
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.config import container_env_prefixes
 from vergil_tooling.lib.container import build_container_args, detect_runtime
 
 _VALID_PREFIXES = {"dev", "prod"}
@@ -91,11 +92,13 @@ def main(argv: list[str] | None = None) -> int:
     if (repo_root / "pyproject.toml").is_file():
         container_cmd = f"uv sync --group docs && uv run {mkdocs_cmd}"
 
+    env_prefixes = container_env_prefixes(repo_root)
     container_args = build_container_args(
         repo_root,
         image,
         ["bash", "-c", container_cmd],
         runtime=runtime,
+        env_prefixes=env_prefixes,
     )
 
     if command == "serve":

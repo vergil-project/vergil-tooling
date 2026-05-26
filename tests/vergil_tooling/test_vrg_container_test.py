@@ -96,10 +96,20 @@ def test_build_container_args_custom_env(tmp_path: Path) -> None:
 def test_build_container_args_mq_env(tmp_path: Path) -> None:
     env = {"MQ_HOST": "localhost", "MQ_PORT": "1414"}
     with patch.dict("os.environ", env, clear=True):
-        args = build_test_container_args(tmp_path, "python", runtime="docker")
+        args = build_test_container_args(
+            tmp_path, "python", runtime="docker", env_prefixes=("MQ_",)
+        )
     assert "-e" in args
     assert "MQ_HOST" in args
     assert "MQ_PORT" in args
+
+
+def test_build_container_args_no_prefixes_no_mq_env(tmp_path: Path) -> None:
+    env = {"MQ_HOST": "localhost", "MQ_PORT": "1414"}
+    with patch.dict("os.environ", env, clear=True):
+        args = build_test_container_args(tmp_path, "python", runtime="docker")
+    assert "MQ_HOST" not in args
+    assert "MQ_PORT" not in args
 
 
 def test_build_container_args_no_image(tmp_path: Path) -> None:

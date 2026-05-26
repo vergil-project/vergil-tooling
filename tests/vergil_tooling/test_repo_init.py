@@ -638,8 +638,8 @@ class TestStepScaffoldConfigFiles:
 
         assert (tmp_path / "VERSION").exists()
         assert (tmp_path / "VERSION").read_text() == "0.1.0\n"
-        assert (tmp_path / ".githooks" / "pre-commit").exists()
-        assert (tmp_path / ".githooks" / "pre-commit").stat().st_mode & 0o111
+        assert (tmp_path / ".claude" / "hooks" / "guard.sh").exists()
+        assert (tmp_path / ".claude" / "hooks" / "guard.sh").stat().st_mode & 0o111
         assert (tmp_path / "CLAUDE.md").exists()
         assert (tmp_path / ".claude" / "settings.json").exists()
         assert (tmp_path / "LICENSE").exists()
@@ -660,22 +660,17 @@ class TestStepScaffoldConfigFiles:
 
         assert not (tmp_path / "LICENSE").exists()
 
-    def test_hooks_path_set(self, tmp_path: Path) -> None:
+    def test_no_githooks_created(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
         ctx.work_dir = tmp_path
         ctx.description = "Test"
         ctx.license_type = "none"
         ctx.publish_docs = True
 
-        calls: list[tuple[str, ...]] = []
-
-        def mock_git_run(*args: str) -> None:
-            calls.append(args)
-
-        with patch("vergil_tooling.lib.repo_init.git.run", side_effect=mock_git_run):
+        with patch("vergil_tooling.lib.repo_init.git.run"):
             step_scaffold_config_files(ctx)
 
-        assert ("config", "core.hooksPath", ".githooks") in calls
+        assert not (tmp_path / ".githooks").exists()
 
 
 class TestStepCiCdWorkflows:

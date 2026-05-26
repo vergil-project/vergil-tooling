@@ -100,8 +100,8 @@ def main(argv: list[str] | None = None) -> int:
     repo_root = git.repo_root()
 
     try:
-        st_config = config.read_config(repo_root)
-        language = st_config.project.primary_language
+        vergil_config = config.read_config(repo_root)
+        language = vergil_config.project.primary_language
     except FileNotFoundError:
         language = ""
     except config.ConfigError as exc:

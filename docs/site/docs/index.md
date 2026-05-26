@@ -14,8 +14,8 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 **Lint tools** (installed as `vrg-*`):
 `vrg-repo-profile`, `vrg-pr-issue-linkage`, validation drivers
 
-**Git hooks** (`.githooks/`):
-Env-var gate that admits `vrg-commit` and blocks raw `git commit`
+**Claude Code hook guard** (`.claude/hooks/`):
+PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers
 
 ## Design Principles
 
@@ -35,8 +35,8 @@ Env-var gate that admits `vrg-commit` and blocks raw `git commit`
 3. Python consumers also declare `vergil-tooling` as a dev dep
    via `[tool.uv.sources]` so `uv run vrg-*` inside the container
    resolves the pinned version.
-4. Each repo checks in a `.githooks/pre-commit` env-var gate,
-   enabled via `git config core.hooksPath .githooks`.
+4. Each repo ships a `.claude/hooks/guard.sh` shim wired via
+   `.claude/settings.json`, blocking raw `git`/`gh` in agent sessions.
 5. Consuming repos call tools by bare name -- no file copying or
    syncing.
 

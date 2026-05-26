@@ -99,7 +99,7 @@ class TestWaitForChecks:
         assert "error" in captured.err
 
     def test_polls_until_checks_registered(self) -> None:
-        registered_calls = iter([False, False, True])
+        registered_calls = iter([False, False, True, True])
         with (
             patch(_MOD + "._checks_registered", side_effect=registered_calls),
             patch(_MOD + "._run_with_retry", return_value=_completed()),
@@ -108,14 +108,16 @@ class TestWaitForChecks:
         ):
             wait_for_checks("https://github.com/o/r/pull/1", verbose=False)
 
-    def test_polls_timeout_falls_through(self) -> None:
+    def test_polls_timeout_raises(self) -> None:
         with (
             patch(_MOD + "._checks_registered", return_value=False),
-            patch(_MOD + "._run_with_retry", return_value=_completed()),
+            patch(_MOD + "._run_with_retry") as mock_run,
             patch(_MOD + ".time.sleep"),
-            patch(_MOD + ".time.monotonic", side_effect=[0, 100]),
+            patch(_MOD + ".time.monotonic", side_effect=[0, 200]),
+            pytest.raises(subprocess.CalledProcessError, match="no checks reported"),
         ):
             wait_for_checks("https://github.com/o/r/pull/1", verbose=False)
+        mock_run.assert_not_called()
 
 
 class TestWatchWorkflow:

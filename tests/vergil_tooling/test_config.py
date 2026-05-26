@@ -10,8 +10,10 @@ import pytest
 from vergil_tooling.lib.config import (
     CiConfig,
     ConfigError,
+    ContainerConfig,
     MarkdownlintConfig,
     _warn_unrecognized_keys,
+    container_env_prefixes,
     read_config,
     vrg_install_tag,
 )
@@ -389,3 +391,88 @@ def test_no_warnings_for_valid_config(tmp_path: Path, capsys: pytest.CaptureFixt
     read_config(tmp_path)
     err = capsys.readouterr().err
     assert err == ""
+
+
+# -- [container] section ------------------------------------------------------
+
+_CONTAINER_TOML = (
+    _VALID_TOML
+    + """
+[container]
+env-prefixes = ["MQ_"]
+"""
+)
+
+
+def test_read_config_container_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_CONTAINER_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.container == ContainerConfig(env_prefixes=["MQ_"])
+
+
+def test_read_config_no_container_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.container == ContainerConfig(env_prefixes=[])
+
+
+def test_read_config_container_empty_prefixes(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[container]\nenv-prefixes = []\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.env_prefixes == []
+
+
+def test_read_config_container_multiple_prefixes(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_", "KAFKA_"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.env_prefixes == ["MQ_", "KAFKA_"]
+
+
+def test_read_config_container_missing_env_prefixes(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[container]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\].*env-prefixes"):
+        read_config(tmp_path)
+
+
+def test_read_config_container_prefixes_not_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = "MQ_"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.env-prefixes must be a list"):
+        read_config(tmp_path)
+
+
+def test_read_config_container_prefixes_not_strings(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[container]\nenv-prefixes = [1, 2]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.env-prefixes must be a list of strings"):
+        read_config(tmp_path)
+
+
+def test_warns_unrecognized_container_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_"]\nfoo = true\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert "unrecognized key 'foo' in [container]" in err
+
+
+# -- container_env_prefixes convenience function ------------------------------
+
+
+def test_container_env_prefixes_with_config(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_CONTAINER_TOML)
+    assert container_env_prefixes(tmp_path) == ["MQ_"]
+
+
+def test_container_env_prefixes_no_file(tmp_path: Path) -> None:
+    assert container_env_prefixes(tmp_path) == []
+
+
+def test_container_env_prefixes_no_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert container_env_prefixes(tmp_path) == []

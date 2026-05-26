@@ -143,8 +143,6 @@ a local `.venv-host`:
 UV_PROJECT_ENVIRONMENT=.venv-host uv sync --group dev
 export PATH="$(pwd)/.venv-host/bin:$PATH"
 
-# Enable the pre-commit gate (refuses raw `git commit`; admits vrg-commit)
-git config core.hooksPath .githooks
 ```
 
 After host tools are available, use `vrg-container-run` to run all
@@ -158,7 +156,7 @@ Testing is split across two tiers with increasing scope and cost:
 **Tier 1 — Local pre-commit (seconds):** The single entry point
 `vrg-container-run -- uv run vrg-validate` runs everything
 (lint, typecheck, tests, audit, common checks) inside one dev
-container. Enforced via the `.githooks` pre-commit gate on every commit.
+container.
 
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Python 3.12,
 all quality checks, security scanners (CodeQL, Trivy, Semgrep), standards
@@ -207,6 +205,7 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
+- **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
 - **`vrg-container-run`** — Run arbitrary commands inside a dev container
 - **`vrg-container-test`** — Run repo test suite inside a dev container
 
@@ -230,19 +229,26 @@ it in a thin `scripts/dev/test.sh`. Environment overrides:
 
 - `DOCKER_DEV_IMAGE` — override the container image
 - `DOCKER_TEST_CMD` — override the test command
-- `DOCKER_NETWORK` — join a Docker network (e.g., for MQ integration tests)
-- `MQ_*` env vars are automatically passed through to the container
+- `DOCKER_NETWORK` — join a Docker network (e.g., for integration tests)
 
-### Git Hooks (`.githooks/`)
+Env-var passthrough is configured per-repo via `[container].env-prefixes`
+in `vergil.toml` (see `docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`).
 
-Consumed via `git config core.hooksPath .githooks`:
+### Claude Code Hook Guard
 
-- `pre-commit` — Env-var-plus-`GIT_REFLOG_ACTION` gate. Admits commits
-  with `VRG_COMMIT_CONTEXT=1` (set by `vrg-commit`) and admits derived
-  workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
-  Rejects raw `git commit -m "..."`. The five branch / context checks
-  (detached HEAD, protected branches, branch prefix, issue number,
-  worktree convention) live in `vrg-commit` itself, not the hook.
+Raw `git` and `gh` commands are blocked by a Claude Code `PreToolUse`
+hook. The enforcement has two layers:
+
+- **Per-repo hook wiring** (`.claude/settings.json`) — calls
+  `.claude/hooks/guard.sh`, a thin shell shim that execs
+  `vrg-hook-guard` when vergil-tooling is installed, or falls back
+  to a `jq`-based hard deny for git/gh commands.
+- **Per-developer plugin** (`vergil-claude-plugin`) — provides the
+  same guard via the plugin's hook system.
+
+Both layers call `vrg-hook-guard`, which uses regex matching to
+detect raw `git`/`gh` invocations while allowing `vrg-git`/`vrg-gh`
+wrappers through. Only active in repos with a `vergil.toml`.
 
 ### Consumption Model
 
@@ -260,13 +266,9 @@ Consumed via `git config core.hooksPath .githooks`:
 uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
 ```
 
-**Git hooks** (any consuming repo): each repo checks in its own
-`.githooks/pre-commit` (an env-var gate that admits `vrg-commit` and
-rejects raw `git commit`) and enables it once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
+**Claude Code hook** (any consuming repo): each repo ships a thin
+shell shim at `.claude/hooks/guard.sh` that calls `vrg-hook-guard`
+to block raw `git`/`gh` commands in agent sessions.
 
 **CI (GitHub Actions)**: All repos use the cache-first runtime path
 via `vrg-container-run`, which reads `vergil.toml` for the

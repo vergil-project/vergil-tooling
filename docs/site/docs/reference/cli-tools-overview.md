@@ -14,8 +14,8 @@ They drive git, `gh`, SSH, and Docker operations. Installed via
 
 Construct standards-compliant conventional commits with co-author
 resolution. Performs five branch/context checks before committing
-and sets `VRG_COMMIT_CONTEXT=1` so the `.githooks/pre-commit` gate
-admits the commit.
+(detached HEAD, protected branch, branch prefix, issue number,
+worktree convention).
 
 | Attribute | Value |
 |---|---|

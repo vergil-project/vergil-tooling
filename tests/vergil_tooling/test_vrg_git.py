@@ -3,11 +3,19 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_git import main
+from vergil_tooling.bin.vrg_git import (
+    _parse_branch_target,
+    _worktree_convention_active,
+    main,
+)
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 # -- no arguments -------------------------------------------------------------
 
@@ -34,6 +42,7 @@ _ALLOWED_SIMPLE = [
     "ls-remote",
     "rev-parse",
     "add",
+    "mv",
     "push",
     "fetch",
     "pull",
@@ -127,30 +136,16 @@ def test_commit_suggests_vrg_commit(capsys: pytest.CaptureFixture[str]) -> None:
     assert "vrg-commit" in err
 
 
-# -- exact-match allowlist ----------------------------------------------------
+# -- config is denied (no exact-match exceptions) ----------------------------
 
 
-def test_exact_match_allows_hooks_path() -> None:
-    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
-        rc = main(["config", "core.hooksPath", ".githooks"])
-    assert rc == 0
-    args = mock_run.call_args[0][0]
-    assert args == ["git", "config", "core.hooksPath", ".githooks"]
-
-
-def test_exact_match_denies_different_value(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["config", "core.hooksPath", "/tmp/evil"]) != 0  # noqa: S108
-    assert "denied" in capsys.readouterr().err.lower()
-
-
-def test_exact_match_denies_other_config(capsys: pytest.CaptureFixture[str]) -> None:
-    assert main(["config", "user.email", "x@example.com"]) != 0
-    assert "denied" in capsys.readouterr().err.lower()
-
-
-def test_exact_match_denies_bare_config(capsys: pytest.CaptureFixture[str]) -> None:
+def test_config_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["config"]) != 0
+    assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_config_with_args_denied(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["config", "user.email", "x@example.com"]) != 0
     assert "denied" in capsys.readouterr().err.lower()
 
 
@@ -493,3 +488,188 @@ class TestRemoteTokenInjection:
         header_value = kwargs["env"]["GIT_CONFIG_VALUE_0"]
         expected = base64.b64encode(b"x-access-token:ghs_test_token").decode()
         assert expected in header_value
+
+
+# -- worktree convention -------------------------------------------------------
+
+
+class TestParseBranchTarget:
+    def test_checkout_with_flag_skips_flag(self) -> None:
+        assert _parse_branch_target("checkout", ["-b", "feature/x"]) == "feature/x"
+
+    def test_checkout_no_args(self) -> None:
+        assert _parse_branch_target("checkout", []) is None
+
+    def test_switch_with_flag_skips_flag(self) -> None:
+        assert _parse_branch_target("switch", ["--detach", "main"]) == "main"
+
+    def test_switch_no_args(self) -> None:
+        assert _parse_branch_target("switch", []) is None
+
+    def test_unknown_subcmd_returns_none(self) -> None:
+        assert _parse_branch_target("merge", ["feature/x"]) is None
+
+
+def test_worktree_convention_active_without_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _worktree_convention_active() is False
+
+
+def test_worktree_convention_active_with_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / ".worktrees").mkdir()
+    monkeypatch.chdir(tmp_path)
+    assert _worktree_convention_active() is True
+
+
+class TestWorktreeConvention:
+    """Branch switches in the main worktree are blocked when .worktrees/ exists."""
+
+    def test_checkout_feature_denied_in_main_worktree(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+        ):
+            rc = main(["checkout", "feature/123-foo"])
+        assert rc != 0
+        assert "worktree" in capsys.readouterr().err.lower()
+
+    def test_checkout_develop_allowed_in_main_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["checkout", "develop"])
+        assert rc == 0
+
+    def test_checkout_main_allowed_in_main_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["checkout", "main"])
+        assert rc == 0
+
+    def test_checkout_file_allowed_in_main_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["checkout", "--", "src/file.py"])
+        assert rc == 0
+
+    def test_checkout_feature_allowed_in_secondary_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=False),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["checkout", "feature/123-foo"])
+        assert rc == 0
+
+    def test_checkout_feature_allowed_without_worktrees_dir(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=False,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["checkout", "feature/123-foo"])
+        assert rc == 0
+
+    def test_switch_feature_denied_in_main_worktree(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+        ):
+            rc = main(["switch", "feature/123-foo"])
+        assert rc != 0
+        assert "worktree" in capsys.readouterr().err.lower()
+
+    def test_switch_create_denied_in_main_worktree(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+        ):
+            rc = main(["switch", "-c", "feature/456-bar"])
+        assert rc != 0
+        assert "worktree" in capsys.readouterr().err.lower()
+
+    def test_switch_develop_allowed_in_main_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["switch", "develop"])
+        assert rc == 0
+
+    def test_switch_feature_allowed_in_secondary_worktree(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=False),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["switch", "feature/123-foo"])
+        assert rc == 0
+
+    def test_switch_feature_allowed_without_worktrees_dir(self) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git._is_main_worktree", return_value=True),
+            patch(
+                "vergil_tooling.bin.vrg_git._worktree_convention_active",
+                return_value=False,
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["switch", "feature/123-foo"])
+        assert rc == 0

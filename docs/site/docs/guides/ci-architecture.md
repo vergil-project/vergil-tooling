@@ -28,9 +28,9 @@ latency:
 - **Tier 2**: Full version matrix, all checks, security uploads
 
 The goal is fast local feedback for the developer and comprehensive gated
-checks on the PR itself. The pre-commit gate in `.githooks` enforces that
-Tier 1 runs before any commit lands, so by the time a PR opens, it should
-already be green.
+checks on the PR itself. The Claude Code hook guard and `vrg-commit`
+enforce that Tier 1 runs before any commit lands, so by the time a PR
+opens, it should already be green.
 
 !!! note "Historical: three-tier CI"
     Earlier versions of this guide documented a third tier — push-CI — as
@@ -70,9 +70,10 @@ Environment overrides:
     Build the dev images locally before first use:
     `cd ../vergil-docker && docker/build.sh`
 
-The `.githooks` pre-commit gate runs `vrg-container-run -- uv run vrg-validate`
-on every commit, which runs common checks and per-language validation. Hook
-bypass (`--no-verify`) is disallowed by policy.
+Running `vrg-container-run -- uv run vrg-validate` before each commit runs
+common checks and per-language validation. The Claude Code hook guard
+ensures agents use `vrg-commit` (which runs validation) rather than raw
+`git commit`.
 
 ## Tier 2: PR CI
 

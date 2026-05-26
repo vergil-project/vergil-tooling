@@ -5,7 +5,7 @@
 - [Purpose](#purpose)
 - [Installation](#installation)
 - [CLI tools](#cli-tools)
-- [Git hooks](#git-hooks)
+- [Claude Code hook guard](#claude-code-hook-guard)
 - [Releasing](#releasing)
 
 ## Purpose
@@ -23,7 +23,6 @@ host-level developer tool per
 cd vergil-tooling
 uv sync --group dev
 export PATH="$(pwd)/.venv/bin:$PATH"
-git config core.hooksPath .githooks
 ```
 
 ### CI (GitHub Actions)
@@ -50,15 +49,12 @@ git config core.hooksPath .githooks
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation
 
-## Git hooks
+## Claude Code hook guard
 
-Consumed via `git config core.hooksPath .githooks`:
-
-- `pre-commit` — env-var-plus-`GIT_REFLOG_ACTION` gate. Admits
-  `vrg-commit`-driven commits (`VRG_COMMIT_CONTEXT=1`) and derived
-  workflows (`amend`, `cherry-pick`, `revert`, `rebase*`, `merge*`).
-  Rejects raw `git commit`. Branch / context validation lives in
-  `vrg-commit` itself.
+Raw `git` and `gh` commands are blocked in AI agent sessions by
+`vrg-hook-guard`, a Claude Code `PreToolUse` hook. Each repo ships a
+thin shell shim at `.claude/hooks/guard.sh` that calls
+`vrg-hook-guard` to enforce the `vrg-git`/`vrg-gh` wrapper policy.
 
 ## Releasing
 

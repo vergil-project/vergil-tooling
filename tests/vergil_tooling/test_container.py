@@ -222,17 +222,26 @@ def test_build_docker_args_empty_extra_volumes(tmp_path: Path) -> None:
 
 
 def test_build_docker_args_env_passthrough(tmp_path: Path) -> None:
+    env = {"MQ_HOST": "localhost", "GH_TOKEN": "tok", "OTHER": "x"}
+    with patch.dict("os.environ", env, clear=True):
+        args = build_docker_args(tmp_path, "img:1", ["cmd"], env_prefixes=("MQ_",))
+    assert "MQ_HOST" in args
+    assert "GH_TOKEN" not in args
+    assert "OTHER" not in args
+
+
+def test_build_docker_args_no_prefixes_no_passthrough(tmp_path: Path) -> None:
     env = {"MQ_HOST": "localhost", "GH_TOKEN": "tok", "GITHUB_SHA": "abc"}
     with patch.dict("os.environ", env, clear=True):
         args = build_docker_args(tmp_path, "img:1", ["cmd"])
-    assert "MQ_HOST" in args
-    assert "GH_TOKEN" in args
-    assert "GITHUB_SHA" in args
+    assert "MQ_HOST" not in args
+    assert "GH_TOKEN" not in args
+    assert "GITHUB_SHA" not in args
 
 
 def test_build_docker_args_no_unrelated_env(tmp_path: Path) -> None:
     with patch.dict("os.environ", {"HOME": "/home/user"}, clear=True):
-        args = build_docker_args(tmp_path, "img:1", ["cmd"])
+        args = build_docker_args(tmp_path, "img:1", ["cmd"], env_prefixes=("MQ_",))
     assert "HOME" not in args
 
 

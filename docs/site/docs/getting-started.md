@@ -35,15 +35,13 @@ which vrg-container-run    # should resolve to ~/.local/bin/vrg-container-run
 vrg-container-run --help   # should print usage
 ```
 
-## 2. Configure git hooks in your consuming repo
+## 2. Configure the Claude Code hook guard
 
-Every managed repo checks in a `.githooks/pre-commit` env-var gate
-(see [Consuming Repo Setup](guides/consuming-repo-setup.md) for
-the gate content). Enable it once per clone:
-
-```bash
-git config core.hooksPath .githooks
-```
+Every managed repo ships a `.claude/hooks/guard.sh` shim that blocks
+raw `git` and `gh` commands in agent sessions. The shim is wired via
+`.claude/settings.json` and requires no per-clone configuration. See
+[Consuming Repo Setup](guides/consuming-repo-setup.md) for the full
+setup.
 
 ## 3. Enable the Claude Code plugin
 
@@ -126,11 +124,13 @@ vrg-container-run --help
 # Repo profile validates (runs inside the container)
 vrg-container-run -- uv run vrg-repo-profile
 
-# Git hook blocks raw git commit
-git commit --allow-empty -m "test"    # should be blocked by the gate
+# Hook guard shim is present and executable
+ls -la .claude/hooks/guard.sh
 ```
 
-If all three behave as expected, you're wired up correctly.
+If all three behave as expected, you're wired up correctly. The hook
+guard fires on Claude Code `Bash` tool invocations — to test it end
+to end, have Claude Code try a raw `git commit` in a session.
 
 ## Next steps
 

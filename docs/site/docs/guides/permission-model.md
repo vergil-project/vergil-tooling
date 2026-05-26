@@ -150,25 +150,32 @@ agent-initiated `gh` calls via the Bash tool.
   "permissions": {
     "allow": [
       "Bash(vrg-*)"
-    ],
-    "deny": [
-      "Bash(git *)",
-      "Bash(*/git *)",
-      "Bash(gh *)",
-      "Bash(*/gh *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh"
+          }
+        ]
+      }
     ]
   }
 }
 ```
 
-The project layer is the primary enforcement point. It allowlists
-all VRG tools via a single wildcard and hard-denies raw `git` and
-`gh`. The `*/git *` patterns cover fully qualified path
-invocations (e.g., `/usr/bin/git status`).
+The project layer allowlists all VRG tools via a single wildcard
+and wires the Claude Code hook guard (`guard.sh`) as a `PreToolUse`
+hook on every `Bash` tool invocation. The hook guard delegates to
+`vrg-hook-guard`, which uses regex matching to block raw `git` and
+`gh` commands while allowing `vrg-git`/`vrg-gh` wrappers through.
 
-Deny rules at any scope cannot be overridden by allow rules at any
-other scope. A deny in `.claude/settings.json` applies to everyone
-who clones the repo — no per-developer setup needed.
+This configuration applies to everyone who clones the repo — no
+per-developer setup needed.
 
 ### Global User Settings (`~/.claude/settings.json`)
 
@@ -223,7 +230,7 @@ are found (Explore subagent, native Read tool, future
 | `vrg-commit` | No prompt (project allow) |
 | `vrg-git status` | No prompt (project allow) |
 | `grep -r "foo" src/` | No prompt (local allow) |
-| `git push` | Denied (project deny) |
+| `git push` | Blocked (hook guard) |
 | `curl https://...` | Prompts the human |
 | `rm -rf .` | Prompts the human |
 | `vrg-gh pr merge` | No Claude Code prompt, but wrapper rejects it |
@@ -241,8 +248,8 @@ dismantle the entire client-side stack:
 2. Run raw `git` and `gh` — Layer 2 bypassed (the wrappers are
    never invoked)
 3. Remove plugin hook configuration — Layer 3 weakened
-4. Delete `.githooks/pre-commit` or run
-   `git config --unset core.hooksPath` — Layer 4 gone
+4. Delete `.claude/hooks/guard.sh` or remove the hooks
+   wiring from `.claude/settings.json` — Layer 4 gone
 
 After those four steps, the agent has unrestricted local access.
 This is not a theoretical attack — it is trivial for any model
@@ -315,17 +322,18 @@ even bypass mode. Hooks that become redundant with layers 1-2 are
 retained — they catch regressions if a higher layer is
 misconfigured.
 
-**Layer 4 — Git-Level Hooks (`.githooks/pre-commit`).** The
-innermost layer. Rejects raw `git commit` without the
-`VRG_COMMIT_CONTEXT=1` environment variable that `vrg-commit`
-sets. With layers 1-3 in place, agents cannot reach this layer
+**Layer 4 — Claude Code Hook Guard (`.claude/hooks/guard.sh`).**
+The innermost layer. A `PreToolUse` hook wired in
+`.claude/settings.json` that delegates to `vrg-hook-guard`,
+blocking all raw `git` and `gh` commands via regex matching.
+With layers 1-3 in place, agents cannot reach this layer
 through normal operation.
 
 ### Layer Interaction Matrix
 
-| Operation | L1 Permissions | L2 Wrapper | L3 Plugin Hook | L4 Git Hook | Server-Side |
+| Operation | L1 Permissions | L2 Wrapper | L3 Plugin Hook | L4 Hook Guard | Server-Side |
 |---|---|---|---|---|---|
-| `vrg-commit` | allowed | n/a | n/a | admits | push accepted |
+| `vrg-commit` | allowed | n/a | n/a | allows | push accepted |
 | `vrg-git push` | allowed | validates: no `--force` | n/a | n/a | push accepted |
 | `git push` | denied | n/a | blocked | n/a | push accepted (if layers bypassed) |
 | `vrg-gh pr merge` | allowed | rejected | blocked | n/a | **API rejected** (no merge permission) |

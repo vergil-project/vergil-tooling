@@ -19,9 +19,9 @@ The setup steps below wire up each one:
 Plus two layers that aren't installed as packages but are expected
 to be present in every consuming repo:
 
-- **Local git hooks** — a `.githooks/pre-commit` env-var gate
-  checked into the repo, wired via `git config core.hooksPath
-  .githooks`.
+- **Claude Code hook guard** — a `.claude/hooks/guard.sh` shim
+  checked into the repo, wired via `.claude/settings.json` as a
+  `PreToolUse` hook.
 - **CI workflow** — the `standards-compliance` composite action
   from `vergil-project/vergil-actions`, invoked from your repo's
   `.github/workflows/ci.yml`.
@@ -80,36 +80,48 @@ vrg-container-run --help   # should print usage
     override described in the vergil-tooling `CLAUDE.md`. This
     does not apply to consuming repos.
 
-## Step 3: Git hook setup
+## Step 3: Claude Code hook guard
 
-Every managed repo checks in a `.githooks/pre-commit` env-var gate.
-Create it in your repo:
+Every managed repo ships a `.claude/hooks/guard.sh` shim that
+blocks raw `git` and `gh` commands in Claude Code agent sessions.
+The shim delegates to `vrg-hook-guard` (when vergil-tooling is
+installed on the host) or falls back to a `jq`-based hard deny.
+
+Create `.claude/hooks/guard.sh` in your repo (the `vrg-github-repo-init`
+wizard creates this automatically for new repos):
 
 ```bash
 #!/usr/bin/env bash
-# Admit vrg-commit-driven commits.
-if [[ "${VRG_COMMIT_CONTEXT:-}" == "1" ]]; then exit 0; fi
-# Admit derived-commit workflows (amend, cherry-pick, revert, rebase, merge).
-case "${GIT_REFLOG_ACTION:-}" in
-  amend|cherry-pick|revert|rebase*|merge*) exit 0 ;;
+set -euo pipefail
+if command -v vrg-hook-guard >/dev/null 2>&1; then
+  exec vrg-hook-guard
+fi
+# Fallback: hard-deny git/gh when vrg-hook-guard is not installed.
+INPUT="$(cat)"
+CMD="$(printf '%s' "$INPUT" | jq -r '.input.command // empty')"
+case "$CMD" in
+  git\ *|*/git\ *|gh\ *|*/gh\ *)
+    printf '{"decision":"block","reason":"raw git/gh blocked (vrg-hook-guard not installed)"}\n'
+    exit 0
+    ;;
 esac
-echo "ERROR: raw 'git commit' is blocked. Use 'vrg-commit' instead." >&2
-echo "See docs/repository-standards.md" >&2
-exit 1
+exit 0
 ```
 
-Save this as `.githooks/pre-commit`, make it executable, and commit
-it. Then enable the hook once per clone:
+Save this as `.claude/hooks/guard.sh`, make it executable, and
+commit it:
 
 ```bash
-chmod +x .githooks/pre-commit
-git config core.hooksPath .githooks
+mkdir -p .claude/hooks
+chmod +x .claude/hooks/guard.sh
 ```
 
-The gate admits commits from `vrg-commit` (which sets
-`VRG_COMMIT_CONTEXT=1`) and from derived workflows like rebase and
-cherry-pick. All branch/context checks (detached HEAD, protected
-branches, branch prefix, issue number) live in `vrg-commit` itself.
+No per-clone configuration is required — the hook is wired via
+`.claude/settings.json` (see Step 5 below) and fires automatically
+in every Claude Code session.
+
+All branch/context checks (detached HEAD, protected branches,
+branch prefix, issue number) live in `vrg-commit` itself.
 
 Full reference: [Git Hooks and Validation][hooks-doc].
 
@@ -160,12 +172,30 @@ Values containing `<`, `>`, or `|` are rejected as placeholders by
 
 ## Step 5: Enable the Claude Code plugin
 
-Create `.claude/settings.json` in your repo:
+Create `.claude/settings.json` in your repo. This file serves
+double duty: it wires the hook guard from Step 3, and it enables
+the Claude Code plugin:
 
 ```json
 {
+  "permissions": {
+    "allow": ["Bash(vrg-*)"]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh"
+          }
+        ]
+      }
+    ]
+  },
   "extraKnownMarketplaces": {
-    "vergil-tooling-marketplace": {
+    "vergil-marketplace": {
       "source": {
         "source": "github",
         "repo": "vergil-project/vergil-claude-plugin"
@@ -173,21 +203,20 @@ Create `.claude/settings.json` in your repo:
     }
   },
   "enabledPlugins": {
-    "vergil-tooling@vergil-tooling-marketplace": true
+    "vergil@vergil-marketplace": true
   }
 }
 ```
 
 Commit this file. It's part of your repo's reproducible
 environment — any Claude Code session opened in this repo will
-pick up the plugin via this declaration.
+load the hook guard and the plugin automatically.
 
 What the plugin provides:
 
-- **PreToolUse hooks** on `Bash` that block raw `git commit`, raw
-  `gh pr create`, heredoc syntax, and (on repos that have adopted
-  the worktree convention) commits originating outside
-  `.worktrees/<name>/`.
+- **PreToolUse hooks** on `Bash` that block heredoc syntax and
+  (on repos that have adopted the worktree convention) commits
+  originating outside `.worktrees/<name>/`.
 - **PostToolUse hooks** that remind you to run `vrg-finalize-repo`
   after `vrg-submit-pr`, and that surface deprecation warnings in
   test output.
@@ -290,13 +319,12 @@ vrg-container-run -- echo "container ok"
 # 3. Repo profile — runs vrg-repo-profile inside the container
 vrg-container-run -- uv run vrg-repo-profile
 
-# 4. Git hook — raw git commit should be blocked by the gate
-git commit --allow-empty -m "test"     # expected: blocked
+# 4. Hook guard shim is present and executable
+ls -la .claude/hooks/guard.sh
 
-# 5. Plugin hook (requires Claude Code session) — in a Claude
+# 5. Hook guard (requires Claude Code session) — in a Claude
 #    Code session in this repo, have Claude try to run a raw
-#    `git commit`. The plugin should block it and point at
-#    vrg-commit.
+#    `git commit`. The hook guard should block it.
 ```
 
 If any step fails, check the corresponding section above, then
@@ -352,9 +380,9 @@ git -C ~/.claude/plugins/marketplaces/vergil-tooling-marketplace pull
   expected since 2026-04-22. Auto-merge is disabled org-wide; the
   PR itself was created successfully. Tracked in
   [vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268).
-- **"raw 'git commit' is blocked"** — the `.githooks/pre-commit`
-  gate is working as intended. Use `vrg-commit` instead of raw `git
-  commit`.
+- **"raw git/gh blocked"** — the Claude Code hook guard is working
+  as intended. Use `vrg-commit` instead of raw `git commit`, and
+  `vrg-gh` instead of raw `gh`.
 
 For a broader troubleshooting index see
 [Git Workflow → Troubleshooting](git-workflow.md#troubleshooting).
