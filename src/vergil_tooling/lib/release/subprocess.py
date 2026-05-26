@@ -6,10 +6,10 @@ import subprocess as _subprocess
 import sys
 import time
 
-from vergil_tooling.lib.github import _checks_registered, _run_with_retry
+from vergil_tooling.lib.github import GitHubAPIError, _checks_registered, _run_with_retry
 
 _POLL_INTERVAL_SECS = 5
-_POLL_TIMEOUT_SECS = 60
+_POLL_TIMEOUT_SECS = 180
 
 
 def _run_verbose(cmd: tuple[str, ...], *, verbose: bool) -> None:
@@ -37,6 +37,14 @@ def wait_for_checks(pr: str, *, verbose: bool) -> None:
         if time.monotonic() >= deadline:
             break
         time.sleep(_POLL_INTERVAL_SECS)
+
+    if not _checks_registered(pr):
+        raise GitHubAPIError(
+            1,
+            ("gh", "pr", "checks", pr, "--watch", "--fail-fast"),
+            stderr=f"no checks reported after {_POLL_TIMEOUT_SECS}s"
+            " — GitHub may be experiencing delays",
+        )
 
     _run_verbose(
         ("gh", "pr", "checks", pr, "--watch", "--fail-fast"),  # noqa: S607

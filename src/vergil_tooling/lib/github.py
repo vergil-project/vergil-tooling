@@ -230,7 +230,7 @@ class GitHubAPIError(subprocess.CalledProcessError):
 
 _NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
-_POLL_TIMEOUT_SECS = 60
+_POLL_TIMEOUT_SECS = 180
 
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -346,6 +346,15 @@ def wait_for_checks(
         if time.monotonic() >= deadline:
             break
         time.sleep(poll_interval)
+
+    if not _checks_registered(pr):
+        cmd = ("gh", "pr", "checks", pr, "--watch", "--fail-fast")
+        raise GitHubAPIError(
+            1,
+            cmd,
+            stderr=f"no checks reported after {poll_timeout}s — GitHub may be experiencing delays",
+        )
+
     run("pr", "checks", pr, "--watch", "--fail-fast")
 
 

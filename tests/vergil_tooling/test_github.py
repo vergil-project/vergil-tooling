@@ -78,7 +78,7 @@ def test_wait_for_checks_polls_until_registered() -> None:
     with (
         patch(
             "vergil_tooling.lib.github._checks_registered",
-            side_effect=[False, False, True],
+            side_effect=[False, False, True, True],
         ),
         patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
         patch("vergil_tooling.lib.github.run") as mock_run,
@@ -92,8 +92,7 @@ def test_wait_for_checks_polls_until_registered() -> None:
     )
 
 
-def test_wait_for_checks_proceeds_after_timeout() -> None:
-    # monotonic: [initial (deadline), loop iter1 check, loop iter2 check (expired)]
+def test_wait_for_checks_raises_after_timeout() -> None:
     with (
         patch("vergil_tooling.lib.github._checks_registered", return_value=False),
         patch(
@@ -102,19 +101,18 @@ def test_wait_for_checks_proceeds_after_timeout() -> None:
         ),
         patch("vergil_tooling.lib.github.time.sleep"),
         patch("vergil_tooling.lib.github.run") as mock_run,
+        pytest.raises(github.GitHubAPIError, match="no checks reported"),
     ):
         github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
 
-    mock_run.assert_called_once_with(
-        "pr", "checks", "https://github.com/pr/1", "--watch", "--fail-fast"
-    )
+    mock_run.assert_not_called()
 
 
 def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
     with (
         patch(
             "vergil_tooling.lib.github._checks_registered",
-            side_effect=[False, True],
+            side_effect=[False, True, True],
         ),
         patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
         patch("vergil_tooling.lib.github.run"),
