@@ -74,7 +74,14 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(identity.vm_instance, template, identity.projects_dir)
+        create_vm(
+            identity.vm_instance,
+            template,
+            identity.projects_dir,
+            cpus=identity.cpus,
+            memory=identity.memory,
+            disk=identity.disk,
+        )
 
         print("  Starting VM...")
         start_vm(identity.vm_instance)
@@ -226,7 +233,14 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(identity.vm_instance, template, identity.projects_dir)
+        create_vm(
+            identity.vm_instance,
+            template,
+            identity.projects_dir,
+            cpus=identity.cpus,
+            memory=identity.memory,
+            disk=identity.disk,
+        )
 
         print("  Starting VM...")
         start_vm(identity.vm_instance)

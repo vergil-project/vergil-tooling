@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.57] - 2026-05-26
+
+### Features
+
+- add cpus, memory, disk resource fields
+- validate cpus, memory, disk syntax at config load
+- accept resource overrides in create_vm
+- pass identity resource overrides through create and rebuild
+
+### Styling
+
+- fix nested-if and Yoda condition lint warnings
+- apply ruff formatting
+
 ## [2.0.56] - 2026-05-26
 
 ### Bug fixes
