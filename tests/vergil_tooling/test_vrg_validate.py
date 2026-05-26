@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import mock_open, patch
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -25,8 +25,9 @@ from vergil_tooling.lib.validate_commands import CheckKind
 
 
 @pytest.fixture(autouse=True)
-def _container_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("ST_IN_DEV_CONTAINER", "1")
+def _container_env() -> Iterator[None]:
+    with patch("vergil_tooling.bin.vrg_validate._in_dev_container", return_value=True):
+        yield
 
 
 def _write_config(tmp_path: Path, language: str) -> None:
@@ -41,8 +42,7 @@ def _write_config(tmp_path: Path, language: str) -> None:
 # -- Container guard ----------------------------------------------------------
 
 
-def test_rejects_host_execution(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ST_IN_DEV_CONTAINER", raising=False)
+def test_rejects_host_execution() -> None:
     with patch("vergil_tooling.bin.vrg_validate._in_dev_container", return_value=False):
         assert main([]) == 1
 
@@ -171,14 +171,54 @@ def test_run_all_language_none_skips_language_checks(tmp_path: Path) -> None:
 # -- Unit tests for internal functions ----------------------------------------
 
 
-def test_in_dev_container_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_in_dev_container_dockerenv() -> None:
+    with patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=True):
+        assert _in_dev_container() is True
+
+
+_OVERLAY_MOUNTINFO = (
+    "22 1 0:21 / /proc rw,nosuid - proc proc rw\n"
+    "448 242 0:45 / / rw,relatime - overlay overlay rw,lowerdir=...\n"
+)
+
+_HOST_MOUNTINFO = (
+    "22 1 0:21 / /proc rw,nosuid - proc proc rw\n"
+    "1 0 259:2 / / rw,relatime - ext4 /dev/nvme0n1p2 rw\n"
+)
+
+
+def test_in_dev_container_overlay_mountinfo() -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=False),
+        patch.object(Path, "open", mock_open(read_data=_OVERLAY_MOUNTINFO)),
+    ):
+        assert _in_dev_container() is True
+
+
+def test_in_dev_container_host_mountinfo() -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=False),
+        patch.object(Path, "open", mock_open(read_data=_HOST_MOUNTINFO)),
+    ):
+        assert _in_dev_container() is False
+
+
+def test_in_dev_container_no_mountinfo() -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=False),
+        patch.object(Path, "open", side_effect=OSError),
+    ):
+        assert _in_dev_container() is False
+
+
+def test_in_dev_container_env_var_no_longer_used(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("ST_IN_DEV_CONTAINER", "1")
-    assert _in_dev_container() is True
-
-
-def test_in_dev_container_false(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("ST_IN_DEV_CONTAINER", raising=False)
-    with patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=False):
+    with (
+        patch("vergil_tooling.bin.vrg_validate.Path.exists", return_value=False),
+        patch.object(Path, "open", side_effect=OSError),
+    ):
         assert _in_dev_container() is False
 
 
