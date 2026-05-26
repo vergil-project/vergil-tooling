@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import subprocess
+import urllib.error
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -702,24 +704,80 @@ class TestDetectOrg:
             assert github._detect_org() is None
 
 
+_URLOPEN = "vergil_tooling.lib.github.urllib.request.urlopen"
+
+
+def _mock_http_response(body: bytes) -> MagicMock:
+    resp = MagicMock()
+    resp.read.return_value = body
+    resp.__enter__ = MagicMock(return_value=resp)
+    resp.__exit__ = MagicMock(return_value=False)
+    return resp
+
+
+class TestJwtApiRequest:
+    def test_sends_bearer_auth_header(self) -> None:
+        resp = _mock_http_response(b'[{"id": 1}]')
+        with patch(_URLOPEN, return_value=resp) as mock_open:
+            github._jwt_api_request("/app/installations", "test-jwt")
+        req = mock_open.call_args[0][0]
+        assert req.get_header("Authorization") == "Bearer test-jwt"
+        assert req.get_header("Accept") == "application/vnd.github+json"
+
+    def test_get_does_not_send_body(self) -> None:
+        resp = _mock_http_response(b"[]")
+        with patch(_URLOPEN, return_value=resp) as mock_open:
+            github._jwt_api_request("/app/installations", "jwt")
+        req = mock_open.call_args[0][0]
+        assert req.data is None
+        assert req.get_method() == "GET"
+
+    def test_post_sends_empty_body(self) -> None:
+        resp = _mock_http_response(b'{"token": "ghs_abc"}')
+        with patch(_URLOPEN, return_value=resp) as mock_open:
+            github._jwt_api_request(
+                "/app/installations/123/access_tokens",
+                "jwt",
+                method="POST",
+            )
+        req = mock_open.call_args[0][0]
+        assert req.data == b""
+        assert req.get_method() == "POST"
+
+    def test_returns_parsed_json(self) -> None:
+        resp = _mock_http_response(b'{"token": "ghs_abc"}')
+        with patch(_URLOPEN, return_value=resp):
+            result = github._jwt_api_request("/endpoint", "jwt")
+        assert result == {"token": "ghs_abc"}
+
+
 class TestResolveInstallations:
     def test_returns_org_to_id_mapping(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = _completed(stdout="vergil-project 111\nwphillipmoore 222\n")
+        api_response = [
+            {"account": {"login": "vergil-project"}, "id": 111},
+            {"account": {"login": "wphillipmoore"}, "id": 222},
+        ]
+        with patch("vergil_tooling.lib.github._jwt_api_request", return_value=api_response):
             result = github._resolve_installations("fake-jwt")
         assert result == {"vergil-project": "111", "wphillipmoore": "222"}
 
     def test_caches_result(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = _completed(stdout="org1 100\n")
+        api_response = [{"account": {"login": "org1"}, "id": 100}]
+        with patch(
+            "vergil_tooling.lib.github._jwt_api_request", return_value=api_response
+        ) as mock_req:
             first = github._resolve_installations("jwt1")
             second = github._resolve_installations("jwt2")
         assert first is second
-        assert mock_run.call_count == 1
+        assert mock_req.call_count == 1
 
-    def test_skips_malformed_lines(self) -> None:
-        with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
-            mock_run.return_value = _completed(stdout="good-org 100\nbad line here\n\n")
+    def test_skips_incomplete_entries(self) -> None:
+        api_response = [
+            {"account": {"login": "good-org"}, "id": 100},
+            {"account": {}, "id": 200},
+            {"account": {"login": "no-id"}},
+        ]
+        with patch("vergil_tooling.lib.github._jwt_api_request", return_value=api_response):
             result = github._resolve_installations("jwt")
         assert result == {"good-org": "100"}
 
@@ -764,13 +822,16 @@ class TestGetInstallationToken:
                 "vergil_tooling.lib.github._resolve_installations",
                 return_value={"test-org": "67890"},
             ),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.github._jwt_api_request") as mock_req,
         ):
-            mock_run.return_value = _completed(stdout="ghs_install_token_abc\n")
+            mock_req.return_value = {"token": "ghs_install_token_abc"}
             token = github.get_installation_token(org="test-org")
         assert token == "ghs_install_token_abc"  # noqa: S105
-        call_args = mock_run.call_args[0][0]
-        assert "/app/installations/67890/access_tokens" in " ".join(call_args)
+        mock_req.assert_called_once_with(
+            "/app/installations/67890/access_tokens",
+            "fake-jwt",
+            method="POST",
+        )
 
     def test_returns_none_when_org_not_in_installations(
         self,
@@ -811,13 +872,13 @@ class TestGetInstallationToken:
                 "vergil_tooling.lib.github._resolve_installations",
                 return_value={"test-org": "67890"},
             ),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.github._jwt_api_request") as mock_req,
         ):
-            mock_run.return_value = _completed(stdout="ghs_token\n")
+            mock_req.return_value = {"token": "ghs_token"}
             first = github.get_installation_token(org="test-org")
             second = github.get_installation_token(org="test-org")
         assert first == second == "ghs_token"
-        assert mock_run.call_count == 1
+        assert mock_req.call_count == 1
 
     def test_returns_none_when_jwt_generation_fails(
         self,
@@ -873,16 +934,20 @@ class TestGetInstallationToken:
         config_dir.mkdir(parents=True)
         (config_dir / "app.env").write_text("APP_ID=12345\n")
         (config_dir / "app.pem").write_text("fake-key\n")
-        err = subprocess.CalledProcessError(1, "gh")
-        err.stderr = "HTTP 401 Unauthorized"
-        err.stdout = ""
+        err = urllib.error.HTTPError(
+            "https://api.github.com/app/installations/67890/access_tokens",
+            401,
+            "Unauthorized",
+            http.client.HTTPMessage(),
+            None,
+        )
         with (
             patch("vergil_tooling.lib.github._generate_jwt", return_value="fake-jwt"),
             patch(
                 "vergil_tooling.lib.github._resolve_installations",
                 return_value={"test-org": "67890"},
             ),
-            patch("vergil_tooling.lib.github.subprocess.run", side_effect=err),
+            patch("vergil_tooling.lib.github._jwt_api_request", side_effect=err),
         ):
             assert github.get_installation_token(org="test-org") is None
 
@@ -953,8 +1018,8 @@ class TestGetInstallationToken:
                 "vergil_tooling.lib.github._resolve_installations",
                 return_value={"test-org": "67890"},
             ),
-            patch("vergil_tooling.lib.github.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.github._jwt_api_request") as mock_req,
         ):
-            mock_run.return_value = _completed(stdout="new_token\n")
+            mock_req.return_value = {"token": "new_token"}
             token = github.get_installation_token(org="test-org")
         assert token == "new_token"  # noqa: S105

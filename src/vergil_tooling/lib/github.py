@@ -13,6 +13,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -78,31 +80,36 @@ def _detect_org() -> str | None:
     return None
 
 
+def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> Any:
+    """Make a GitHub API request with JWT Bearer authentication.
+
+    The ``gh`` CLI sends ``GH_TOKEN`` values as ``Authorization: token``
+    but GitHub requires JWTs to use ``Authorization: Bearer``.
+    """
+    url = f"https://api.github.com{endpoint}"
+    data = b"" if method == "POST" else None
+    req = urllib.request.Request(url, method=method, data=data)  # noqa: S310
+    req.add_header("Authorization", f"Bearer {jwt_token}")
+    req.add_header("Accept", "application/vnd.github+json")
+
+    with urllib.request.urlopen(req) as resp:  # noqa: S310
+        return json.loads(resp.read())
+
+
 def _resolve_installations(jwt_token: str) -> dict[str, str]:
     """Fetch all App installations and return an org → installation ID map."""
     global _installation_cache  # noqa: PLW0603
     if _installation_cache is not None:
         return _installation_cache
 
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gh",
-            "api",
-            "/app/installations",
-            "--jq",
-            r'.[] | "\(.account.login) \(.id)"',
-        ],
-        env={**os.environ, "GH_TOKEN": jwt_token},
-        capture_output=True,
-        text=True,
-        check=True,
-    )
+    data = _jwt_api_request("/app/installations", jwt_token)
 
     mapping: dict[str, str] = {}
-    for line in result.stdout.strip().splitlines():
-        parts = line.strip().split()
-        if len(parts) == 2:
-            mapping[parts[0]] = parts[1]
+    for item in data:
+        login = item.get("account", {}).get("login", "")
+        inst_id = item.get("id")
+        if login and inst_id is not None:
+            mapping[login] = str(inst_id)
 
     _installation_cache = mapping
     return mapping
@@ -175,20 +182,10 @@ def get_installation_token(org: str | None = None) -> str | None:
         if not installation_id:
             return None
 
-        result = subprocess.run(  # noqa: S603
-            [  # noqa: S607
-                "gh",
-                "api",
-                f"/app/installations/{installation_id}/access_tokens",
-                "-X",
-                "POST",
-                "--jq",
-                ".token",
-            ],
-            env={**os.environ, "GH_TOKEN": jwt_token},
-            capture_output=True,
-            text=True,
-            check=True,
+        data = _jwt_api_request(
+            f"/app/installations/{installation_id}/access_tokens",
+            jwt_token,
+            method="POST",
         )
     except (subprocess.CalledProcessError, OSError) as exc:
         detail = ""
@@ -200,7 +197,7 @@ def get_installation_token(org: str | None = None) -> str | None:
             log.warning("GitHub App auth failed, falling back to ambient auth: %s", exc)
         return None
 
-    token = result.stdout.strip()
+    token = str(data.get("token", ""))
     _token_cache[org] = (token, time.time() + 3300)
     return token
 
