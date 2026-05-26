@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.58] - 2026-05-26
+
+### Bug fixes
+
+- add 'repo list' to subcommand allowlist
+- use Bearer auth for JWT-authenticated API calls
+
+### Features
+
+- inject host VCS identity into VM during credential setup
+
 ## [2.0.57] - 2026-05-26
 
 ### Features
