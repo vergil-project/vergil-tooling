@@ -16,7 +16,7 @@ _ALLOWED: dict[str, set[str]] = {
     "issue": {"view", "create", "close", "edit", "list", "comment"},
     "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
     "run": {"list", "view", "watch"},
-    "repo": {"view"},
+    "repo": {"view", "list"},
     "label": {"list", "create"},
 }
 
