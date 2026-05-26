@@ -839,6 +839,8 @@
       
         
       
+        
+      
     
     
     
@@ -891,6 +893,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="releases/v2.0.56/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.56
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3816,7 +3846,7 @@
   <span class="md-ellipsis">
     
   
-    Git Hooks
+    Hook Guard
   
 
     
@@ -3832,7 +3862,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Git Hooks
+    Hook Guard
   
 
           </label>
@@ -3852,7 +3882,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -6520,8 +6550,8 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 <code>vrg-finalize-repo</code>, <code>vrg-validate</code></p>
 <p><strong>Lint tools</strong> (installed as <code>vrg-*</code>):
 <code>vrg-repo-profile</code>, <code>vrg-pr-issue-linkage</code>, validation drivers</p>
-<p><strong>Git hooks</strong> (<code>.githooks/</code>):
-Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit</code></p>
+<p><strong>Claude Code hook guard</strong> (<code>.claude/hooks/</code>):
+PreToolUse hook that blocks raw <code>git</code> and <code>gh</code>, routing through <code>vrg-*</code> wrappers</p>
 <h2 id="design-principles">Design Principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Portability</strong> -- scripts run on both macOS and Linux</li>
@@ -6540,8 +6570,8 @@ Env-var gate that admits <code>vrg-commit</code> and blocks raw <code>git commit
 <li>Python consumers also declare <code>vergil-tooling</code> as a dev dep
    via <code>[tool.uv.sources]</code> so <code>uv run vrg-*</code> inside the container
    resolves the pinned version.</li>
-<li>Each repo checks in a <code>.githooks/pre-commit</code> env-var gate,
-   enabled via <code>git config core.hooksPath .githooks</code>.</li>
+<li>Each repo ships a <code>.claude/hooks/guard.sh</code> shim wired via
+   <code>.claude/settings.json</code>, blocking raw <code>git</code>/<code>gh</code> in agent sessions.</li>
 <li>Consuming repos call tools by bare name -- no file copying or
    syncing.</li>
 </ol>

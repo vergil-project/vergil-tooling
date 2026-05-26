@@ -750,6 +750,8 @@
       
         
       
+        
+      
     
     
     
@@ -802,6 +804,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.56/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.56
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -4065,7 +4095,7 @@
   <span class="md-ellipsis">
     
   
-    Git Hooks
+    Hook Guard
   
 
     
@@ -4081,7 +4111,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Git Hooks
+    Hook Guard
   
 
           </label>
@@ -4101,7 +4131,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -7014,8 +7044,8 @@ They drive git, <code>gh</code>, SSH, and Docker operations. Installed via
 <h3 id="vrg-commit">vrg-commit<a class="headerlink" href="#vrg-commit" title="Permanent link">&para;</a></h3>
 <p>Construct standards-compliant conventional commits with co-author
 resolution. Performs five branch/context checks before committing
-and sets <code>VRG_COMMIT_CONTEXT=1</code> so the <code>.githooks/pre-commit</code> gate
-admits the commit.</p>
+(detached HEAD, protected branch, branch prefix, issue number,
+worktree convention).</p>
 <table>
 <thead>
 <tr>

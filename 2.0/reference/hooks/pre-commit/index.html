@@ -25,7 +25,7 @@
     
     
       
-        <title>pre-commit - VERGIL Tooling</title>
+        <title>Claude Code Hook Guard - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#pre-commit" class="md-skip">
+        <a href="#claude-code-hook-guard" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              pre-commit
+              Claude Code Hook Guard
             
           </span>
         </div>
@@ -750,6 +750,8 @@
       
         
       
+        
+      
     
     
     
@@ -802,6 +804,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.0.56/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.56
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3737,7 +3767,7 @@
   <span class="md-ellipsis">
     
   
-    Git Hooks
+    Hook Guard
   
 
     
@@ -3753,7 +3783,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Git Hooks
+    Hook Guard
   
 
           </label>
@@ -3782,7 +3812,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -3800,7 +3830,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -6627,11 +6657,12 @@
 
 
 
-<h1 id="pre-commit">pre-commit<a class="headerlink" href="#pre-commit" title="Permanent link">&para;</a></h1>
-<p><strong>Path:</strong> <code>.githooks/pre-commit</code></p>
-<p>The pre-commit hook is an env-var gate that admits <code>vrg-commit</code>-driven
-commits (via <code>VRG_COMMIT_CONTEXT=1</code>) and derived workflows (amend,
-cherry-pick, revert, rebase, merge), and rejects raw <code>git commit</code>.</p>
+<h1 id="claude-code-hook-guard">Claude Code Hook Guard<a class="headerlink" href="#claude-code-hook-guard" title="Permanent link">&para;</a></h1>
+<p><strong>Path:</strong> <code>.claude/hooks/guard.sh</code></p>
+<p>The hook guard is a Claude Code <code>PreToolUse</code> hook that blocks raw
+<code>git</code> and <code>gh</code> commands in agent sessions. It delegates to
+<code>vrg-hook-guard</code> (when vergil-tooling is installed) or falls back
+to a <code>jq</code>-based hard deny.</p>
 <p>The five branch/context checks below live in <code>vrg-commit</code> itself and
 run before <code>git commit</code> is invoked:</p>
 <h2 id="checks">Checks<a class="headerlink" href="#checks" title="Permanent link">&para;</a></h2>
@@ -6695,7 +6726,8 @@ because they are created by automated workflows.</p>
 </tbody>
 </table>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>The hook reads <code>branching_model</code> from
+<p>The hook guard is wired via <code>.claude/settings.json</code> and requires
+no per-clone setup. <code>vrg-commit</code> reads <code>branching_model</code> from
 <code>docs/repository-standards.md</code>. No other configuration is required.</p>
 
 

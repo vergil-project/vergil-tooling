@@ -750,6 +750,8 @@
       
         
       
+        
+      
     
     
     
@@ -802,6 +804,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.56/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.56
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3727,7 +3757,7 @@
   <span class="md-ellipsis">
     
   
-    Git Hooks
+    Hook Guard
   
 
     
@@ -3743,7 +3773,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Git Hooks
+    Hook Guard
   
 
           </label>
@@ -3763,7 +3793,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -6319,10 +6349,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-git-hook-setup" class="md-nav__link">
+  <a href="#step-3-claude-code-hook-guard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3: Git hook setup
+        Step 3: Claude Code hook guard
       
     </span>
   </a>
@@ -6577,10 +6607,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#step-3-git-hook-setup" class="md-nav__link">
+  <a href="#step-3-claude-code-hook-guard" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Step 3: Git hook setup
+        Step 3: Claude Code hook guard
       
     </span>
   </a>
@@ -6729,9 +6759,9 @@ The setup steps below wire up each one:</p>
 <p>Plus two layers that aren't installed as packages but are expected
 to be present in every consuming repo:</p>
 <ul>
-<li><strong>Local git hooks</strong> — a <code>.githooks/pre-commit</code> env-var gate
-  checked into the repo, wired via <code>git config core.hooksPath
-  .githooks</code>.</li>
+<li><strong>Claude Code hook guard</strong> — a <code>.claude/hooks/guard.sh</code> shim
+  checked into the repo, wired via <code>.claude/settings.json</code> as a
+  <code>PreToolUse</code> hook.</li>
 <li><strong>CI workflow</strong> — the <code>standards-compliance</code> composite action
   from <code>vergil-project/vergil-actions</code>, invoked from your repo's
   <code>.github/workflows/ci.yml</code>.</li>
@@ -6776,29 +6806,39 @@ unreleased code on the host, use the <code>.venv-host</code> dev-tree
 override described in the vergil-tooling <code>CLAUDE.md</code>. This
 does not apply to consuming repos.</p>
 </div>
-<h2 id="step-3-git-hook-setup">Step 3: Git hook setup<a class="headerlink" href="#step-3-git-hook-setup" title="Permanent link">&para;</a></h2>
-<p>Every managed repo checks in a <code>.githooks/pre-commit</code> env-var gate.
-Create it in your repo:</p>
+<h2 id="step-3-claude-code-hook-guard">Step 3: Claude Code hook guard<a class="headerlink" href="#step-3-claude-code-hook-guard" title="Permanent link">&para;</a></h2>
+<p>Every managed repo ships a <code>.claude/hooks/guard.sh</code> shim that
+blocks raw <code>git</code> and <code>gh</code> commands in Claude Code agent sessions.
+The shim delegates to <code>vrg-hook-guard</code> (when vergil-tooling is
+installed on the host) or falls back to a <code>jq</code>-based hard deny.</p>
+<p>Create <code>.claude/hooks/guard.sh</code> in your repo (the <code>vrg-github-repo-init</code>
+wizard creates this automatically for new repos):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="ch">#!/usr/bin/env bash</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># Admit vrg-commit-driven commits.</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">if</span><span class="w"> </span><span class="o">[[</span><span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">VRG_COMMIT_CONTEXT</span><span class="k">:-</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="o">]]</span><span class="p">;</span><span class="w"> </span><span class="k">then</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">0</span><span class="p">;</span><span class="w"> </span><span class="k">fi</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Admit derived-commit workflows (amend, cherry-pick, revert, rebase, merge).</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">case</span><span class="w"> </span><span class="s2">&quot;</span><span class="si">${</span><span class="nv">GIT_REFLOG_ACTION</span><span class="k">:-</span><span class="si">}</span><span class="s2">&quot;</span><span class="w"> </span><span class="k">in</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>amend<span class="p">|</span>cherry-pick<span class="p">|</span>revert<span class="p">|</span>rebase*<span class="p">|</span>merge*<span class="o">)</span><span class="w"> </span><span class="nb">exit</span><span class="w"> </span><span class="m">0</span><span class="w"> </span><span class="p">;;</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="k">esac</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;ERROR: raw &#39;git commit&#39; is blocked. Use &#39;vrg-commit&#39; instead.&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="nb">echo</span><span class="w"> </span><span class="s2">&quot;See docs/repository-standards.md&quot;</span><span class="w"> </span>&gt;<span class="p">&amp;</span><span class="m">2</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="nb">exit</span><span class="w"> </span><span class="m">1</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nb">set</span><span class="w"> </span>-euo<span class="w"> </span>pipefail
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="k">if</span><span class="w"> </span><span class="nb">command</span><span class="w"> </span>-v<span class="w"> </span>vrg-hook-guard<span class="w"> </span>&gt;/dev/null<span class="w"> </span><span class="m">2</span>&gt;<span class="p">&amp;</span><span class="m">1</span><span class="p">;</span><span class="w"> </span><span class="k">then</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span><span class="nb">exec</span><span class="w"> </span>vrg-hook-guard
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="k">fi</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="c1"># Fallback: hard-deny git/gh when vrg-hook-guard is not installed.</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="nv">INPUT</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="nv">CMD</span><span class="o">=</span><span class="s2">&quot;</span><span class="k">$(</span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;%s&#39;</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$INPUT</span><span class="s2">&quot;</span><span class="w"> </span><span class="p">|</span><span class="w"> </span>jq<span class="w"> </span>-r<span class="w"> </span><span class="s1">&#39;.input.command // empty&#39;</span><span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="k">case</span><span class="w"> </span><span class="s2">&quot;</span><span class="nv">$CMD</span><span class="s2">&quot;</span><span class="w"> </span><span class="k">in</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="w">  </span>git<span class="se">\ </span>*<span class="p">|</span>*/git<span class="se">\ </span>*<span class="p">|</span>gh<span class="se">\ </span>*<span class="p">|</span>*/gh<span class="se">\ </span>*<span class="o">)</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a><span class="w">    </span><span class="nb">printf</span><span class="w"> </span><span class="s1">&#39;{&quot;decision&quot;:&quot;block&quot;,&quot;reason&quot;:&quot;raw git/gh blocked (vrg-hook-guard not installed)&quot;}\n&#39;</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nb">exit</span><span class="w"> </span><span class="m">0</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="p">;;</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="k">esac</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="nb">exit</span><span class="w"> </span><span class="m">0</span>
 </code></pre></div>
-<p>Save this as <code>.githooks/pre-commit</code>, make it executable, and commit
-it. Then enable the hook once per clone:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>chmod<span class="w"> </span>+x<span class="w"> </span>.githooks/pre-commit
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>git<span class="w"> </span>config<span class="w"> </span>core.hooksPath<span class="w"> </span>.githooks
+<p>Save this as <code>.claude/hooks/guard.sh</code>, make it executable, and
+commit it:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>mkdir<span class="w"> </span>-p<span class="w"> </span>.claude/hooks
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>chmod<span class="w"> </span>+x<span class="w"> </span>.claude/hooks/guard.sh
 </code></pre></div>
-<p>The gate admits commits from <code>vrg-commit</code> (which sets
-<code>VRG_COMMIT_CONTEXT=1</code>) and from derived workflows like rebase and
-cherry-pick. All branch/context checks (detached HEAD, protected
-branches, branch prefix, issue number) live in <code>vrg-commit</code> itself.</p>
+<p>No per-clone configuration is required — the hook is wired via
+<code>.claude/settings.json</code> (see Step 5 below) and fires automatically
+in every Claude Code session.</p>
+<p>All branch/context checks (detached HEAD, protected branches,
+branch prefix, issue number) live in <code>vrg-commit</code> itself.</p>
 <p>Full reference: <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>.</p>
 <h2 id="step-4-repository-profile">Step 4: Repository profile<a class="headerlink" href="#step-4-repository-profile" title="Permanent link">&para;</a></h2>
 <p>Create <code>docs/repository-standards.md</code> at your repo root. This is
@@ -6871,30 +6911,47 @@ agent identity.</p>
 <p>Values containing <code>&lt;</code>, <code>&gt;</code>, or <code>|</code> are rejected as placeholders by
 <code>vrg-repo-profile</code>.</p>
 <h2 id="step-5-enable-the-claude-code-plugin">Step 5: Enable the Claude Code plugin<a class="headerlink" href="#step-5-enable-the-claude-code-plugin" title="Permanent link">&para;</a></h2>
-<p>Create <code>.claude/settings.json</code> in your repo:</p>
+<p>Create <code>.claude/settings.json</code> in your repo. This file serves
+double duty: it wires the hook guard from Step 3, and it enables
+the Claude Code plugin:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="p">{</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;extraKnownMarketplaces&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">&quot;vergil-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">        </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;github&quot;</span><span class="p">,</span>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">        </span><span class="nt">&quot;repo&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;vergil-project/vergil-claude-plugin&quot;</span>
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="p">}</span>
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="p">}</span>
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">&quot;enabledPlugins&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nt">&quot;vergil-tooling@vergil-tooling-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="p">}</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span><span class="nt">&quot;permissions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">    </span><span class="nt">&quot;allow&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;Bash(vrg-*)&quot;</span><span class="p">]</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="nt">&quot;PreToolUse&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">      </span><span class="p">{</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">        </span><span class="nt">&quot;matcher&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;Bash&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="w">        </span><span class="nt">&quot;hooks&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">          </span><span class="p">{</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">            </span><span class="nt">&quot;type&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;command&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">            </span><span class="nt">&quot;command&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.sh&quot;</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">          </span><span class="p">}</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">        </span><span class="p">]</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">    </span><span class="p">]</span>
+<a id="__codelineno-5-17" name="__codelineno-5-17" href="#__codelineno-5-17"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-5-18" name="__codelineno-5-18" href="#__codelineno-5-18"></a><span class="w">  </span><span class="nt">&quot;extraKnownMarketplaces&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-19" name="__codelineno-5-19" href="#__codelineno-5-19"></a><span class="w">    </span><span class="nt">&quot;vergil-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-20" name="__codelineno-5-20" href="#__codelineno-5-20"></a><span class="w">      </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-21" name="__codelineno-5-21" href="#__codelineno-5-21"></a><span class="w">        </span><span class="nt">&quot;source&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;github&quot;</span><span class="p">,</span>
+<a id="__codelineno-5-22" name="__codelineno-5-22" href="#__codelineno-5-22"></a><span class="w">        </span><span class="nt">&quot;repo&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;vergil-project/vergil-claude-plugin&quot;</span>
+<a id="__codelineno-5-23" name="__codelineno-5-23" href="#__codelineno-5-23"></a><span class="w">      </span><span class="p">}</span>
+<a id="__codelineno-5-24" name="__codelineno-5-24" href="#__codelineno-5-24"></a><span class="w">    </span><span class="p">}</span>
+<a id="__codelineno-5-25" name="__codelineno-5-25" href="#__codelineno-5-25"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-5-26" name="__codelineno-5-26" href="#__codelineno-5-26"></a><span class="w">  </span><span class="nt">&quot;enabledPlugins&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-5-27" name="__codelineno-5-27" href="#__codelineno-5-27"></a><span class="w">    </span><span class="nt">&quot;vergil@vergil-marketplace&quot;</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-5-28" name="__codelineno-5-28" href="#__codelineno-5-28"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-5-29" name="__codelineno-5-29" href="#__codelineno-5-29"></a><span class="p">}</span>
 </code></pre></div>
 <p>Commit this file. It's part of your repo's reproducible
 environment — any Claude Code session opened in this repo will
-pick up the plugin via this declaration.</p>
+load the hook guard and the plugin automatically.</p>
 <p>What the plugin provides:</p>
 <ul>
-<li><strong>PreToolUse hooks</strong> on <code>Bash</code> that block raw <code>git commit</code>, raw
-  <code>gh pr create</code>, heredoc syntax, and (on repos that have adopted
-  the worktree convention) commits originating outside
-  <code>.worktrees/&lt;name&gt;/</code>.</li>
+<li><strong>PreToolUse hooks</strong> on <code>Bash</code> that block heredoc syntax and
+  (on repos that have adopted the worktree convention) commits
+  originating outside <code>.worktrees/&lt;name&gt;/</code>.</li>
 <li><strong>PostToolUse hooks</strong> that remind you to run <code>vrg-finalize-repo</code>
   after <code>vrg-submit-pr</code>, and that surface deprecation warnings in
   test output.</li>
@@ -6981,13 +7038,12 @@ per-language test/lint/audit tiers.</p>
 <a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a><span class="c1"># 3. Repo profile — runs vrg-repo-profile inside the container</span>
 <a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a>vrg-container-run<span class="w"> </span>--<span class="w"> </span>uv<span class="w"> </span>run<span class="w"> </span>vrg-repo-profile
 <a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># 4. Git hook — raw git commit should be blocked by the gate</span>
-<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>git<span class="w"> </span>commit<span class="w"> </span>--allow-empty<span class="w"> </span>-m<span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="w">     </span><span class="c1"># expected: blocked</span>
+<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="c1"># 4. Hook guard shim is present and executable</span>
+<a id="__codelineno-8-12" name="__codelineno-8-12" href="#__codelineno-8-12"></a>ls<span class="w"> </span>-la<span class="w"> </span>.claude/hooks/guard.sh
 <a id="__codelineno-8-13" name="__codelineno-8-13" href="#__codelineno-8-13"></a>
-<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># 5. Plugin hook (requires Claude Code session) — in a Claude</span>
+<a id="__codelineno-8-14" name="__codelineno-8-14" href="#__codelineno-8-14"></a><span class="c1"># 5. Hook guard (requires Claude Code session) — in a Claude</span>
 <a id="__codelineno-8-15" name="__codelineno-8-15" href="#__codelineno-8-15"></a><span class="c1">#    Code session in this repo, have Claude try to run a raw</span>
-<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="c1">#    `git commit`. The plugin should block it and point at</span>
-<a id="__codelineno-8-17" name="__codelineno-8-17" href="#__codelineno-8-17"></a><span class="c1">#    vrg-commit.</span>
+<a id="__codelineno-8-16" name="__codelineno-8-16" href="#__codelineno-8-16"></a><span class="c1">#    `git commit`. The hook guard should block it.</span>
 </code></pre></div>
 <p>If any step fails, check the corresponding section above, then
 re-run. Common causes: <code>uv tool install</code> not run,
@@ -7032,9 +7088,9 @@ refresh:</p>
   expected since 2026-04-22. Auto-merge is disabled org-wide; the
   PR itself was created successfully. Tracked in
   <a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>.</li>
-<li><strong>"raw 'git commit' is blocked"</strong> — the <code>.githooks/pre-commit</code>
-  gate is working as intended. Use <code>vrg-commit</code> instead of raw <code>git
-  commit</code>.</li>
+<li><strong>"raw git/gh blocked"</strong> — the Claude Code hook guard is working
+  as intended. Use <code>vrg-commit</code> instead of raw <code>git commit</code>, and
+  <code>vrg-gh</code> instead of raw <code>gh</code>.</li>
 </ul>
 <p>For a broader troubleshooting index see
 <a href="../git-workflow/#troubleshooting">Git Workflow → Troubleshooting</a>.</p>

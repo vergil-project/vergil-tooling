@@ -750,6 +750,8 @@
       
         
       
+        
+      
     
     
     
@@ -802,6 +804,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.0.56/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    v2.0.56
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -3727,7 +3757,7 @@
   <span class="md-ellipsis">
     
   
-    Git Hooks
+    Hook Guard
   
 
     
@@ -3743,7 +3773,7 @@
             <span class="md-nav__icon md-icon"></span>
             
   
-    Git Hooks
+    Hook Guard
   
 
           </label>
@@ -3763,7 +3793,7 @@
   <span class="md-ellipsis">
     
   
-    pre-commit
+    Claude Code Hook Guard
   
 
     
@@ -7053,9 +7083,9 @@ mechanisms. Both exist; they complement each other.</p>
 </thead>
 <tbody>
 <tr>
-<td><strong>Pre-commit git hook</strong></td>
-<td><code>.githooks/pre-commit</code> checked into each repo; enabled via <code>git config core.hooksPath .githooks</code>. The hook is an env-var gate that admits <code>vrg-commit</code>-driven commits and rejects raw <code>git commit</code>. The five branch/context checks live in <code>vrg-commit</code> itself.</td>
-<td>Detached HEAD • direct commits to protected branches • wrong branch prefix • missing issue number in branch name</td>
+<td><strong>Claude Code hook guard</strong></td>
+<td><code>.claude/hooks/guard.sh</code> checked into each repo; wired via <code>.claude/settings.json</code> as a <code>PreToolUse</code> hook on the <code>Bash</code> matcher. Delegates to <code>vrg-hook-guard</code> (regex-based detection of raw <code>git</code>/<code>gh</code> commands). The five branch/context checks live in <code>vrg-commit</code> itself.</td>
+<td>Raw <code>git</code> commands blocked • raw <code>gh</code> commands blocked • <code>vrg-commit</code> additionally checks: detached HEAD, protected branches, branch prefix, issue number</td>
 </tr>
 <tr>
 <td><strong>Plugin PreToolUse hooks</strong></td>
@@ -7064,12 +7094,11 @@ mechanisms. Both exist; they complement each other.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Why both?</strong> The pre-commit hook catches anyone (human or agent)
-running git directly. The plugin catches patterns at the
-Claude-Code-tool level — some of which never reach a <code>git commit</code>
-(like <code>gh pr create</code>, or heredocs in gh commands). Together they
-close the loop.</p>
-<p>For the pre-commit-hook detail, see
+<p><strong>Why both?</strong> The hook guard catches all raw <code>git</code>/<code>gh</code> commands
+at the Claude Code tool level. The plugin catches additional
+patterns (heredocs, worktree convention enforcement) that the
+hook guard does not cover. Together they close the loop.</p>
+<p>For the hook guard detail, see
 <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/git-hooks-and-validation.md">Git Hooks and Validation</a>.
 For the plugin hook detail, see
 <a href="https://github.com/vergil-project/vergil-claude-plugin/blob/develop/docs/site/docs/hooks/index.md">vergil-claude-plugin/docs → Hooks</a>.</p>
@@ -7079,7 +7108,7 @@ For the plugin hook detail, see
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>git<span class="w"> </span>fetch<span class="w"> </span>origin<span class="w"> </span>develop
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>git<span class="w"> </span>checkout<span class="w"> </span>-b<span class="w"> </span>feature/42-add-caching<span class="w"> </span>origin/develop
 </code></pre></div>
-<p>The pre-commit hook enforces the prefix and issue-number rule when
+<p><code>vrg-commit</code> enforces the prefix and issue-number rule when
 you try to commit, so name the branch correctly now.</p>
 <h3 id="2-commit-with-vrg-commit">2. Commit with <code>vrg-commit</code><a class="headerlink" href="#2-commit-with-vrg-commit" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
@@ -7096,8 +7125,7 @@ you try to commit, so name the branch correctly now.</p>
   <code>build</code>).</li>
 <li>Resolves the AI agent's <code>Co-Authored-By</code> trailer from
   <code>docs/repository-standards.md</code>.</li>
-<li>Invokes <code>git commit</code> under the hood — triggering the pre-commit
-  git hook, which checks the branching rules.</li>
+<li>Invokes <code>git commit</code> under the hood after all checks pass.</li>
 </ul>
 <p><strong>Multi-line bodies go in a file</strong>, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:</p>
@@ -7248,10 +7276,10 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 <ol>
 <li><code>docs/repository-standards.md</code> with the six required attributes
    (see the existing setup guide).</li>
-<li>A <code>.githooks/pre-commit</code> env-var gate checked into the repo, plus
-   <code>git config core.hooksPath .githooks</code> (once per clone).</li>
-<li><code>.claude/settings.json</code> enabling the <code>vergil-tooling</code> plugin
-   so the plugin hooks fire in Claude Code sessions.</li>
+<li><code>.claude/hooks/guard.sh</code> and <code>.claude/settings.json</code> wiring
+   the Claude Code hook guard to block raw <code>git</code>/<code>gh</code> commands.</li>
+<li><code>.claude/settings.json</code> also enabling the <code>vergil-tooling</code>
+   plugin so the plugin hooks fire in Claude Code sessions.</li>
 <li><code>.worktrees/</code> in <code>.gitignore</code> and a Parallel-AI-agent-development
    section in CLAUDE.md so the worktree convention applies.</li>
 </ol>
@@ -7289,27 +7317,27 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 </tr>
 <tr>
 <td><code>"Commits on protected branch \"develop\" are blocked"</code></td>
-<td>plugin or pre-commit</td>
+<td>plugin or vrg-commit</td>
 <td>Create a feature branch with the issue number in its name</td>
 </tr>
 <tr>
 <td><code>"direct commits to protected branches are forbidden"</code></td>
-<td>pre-commit git hook</td>
+<td>vrg-commit</td>
 <td>Same — you're on <code>develop</code>/<code>release</code>/<code>main</code> directly</td>
 </tr>
 <tr>
 <td><code>"branch name must use {prefixes}"</code></td>
-<td>pre-commit</td>
+<td>vrg-commit</td>
 <td>Rename the branch to <code>feature/42-&lt;slug&gt;</code> or similar</td>
 </tr>
 <tr>
 <td><code>"branch name must include a repo issue number"</code></td>
-<td>pre-commit</td>
+<td>vrg-commit</td>
 <td>Add the issue number to the branch name</td>
 </tr>
 <tr>
 <td><code>"detached HEAD is not allowed for commits"</code></td>
-<td>pre-commit</td>
+<td>vrg-commit</td>
 <td>Create a named branch before committing</td>
 </tr>
 </tbody>
