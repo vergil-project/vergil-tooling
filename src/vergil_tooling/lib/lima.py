@@ -144,14 +144,29 @@ def fetch_template(tag: str) -> Path:
     return Path(tmp.name)
 
 
-def create_vm(instance: str, template: Path, projects_dir: str) -> None:
-    _limactl(
+def create_vm(
+    instance: str,
+    template: Path,
+    projects_dir: str,
+    *,
+    cpus: int | None = None,
+    memory: str | None = None,
+    disk: str | None = None,
+) -> None:
+    args = [
         "create",
         f"--name={instance}",
         "--tty=false",
         f'--set=.mounts[0].location = "{projects_dir}"',
-        str(template),
-    )
+    ]
+    if cpus is not None:
+        args.append(f"--set=.cpus = {cpus}")
+    if memory is not None:
+        args.append(f'--set=.memory = "{memory}"')
+    if disk is not None:
+        args.append(f'--set=.disk = "{disk}"')
+    args.append(str(template))
+    _limactl(*args)
 
 
 def start_vm(instance: str) -> None:

@@ -258,6 +258,55 @@ class TestCreateVm:
         assert len(mount_arg) == 1
         assert "/home/user/projects" in mount_arg[0]
 
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_passes_cpu_override(self, mock: MagicMock) -> None:
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects", cpus=12)
+        args = mock.call_args[0]
+        cpu_args = [a for a in args if "cpus" in a]
+        assert len(cpu_args) == 1
+        assert "--set=.cpus = 12" == cpu_args[0]
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_passes_memory_override(self, mock: MagicMock) -> None:
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects", memory="32GiB")
+        args = mock.call_args[0]
+        mem_args = [a for a in args if "memory" in a]
+        assert len(mem_args) == 1
+        assert '--set=.memory = "32GiB"' == mem_args[0]
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_passes_disk_override(self, mock: MagicMock) -> None:
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects", disk="100GiB")
+        args = mock.call_args[0]
+        disk_args = [a for a in args if "disk" in a]
+        assert len(disk_args) == 1
+        assert '--set=.disk = "100GiB"' == disk_args[0]
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_omits_none_overrides(self, mock: MagicMock) -> None:
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects")
+        args = mock.call_args[0]
+        assert not any("cpus" in a for a in args)
+        assert not any("memory" in a for a in args)
+        assert not any("disk" in a for a in args)
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_passes_all_overrides(self, mock: MagicMock) -> None:
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm(
+            "vergil-agent", tpl, "/home/user/projects",
+            cpus=8, memory="24GiB", disk="100GiB",
+        )
+        args = mock.call_args[0]
+        assert "--set=.cpus = 8" in args
+        assert '--set=.memory = "24GiB"' in args
+        assert '--set=.disk = "100GiB"' in args
+        assert str(tpl) == args[-1]
+
 
 class TestStartStopVm:
     @patch("vergil_tooling.lib.lima._limactl")
