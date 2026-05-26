@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.55] - 2026-05-26
+
+### Bug fixes
+
+- fix guard.sh fallback regex matching command names in filenames
+
+### Documentation
+
+- add design spec for configurable container env passthrough (#777)
+- move design spec to docs/specs/ (#777)
+- address pushback: breaking change note and caller accuracy (#777)
+- add implementation plan for configurable container env passthrough (#777)
+- update docs and fix lint for configurable env passthrough (#777)
+
+### Features
+
+- replace git pre-commit hook with Claude Code PreToolUse hook (#1135, #724)
+- add [container].env-prefixes section to vergil.toml (#777)
+- make env-var passthrough configurable via env_prefixes parameter (#777)
+- wire vrg-container-run to [container].env-prefixes config (#777)
+- wire vrg-container-test to [container].env-prefixes config (#777)
+- wire vrg-container-docs to [container].env-prefixes config (#777)
+- add mv to vrg-git subcommand allowlist (#1134)
+- update repo_init and docs for Claude Code hook guard
+
+### Refactoring
+
+- rename StConfig to VergilConfig and st_config to vergil_config (#1136)
+
 ## [2.0.54] - 2026-05-25
 
 ### Documentation
