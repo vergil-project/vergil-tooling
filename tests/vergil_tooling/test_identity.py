@@ -401,3 +401,102 @@ def test_resource_fields_default_none(config_file: Path) -> None:
     assert ident.cpus is None
     assert ident.memory is None
     assert ident.disk is None
+
+
+def test_resource_validation_rejects_negative_cpus(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        cpus = -1
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
+def test_resource_validation_rejects_zero_cpus(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        cpus = 0
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
+def test_resource_validation_rejects_string_cpus(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        cpus = "four"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
+def test_resource_validation_rejects_bad_memory(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        memory = "32GB"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
+def test_resource_validation_rejects_bad_disk(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        disk = "lots"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
+def test_resource_validation_accepts_valid_values(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        cpus = 12
+        memory = "32GiB"
+        disk = "100GiB"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["vergil"].cpus == 12
+
+
+def test_resource_validation_error_message(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        memory = "32GB"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+    captured = capsys.readouterr()
+    assert "vergil" in captured.err
+    assert "memory" in captured.err
+    assert "<number>GiB" in captured.err
