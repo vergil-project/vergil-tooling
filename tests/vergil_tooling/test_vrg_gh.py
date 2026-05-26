@@ -53,6 +53,7 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("run", "view"),
     ("run", "watch"),
     ("repo", "view"),
+    ("repo", "list"),
     ("label", "list"),
     ("label", "create"),
 ]
