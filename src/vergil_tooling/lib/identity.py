@@ -35,8 +35,7 @@ class IdentityConfig:
 
 
 def _validate_identity_resources(name: str, identity: Identity) -> None:
-    if identity.cpus is not None:
-        if not isinstance(identity.cpus, int) or identity.cpus < 1:
+    if identity.cpus is not None and (not isinstance(identity.cpus, int) or identity.cpus < 1):
             print(
                 f"ERROR: identity '{name}': cpus must be a positive integer,"
                 f" got {identity.cpus!r}",

@@ -265,7 +265,7 @@ class TestCreateVm:
         args = mock.call_args[0]
         cpu_args = [a for a in args if "cpus" in a]
         assert len(cpu_args) == 1
-        assert "--set=.cpus = 12" == cpu_args[0]
+        assert cpu_args[0] == "--set=.cpus = 12"
 
     @patch("vergil_tooling.lib.lima._limactl")
     def test_passes_memory_override(self, mock: MagicMock) -> None:
@@ -274,7 +274,7 @@ class TestCreateVm:
         args = mock.call_args[0]
         mem_args = [a for a in args if "memory" in a]
         assert len(mem_args) == 1
-        assert '--set=.memory = "32GiB"' == mem_args[0]
+        assert mem_args[0] == '--set=.memory = "32GiB"'
 
     @patch("vergil_tooling.lib.lima._limactl")
     def test_passes_disk_override(self, mock: MagicMock) -> None:
@@ -283,7 +283,7 @@ class TestCreateVm:
         args = mock.call_args[0]
         disk_args = [a for a in args if "disk" in a]
         assert len(disk_args) == 1
-        assert '--set=.disk = "100GiB"' == disk_args[0]
+        assert disk_args[0] == '--set=.disk = "100GiB"'
 
     @patch("vergil_tooling.lib.lima._limactl")
     def test_omits_none_overrides(self, mock: MagicMock) -> None:
