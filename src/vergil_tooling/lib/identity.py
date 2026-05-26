@@ -18,6 +18,9 @@ class Identity:
     projects_dir: str = ""
     vergil: str = ""
     vergil_vm: str = ""
+    cpus: int | None = None
+    memory: str | None = None
+    disk: str | None = None
 
 
 @dataclass
@@ -51,6 +54,9 @@ def load_config(path: Path) -> IdentityConfig:
             projects_dir=data.get("projects_dir", ""),
             vergil=data.get("vergil", ""),
             vergil_vm=data.get("vergil-vm", ""),
+            cpus=data.get("cpus"),
+            memory=data.get("memory"),
+            disk=data.get("disk"),
         )
     return IdentityConfig(
         identities=identities,

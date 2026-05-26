@@ -375,3 +375,29 @@ def test_claude_token_path_parsed(tmp_path: Path) -> None:
 def test_claude_token_path_defaults_empty(config_file: Path) -> None:
     cfg = load_config(config_file)
     assert cfg.identities["vergil"].claude_token_path == ""
+
+
+def test_resource_fields_parsed(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        cpus = 12
+        memory = "32GiB"
+        disk = "100GiB"
+    """)
+    )
+    cfg = load_config(p)
+    ident = cfg.identities["vergil"]
+    assert ident.cpus == 12
+    assert ident.memory == "32GiB"
+    assert ident.disk == "100GiB"
+
+
+def test_resource_fields_default_none(config_file: Path) -> None:
+    cfg = load_config(config_file)
+    ident = cfg.identities["vergil"]
+    assert ident.cpus is None
+    assert ident.memory is None
+    assert ident.disk is None
