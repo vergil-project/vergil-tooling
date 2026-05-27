@@ -661,8 +661,32 @@ class TestUpdateTooling:
 
     @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")
-    def test_writes_tag_marker(self, _mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+    def test_explicit_tag_does_not_persist_marker(
+        self, _mock_run: MagicMock, mock_pipe: MagicMock
+    ) -> None:
         update_tooling("vergil-agent", "v2.1")
+        mock_pipe.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_resolved_tag_persists_marker(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="v2.1\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        update_tooling("vergil-agent")
+        mock_pipe.assert_called_once()
+        assert "tooling-tag" in mock_pipe.call_args[0][1]
+        assert "v2.1" in mock_pipe.call_args[0][2]
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_fallback_tag_persists_marker(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        update_tooling("vergil-agent", fallback_tag="v2.1")
         mock_pipe.assert_called_once()
         assert "tooling-tag" in mock_pipe.call_args[0][1]
         assert "v2.1" in mock_pipe.call_args[0][2]
