@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import git
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
@@ -53,6 +54,11 @@ def _promote_phase(ctx: ReleaseContext) -> None:
     if not ctx.promote:
         print("Skipping promote (--no-promote).")
         return
+    if ctx.skip_cd:
+        tag = f"v{ctx.version}"
+        if not git.ref_exists(tag):
+            print(f"Skipping promote — tag {tag} not found (CD may not have completed).")
+            return
     promote(ctx.version)
 
 
@@ -70,12 +76,18 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
         if ctx.release_pr_url:
             lines.append(f"Merged: {ctx.release_pr_url}")
     elif phase == "confirm-main":
-        if ctx.tag:
-            lines.append(f"Tag: `{ctx.tag}`")
-        if ctx.release_url:
-            lines.append(f"Release: {ctx.release_url}")
-        if ctx.cd_run_url:
-            lines.append(f"CD workflow: {ctx.cd_run_url}")
+        if ctx.skip_cd:
+            if ctx.tag:
+                lines.append(f"CD skipped. Tag `{ctx.tag}` found.")
+            else:
+                lines.append(f"CD skipped. Tag v{ctx.version} not yet available.")
+        else:
+            if ctx.tag:
+                lines.append(f"Tag: `{ctx.tag}`")
+            if ctx.release_url:
+                lines.append(f"Release: {ctx.release_url}")
+            if ctx.cd_run_url:
+                lines.append(f"CD workflow: {ctx.cd_run_url}")
     elif phase == "back-merge-bump":
         if ctx.bump_pr_url:
             lines.append(f"Back-merge PR: {ctx.bump_pr_url}")
@@ -100,6 +112,13 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
 def _confirm_main_phase(ctx: ReleaseContext) -> None:
     if ctx.skip_cd:
         print("Skipping CD verification (--skip-cd).")
+        git.run("fetch", "--tags", "--force", "origin")
+        tag = f"v{ctx.version}"
+        if git.ref_exists(tag):
+            ctx.tag = tag
+            print(f"  Tag {tag} found.")
+        else:
+            print(f"  Tag {tag} not yet available.")
         return
     confirm_main(ctx)
 
