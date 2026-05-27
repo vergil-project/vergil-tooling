@@ -65,19 +65,24 @@ def test_create_pr_returns_url() -> None:
     assert url == "https://github.com/pr/1"
 
 
-def test_wait_for_checks_skips_poll_when_already_registered() -> None:
+def test_wait_for_checks_resolves_sha_and_watches() -> None:
     with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123") as mock_sha,
         patch("vergil_tooling.lib.github._checks_registered", return_value=True),
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         github.wait_for_checks("https://github.com/pr/1")
+    mock_sha.assert_called_once_with("https://github.com/pr/1")
     mock_run.assert_called_once_with(
-        "pr", "checks", "https://github.com/pr/1", "--watch", "--fail-fast"
+        "pr", "checks", "https://github.com/pr/1", "--watch"
     )
 
 
 def test_wait_for_checks_polls_until_registered() -> None:
     with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
         patch(
             "vergil_tooling.lib.github._checks_registered",
             side_effect=[False, False, True, True],
@@ -86,16 +91,28 @@ def test_wait_for_checks_polls_until_registered() -> None:
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-
     assert mock_sleep.call_count == 2
     mock_sleep.assert_called_with(5)
     mock_run.assert_called_once_with(
-        "pr", "checks", "https://github.com/pr/1", "--watch", "--fail-fast"
+        "pr", "checks", "https://github.com/pr/1", "--watch"
     )
 
 
-def test_wait_for_checks_raises_after_timeout() -> None:
+def test_wait_for_checks_passes_repo_and_sha_to_checks_registered() -> None:
     with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
+        patch("vergil_tooling.lib.github._checks_registered", return_value=True) as mock_reg,
+        patch("vergil_tooling.lib.github.run"),
+    ):
+        github.wait_for_checks("https://github.com/pr/1")
+    mock_reg.assert_called_with("owner/repo", "abc123")
+
+
+def test_wait_for_checks_raises_after_timeout_with_sha() -> None:
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123def456"),
         patch("vergil_tooling.lib.github._checks_registered", return_value=False),
         patch(
             "vergil_tooling.lib.github.time.monotonic",
@@ -103,15 +120,16 @@ def test_wait_for_checks_raises_after_timeout() -> None:
         ),
         patch("vergil_tooling.lib.github.time.sleep"),
         patch("vergil_tooling.lib.github.run") as mock_run,
-        pytest.raises(github.GitHubAPIError, match="no checks reported"),
+        pytest.raises(github.GitHubAPIError, match="abc123de"),
     ):
         github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-
     mock_run.assert_not_called()
 
 
 def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
     with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
         patch(
             "vergil_tooling.lib.github._checks_registered",
             side_effect=[False, True, True],
@@ -120,8 +138,19 @@ def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
         patch("vergil_tooling.lib.github.run"),
     ):
         github.wait_for_checks("https://github.com/pr/1", poll_interval=10, poll_timeout=60)
-
     mock_sleep.assert_called_once_with(10)
+
+
+def test_wait_for_checks_does_not_use_fail_fast() -> None:
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
+        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        github.wait_for_checks("https://github.com/pr/1")
+    call_args = mock_run.call_args[0]
+    assert "--fail-fast" not in call_args
 
 
 def test_mergeable_returns_conflicting() -> None:
