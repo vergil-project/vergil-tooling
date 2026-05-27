@@ -48,6 +48,16 @@ def test_go_ecosystem_no_credential(capsys: pytest.CaptureFixture[str]) -> None:
     assert "credential_required: False" in captured.out
 
 
+def test_ci_mode_without_github_output(capsys: pytest.CaptureFixture[str]) -> None:
+    env = {k: v for k, v in os.environ.items() if k != "GITHUB_OUTPUT"}
+    with (
+        patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
+        patch.dict(os.environ, env, clear=True),
+    ):
+        rc = main(["python"])
+    assert rc == 0
+
+
 def test_unknown_language_fails() -> None:
     with patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=False):
         rc = main(["unknown"])

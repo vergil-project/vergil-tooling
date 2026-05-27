@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from pathlib import Path
 
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error, is_ci, write_output
@@ -39,13 +41,20 @@ def main(argv: list[str] | None = None) -> int:
     if is_ci():
         write_output("build_cmd", build_str)
         write_output("publish_cmd", publish_str)
-        write_output("credential_secret_name", info.credential_secret_name or "")
+        _write_github_output("credential_secret_name", info.credential_secret_name or "")
     else:
         print(f"build_cmd: {build_str}")
         print(f"publish_cmd: {publish_str}")
         print(f"credential_required: {info.credential_secret_name is not None}")
 
     return 0
+
+
+def _write_github_output(key: str, value: str) -> None:
+    output_path = os.environ.get("GITHUB_OUTPUT", "")
+    if output_path:
+        with Path(output_path).open("a") as f:
+            f.write(f"{key}={value}\n")
 
 
 if __name__ == "__main__":
