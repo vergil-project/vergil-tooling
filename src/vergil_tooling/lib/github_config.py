@@ -134,10 +134,9 @@ def desired_security_settings(*, visibility: str) -> DesiredSecuritySettings:
     )
 
 
-def desired_actions_permissions(primary_language: str) -> DesiredActionsPermissions:
-    patterns = sorted(
-        set(_BASE_ACTION_PATTERNS) | set(_LANGUAGE_ACTION_PATTERNS.get(primary_language, []))
-    )
+def desired_actions_permissions(primary_language: str | None) -> DesiredActionsPermissions:
+    lang_patterns = _LANGUAGE_ACTION_PATTERNS.get(primary_language, []) if primary_language else []
+    patterns = sorted(set(_BASE_ACTION_PATTERNS) | set(lang_patterns))
     return DesiredActionsPermissions(
         default_workflow_permissions="read",
         can_approve_pull_request_reviews=False,
@@ -225,9 +224,9 @@ def _make_ghas_check(context: str) -> dict[str, object]:
     }
 
 
-def _lang_has_check(language: str, check: str) -> bool:
+def _lang_has_check(language: str | None, check: str) -> bool:
     """Consult the per-language command registry."""
-    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+    from vergil_tooling.lib.languages import CheckKind, language_commands
 
     kind_map = {
         "lint": CheckKind.LINT,
@@ -264,6 +263,7 @@ def desired_ci_gates_ruleset(
     # CodeQL for supported languages
     if lang in _CODEQL_SUPPORTED_LANGUAGES:
         checks.append(_make_check("security / codeql"))
+        checks.append(_make_ghas_check("CodeQL"))
 
     # Versioned checks — only emitted when the language has
     # a command registry entry for the check

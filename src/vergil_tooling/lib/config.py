@@ -18,16 +18,17 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust", "shell", "none", "claude-plugin"},
+    "primary-language": {"python", "go", "java", "ruby", "rust"},
 }
 
-_PROJECT_FIELDS = (
+_REQUIRED_PROJECT_FIELDS = (
     "repository-type",
     "versioning-scheme",
     "branching-model",
     "release-model",
-    "primary-language",
 )
+
+_PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language")
 
 _KNOWN_SECTIONS = frozenset(
     {"project", "dependencies", "markdownlint", "ci", "publish", "container"},
@@ -53,7 +54,7 @@ class ProjectConfig:
     versioning_scheme: str
     branching_model: str
     release_model: str
-    primary_language: str
+    primary_language: str | None
 
 
 @dataclass
@@ -110,17 +111,23 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
     _warn_unrecognized_keys(raw)
     project_raw = raw.get("project", {})
 
-    for field in _PROJECT_FIELDS:
+    for field in _REQUIRED_PROJECT_FIELDS:
         if field not in project_raw or not project_raw[field]:
             msg = f"{CONFIG_FILE}: missing or empty required field '{field}'"
             raise ConfigError(msg)
 
-    for field in _PROJECT_FIELDS:
+    for field in _REQUIRED_PROJECT_FIELDS:
         value = project_raw[field]
         if value not in _ENUMS[field]:
             allowed = ", ".join(sorted(_ENUMS[field]))
             msg = f"{CONFIG_FILE}: invalid {field} '{value}' (allowed: {allowed})"
             raise ConfigError(msg)
+
+    raw_lang = project_raw.get("primary-language", "")
+    if raw_lang and raw_lang not in _ENUMS["primary-language"]:
+        allowed = ", ".join(sorted(_ENUMS["primary-language"]))
+        msg = f"{CONFIG_FILE}: invalid primary-language '{raw_lang}' (allowed: {allowed})"
+        raise ConfigError(msg)
 
     deps = raw.get("dependencies", {})
     if "vergil" not in deps:
@@ -178,7 +185,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
         versioning_scheme=project_raw["versioning-scheme"],
         branching_model=project_raw["branching-model"],
         release_model=project_raw["release-model"],
-        primary_language=project_raw["primary-language"],
+        primary_language=raw_lang or None,
     )
     return VergilConfig(
         project=project,

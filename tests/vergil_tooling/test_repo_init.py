@@ -11,6 +11,8 @@ from vergil_tooling.lib.config import _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _check_remote_steps,
+    _container_suffix,
+    _default_ci_versions,
     _load_existing_config,
     _remote_branch_exists,
     _sync_labels,
@@ -150,7 +152,7 @@ class TestRenderVergilToml:
     def test_output_is_valid_toml(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test-repo")
         ctx.repository_type = "tooling"
-        ctx.primary_language = "shell"
+        ctx.primary_language = "python"
         ctx.branching_model = "library-release"
         ctx.versioning_scheme = "semver"
         ctx.release_model = "tagged-release"
@@ -163,7 +165,7 @@ class TestRenderVergilToml:
         content = render_vergil_toml(ctx)
         raw = tomllib.loads(content)
         assert raw["project"]["repository-type"] == "tooling"
-        assert raw["project"]["primary-language"] == "shell"
+        assert raw["project"]["primary-language"] == "python"
         assert raw["dependencies"]["vergil"] == "v2.0"
 
     def test_passes_config_validation(self) -> None:
@@ -261,9 +263,8 @@ class TestRenderCiWorkflow:
         assert "ci-version-bump.yml@v2.0" in content
         assert "run-codeql: false" not in content
 
-    def test_shell_workflow(self) -> None:
+    def test_no_language_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.primary_language = "shell"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
@@ -277,9 +278,8 @@ class TestRenderCiWorkflow:
         assert content.count("container-suffix: base") == 3
         assert content.count("container-tag: 'latest'") == 3
 
-    def test_shell_no_release_minimal_jobs(self) -> None:
+    def test_no_language_no_release_minimal_jobs(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.primary_language = "shell"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
@@ -291,9 +291,8 @@ class TestRenderCiWorkflow:
         assert content.count("container-suffix: base") == 2
         assert content.count("container-tag: 'latest'") == 2
 
-    def test_claude_plugin_skips_audit_and_test(self) -> None:
+    def test_no_language_skips_audit_and_test(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.primary_language = "claude-plugin"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
@@ -305,20 +304,26 @@ class TestRenderCiWorkflow:
 
     def test_no_version_bump_when_release_none(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.primary_language = "shell"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
         assert "version-bump" not in content
 
-    def test_integration_tests_emit_test_job_for_shell(self) -> None:
+    def test_integration_tests_emit_test_job_without_language(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
-        ctx.primary_language = "shell"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         ctx.integration_tests = True
         content = render_ci_workflow(ctx)
         assert "ci-test.yml@v2.0" in content
+
+
+class TestContainerHelpers:
+    def test_container_suffix_none_returns_base(self) -> None:
+        assert _container_suffix(None) == "base"
+
+    def test_default_ci_versions_none_returns_latest(self) -> None:
+        assert _default_ci_versions(None) == "latest"
 
 
 class TestRenderCdWorkflow:
@@ -532,13 +537,13 @@ class TestStepGenerateConfig:
         ctx.work_dir = tmp_path
 
         # Indices are alphabetical within each sorted enum:
-        # repository-type: 5=tooling, primary-language: 8=shell,
+        # repository-type: 5=tooling, primary-language: 3=python,
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
         inputs = iter(
             [
                 "5",  # repository-type: tooling
-                "8",  # primary-language: shell
+                "3",  # primary-language: python
                 "3",  # branching-model: library-release
                 "4",  # versioning-scheme: semver
                 "4",  # release-model: tagged-release
@@ -566,7 +571,7 @@ class TestStepGenerateConfig:
         toml_path = tmp_path / "vergil.toml"
         assert toml_path.exists()
         content = toml_path.read_text()
-        assert 'primary-language = "shell"' in content
+        assert 'primary-language = "python"' in content
 
         assert any("commit" in c for c in calls)
 
@@ -587,7 +592,7 @@ class TestStepGenerateConfig:
             'versioning-scheme = "semver"\n'
             'branching-model = "library-release"\n'
             'release-model = "tagged-release"\n'
-            'primary-language = "shell"\n'
+            'primary-language = "python"\n'
             "\n"
             "[ci]\n"
             'versions = ["latest"]\n'
@@ -616,7 +621,7 @@ class TestStepGenerateConfig:
         ):
             step_generate_config(ctx)
 
-        assert ctx.primary_language == "shell"
+        assert ctx.primary_language == "python"
         assert ctx.repository_type == "tooling"
 
 
@@ -709,7 +714,6 @@ class TestStepCiCdWorkflows:
     def test_skips_cd_when_no_docs_or_release(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.work_dir = tmp_path
-        ctx.primary_language = "shell"
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         ctx.publish_docs = False

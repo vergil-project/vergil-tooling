@@ -169,7 +169,7 @@ def test_tag_protection_ruleset() -> None:
 
 def _project(
     *,
-    language: str = "python",
+    language: str | None = "python",
     release_model: str = "tagged-release",
 ) -> ProjectConfig:
     return ProjectConfig(
@@ -234,19 +234,23 @@ def test_ci_gates_always_includes_common_and_security() -> None:
 def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
     r = desired_ci_gates_ruleset(_project(), _ci())
     checks = _checks(r)
-    ghas_names = ("Trivy", "Semgrep OSS")
+    ghas_names = ("Trivy", "Semgrep OSS", "CodeQL")
     ghas_checks = {c["context"]: c["integration_id"] for c in checks if c["context"] in ghas_names}
-    assert ghas_checks == {"Trivy": 57789, "Semgrep OSS": 57789}
+    assert ghas_checks == {"Trivy": 57789, "Semgrep OSS": 57789, "CodeQL": 57789}
 
 
 def test_ci_gates_codeql_for_supported_language() -> None:
     r = desired_ci_gates_ruleset(_project(language="python"), _ci())
-    assert "security / codeql" in _check_names(r)
+    names = _check_names(r)
+    assert "security / codeql" in names
+    assert "CodeQL" in names
 
 
-def test_ci_gates_no_codeql_for_shell() -> None:
-    r = desired_ci_gates_ruleset(_project(language="shell"), _ci())
-    assert "security / codeql" not in _check_names(r)
+def test_ci_gates_no_codeql_without_language() -> None:
+    r = desired_ci_gates_ruleset(_project(language=None), _ci())
+    names = _check_names(r)
+    assert "security / codeql" not in names
+    assert "CodeQL" not in names
 
 
 def test_ci_gates_versioned_checks_per_version() -> None:
@@ -286,8 +290,8 @@ def test_ci_gates_no_release_when_none() -> None:
     assert "version / version-bump" not in _check_names(r)
 
 
-def test_ci_gates_shell_has_no_versioned_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(language="shell"), _ci(versions=["latest"]))
+def test_ci_gates_no_language_has_no_versioned_checks() -> None:
+    r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]))
     names = _check_names(r)
     assert "quality / common" in names
     assert not any("quality / lint" in n for n in names)

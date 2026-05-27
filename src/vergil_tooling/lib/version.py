@@ -32,9 +32,6 @@ _DEFAULT_VERSION_FILES: dict[str, str] = {
     "python": "pyproject.toml",
     "rust": "Cargo.toml",
     "java": "pom.xml",
-    "shell": "VERSION",
-    "none": "VERSION",
-    "claude-plugin": ".claude-plugin/plugin.json",
 }
 
 VERSION_FILE = "VERSION"
@@ -46,9 +43,12 @@ _LANGUAGES_WITH_SEPARATE_VERSION = frozenset(
         "java",
         "ruby",
         "go",
-        "claude-plugin",
     }
 )
+
+_SECONDARY_VERSION_FILES: dict[str, str] = {
+    ".claude-plugin/plugin.json": "claude-plugin",
+}
 
 
 class VersionSyncError(Exception):
@@ -77,29 +77,38 @@ def _discover_version_file(repo_root: Path, language: str) -> Path:
     raise ValueError(msg)
 
 
-def _cross_check_language_file(repo_root: Path, language: str, canonical_version: str) -> None:
-    if language not in _LANGUAGES_WITH_SEPARATE_VERSION:
-        return
-    try:
-        lang_file = _discover_version_file(repo_root, language)
-    except (FileNotFoundError, ValueError):
-        print(
-            f"warning: {language} version file not found; sync check skipped",
-            file=sys.stderr,
-        )
-        return
-    if not lang_file.is_file():
-        rel = lang_file.relative_to(repo_root)
-        print(
-            f"warning: {rel} not found; sync check skipped",
-            file=sys.stderr,
-        )
-        return
-    lang_version = _read_version(lang_file.read_text(), language)
-    if lang_version != canonical_version:
-        rel = lang_file.relative_to(repo_root)
-        msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
-        raise VersionSyncError(msg)
+def _cross_check_language_file(
+    repo_root: Path, language: str | None, canonical_version: str
+) -> None:
+    if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
+        try:
+            lang_file = _discover_version_file(repo_root, language)
+        except (FileNotFoundError, ValueError):
+            print(
+                f"warning: {language} version file not found; sync check skipped",
+                file=sys.stderr,
+            )
+        else:
+            if not lang_file.is_file():
+                rel = lang_file.relative_to(repo_root)
+                print(
+                    f"warning: {rel} not found; sync check skipped",
+                    file=sys.stderr,
+                )
+            else:
+                lang_version = _read_version(lang_file.read_text(), language)
+                if lang_version != canonical_version:
+                    rel = lang_file.relative_to(repo_root)
+                    msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
+                    raise VersionSyncError(msg)
+
+    for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
+        secondary = repo_root / rel_path
+        if secondary.is_file():
+            sec_version = _read_version(secondary.read_text(), fmt)
+            if sec_version != canonical_version:
+                msg = f"VERSION contains {canonical_version} but {rel_path} contains {sec_version}"
+                raise VersionSyncError(msg)
 
 
 def _read_version(text: str, language: str) -> str:
@@ -160,7 +169,7 @@ def _read_version_from_ref(ref: str, relative_path: str, language: str) -> str:
 
 def show(repo_root: Path, *, ref: str | None = None) -> str:
     if ref is not None:
-        return _read_version_from_ref(ref, VERSION_FILE, "shell")
+        return _read_version_from_ref(ref, VERSION_FILE, "plaintext")
 
     version_file = repo_root / VERSION_FILE
     if not version_file.is_file():
@@ -248,7 +257,7 @@ def bump(repo_root: Path, part: str = "patch") -> str:
 
     cfg = read_config(repo_root)
     language = cfg.project.primary_language
-    if language in _LANGUAGES_WITH_SEPARATE_VERSION:
+    if language is not None and language in _LANGUAGES_WITH_SEPARATE_VERSION:
         try:
             lang_file = _discover_version_file(repo_root, language)
             if lang_file.is_file():
@@ -256,5 +265,11 @@ def bump(repo_root: Path, part: str = "patch") -> str:
         except (FileNotFoundError, ValueError):
             pass
 
-    _run_lockfile_maintenance(repo_root, language)
+    for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
+        secondary = repo_root / rel_path
+        if secondary.is_file():
+            _write_version(secondary, fmt, old_version, new_version)
+
+    if language is not None:
+        _run_lockfile_maintenance(repo_root, language)
     return new_version
