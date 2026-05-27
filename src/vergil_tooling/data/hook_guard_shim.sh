@@ -20,7 +20,7 @@ case "$base" in
       hookSpecificOutput: {
         hookEventName: "PreToolUse",
         permissionDecision: "deny",
-        permissionDecisionReason: "vergil-tooling is not available. This repository requires a correctly configured environment — all git/gh operations are blocked until resolved."
+        permissionDecisionReason: "Raw git/gh is blocked in Vergil-managed repos. Install vergil-tooling to enable the vrg-git/vrg-gh wrappers."
       }
     }'
     exit 0

@@ -104,10 +104,10 @@ def test_read_config_invalid_toml(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_read_config_missing_project_field(tmp_path: Path) -> None:
-    toml = _VALID_TOML.replace('primary-language = "python"\n', "")
+def test_read_config_missing_required_project_field(tmp_path: Path) -> None:
+    toml = _VALID_TOML.replace('release-model = "tagged-release"\n', "")
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="primary-language"):
+    with pytest.raises(ConfigError, match="release-model"):
         read_config(tmp_path)
 
 
@@ -132,6 +132,47 @@ def test_read_config_ignores_leftover_co_authors(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML + co_authors)
     cfg = read_config(tmp_path)
     assert not hasattr(cfg.project, "co_authors")
+
+
+# -- optional primary-language -------------------------------------------------
+
+
+def test_config_without_primary_language(tmp_path: Path) -> None:
+    """Repos with no toolchain can omit primary-language."""
+    toml = (
+        "[project]\n"
+        'repository-type = "infrastructure"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        "\n[dependencies]\n"
+        'vergil = "v2.0.60"\n'
+        '\n[ci]\nversions = ["3.12"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+
+
+def test_config_rejects_shell_language(tmp_path: Path) -> None:
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "shell"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match="primary-language"):
+        read_config(tmp_path)
+
+
+def test_config_rejects_none_language(tmp_path: Path) -> None:
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "none"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match="primary-language"):
+        read_config(tmp_path)
+
+
+def test_config_rejects_claude_plugin_language(tmp_path: Path) -> None:
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "claude-plugin"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match="primary-language"):
+        read_config(tmp_path)
 
 
 # -- [markdownlint] section ---------------------------------------------------

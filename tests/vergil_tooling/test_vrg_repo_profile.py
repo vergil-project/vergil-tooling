@@ -48,9 +48,16 @@ def test_missing_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_missing_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    toml = _VALID_TOML.replace('primary-language = "python"\n', "")
+    toml = _VALID_TOML.replace('release-model = "tagged-release"\n', "")
     _write_toml(tmp_path, toml)
     assert main() == 1
+
+
+def test_optional_primary_language(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    toml = _VALID_TOML.replace('primary-language = "python"\n', "")
+    _write_toml(tmp_path, toml)
+    assert main() == 0
 
 
 def test_invalid_enum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

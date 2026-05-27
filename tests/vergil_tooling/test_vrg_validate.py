@@ -21,7 +21,7 @@ from vergil_tooling.bin.vrg_validate import (
     _run_custom_validator,
     main,
 )
-from vergil_tooling.lib.validate_commands import CheckKind
+from vergil_tooling.lib.languages import CheckKind
 
 
 @pytest.fixture(autouse=True)
@@ -30,11 +30,12 @@ def _container_env() -> Iterator[None]:
         yield
 
 
-def _write_config(tmp_path: Path, language: str) -> None:
+def _write_config(tmp_path: Path, language: str = "") -> None:
+    lang_line = f'primary-language = "{language}"\n' if language else ""
     (tmp_path / "vergil.toml").write_text(
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        f'primary-language = "{language}"\n\n[dependencies]\nvergil = "v2.0"\n'
+        f'{lang_line}\n[dependencies]\nvergil = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 
@@ -83,8 +84,8 @@ def test_check_lint_runs_install_then_lint(tmp_path: Path) -> None:
     assert "ruff check src/ tests/" in joined
 
 
-def test_check_lint_no_commands_for_shell(tmp_path: Path) -> None:
-    _write_config(tmp_path, "shell")
+def test_check_lint_no_commands_without_language(tmp_path: Path) -> None:
+    _write_config(tmp_path)
     with patch("vergil_tooling.bin.vrg_validate.git.repo_root", return_value=tmp_path):
         result = main(["--check", "lint"])
     assert result == 0
@@ -157,7 +158,7 @@ def test_run_all_includes_custom_validator(tmp_path: Path) -> None:
 
 
 def test_run_all_language_none_skips_language_checks(tmp_path: Path) -> None:
-    _write_config(tmp_path, "none")
+    _write_config(tmp_path)
 
     with (
         patch("vergil_tooling.bin.vrg_validate.git.repo_root", return_value=tmp_path),
@@ -360,7 +361,7 @@ def test_run_all_language_check_failure_stops(tmp_path: Path) -> None:
 
 
 def test_run_all_custom_validator_failure(tmp_path: Path) -> None:
-    _write_config(tmp_path, "none")
+    _write_config(tmp_path)
 
     with (
         patch("vergil_tooling.bin.vrg_validate.git.repo_root", return_value=tmp_path),

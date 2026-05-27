@@ -13,7 +13,7 @@ import sys
 from vergil_tooling.lib import github, retry
 
 _ALLOWED: dict[str, set[str]] = {
-    "issue": {"view", "create", "close", "edit", "list", "comment"},
+    "issue": {"view", "create", "close", "reopen", "edit", "list", "comment"},
     "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},

@@ -1,12 +1,15 @@
-"""Tests for vergil_tooling.lib.validate_commands."""
+"""Tests for vergil_tooling.lib.languages."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from vergil_tooling.lib.validate_commands import (
+from vergil_tooling.lib.languages import (
     CheckKind,
+    EcosystemInfo,
+    ecosystem_metadata,
     language_commands,
+    supported_languages,
 )
 
 
@@ -221,18 +224,13 @@ def test_unknown_language_returns_empty() -> None:
     assert cmds == []
 
 
-def test_shell_language_returns_empty() -> None:
-    cmds = language_commands("shell", CheckKind.LINT)
-    assert cmds == []
-
-
-def test_shell_install_commands() -> None:
-    cmds = language_commands("shell", CheckKind.INSTALL)
-    assert cmds == []
-
-
 def test_none_language_returns_empty() -> None:
-    cmds = language_commands("none", CheckKind.LINT)
+    cmds = language_commands(None, CheckKind.LINT)
+    assert cmds == []
+
+
+def test_none_language_install_returns_empty() -> None:
+    cmds = language_commands(None, CheckKind.INSTALL)
     assert cmds == []
 
 
@@ -253,3 +251,48 @@ def test_configs_placeholder_resolves_to_existing_directory() -> None:
     decisions_arg = license_finder_cmds[0][1]
     path = decisions_arg.split("=", 1)[1]
     assert Path(path).exists(), f"Resolved path does not exist: {path}"
+
+
+# -- New API ------------------------------------------------------------------
+
+
+def test_supported_languages_returns_five() -> None:
+    langs = supported_languages()
+    assert langs == frozenset({"python", "go", "java", "ruby", "rust"})
+
+
+def test_supported_languages_is_frozen() -> None:
+    langs = supported_languages()
+    assert isinstance(langs, frozenset)
+
+
+def test_ecosystem_metadata_python() -> None:
+    info = ecosystem_metadata("python")
+    assert isinstance(info, EcosystemInfo)
+    assert info.build_cmd is not None
+    assert info.publish_cmd is not None
+    assert info.publish_env_var is not None
+
+
+def test_ecosystem_metadata_go() -> None:
+    info = ecosystem_metadata("go")
+    assert isinstance(info, EcosystemInfo)
+    assert info.publish_env_var is None
+
+
+def test_ecosystem_metadata_all_languages_have_entries() -> None:
+    for lang in supported_languages():
+        info = ecosystem_metadata(lang)
+        assert isinstance(info, EcosystemInfo), f"Missing ecosystem for {lang}"
+
+
+def test_ecosystem_metadata_unknown_raises() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unsupported"):
+        ecosystem_metadata("unknown")
+
+
+def test_language_commands_still_works_for_unknown() -> None:
+    cmds = language_commands("unknown", CheckKind.LINT)
+    assert cmds == []

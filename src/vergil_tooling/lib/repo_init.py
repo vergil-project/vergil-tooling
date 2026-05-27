@@ -134,13 +134,14 @@ def _load_license(license_type: str) -> str:
 def render_vergil_toml(ctx: RepoInitContext) -> str:
     """Render vergil.toml from wizard answers."""
     ci_versions = ", ".join(f'"{v}"' for v in ctx.ci_versions)
+    lang_line = f'primary-language = "{ctx.primary_language}"\n' if ctx.primary_language else ""
     return (
         "[project]\n"
         f'repository-type = "{ctx.repository_type}"\n'
         f'versioning-scheme = "{ctx.versioning_scheme}"\n'
         f'branching-model = "{ctx.branching_model}"\n'
         f'release-model = "{ctx.release_model}"\n'
-        f'primary-language = "{ctx.primary_language}"\n'
+        f"{lang_line}"
         "\n"
         "[ci]\n"
         f"versions = [{ci_versions}]\n"
@@ -238,22 +239,21 @@ def render_gitignore() -> str:
     )
 
 
-def _container_suffix(language: str) -> str:
+def _container_suffix(language: str | None) -> str:
     """Map primary language to dev container image suffix."""
+    if language is None:
+        return "base"
     suffix_map = {
         "python": "python",
         "go": "go",
         "java": "java",
         "ruby": "ruby",
         "rust": "rust",
-        "shell": "base",
-        "none": "base",
-        "claude-plugin": "base",
     }
     return suffix_map.get(language, "base")
 
 
-def _container_tag(language: str, versions: list[str]) -> str:
+def _container_tag(language: str | None, versions: list[str]) -> str:
     """Derive the container tag from language and versions."""
     if language == "python" and versions:
         return versions[-1]
@@ -278,8 +278,9 @@ _CODEQL_LANGUAGES = frozenset(
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
-    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+    from vergil_tooling.lib.languages import CheckKind, language_commands
 
+    lang_yaml = ctx.primary_language or ""
     suffix = _container_suffix(ctx.primary_language)
     tag = _container_tag(ctx.primary_language, ctx.ci_versions)
     versions_json = json.dumps(ctx.ci_versions)
@@ -319,7 +320,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "  audit:\n",
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.0\n",
                 "    with:\n",
-                f"      language: {ctx.primary_language}\n",
+                f"      language: {lang_yaml}\n",
                 f"      versions: '{versions_json}'\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
@@ -332,7 +333,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "  quality:\n",
             "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0\n",
             "    with:\n",
-            f"      language: {ctx.primary_language}\n",
+            f"      language: {lang_yaml}\n",
             f"      versions: '{versions_json}'\n",
             f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
@@ -343,7 +344,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "      contents: read\n",
             "      security-events: write\n",
             "    with:\n",
-            f"      language: {ctx.primary_language}\n",
+            f"      language: {lang_yaml}\n",
             "      run-standards: ${{ inputs.run-release != 'false' }}\n",
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
             f"      container-tag: '{tag}'\n",
@@ -361,7 +362,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "  test:\n",
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
                 "    with:\n",
-                f"      language: {ctx.primary_language}\n",
+                f"      language: {lang_yaml}\n",
                 f"      versions: '{versions_json}'\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
@@ -376,7 +377,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "    uses: vergil-project/vergil-actions/"
                 ".github/workflows/ci-version-bump.yml@v2.0\n",
                 "    with:\n",
-                f"      language: {ctx.primary_language}\n",
+                f"      language: {lang_yaml}\n",
                 "      run-release: ${{ inputs.run-release != 'false' }}\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
@@ -560,17 +561,16 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
     print(f"  Cloned to {target}.")
 
 
-def _default_ci_versions(language: str) -> str:
+def _default_ci_versions(language: str | None) -> str:
     """Return sensible default CI versions for a language."""
+    if language is None:
+        return "latest"
     defaults: dict[str, str] = {
         "python": "3.12, 3.13, 3.14",
         "go": "1.23",
         "java": "21",
         "ruby": "3.3",
         "rust": "stable",
-        "shell": "latest",
-        "none": "latest",
-        "claude-plugin": "latest",
     }
     return defaults.get(language, "latest")
 

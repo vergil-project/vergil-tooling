@@ -40,6 +40,7 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("issue", "view"),
     ("issue", "create"),
     ("issue", "close"),
+    ("issue", "reopen"),
     ("issue", "edit"),
     ("issue", "list"),
     ("issue", "comment"),

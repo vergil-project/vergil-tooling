@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.0.60"
+version = "2.0.61"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -17,9 +17,13 @@ vrg-commit = "vergil_tooling.bin.vrg_commit:main"
 vrg-container-cache = "vergil_tooling.bin.vrg_container_cache:main"
 vrg-container-docs = "vergil_tooling.bin.vrg_container_docs:main"
 vrg-container-run = "vergil_tooling.bin.vrg_container_run:main"
+vrg-docs-patch-nav = "vergil_tooling.bin.vrg_docs_patch_nav:main"
+vrg-docs-stage = "vergil_tooling.bin.vrg_docs_stage:main"
+vrg-ecosystem-resolve = "vergil_tooling.bin.vrg_ecosystem_resolve:main"
 vrg-container-test = "vergil_tooling.bin.vrg_container_test:main"
 vrg-ensure-label = "vergil_tooling.bin.vrg_ensure_label:main"
 vrg-finalize-repo = "vergil_tooling.bin.vrg_finalize_repo:main"
+vrg-freeze-refs = "vergil_tooling.bin.vrg_freeze_refs:main"
 vrg-generate-commands = "vergil_tooling.bin.vrg_generate_commands:main"
 vrg-gh = "vergil_tooling.bin.vrg_gh:main"
 vrg-git = "vergil_tooling.bin.vrg_git:main"
@@ -29,13 +33,19 @@ vrg-github-repo-init = "vergil_tooling.bin.vrg_github_repo_init:main"
 vrg-pr-issue-linkage = "vergil_tooling.bin.vrg_pr_issue_linkage:main"
 vrg-promote = "vergil_tooling.bin.vrg_promote:main"
 vrg-release = "vergil_tooling.bin.vrg_release:main"
+vrg-release-validate-inputs = "vergil_tooling.bin.vrg_release_validate_inputs:main"
 vrg-repo-profile = "vergil_tooling.bin.vrg_repo_profile:main"
+vrg-resolve-tooling-version = "vergil_tooling.bin.vrg_resolve_tooling_version:main"
 vrg-resolve-tracking-issue = "vergil_tooling.bin.vrg_resolve_tracking_issue:main"
+vrg-sarif-evaluate = "vergil_tooling.bin.vrg_sarif_evaluate:main"
 vrg-scorecard = "vergil_tooling.bin.vrg_scorecard:main"
+vrg-semgrep-scan = "vergil_tooling.bin.vrg_semgrep_scan:main"
 vrg-submit-pr = "vergil_tooling.bin.vrg_submit_pr:main"
+vrg-trivy-scan = "vergil_tooling.bin.vrg_trivy_scan:main"
 vrg-vm = "vergil_tooling.bin.vrg_vm:main"
 vrg-validate = "vergil_tooling.bin.vrg_validate:main"
 vrg-version = "vergil_tooling.bin.vrg_version:main"
+vrg-version-divergence = "vergil_tooling.bin.vrg_version_divergence:main"
 vrg-wait-until-green = "vergil_tooling.bin.vrg_wait_until_green:main"
 
 [dependency-groups]
@@ -58,7 +68,8 @@ line-length = 100
 select = ["E", "F", "W", "I", "N", "UP", "S", "B", "A", "C4", "SIM", "TCH", "ARG", "PTH", "ERA"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "ARG"]
+"tests/**" = ["S101", "ARG", "E402"]
+"src/vergil_tooling/lib/languages.py" = ["S106"]
 
 [tool.mypy]
 python_version = "3.12"
