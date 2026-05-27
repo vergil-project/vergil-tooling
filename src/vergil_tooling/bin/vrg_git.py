@@ -5,13 +5,12 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
-import base64
-import os
 import subprocess
 import sys
 from pathlib import Path
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.git import _git_auth_env
 
 _ALLOWED_SIMPLE: set[str] = {
     "status",
@@ -195,17 +194,6 @@ def _check_worktree_convention(subcmd: str, args: list[str]) -> str | None:
         "Branch switches in the main worktree are blocked. "
         "Use a worktree under .worktrees/ instead."
     )
-
-
-def _git_auth_env(token: str) -> dict[str, str]:
-    """Return env dict that authenticates HTTPS git to GitHub."""
-    credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
-    return {
-        **os.environ,
-        "GIT_CONFIG_COUNT": "1",
-        "GIT_CONFIG_KEY_0": "http.https://github.com/.extraHeader",
-        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
-    }
 
 
 def main(argv: list[str] | None = None) -> int:
