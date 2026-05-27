@@ -126,8 +126,12 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
     raw_lang = project_raw.get("primary-language", "")
     if raw_lang and raw_lang not in _ENUMS["primary-language"]:
         allowed = ", ".join(sorted(_ENUMS["primary-language"]))
-        msg = f"{CONFIG_FILE}: invalid primary-language '{raw_lang}' (allowed: {allowed})"
-        raise ConfigError(msg)
+        print(
+            f"warning: {CONFIG_FILE}: unrecognized primary-language '{raw_lang}'"
+            f" (known: {allowed}); treating as unset",
+            file=sys.stderr,
+        )
+        raw_lang = ""
 
     deps = raw.get("dependencies", {})
     if "vergil" not in deps:
