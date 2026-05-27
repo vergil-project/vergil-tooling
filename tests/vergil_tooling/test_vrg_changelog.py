@@ -17,7 +17,7 @@ def _write_toml(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(
         '[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        'primary-language = "shell"\n\n[dependencies]\nvergil = "v2.0"\n'
+        '\n[dependencies]\nvergil = "v2.0"\n'
         '\n[ci]\nversions = ["3.14"]\n'
     )
 

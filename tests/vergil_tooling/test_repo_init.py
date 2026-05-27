@@ -150,7 +150,7 @@ class TestRenderVergilToml:
     def test_output_is_valid_toml(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test-repo")
         ctx.repository_type = "tooling"
-        ctx.primary_language = "shell"
+        ctx.primary_language = "python"
         ctx.branching_model = "library-release"
         ctx.versioning_scheme = "semver"
         ctx.release_model = "tagged-release"
@@ -163,7 +163,7 @@ class TestRenderVergilToml:
         content = render_vergil_toml(ctx)
         raw = tomllib.loads(content)
         assert raw["project"]["repository-type"] == "tooling"
-        assert raw["project"]["primary-language"] == "shell"
+        assert raw["project"]["primary-language"] == "python"
         assert raw["dependencies"]["vergil"] == "v2.0"
 
     def test_passes_config_validation(self) -> None:
@@ -532,13 +532,13 @@ class TestStepGenerateConfig:
         ctx.work_dir = tmp_path
 
         # Indices are alphabetical within each sorted enum:
-        # repository-type: 5=tooling, primary-language: 8=shell,
+        # repository-type: 5=tooling, primary-language: 3=python,
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
         inputs = iter(
             [
                 "5",  # repository-type: tooling
-                "8",  # primary-language: shell
+                "3",  # primary-language: python
                 "3",  # branching-model: library-release
                 "4",  # versioning-scheme: semver
                 "4",  # release-model: tagged-release
@@ -566,7 +566,7 @@ class TestStepGenerateConfig:
         toml_path = tmp_path / "vergil.toml"
         assert toml_path.exists()
         content = toml_path.read_text()
-        assert 'primary-language = "shell"' in content
+        assert 'primary-language = "python"' in content
 
         assert any("commit" in c for c in calls)
 
@@ -587,7 +587,7 @@ class TestStepGenerateConfig:
             'versioning-scheme = "semver"\n'
             'branching-model = "library-release"\n'
             'release-model = "tagged-release"\n'
-            'primary-language = "shell"\n'
+            'primary-language = "python"\n'
             "\n"
             "[ci]\n"
             'versions = ["latest"]\n'
@@ -616,7 +616,7 @@ class TestStepGenerateConfig:
         ):
             step_generate_config(ctx)
 
-        assert ctx.primary_language == "shell"
+        assert ctx.primary_language == "python"
         assert ctx.repository_type == "tooling"
 
 
