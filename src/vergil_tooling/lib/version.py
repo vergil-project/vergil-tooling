@@ -99,10 +99,7 @@ def _cross_check_language_file(
                 lang_version = _read_version(lang_file.read_text(), language)
                 if lang_version != canonical_version:
                     rel = lang_file.relative_to(repo_root)
-                    msg = (
-                        f"VERSION contains {canonical_version} "
-                        f"but {rel} contains {lang_version}"
-                    )
+                    msg = f"VERSION contains {canonical_version} but {rel} contains {lang_version}"
                     raise VersionSyncError(msg)
 
     for rel_path, fmt in _SECONDARY_VERSION_FILES.items():
@@ -110,10 +107,7 @@ def _cross_check_language_file(
         if secondary.is_file():
             sec_version = _read_version(secondary.read_text(), fmt)
             if sec_version != canonical_version:
-                msg = (
-                    f"VERSION contains {canonical_version} "
-                    f"but {rel_path} contains {sec_version}"
-                )
+                msg = f"VERSION contains {canonical_version} but {rel_path} contains {sec_version}"
                 raise VersionSyncError(msg)
 
 

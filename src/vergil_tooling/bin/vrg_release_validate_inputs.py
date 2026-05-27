@@ -38,8 +38,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.language not in langs:
         errors.append(
-            f"unsupported language: {args.language} "
-            f"(supported: {', '.join(sorted(langs))})"
+            f"unsupported language: {args.language} (supported: {', '.join(sorted(langs))})"
         )
     else:
         info = ecosystem_metadata(args.language)
@@ -49,9 +48,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"(no publish command defined)"
             )
         if args.container_tag and args.language not in _CONTAINER_LANGUAGES:
-            errors.append(
-                f"--container-tag is not supported for {args.language}"
-            )
+            errors.append(f"--container-tag is not supported for {args.language}")
 
     if errors:
         for msg in errors:

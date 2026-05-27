@@ -154,7 +154,7 @@ def _run_all_checks(language: str, repo_root: Path) -> int:
     if rc != 0:
         return rc
 
-    if language and language != "none":
+    if language:
         install_cmds = language_commands(language, CheckKind.INSTALL)
         if install_cmds:
             print()

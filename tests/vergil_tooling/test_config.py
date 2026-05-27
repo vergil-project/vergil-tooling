@@ -169,9 +169,7 @@ def test_config_rejects_none_language(tmp_path: Path) -> None:
 
 
 def test_config_rejects_claude_plugin_language(tmp_path: Path) -> None:
-    toml = _VALID_TOML.replace(
-        'primary-language = "python"', 'primary-language = "claude-plugin"'
-    )
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "claude-plugin"')
     (tmp_path / "vergil.toml").write_text(toml)
     with pytest.raises(ConfigError, match="primary-language"):
         read_config(tmp_path)
