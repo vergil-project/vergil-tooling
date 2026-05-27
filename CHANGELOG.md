@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.67] - 2026-05-27
+
+### Bug fixes
+
+- pin vergil-actions workflows to v2.0 tag instead of develop
+
+### Features
+
+- add --timeout to start/rebuild and fix mkdir for tooling-tag
+- add --skip-cd flag to bypass CD verification
+
 ## [2.0.66] - 2026-05-27
 
 ### Bug fixes
