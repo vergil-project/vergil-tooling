@@ -21,7 +21,8 @@ def test_python_ecosystem_interactive(capsys: pytest.CaptureFixture[str]) -> Non
     assert rc == 0
     assert "build_cmd:" in captured.out
     assert "publish_cmd:" in captured.out
-    assert "credential_required: True" in captured.out
+    assert "publish_env_var:" in captured.out
+    assert "publish_requires_auth: True" in captured.out
 
 
 def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -36,7 +37,7 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
     content = output_file.read_text()
     assert "build_cmd=" in content
     assert "publish_cmd=" in content
-    assert "credential_secret_name=" in content
+    assert "publish_env_var=" in content
 
 
 def test_go_ecosystem_no_credential(capsys: pytest.CaptureFixture[str]) -> None:
@@ -45,17 +46,7 @@ def test_go_ecosystem_no_credential(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert rc == 0
     assert "publish_cmd:" in captured.out
-    assert "credential_required: False" in captured.out
-
-
-def test_ci_mode_without_github_output(capsys: pytest.CaptureFixture[str]) -> None:
-    env = {k: v for k, v in os.environ.items() if k != "GITHUB_OUTPUT"}
-    with (
-        patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
-        patch.dict(os.environ, env, clear=True),
-    ):
-        rc = main(["python"])
-    assert rc == 0
+    assert "publish_requires_auth: False" in captured.out
 
 
 def test_unknown_language_fails() -> None:

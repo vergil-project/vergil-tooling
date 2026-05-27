@@ -1,19 +1,14 @@
 """Resolve ecosystem metadata for a language.
 
-Resolves build command, publish command, and credential requirements
-for the given language identifier. In CI mode, outputs the credential
-secret name to $GITHUB_OUTPUT; interactively, only reports whether
-a credential is required.
+Resolves build command, publish command, and publish environment
+variable for the given language identifier.
 """
 
 from __future__ import annotations
 
 import argparse
-import dataclasses
 import json
-import os
 import sys
-from pathlib import Path
 
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error, is_ci, write_output
@@ -36,28 +31,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    eco = dataclasses.asdict(info)
-    build_str = json.dumps(eco["build_cmd"]) if eco["build_cmd"] else ""
-    publish_str = json.dumps(eco["publish_cmd"]) if eco["publish_cmd"] else ""
-    cred_name: str = eco["credential_secret_name"] or ""
+    build_str = json.dumps(info.build_cmd) if info.build_cmd else ""
+    publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
+    env_var = info.publish_env_var or ""
 
-    if is_ci():
-        write_output("build_cmd", build_str)
-        write_output("publish_cmd", publish_str)
-        _write_github_output("credential_secret_name", cred_name)
-    else:
-        print(f"build_cmd: {build_str}")
-        print(f"publish_cmd: {publish_str}")
-        print(f"credential_required: {bool(cred_name)}")
+    write_output("build_cmd", build_str)
+    write_output("publish_cmd", publish_str)
+    write_output("publish_env_var", env_var)
+    if not is_ci():
+        print(f"publish_requires_auth: {bool(env_var)}")
 
     return 0
-
-
-def _write_github_output(key: str, value: str) -> None:
-    output_path = os.environ.get("GITHUB_OUTPUT", "")
-    if output_path:
-        with Path(output_path).open("a") as f:
-            f.write(f"{key}={value}\n")
 
 
 if __name__ == "__main__":
