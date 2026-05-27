@@ -225,7 +225,6 @@ class GitHubAPIError(subprocess.CalledProcessError):
         return base
 
 
-_NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 180
 
