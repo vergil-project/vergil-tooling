@@ -7,8 +7,6 @@ from unittest.mock import patch
 
 from vergil_tooling.lib.trivy import (
     _run_trivy_command,
-    build_docker_args,
-    build_sbom_args,
     generate_sbom,
     run_scan,
 )
@@ -17,56 +15,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _MOD = "vergil_tooling.lib.trivy"
-
-
-class TestBuildDockerArgs:
-    def test_filesystem_scan(self) -> None:
-        args = build_docker_args("filesystem", "/project", "/out")
-        assert "-v" in args
-        assert "/project:/scan:ro" in args
-        assert "aquasec/trivy:latest" in args
-
-    def test_image_scan(self) -> None:
-        args = build_docker_args("image", "myimage:latest", "/out")
-        assert "/var/run/docker.sock:/var/run/docker.sock" in args
-        assert "/project:/scan:ro" not in list(args)
-
-    def test_trivyignore(self) -> None:
-        args = build_docker_args(
-            "filesystem",
-            "/project",
-            "/out",
-            trivyignore="/path/.trivyignore",
-        )
-        assert "/path/.trivyignore:/trivyignore:ro" in args
-        assert "TRIVY_IGNOREFILE=/trivyignore" in args
-
-    def test_custom_severity(self) -> None:
-        args = build_docker_args(
-            "filesystem",
-            "/project",
-            "/out",
-            severity="HIGH,CRITICAL",
-        )
-        idx = args.index("--severity")
-        assert args[idx + 1] == "HIGH,CRITICAL"
-
-    def test_default_severity(self) -> None:
-        args = build_docker_args("filesystem", "/project", "/out")
-        idx = args.index("--severity")
-        assert args[idx + 1] == "MEDIUM,HIGH,CRITICAL"
-
-    def test_output_volume(self) -> None:
-        args = build_docker_args("filesystem", "/project", "/out")
-        assert "/out:/output" in args
-
-
-class TestBuildSbomArgs:
-    def test_structure(self) -> None:
-        args = build_sbom_args("/project", "sbom.json")
-        assert "aquasec/trivy:latest" in args
-        assert "cyclonedx" in args
-        assert "/project:/scan:ro" in args
 
 
 class TestRunScan:
@@ -94,13 +42,15 @@ class TestRunScan:
 
         assert out.is_dir()
 
-    def test_filesystem_uses_scan_target(self, tmp_path: Path) -> None:
+    def test_filesystem_uses_target_directly(self, tmp_path: Path) -> None:
         with patch(f"{_MOD}._run_trivy_command") as mock_run:
             mock_run.return_value.returncode = 0
             run_scan("filesystem", "/project", tmp_path)
 
         scan_cmd = mock_run.call_args_list[0][0][0]
-        assert scan_cmd[-1] == "/scan"
+        assert scan_cmd[-1] == "/project"
+        assert scan_cmd[0] == "trivy"
+        assert scan_cmd[1] == "filesystem"
 
     def test_image_uses_target_name(self, tmp_path: Path) -> None:
         with patch(f"{_MOD}._run_trivy_command") as mock_run:
@@ -109,6 +59,7 @@ class TestRunScan:
 
         scan_cmd = mock_run.call_args_list[0][0][0]
         assert scan_cmd[-1] == "myimage:latest"
+        assert scan_cmd[1] == "image"
 
     def test_result_paths(self, tmp_path: Path) -> None:
         with patch(f"{_MOD}._run_trivy_command") as mock_run:
@@ -117,6 +68,80 @@ class TestRunScan:
 
         assert result.sarif_path == str(tmp_path / "trivy-results.sarif")
         assert result.table_path == str(tmp_path / "trivy-results.table")
+
+    def test_default_severity(self, tmp_path: Path) -> None:
+        with patch(f"{_MOD}._run_trivy_command") as mock_run:
+            mock_run.return_value.returncode = 0
+            run_scan("filesystem", "/project", tmp_path)
+
+        scan_cmd = mock_run.call_args_list[0][0][0]
+        idx = scan_cmd.index("--severity")
+        assert scan_cmd[idx + 1] == "MEDIUM,HIGH,CRITICAL"
+
+    def test_custom_severity(self, tmp_path: Path) -> None:
+        with patch(f"{_MOD}._run_trivy_command") as mock_run:
+            mock_run.return_value.returncode = 0
+            run_scan(
+                "filesystem",
+                "/project",
+                tmp_path,
+                severity="HIGH,CRITICAL",
+            )
+
+        scan_cmd = mock_run.call_args_list[0][0][0]
+        idx = scan_cmd.index("--severity")
+        assert scan_cmd[idx + 1] == "HIGH,CRITICAL"
+
+    def test_trivyignore(self, tmp_path: Path) -> None:
+        with patch(f"{_MOD}._run_trivy_command") as mock_run:
+            mock_run.return_value.returncode = 0
+            run_scan(
+                "filesystem",
+                "/project",
+                tmp_path,
+                trivyignore="/path/.trivyignore",
+            )
+
+        scan_cmd = mock_run.call_args_list[0][0][0]
+        idx = scan_cmd.index("--ignorefile")
+        assert scan_cmd[idx + 1] == "/path/.trivyignore"
+
+    def test_no_docker_in_commands(self, tmp_path: Path) -> None:
+        with patch(f"{_MOD}._run_trivy_command") as mock_run:
+            mock_run.return_value.returncode = 0
+            run_scan("filesystem", "/project", tmp_path)
+
+        for call in mock_run.call_args_list:
+            cmd = call[0][0]
+            assert cmd[0] == "trivy"
+            assert "docker" not in cmd
+
+    def test_convert_commands_use_host_paths(self, tmp_path: Path) -> None:
+        with patch(f"{_MOD}._run_trivy_command") as mock_run:
+            mock_run.return_value.returncode = 0
+            run_scan("filesystem", "/project", tmp_path)
+
+        table_cmd = mock_run.call_args_list[1][0][0]
+        assert table_cmd == [
+            "trivy",
+            "convert",
+            "--format",
+            "table",
+            "--output",
+            str(tmp_path / "trivy-results.table"),
+            str(tmp_path / "trivy-results.json"),
+        ]
+
+        sarif_cmd = mock_run.call_args_list[2][0][0]
+        assert sarif_cmd == [
+            "trivy",
+            "convert",
+            "--format",
+            "sarif",
+            "--output",
+            str(tmp_path / "trivy-results.sarif"),
+            str(tmp_path / "trivy-results.json"),
+        ]
 
 
 class TestRunTrivyCommand:
@@ -130,14 +155,24 @@ class TestRunTrivyCommand:
 
 
 class TestGenerateSbom:
-    def test_calls_docker(self, tmp_path: Path) -> None:
+    def test_calls_trivy_directly(self, tmp_path: Path) -> None:
         output = tmp_path / "sbom.json"
         with patch(f"{_MOD}._run_trivy_command") as mock_run:
             mock_run.return_value.returncode = 0
             rc = generate_sbom("/project", output)
 
         assert rc == 0
-        mock_run.assert_called_once()
+        mock_run.assert_called_once_with(
+            [
+                "trivy",
+                "filesystem",
+                "--format",
+                "cyclonedx",
+                "--output",
+                str(output),
+                "/project",
+            ]
+        )
 
     def test_creates_parent_dir(self, tmp_path: Path) -> None:
         output = tmp_path / "sub" / "sbom.json"
