@@ -189,3 +189,15 @@ class TestWatchWorkflow:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "error" in captured.err
+
+    def test_check_status_false_omits_exit_status(self) -> None:
+        with patch(_MOD + "._run_with_retry", return_value=_completed()) as m:
+            watch_workflow("owner/repo", "12345", verbose=False, check_status=False)
+        cmd = m.call_args[0][0]
+        assert "--exit-status" not in cmd
+
+    def test_check_status_true_includes_exit_status(self) -> None:
+        with patch(_MOD + "._run_with_retry", return_value=_completed()) as m:
+            watch_workflow("owner/repo", "12345", verbose=False, check_status=True)
+        cmd = m.call_args[0][0]
+        assert "--exit-status" in cmd
