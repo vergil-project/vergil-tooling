@@ -310,15 +310,16 @@ def create_pr(*, base: str, title: str, body_file: str) -> str:
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
 
 
-def _checks_registered(pr: str) -> bool:
-    """Return True if at least one check is registered on ``pr``."""
-    result = subprocess.run(  # noqa: S603
-        ("gh", "pr", "checks", pr),  # noqa: S607
-        capture_output=True,
+def _checks_registered(repo: str, sha: str) -> bool:
+    """Return True if at least one check run exists for *sha*."""
+    result = _run_with_retry(
+        ("gh", "api", f"repos/{repo}/commits/{sha}/check-runs",  # noqa: S607
+         "--jq", ".total_count"),
+        check=True,
         text=True,
-        env=_gh_env(),
+        capture_output=True,
     )
-    return _NO_CHECKS_PHRASE not in (result.stdout + result.stderr)
+    return int(result.stdout.strip()) > 0
 
 
 def wait_for_checks(

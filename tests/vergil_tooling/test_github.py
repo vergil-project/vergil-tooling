@@ -260,22 +260,26 @@ def test_read_json_returns_parsed_list() -> None:
     assert result == payload
 
 
-def test_checks_registered_returns_false_when_phrase_in_stdout() -> None:
-    cp = _completed(returncode=1, stdout="no checks reported on the 'main' branch\n")
-    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
-        assert github._checks_registered("https://github.com/pr/1") is False
-
-
-def test_checks_registered_returns_false_when_phrase_in_stderr() -> None:
-    cp = _completed(returncode=1, stderr="no checks reported on the 'main' branch\n")
-    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
-        assert github._checks_registered("https://github.com/pr/1") is False
-
-
 def test_checks_registered_returns_true_when_checks_exist() -> None:
-    cp = _completed(stdout="ci/tests\tpass\nhttps://example.com\n")
-    with patch("vergil_tooling.lib.github.subprocess.run", return_value=cp):
-        assert github._checks_registered("https://github.com/pr/1") is True
+    cp = _completed(stdout="1\n")
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
+        assert github._checks_registered("owner/repo", "abc123") is True
+
+
+def test_checks_registered_returns_false_when_no_checks() -> None:
+    cp = _completed(stdout="0\n")
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp):
+        assert github._checks_registered("owner/repo", "abc123") is False
+
+
+def test_checks_registered_calls_correct_api_endpoint() -> None:
+    cp = _completed(stdout="0\n")
+    with patch("vergil_tooling.lib.retry.subprocess.run", return_value=cp) as mock_run:
+        github._checks_registered("owner/repo", "abc123def456")
+    args = mock_run.call_args[0][0]
+    assert "repos/owner/repo/commits/abc123def456/check-runs" in args
+    assert "--jq" in args
+    assert ".total_count" in args
 
 
 def test_write_json_sends_body_via_stdin() -> None:
