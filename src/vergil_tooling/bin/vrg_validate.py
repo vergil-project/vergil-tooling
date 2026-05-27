@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import config, git
-from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+from vergil_tooling.lib.languages import CheckKind, language_commands
 
 _CHECK_KINDS = {
     "common": None,

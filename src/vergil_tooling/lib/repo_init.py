@@ -278,7 +278,7 @@ _CODEQL_LANGUAGES = frozenset(
 
 def render_ci_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/ci.yml."""
-    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+    from vergil_tooling.lib.languages import CheckKind, language_commands
 
     suffix = _container_suffix(ctx.primary_language)
     tag = _container_tag(ctx.primary_language, ctx.ci_versions)

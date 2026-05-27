@@ -227,7 +227,7 @@ def _make_ghas_check(context: str) -> dict[str, object]:
 
 def _lang_has_check(language: str, check: str) -> bool:
     """Consult the per-language command registry."""
-    from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+    from vergil_tooling.lib.languages import CheckKind, language_commands
 
     kind_map = {
         "lint": CheckKind.LINT,

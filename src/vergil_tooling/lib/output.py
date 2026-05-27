@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
+from pathlib import Path
 
 
 def is_ci() -> bool:
@@ -34,7 +35,7 @@ def emit_warning(msg: str, *, file: str | None = None, line: int | None = None) 
 def write_output(key: str, value: str) -> None:
     output_path = os.environ.get("GITHUB_OUTPUT") if is_ci() else None
     if output_path:
-        with open(output_path, "a") as f:
+        with Path(output_path).open("a") as f:
             f.write(f"{key}={value}\n")
     else:
         print(f"{key}: {value}")
@@ -43,7 +44,7 @@ def write_output(key: str, value: str) -> None:
 def write_summary(markdown: str) -> None:
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY") if is_ci() else None
     if summary_path:
-        with open(summary_path, "a") as f:
+        with Path(summary_path).open("a") as f:
             f.write(markdown if markdown.endswith("\n") else markdown + "\n")
     else:
         print(markdown)

@@ -21,7 +21,7 @@ from vergil_tooling.bin.vrg_validate import (
     _run_custom_validator,
     main,
 )
-from vergil_tooling.lib.validate_commands import CheckKind
+from vergil_tooling.lib.languages import CheckKind
 
 
 @pytest.fixture(autouse=True)

@@ -6,7 +6,10 @@ from pathlib import Path
 
 from vergil_tooling.lib.languages import (
     CheckKind,
+    EcosystemInfo,
+    ecosystem_metadata,
     language_commands,
+    supported_languages,
 )
 
 
@@ -256,13 +259,6 @@ def test_configs_placeholder_resolves_to_existing_directory() -> None:
 
 
 # -- New API ------------------------------------------------------------------
-
-from vergil_tooling.lib.languages import (
-    EcosystemInfo,
-    Language,
-    ecosystem_metadata,
-    supported_languages,
-)
 
 
 def test_supported_languages_returns_five() -> None:

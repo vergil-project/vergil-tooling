@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container import container_platform, detect_runtime
-from vergil_tooling.lib.validate_commands import CheckKind, language_commands
+from vergil_tooling.lib.languages import CheckKind, language_commands
 
 if TYPE_CHECKING:
     from pathlib import Path

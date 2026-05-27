@@ -234,6 +234,5 @@ def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
         return []
     configs_dir = str(files("vergil_tooling.configs"))
     return [
-        [arg.replace("{configs}", configs_dir) for arg in cmd]
-        for cmd in entry.checks.get(kind, [])
+        [arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in entry.checks.get(kind, [])
     ]
