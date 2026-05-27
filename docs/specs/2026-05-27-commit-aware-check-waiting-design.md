@@ -61,9 +61,19 @@ def head_sha(pr: str) -> str:
 Current signature: `_checks_registered(pr: str) -> bool`
 New signature: `_checks_registered(repo: str, sha: str) -> bool`
 
-Uses `gh api repos/{repo}/commits/{sha}/check-runs --jq .total_count`
-to query check runs for the specific commit. Returns `True` when the
-count is greater than zero.
+Calls the GitHub REST API via `_run_with_retry` (the same internal
+path used by `write_json`, `delete`, and other direct API callers in
+`github.py` — not through `vrg-gh`, which denies `api`):
+
+```python
+_run_with_retry(
+    ("gh", "api", f"repos/{repo}/commits/{sha}/check-runs",
+     "--jq", ".total_count"),
+    ...
+)
+```
+
+Returns `True` when the count is greater than zero.
 
 ### Updated `wait_for_checks` flow
 
@@ -106,7 +116,9 @@ detection, or retry logic.
 - `_checks_registered` timeout behavior (poll interval and timeout
   parameters)
 - Error reporting (`GitHubAPIError` on timeout, `CalledProcessError`
-  on check failure)
+  on check failure). The timeout message includes the SHA for
+  debuggability: `no checks reported for {sha[:8]} after
+  {poll_timeout}s — GitHub may be experiencing delays`
 - `gh pr checks --watch` as the blocking mechanism (we remove
   `--fail-fast` but keep the watch)
 
