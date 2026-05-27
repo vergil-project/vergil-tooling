@@ -125,7 +125,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
             return 1
 
     print(f"Starting VM '{identity.vm_instance}' (identity: {name})...")
-    start_vm(identity.vm_instance)
+    start_vm(identity.vm_instance, timeout=args.timeout)
 
     print("Injecting credentials...")
     inject_credentials(identity.vm_instance, identity)
@@ -257,7 +257,7 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
         )
 
         print("  Starting VM...")
-        start_vm(identity.vm_instance)
+        start_vm(identity.vm_instance, timeout=args.timeout)
 
         print("  Injecting credentials...")
         inject_credentials(identity.vm_instance, identity)
@@ -370,6 +370,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Start even if the VM exceeds the staleness threshold",
     )
+    p_start.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for VM to reach running status (default: 30m)",
+    )
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
@@ -390,6 +395,11 @@ def main(argv: list[str] | None = None) -> int:
     _add_identity_args(p_rebuild)
     p_rebuild.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
+    )
+    p_rebuild.add_argument(
+        "--timeout",
+        default="30m",
+        help="How long to wait for VM to reach running status (default: 30m)",
     )
 
     p_list = sub.add_parser("list", help="List all identity VMs and their status")

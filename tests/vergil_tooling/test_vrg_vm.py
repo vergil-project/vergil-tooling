@@ -259,10 +259,30 @@ class TestStart:
     ) -> None:
         result = main(["start", "--config", str(config_file)])
         assert result == 0
-        mock_start.assert_called_once_with("vergil-agent")
+        mock_start.assert_called_once_with("vergil-agent", timeout="30m")
         mock_inject.assert_called_once()
         mock_update.assert_called_once()
         mock_copy.assert_called_once()
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_start_custom_timeout(
+        self,
+        _status: MagicMock,
+        _age: MagicMock,
+        mock_start: MagicMock,
+        _inject: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        config_file: Path,
+    ) -> None:
+        result = main(["start", "--config", str(config_file), "--timeout", "1h"])
+        assert result == 0
+        mock_start.assert_called_once_with("vergil-agent", timeout="1h")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_start_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
@@ -443,9 +463,38 @@ class TestRebuild:
         assert result == 0
         mock_delete.assert_called_once_with("vergil-agent")
         mock_create.assert_called_once()
-        mock_start.assert_called_once()
+        mock_start.assert_called_once_with("vergil-agent", timeout="30m")
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_rebuild_custom_timeout(
+        self,
+        _status: MagicMock,
+        _delete: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        mock_start: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        _copy: MagicMock,
+        config_file: Path,
+        tmp_path: Path,
+    ) -> None:
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        mock_fetch.return_value = template
+
+        result = main(["rebuild", "--config", str(config_file), "--timeout", "45m"])
+        assert result == 0
+        mock_start.assert_called_once_with("vergil-agent", timeout="45m")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_rebuild_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
