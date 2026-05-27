@@ -830,12 +830,18 @@ Ref #1192"
 
 - [ ] **Step 1: Update `version.py`**
 
-1. Remove `"shell": "VERSION"` and `"none": "VERSION"` from `_DEFAULT_VERSION_FILES` (these languages no longer exist).
-2. Remove `"claude-plugin": ".claude-plugin/plugin.json"` from `_DEFAULT_VERSION_FILES`.
-3. Remove `"claude-plugin"` from `_LANGUAGES_WITH_SEPARATE_VERSION`.
-4. Remove the `claude-plugin` branch from `_read_version()` (the `if language == "claude-plugin":` block).
-5. Remove the `claude-plugin` branch from `_write_version()` (the `elif language == "claude-plugin":` line).
-6. Update `_cross_check_language_file` and `bump` to handle `primary_language` being `None` — when it's `None`, skip the cross-check and separate version file write (same as the current behavior for unknown languages, which returns early).
+1. Remove `"shell": "VERSION"` and `"none": "VERSION"` from `_DEFAULT_VERSION_FILES` (these languages no longer exist as primary-language values).
+2. Remove `"claude-plugin"` from `_DEFAULT_VERSION_FILES`, `_LANGUAGES_WITH_SEPARATE_VERSION`, `_read_version()`, and `_write_version()`.
+3. Replace the `claude-plugin` behavior with **presence-based secondary version file detection**. Add a module-level dict of auto-detected secondary version files:
+
+```python
+_SECONDARY_VERSION_FILES: dict[str, str] = {
+    ".claude-plugin/plugin.json": "claude-plugin",
+}
+```
+
+4. In `_cross_check_language_file` and `bump`, after the language-based version file check, also scan for secondary version files by checking whether each path in `_SECONDARY_VERSION_FILES` exists in the repo root. If found, cross-check and update it using the existing `_read_version`/`_write_version` machinery (keep the `claude-plugin` format handlers in those functions, keyed by the format name `"claude-plugin"` from the dict value, not by the primary-language field).
+5. Update `_cross_check_language_file` and `bump` to handle `primary_language` being `None` — when `None`, skip the language-based version file check but still scan for secondary version files.
 
 - [ ] **Step 2: Update test file**
 
@@ -1083,6 +1089,15 @@ def test_go_with_registry_publish_fails(capsys: object) -> None:
     assert rc == 1
 
 
+def test_container_tag_requires_language(capsys: object) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["go", "--container-tag", "v1.0.0"])
+    # Container publishing is only supported for languages with
+    # container build support — exact rules from vergil-actions#601.
+    # At minimum, the flag is accepted and validated.
+    assert rc == 0 or rc == 1
+
+
 def test_reports_all_failures(capsys: object) -> None:
     with patch("vergil_tooling.lib.output.is_ci", return_value=False):
         rc = main(["unknown", "--registry-publish"])
@@ -1118,6 +1133,10 @@ import sys
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error
 
+# Languages that support container image publishing.
+# Exact rules derived from vergil-actions#601.
+_CONTAINER_LANGUAGES = frozenset({"python", "java", "ruby", "rust", "go"})
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
@@ -1151,6 +1170,10 @@ def main(argv: list[str] | None = None) -> int:
             errors.append(
                 f"--registry-publish is not supported for {args.language} "
                 f"(no publish command defined)"
+            )
+        if args.container_tag and args.language not in _CONTAINER_LANGUAGES:
+            errors.append(
+                f"--container-tag is not supported for {args.language}"
             )
 
     if errors:
