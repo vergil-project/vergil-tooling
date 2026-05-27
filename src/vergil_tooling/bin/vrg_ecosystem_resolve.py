@@ -33,16 +33,16 @@ def main(argv: list[str] | None = None) -> int:
 
     build_str = shlex.join(info.build_cmd) if info.build_cmd else ""
     publish_str = shlex.join(info.publish_cmd) if info.publish_cmd else ""
-    credential_secret = info.publish_env_var or ""
+    env_name = info.publish_env_var or ""
 
     if is_ci():
         write_output("build", build_str)
         write_output("publish", publish_str)
-        write_output("credential-secret", credential_secret)
+        write_output("credential-secret", env_name)
     else:
         print(f"build: {build_str}")
         print(f"publish: {publish_str}")
-        print(f"credential-secret: {credential_secret}")
+        print(f"credential-secret: {env_name}")
 
     return 0
 
