@@ -189,11 +189,11 @@ def create_vm(
     _limactl(*args)
 
 
-def start_vm(instance: str) -> None:
+def start_vm(instance: str, *, timeout: str = "30m") -> None:
     status = vm_status(instance)
     if status == "Running":
         return
-    _limactl("start", instance)
+    _limactl("start", f"--timeout={timeout}", instance)
 
 
 def stop_vm(instance: str) -> None:
@@ -344,6 +344,7 @@ def install_tooling(instance: str, tag: str) -> None:
         "-c",
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install "{install_spec}"',
     )
+    shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
     shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
@@ -373,6 +374,7 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
     )
     if not explicit:
+        shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
         shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 

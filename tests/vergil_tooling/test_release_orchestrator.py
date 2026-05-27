@@ -48,6 +48,26 @@ def test_orchestrator_runs_all_phases() -> None:
     m_handoff.assert_called_once_with(ctx)
 
 
+def test_skip_cd_skips_confirm_phases() -> None:
+    ctx = _ctx()
+    ctx.skip_cd = True
+    with (
+        patch(_MOD + ".prepare") as m_prepare,
+        patch(_MOD + ".merge_release"),
+        patch(_MOD + ".confirm_main") as m_confirm_main,
+        patch(_MOD + ".back_merge_and_bump"),
+        patch(_MOD + ".confirm_develop") as m_confirm_develop,
+        patch(_MOD + "._promote_phase"),
+        patch(_MOD + ".close_and_finalize"),
+        patch(_MOD + ".consumer_refresh"),
+        patch(_MOD + ".comment_phase_complete"),
+    ):
+        run_release(ctx)
+    m_prepare.assert_called_once()
+    m_confirm_main.assert_not_called()
+    m_confirm_develop.assert_not_called()
+
+
 def test_promote_phase_calls_promote_when_enabled() -> None:
     from vergil_tooling.lib.release.orchestrator import _promote_phase
 
