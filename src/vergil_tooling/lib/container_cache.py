@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 _SELF_PROJECT_NAME = "vergil-tooling"
 
-_ST_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
+_VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
@@ -120,7 +120,7 @@ def _build_cached_image(
         setup = warmup or "true"
     else:
         tag = vrg_install_tag(repo_root)
-        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_ST_GIT_URL}@{tag}'"
+        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
         setup = f"{uv_install} && {warmup}" if warmup else uv_install
 
     print(f"Building cached image: {target_tag}")

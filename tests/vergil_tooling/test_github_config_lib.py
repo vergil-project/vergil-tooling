@@ -36,6 +36,7 @@ from vergil_tooling.lib.github_config import (
     desired_security_settings,
     desired_tag_protection_ruleset,
     fetch_actual_state,
+    format_rules_delta,
 )
 
 
@@ -1452,3 +1453,133 @@ def test_fetch_actual_state_defaults_owner_type_to_user() -> None:
         result = fetch_actual_state("o/r")
 
     assert result.owner_type == "User"
+
+
+# ---------------------------------------------------------------------------
+# Issue #1210: format_rules_delta — human-readable status check diffs
+# ---------------------------------------------------------------------------
+
+
+def _make_rules(checks: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Build a minimal rules list containing required_status_checks."""
+    return [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": checks,
+            },
+        },
+    ]
+
+
+def test_format_rules_delta_shows_extra_checks() -> None:
+    expected = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+        ]
+    )
+    actual = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+            {"context": "CodeQL", "integration_id": 57789},
+        ]
+    )
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "extra (1)" in result
+    assert "CodeQL (integration_id: 57789)" in result
+    assert "missing (0)" in result
+
+
+def test_format_rules_delta_shows_missing_checks() -> None:
+    expected = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+            {"context": "security / trivy", "integration_id": 15368},
+        ]
+    )
+    actual = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+        ]
+    )
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "missing (1)" in result
+    assert "security / trivy (integration_id: 15368)" in result
+    assert "extra (0)" in result
+
+
+def test_format_rules_delta_shows_both_extra_and_missing() -> None:
+    expected = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+            {"context": "security / trivy", "integration_id": 15368},
+        ]
+    )
+    actual = _make_rules(
+        [
+            {"context": "quality / common", "integration_id": 15368},
+            {"context": "CodeQL", "integration_id": 57789},
+        ]
+    )
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "extra (1)" in result
+    assert "CodeQL (integration_id: 57789)" in result
+    assert "missing (1)" in result
+    assert "security / trivy (integration_id: 15368)" in result
+
+
+def test_format_rules_delta_returns_none_for_non_list() -> None:
+    assert format_rules_delta("foo", "bar") is None
+
+
+def test_format_rules_delta_returns_none_without_status_checks() -> None:
+    expected = [{"type": "deletion"}]
+    actual = [{"type": "deletion"}, {"type": "non_fast_forward"}]
+    assert format_rules_delta(expected, actual) is None
+
+
+def test_format_rules_delta_skips_non_dict_rules() -> None:
+    expected: list[object] = ["not-a-dict", *_make_rules([{"context": "a", "integration_id": 1}])]
+    actual = _make_rules([{"context": "a", "integration_id": 1}])
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "extra (0)" in result
+    assert "missing (0)" in result
+
+
+def test_format_rules_delta_skips_non_list_checks() -> None:
+    expected: list[dict[str, object]] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": "not-a-list",
+            },
+        },
+    ]
+    actual = _make_rules([{"context": "a", "integration_id": 1}])
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "missing (0)" in result
+
+
+def test_format_rules_delta_skips_non_dict_params() -> None:
+    expected: list[dict[str, object]] = [
+        {"type": "required_status_checks", "parameters": "not-a-dict"},
+    ]
+    actual = _make_rules([{"context": "a", "integration_id": 1}])
+    result = format_rules_delta(expected, actual)
+    assert result is not None
+    assert "missing (0)" in result
+
+
+def test_format_rules_delta_identical_checks() -> None:
+    checks: list[dict[str, object]] = [{"context": "quality / common", "integration_id": 15368}]
+    result = format_rules_delta(_make_rules(checks), _make_rules(checks))
+    assert result is not None
+    assert "extra (0)" in result
+    assert "missing (0)" in result
