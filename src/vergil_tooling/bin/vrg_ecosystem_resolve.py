@@ -35,10 +35,14 @@ def main(argv: list[str] | None = None) -> int:
     publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
     env_var = info.publish_env_var or ""
 
-    write_output("build_cmd", build_str)
-    write_output("publish_cmd", publish_str)
-    write_output("publish_env_var", env_var)
-    if not is_ci():
+    if is_ci():
+        write_output("build_cmd", build_str)
+        write_output("publish_cmd", publish_str)
+        write_output("publish_env_var", env_var)
+    else:
+        print(f"build_cmd: {build_str}")
+        print(f"publish_cmd: {publish_str}")
+        print(f"publish_env_var: {env_var}")
         print(f"publish_requires_auth: {bool(env_var)}")
 
     return 0
