@@ -50,6 +50,12 @@ the utility is running in CI. No CLI flags, no environment variable sniffing.
 The module is a formatting concern only. Calling utilities decide *what* to
 emit; the output module decides *how* to format it.
 
+**Missing env var handling:** In CI mode, `write_output()` and
+`write_summary()` require `$GITHUB_OUTPUT` and `$GITHUB_STEP_SUMMARY`
+respectively. If these env vars are not set (non-GitHub CI, or piped
+local invocation), the functions fall back to printing to stdout —
+same as interactive mode, but without color.
+
 ## Phase 1 — Foundation
 
 Covers issues #1184, #1185, #1190. Builds the shared infrastructure that
@@ -67,13 +73,20 @@ Provides the canonical supported-languages set that #1185 needs.
 
 ```python
 @dataclass(frozen=True)
+class EcosystemInfo:
+    build_cmd: list[str] | None                  # e.g. ["uv", "build"]
+    publish_cmd: list[str] | None                # e.g. ["uv", "publish"]
+    credential_secret: str | None                # e.g. "PYPI_TOKEN"
+
+@dataclass(frozen=True)
 class Language:
     name: str                                    # "python", "go", etc.
     checks: dict[CheckKind, list[list[str]]]     # existing _REGISTRY data
-    build_cmd: str | None                        # e.g. "uv build"
-    publish_cmd: str | None                      # e.g. "uv publish"
-    credential_secret: str | None                # e.g. "PYPI_TOKEN"
+    ecosystem: EcosystemInfo                     # build/publish/credential
 ```
+
+Commands are `list[str]` (subprocess argv), not shell strings — this
+eliminates the `eval "$PUBLISH_CMD"` pattern in the current action.
 
 **Registry:** Module-level `dict[str, Language]` replacing the current
 `_REGISTRY`. Populated with the same validation command data plus the new
