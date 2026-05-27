@@ -154,25 +154,30 @@ def test_config_without_primary_language(tmp_path: Path) -> None:
     assert cfg.project.primary_language is None
 
 
-def test_config_rejects_shell_language(tmp_path: Path) -> None:
+def test_config_warns_on_shell_language(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "shell"')
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="primary-language"):
-        read_config(tmp_path)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+    assert "unrecognized primary-language 'shell'" in capsys.readouterr().err
 
 
-def test_config_rejects_none_language(tmp_path: Path) -> None:
+def test_config_warns_on_none_language(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "none"')
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="primary-language"):
-        read_config(tmp_path)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+    assert "unrecognized primary-language 'none'" in capsys.readouterr().err
 
 
-def test_config_rejects_claude_plugin_language(tmp_path: Path) -> None:
+def test_config_warns_on_claude_plugin_language(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "claude-plugin"')
     (tmp_path / "vergil.toml").write_text(toml)
-    with pytest.raises(ConfigError, match="primary-language"):
-        read_config(tmp_path)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+    assert "unrecognized primary-language 'claude-plugin'" in capsys.readouterr().err
 
 
 # -- [markdownlint] section ---------------------------------------------------

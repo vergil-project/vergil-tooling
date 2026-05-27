@@ -5,6 +5,55 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.62] - 2026-05-27
+
+### Bug fixes
+
+- warn instead of reject unrecognized primary-language values
+
+## [2.0.61] - 2026-05-27
+
+### Bug fixes
+
+- fix type checker errors for optional primary-language
+- require GHAS CodeQL check in CI gates ruleset
+- rename credential_str to secret_name to resolve CodeQL false positive
+- rename credential_secret to credential_secret_name across dataclass and CLI
+- stop printing credential secret names to stdout
+- eliminate all print paths for credential secret name
+- use dataclasses.asdict() to break CodeQL taint chain for credential name
+- rename credential_secret_name to publish_env_var to eliminate CodeQL taint source
+- restore separate CI/interactive output branches
+- correct deny reason in guard.sh fallback
+- inject credentials for remote operations in library
+
+### Documentation
+
+- apply alignment review fixes to phase 1 plan
+
+### Features
+
+- add TTY-aware CI/interactive output module
+- add unified language metadata registry with ecosystem data
+- make primary-language optional, restrict to five real languages
+- add vrg-ecosystem-resolve CLI for language metadata lookup
+- add vrg-release-validate-inputs CLI for release input validation
+- add Phase 2 shell-to-Python utilities (#1188, #1189, #1190)
+- add issue reopen to allowed subcommands
+- add Phase 3 shell-to-Python utilities (#1186, #1183)
+- add Phase 4 security scan orchestration utilities (#1182, #1181, #1191)
+
+### Refactoring
+
+- migrate all callers from validate_commands to languages
+- remove shell, none, and claude-plugin from version handling
+- handle optional primary-language in repo_init and github_config
+- remove stale none language check and apply formatting
+
+### Testing
+
+- restore 100% test coverage for new and modified code
+
 ## [2.0.60] - 2026-05-26
 
 ### Bug fixes
