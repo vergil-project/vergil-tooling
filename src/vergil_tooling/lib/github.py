@@ -225,7 +225,6 @@ class GitHubAPIError(subprocess.CalledProcessError):
         return base
 
 
-_NO_CHECKS_PHRASE = "no checks reported"
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 180
 
@@ -310,15 +309,21 @@ def create_pr(*, base: str, title: str, body_file: str) -> str:
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
 
 
-def _checks_registered(pr: str) -> bool:
-    """Return True if at least one check is registered on ``pr``."""
-    result = subprocess.run(  # noqa: S603
-        ("gh", "pr", "checks", pr),  # noqa: S607
-        capture_output=True,
+def _checks_registered(repo: str, sha: str) -> bool:
+    """Return True if at least one check run exists for *sha*."""
+    result = _run_with_retry(
+        (
+            "gh",
+            "api",
+            f"repos/{repo}/commits/{sha}/check-runs",  # noqa: S607
+            "--jq",
+            ".total_count",
+        ),
+        check=True,
         text=True,
-        env=_gh_env(),
+        capture_output=True,
     )
-    return _NO_CHECKS_PHRASE not in (result.stdout + result.stderr)
+    return int(result.stdout.strip()) > 0
 
 
 def wait_for_checks(
@@ -327,32 +332,37 @@ def wait_for_checks(
     poll_interval: int = _POLL_INTERVAL_SECS,
     poll_timeout: int = _POLL_TIMEOUT_SECS,
 ) -> None:
-    """Block until all required checks on ``pr`` complete; fail fast on the first red.
+    """Block until all checks on *pr* reach a terminal state.
 
-    Polls internally when no checks have registered yet (the window between
-    git push and GitHub registering the checks run). Polls every
-    ``poll_interval`` seconds for up to ``poll_timeout`` seconds before
-    falling through to the blocking watch.
+    Resolves the PR's HEAD commit SHA and polls the GitHub REST API
+    until at least one check run exists for that commit.  Then hands
+    off to ``gh pr checks --watch`` which blocks until every check
+    completes.
 
-    Transient GitHub API errors (502/503/504/429) are retried automatically
-    via the library-level retry wrapper.  Persistent failures surface as
-    ``subprocess.CalledProcessError``.
+    Transient GitHub API errors (502/503/504/429) are retried
+    automatically via the library-level retry wrapper.
     """
+    repo = current_repo()
+    sha = head_sha(pr)
+
     deadline = time.monotonic() + poll_timeout
-    while not _checks_registered(pr):
+    while not _checks_registered(repo, sha):
         if time.monotonic() >= deadline:
             break
         time.sleep(poll_interval)
 
-    if not _checks_registered(pr):
-        cmd = ("gh", "pr", "checks", pr, "--watch", "--fail-fast")
+    if not _checks_registered(repo, sha):
+        cmd = ("gh", "pr", "checks", pr, "--watch")
         raise GitHubAPIError(
             1,
             cmd,
-            stderr=f"no checks reported after {poll_timeout}s — GitHub may be experiencing delays",
+            stderr=(
+                f"no checks reported for {sha[:8]} after {poll_timeout}s"
+                " — GitHub may be experiencing delays"
+            ),
         )
 
-    run("pr", "checks", pr, "--watch", "--fail-fast")
+    run("pr", "checks", pr, "--watch")
 
 
 def mergeable(pr: str) -> str:
@@ -404,6 +414,11 @@ def merge_status(pr: str) -> dict[str, str]:
 def current_repo() -> str:
     """Return ``OWNER/REPO`` for the current directory's git remote."""
     return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
+
+
+def head_sha(pr: str) -> str:
+    """Return the HEAD commit SHA for a PR."""
+    return read_output("pr", "view", pr, "--json", "headRefOid", "--jq", ".headRefOid")
 
 
 def update_branch(pr: str) -> None:

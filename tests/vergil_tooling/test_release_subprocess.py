@@ -26,6 +26,8 @@ def _cpe(stdout: str = "", stderr: str = "") -> subprocess.CalledProcessError:
 class TestWaitForChecks:
     def test_verbose_prints_output(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", return_value=_completed(stdout="all passed\n")),
         ):
@@ -35,6 +37,8 @@ class TestWaitForChecks:
 
     def test_quiet_suppresses_output(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", return_value=_completed(stdout="all passed\n")),
         ):
@@ -44,6 +48,8 @@ class TestWaitForChecks:
 
     def test_failure_raises_with_output(self) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", side_effect=_cpe(stdout="fail", stderr="err")),
             pytest.raises(subprocess.CalledProcessError) as exc_info,
@@ -54,6 +60,8 @@ class TestWaitForChecks:
 
     def test_verbose_failure_prints_then_raises(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(
                 _MOD + "._run_with_retry",
@@ -68,6 +76,8 @@ class TestWaitForChecks:
 
     def test_verbose_failure_no_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", side_effect=_cpe(stdout="fail\n", stderr="")),
             pytest.raises(subprocess.CalledProcessError),
@@ -79,6 +89,8 @@ class TestWaitForChecks:
 
     def test_verbose_empty_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", return_value=_completed(stdout="", stderr="warn\n")),
         ):
@@ -89,6 +101,8 @@ class TestWaitForChecks:
 
     def test_verbose_failure_empty_stdout(self, capsys: pytest.CaptureFixture[str]) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", return_value=True),
             patch(_MOD + "._run_with_retry", side_effect=_cpe(stdout="", stderr="error\n")),
             pytest.raises(subprocess.CalledProcessError),
@@ -101,6 +115,8 @@ class TestWaitForChecks:
     def test_polls_until_checks_registered(self) -> None:
         registered_calls = iter([False, False, True, True])
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123"),
             patch(_MOD + "._checks_registered", side_effect=registered_calls),
             patch(_MOD + "._run_with_retry", return_value=_completed()),
             patch(_MOD + ".time.sleep"),
@@ -110,6 +126,8 @@ class TestWaitForChecks:
 
     def test_polls_timeout_raises(self) -> None:
         with (
+            patch(_MOD + ".current_repo", return_value="o/r"),
+            patch(_MOD + ".head_sha", return_value="abc123def456"),
             patch(_MOD + "._checks_registered", return_value=False),
             patch(_MOD + "._run_with_retry") as mock_run,
             patch(_MOD + ".time.sleep"),

@@ -6,7 +6,13 @@ import subprocess as _subprocess
 import sys
 import time
 
-from vergil_tooling.lib.github import GitHubAPIError, _checks_registered, _run_with_retry
+from vergil_tooling.lib.github import (
+    GitHubAPIError,
+    _checks_registered,
+    _run_with_retry,
+    current_repo,
+    head_sha,
+)
 
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 180
@@ -32,22 +38,27 @@ def _run_verbose(cmd: tuple[str, ...], *, verbose: bool) -> None:
 
 def wait_for_checks(pr: str, *, verbose: bool) -> None:
     """Block until CI checks on *pr* pass. Verbose controls output."""
+    repo = current_repo()
+    sha = head_sha(pr)
+
     deadline = time.monotonic() + _POLL_TIMEOUT_SECS
-    while not _checks_registered(pr):
+    while not _checks_registered(repo, sha):
         if time.monotonic() >= deadline:
             break
         time.sleep(_POLL_INTERVAL_SECS)
 
-    if not _checks_registered(pr):
+    if not _checks_registered(repo, sha):
         raise GitHubAPIError(
             1,
-            ("gh", "pr", "checks", pr, "--watch", "--fail-fast"),
-            stderr=f"no checks reported after {_POLL_TIMEOUT_SECS}s"
-            " — GitHub may be experiencing delays",
+            ("gh", "pr", "checks", pr, "--watch"),
+            stderr=(
+                f"no checks reported for {sha[:8]} after {_POLL_TIMEOUT_SECS}s"
+                " — GitHub may be experiencing delays"
+            ),
         )
 
     _run_verbose(
-        ("gh", "pr", "checks", pr, "--watch", "--fail-fast"),  # noqa: S607
+        ("gh", "pr", "checks", pr, "--watch"),  # noqa: S607
         verbose=verbose,
     )
 
