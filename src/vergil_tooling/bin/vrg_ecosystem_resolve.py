@@ -33,16 +33,16 @@ def main(argv: list[str] | None = None) -> int:
 
     build_str = json.dumps(info.build_cmd) if info.build_cmd else ""
     publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
-    credential_str = info.credential_secret or ""
+    secret_name = info.credential_secret or ""
 
     if is_ci():
         write_output("build_cmd", build_str)
         write_output("publish_cmd", publish_str)
-        write_output("credential_secret", credential_str)
+        write_output("credential_secret", secret_name)
     else:
         print(f"build_cmd: {build_str}")
         print(f"publish_cmd: {publish_str}")
-        print(f"credential_secret: {credential_str}")
+        print(f"credential_secret: {secret_name}")
 
     return 0
 
