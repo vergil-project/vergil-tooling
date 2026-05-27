@@ -16,11 +16,12 @@ if TYPE_CHECKING:
 # -- Fixture helpers ----------------------------------------------------------
 
 
-def _write_toml(tmp_path: Path, language: str) -> None:
+def _write_toml(tmp_path: Path, language: str | None = None) -> None:
+    lang_line = f'primary-language = "{language}"\n' if language else ""
     (tmp_path / "vergil.toml").write_text(
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        f'primary-language = "{language}"\n\n[dependencies]\nvergil = "v2.0"\n'
+        f'{lang_line}\n[dependencies]\nvergil = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 
@@ -36,7 +37,7 @@ def test_show_python(tmp_path: Path) -> None:
 
 
 def test_show_generic_version_file(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("2.0.1\n")
     assert show(tmp_path) == "2.0.1"
 
@@ -74,7 +75,7 @@ def test_show_java(tmp_path: Path) -> None:
 
 
 def test_show_claude_plugin(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "claude-plugin")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.4.19\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
@@ -86,7 +87,7 @@ def test_show_claude_plugin(tmp_path: Path) -> None:
 
 
 def test_show_major_minor(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.5.2\n")
     assert show_major_minor(tmp_path) == "1.5"
 
@@ -123,18 +124,12 @@ def test_show_missing_language_file_warns(
     assert "not found" in err
 
 
-def test_show_shell_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _write_toml(tmp_path, "shell")
+def test_show_no_language_skips_cross_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("2.0.1\n")
     assert show(tmp_path) == "2.0.1"
-    err = capsys.readouterr().err
-    assert err == ""
-
-
-def test_show_none_skips_cross_check(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    _write_toml(tmp_path, "none")
-    (tmp_path / "VERSION").write_text("1.0.0\n")
-    assert show(tmp_path) == "1.0.0"
     err = capsys.readouterr().err
     assert err == ""
 
@@ -178,13 +173,13 @@ def test_show_cross_check_warns_when_discover_raises(
 
 
 def test_bump_missing_version_file_raises(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     with pytest.raises(FileNotFoundError, match="VERSION"):
         bump(tmp_path)
 
 
 def test_bump_generic(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     result = bump(tmp_path)
     assert result == "1.2.4"
@@ -254,7 +249,7 @@ def test_bump_java(tmp_path: Path) -> None:
 
 
 def test_bump_claude_plugin(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "claude-plugin")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.4.19\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
@@ -321,7 +316,7 @@ def test_bump_ruby_runs_bundle_install(tmp_path: Path) -> None:
 
 
 def test_bump_generic_skips_lockfile(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.0.0\n")
     with patch("vergil_tooling.lib.version.subprocess.run") as mock_run:
         bump(tmp_path)
@@ -348,7 +343,7 @@ def test_bump_skips_nonexistent_language_file(tmp_path: Path) -> None:
 
 
 def test_bump_claude_plugin_skips_lockfile(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "claude-plugin")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.0.0\n")
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()
@@ -421,7 +416,7 @@ def test_write_version_fallback(tmp_path: Path) -> None:
 
     f = tmp_path / "VERSION"
     f.write_text("1.0.0\n")
-    _write_version(f, "shell", "1.0.0", "1.0.1")
+    _write_version(f, "plaintext", "1.0.0", "1.0.1")
     assert f.read_text() == "1.0.1\n"
 
 
@@ -437,7 +432,7 @@ def test_read_version_from_ref_body(tmp_path: Path) -> None:
             args=[], returncode=0, stdout="1.2.3\n"
         ),
     ):
-        result = _read_version_from_ref("origin/main", "VERSION", "shell")
+        result = _read_version_from_ref("origin/main", "VERSION", "plaintext")
     assert result == "1.2.3"
 
 
@@ -445,7 +440,7 @@ def test_read_version_from_ref_body(tmp_path: Path) -> None:
 
 
 def test_bump_minor_generic(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     result = bump(tmp_path, "minor")
     assert result == "1.3.0"
@@ -453,7 +448,7 @@ def test_bump_minor_generic(tmp_path: Path) -> None:
 
 
 def test_bump_major_generic(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.2.3\n")
     result = bump(tmp_path, "major")
     assert result == "2.0.0"
@@ -486,7 +481,7 @@ def test_bump_major_python(tmp_path: Path) -> None:
 
 def test_bump_patch_default(tmp_path: Path) -> None:
     """Calling bump() with no part argument still increments patch."""
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.0.0\n")
     result = bump(tmp_path)
     assert result == "1.0.1"
@@ -504,7 +499,7 @@ def test_read_version_from_ref_error_no_stderr() -> None:
         patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
         pytest.raises(_sp.CalledProcessError),
     ):
-        _read_version_from_ref("nonexistent", "VERSION", "shell")
+        _read_version_from_ref("nonexistent", "VERSION", "plaintext")
 
 
 def test_run_lockfile_maintenance_error_no_stderr(tmp_path: Path) -> None:
@@ -536,7 +531,7 @@ def test_read_version_from_ref_prints_stderr_on_failure(
         patch("vergil_tooling.lib.version.subprocess.run", side_effect=err),
         pytest.raises(_sp.CalledProcessError),
     ):
-        _read_version_from_ref("nonexistent", "VERSION", "shell")
+        _read_version_from_ref("nonexistent", "VERSION", "plaintext")
     captured = capsys.readouterr()
     assert "bad revision" in captured.err
 
@@ -562,7 +557,7 @@ def test_run_lockfile_maintenance_prints_stderr_on_failure(
 
 
 def test_bump_invalid_part_raises(tmp_path: Path) -> None:
-    _write_toml(tmp_path, "shell")
+    _write_toml(tmp_path)
     (tmp_path / "VERSION").write_text("1.0.0\n")
     with pytest.raises(ValueError, match="part must be"):
         bump(tmp_path, "rc")
