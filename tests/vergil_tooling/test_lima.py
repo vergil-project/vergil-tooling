@@ -17,6 +17,7 @@ from vergil_tooling.lib.lima import (
     create_vm,
     delete_vm,
     fetch_template,
+    get_tooling_version,
     inject_credentials,
     install_tooling,
     list_vms,
@@ -684,6 +685,31 @@ class TestUpdateTooling:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         with pytest.raises(SystemExit):
             update_tooling("vergil-agent")
+
+
+class TestGetToolingVersion:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_parses_version_from_uv_tool_list(self, mock_run: MagicMock) -> None:
+        uv_output = "vergil-tooling v2.0.63\n    - vrg-commit\n"
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout=uv_output, stderr="")
+        assert get_tooling_version("vergil-agent") == "v2.0.63"
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_returns_none_when_not_installed(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="some-other-tool v1.0\n", stderr=""
+        )
+        assert get_tooling_version("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_returns_none_on_empty_output(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        assert get_tooling_version("vergil-agent") is None
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_returns_none_on_command_failure(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert get_tooling_version("vergil-agent") is None
 
 
 class TestVmAgeDays:
