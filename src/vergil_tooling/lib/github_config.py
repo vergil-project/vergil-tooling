@@ -530,6 +530,77 @@ def fetch_actual_state(repo: str) -> FetchResult:
 
 
 # ---------------------------------------------------------------------------
+# Diff formatting
+# ---------------------------------------------------------------------------
+
+
+def _extract_status_checks(
+    rules: Sequence[object],
+) -> list[dict[str, object]] | None:
+    for rule in rules:
+        if not isinstance(rule, dict):
+            continue
+        rd = cast("dict[str, object]", rule)
+        if rd.get("type") != "required_status_checks":
+            continue
+        params = rd.get("parameters")
+        if not isinstance(params, dict):
+            continue
+        pd = cast("dict[str, object]", params)
+        checks = pd.get("required_status_checks")
+        if isinstance(checks, list):
+            return cast("list[dict[str, object]]", checks)
+    return None
+
+
+def _format_check(check: dict[str, object]) -> str:
+    ctx = check.get("context", "?")
+    iid = check.get("integration_id", "?")
+    return f"{ctx} (integration_id: {iid})"
+
+
+def format_rules_delta(expected: object, actual: object) -> str | None:
+    if not isinstance(expected, list) or not isinstance(actual, list):
+        return None
+    expected_checks = _extract_status_checks(cast("Sequence[object]", expected))
+    actual_checks = _extract_status_checks(cast("Sequence[object]", actual))
+    if expected_checks is None and actual_checks is None:
+        return None
+
+    expected_set = {(c.get("context"), c.get("integration_id")) for c in (expected_checks or [])}
+    actual_set = {(c.get("context"), c.get("integration_id")) for c in (actual_checks or [])}
+
+    extra_keys = actual_set - expected_set
+    missing_keys = expected_set - actual_set
+
+    extra_labels = sorted(
+        _format_check(c)
+        for c in (actual_checks or [])
+        if (c.get("context"), c.get("integration_id")) in extra_keys
+    )
+    missing_labels = sorted(
+        _format_check(c)
+        for c in (expected_checks or [])
+        if (c.get("context"), c.get("integration_id")) in missing_keys
+    )
+
+    lines = [f"extra ({len(extra_labels)}):"]
+    if extra_labels:
+        for label in extra_labels:
+            lines.append(f"  - {label}")
+    else:
+        lines.append("  none")
+    lines.append(f"missing ({len(missing_labels)}):")
+    if missing_labels:
+        for label in missing_labels:
+            lines.append(f"  - {label}")
+    else:
+        lines.append("  none")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
 # Diff computation
 # ---------------------------------------------------------------------------
 
