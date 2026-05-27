@@ -311,6 +311,23 @@ def _inject_claude_token(instance: str, token_path: str) -> None:
 _TOOLING_TAG_FILE = "~/.config/vergil/tooling-tag"
 
 
+def get_tooling_version(instance: str) -> str | None:
+    """Return the installed vergil-tooling version string, or None."""
+    try:
+        result = shell_run(
+            instance,
+            "bash",
+            "-c",
+            'export PATH="$HOME/.local/bin:$PATH" && uv tool list 2>/dev/null',
+        )
+        for line in result.stdout.splitlines():
+            if line.startswith("vergil-tooling "):
+                return line.split()[1]
+    except subprocess.CalledProcessError:
+        pass
+    return None
+
+
 def install_tooling(instance: str, tag: str) -> None:
     """Install vergil-tooling inside the VM and record the tag."""
     install_spec = _TOOLING_INSTALL.format(tag=tag)

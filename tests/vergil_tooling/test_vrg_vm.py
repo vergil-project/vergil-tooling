@@ -540,19 +540,21 @@ class TestList:
 
 
 class TestUpdate:
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_update_default_tag(
-        self, _status: MagicMock, mock_update: MagicMock, config_file: Path
+        self, _status: MagicMock, mock_update: MagicMock, _ver: MagicMock, config_file: Path
     ) -> None:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
         mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
 
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_update_explicit_tag(
-        self, _status: MagicMock, mock_update: MagicMock, config_file: Path
+        self, _status: MagicMock, mock_update: MagicMock, _ver: MagicMock, config_file: Path
     ) -> None:
         result = main(["update", "--config", str(config_file), "--tag", "v2.1"])
         assert result == 0
@@ -567,6 +569,52 @@ class TestUpdate:
     def test_update_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
         result = main(["update", "--config", str(config_file)])
         assert result == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", side_effect=["v2.0.60", "v2.0.63"])
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_shows_version_change(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        main(["update", "--config", str(config_file)])
+        out = capsys.readouterr().out
+        assert "v2.0.60 → v2.0.63" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", side_effect=["v2.0.63", "v2.0.63"])
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_shows_already_up_to_date(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        main(["update", "--config", str(config_file)])
+        out = capsys.readouterr().out
+        assert "v2.0.63 (already up to date)" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", side_effect=[None, "v2.0.63"])
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_shows_version_when_before_unknown(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        main(["update", "--config", str(config_file)])
+        out = capsys.readouterr().out
+        assert "vergil-tooling: v2.0.63" in out
+        assert "→" not in out
 
 
 class TestSessionStaleness:
