@@ -347,7 +347,11 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
     Uses *tag* if given, otherwise reads the tag from the marker file
     written by ``install_tooling``.  Falls back to *fallback_tag* when
     no marker exists (pre-existing VMs created before marker support).
+
+    An explicit *tag* is treated as a temporary override and is not
+    persisted to the marker file.
     """
+    explicit = tag is not None
     if tag is None:
         result = shell_run(instance, "bash", "-c", f"cat {_TOOLING_TAG_FILE} 2>/dev/null || true")
         tag = result.stdout.strip() or fallback_tag
@@ -362,7 +366,8 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         "-c",
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
     )
-    shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
+    if not explicit:
+        shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
 def vm_age_days(instance: str) -> float | None:
