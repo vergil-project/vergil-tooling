@@ -263,6 +263,7 @@ def desired_ci_gates_ruleset(
     # CodeQL for supported languages
     if lang in _CODEQL_SUPPORTED_LANGUAGES:
         checks.append(_make_check("security / codeql"))
+        checks.append(_make_ghas_check("CodeQL"))
 
     # Versioned checks — only emitted when the language has
     # a command registry entry for the check
