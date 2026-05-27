@@ -203,3 +203,68 @@ def test_outputs_finding_count(tmp_path: Path) -> None:
         )
     calls = {c[0][0]: c[0][1] for c in mock_out.call_args_list}
     assert calls["finding_count"] == "1"
+
+
+def test_forwards_severity(tmp_path: Path) -> None:
+    result = _make_scan_result(tmp_path, _CLEAN_SARIF)
+    with (
+        patch(f"{_MOD}.run_scan", return_value=result) as mock_scan,
+        patch(f"{_MOD}.write_output"),
+    ):
+        main(
+            [
+                "--type",
+                "filesystem",
+                "--target",
+                "/project",
+                "--output-dir",
+                str(tmp_path),
+                "--severity",
+                "HIGH,CRITICAL",
+            ]
+        )
+    _, kwargs = mock_scan.call_args
+    assert kwargs["severity"] == "HIGH,CRITICAL"
+
+
+def test_forwards_trivyignore(tmp_path: Path) -> None:
+    result = _make_scan_result(tmp_path, _CLEAN_SARIF)
+    with (
+        patch(f"{_MOD}.run_scan", return_value=result) as mock_scan,
+        patch(f"{_MOD}.write_output"),
+    ):
+        main(
+            [
+                "--type",
+                "filesystem",
+                "--target",
+                "/project",
+                "--output-dir",
+                str(tmp_path),
+                "--trivyignore",
+                "/path/.trivyignore",
+            ]
+        )
+    _, kwargs = mock_scan.call_args
+    assert kwargs["trivyignore"] == "/path/.trivyignore"
+
+
+def test_default_severity_forwarded(tmp_path: Path) -> None:
+    result = _make_scan_result(tmp_path, _CLEAN_SARIF)
+    with (
+        patch(f"{_MOD}.run_scan", return_value=result) as mock_scan,
+        patch(f"{_MOD}.write_output"),
+    ):
+        main(
+            [
+                "--type",
+                "filesystem",
+                "--target",
+                "/project",
+                "--output-dir",
+                str(tmp_path),
+            ]
+        )
+    _, kwargs = mock_scan.call_args
+    assert kwargs["severity"] == "MEDIUM,HIGH,CRITICAL"
+    assert kwargs["trivyignore"] is None
