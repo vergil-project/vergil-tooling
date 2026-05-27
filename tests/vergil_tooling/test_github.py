@@ -197,6 +197,24 @@ def test_update_branch_calls_api() -> None:
     )
 
 
+def test_head_sha_returns_commit_sha() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_output",
+        return_value="abc123def456",
+    ) as mock_read:
+        result = github.head_sha("https://github.com/pr/1")
+    assert result == "abc123def456"
+    mock_read.assert_called_once_with(
+        "pr",
+        "view",
+        "https://github.com/pr/1",
+        "--json",
+        "headRefOid",
+        "--jq",
+        ".headRefOid",
+    )
+
+
 def test_merge_delegates_to_gh() -> None:
     with patch("vergil_tooling.lib.github.run") as mock_run:
         github.merge("https://github.com/pr/1", strategy="merge")

@@ -406,6 +406,13 @@ def current_repo() -> str:
     return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 
 
+def head_sha(pr: str) -> str:
+    """Return the HEAD commit SHA for a PR."""
+    return read_output(
+        "pr", "view", pr, "--json", "headRefOid", "--jq", ".headRefOid"
+    )
+
+
 def update_branch(pr: str) -> None:
     """Fast-forward merge the base branch into the PR branch.
 
