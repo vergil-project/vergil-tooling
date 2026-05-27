@@ -14,18 +14,19 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE
+from vergil_tooling.lib.output import emit_error, write_summary
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
 
     if not event_path:
-        print("ERROR: GITHUB_EVENT_PATH is not set.", file=sys.stderr)
+        emit_error("GITHUB_EVENT_PATH is not set.")
         return 2
 
     event_file = Path(event_path)
     if not event_file.is_file():
-        print(f"ERROR: event payload not found at {event_path}", file=sys.stderr)
+        emit_error(f"event payload not found at {event_path}")
         return 2
 
     with event_file.open(encoding="utf-8") as f:
@@ -34,28 +35,29 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     pr_body: str = event.get("pull_request", {}).get("body", "") or ""
 
     if not pr_body:
-        print(
-            "ERROR: pull request body is empty; issue linkage is required.",
-            file=sys.stderr,
-        )
+        msg = "pull request body is empty; issue linkage is required."
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
         return 1
 
     if AUTOCLOSE_RE.search(pr_body):
-        print(
-            "ERROR: pull request body contains a GitHub auto-close keyword "
+        msg = (
+            "pull request body contains a GitHub auto-close keyword "
             "(close/fix/resolve). Use 'Ref #N' instead. "
-            "Issues must remain open until post-merge workflows succeed.",
-            file=sys.stderr,
+            "Issues must remain open until post-merge workflows succeed."
         )
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
         return 1
 
     if not LINKAGE_RE.search(pr_body):
-        print(
-            "ERROR: pull request body must include primary issue linkage "
+        msg = (
+            "pull request body must include primary issue linkage "
             "(Ref #123). Cross-repo references (Ref owner/repo#123) are "
-            "also accepted.",
-            file=sys.stderr,
+            "also accepted."
         )
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
         return 1
 
     return 0

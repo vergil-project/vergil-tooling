@@ -118,3 +118,80 @@ def test_no_pull_request_key(tmp_path: Path) -> None:
     event_file.write_text(json.dumps({}))
     with patch.dict("os.environ", {"GITHUB_EVENT_PATH": str(event_file)}):
         assert main() == 1
+
+
+# -- output module integration ------------------------------------------------
+
+
+_MOD = "vergil_tooling.bin.vrg_pr_issue_linkage"
+
+
+def test_emit_error_on_missing_env() -> None:
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(f"{_MOD}.emit_error") as mock_err,
+    ):
+        main()
+        mock_err.assert_called_once_with("GITHUB_EVENT_PATH is not set.")
+
+
+def test_emit_error_on_empty_body(tmp_path: Path) -> None:
+    event_path = _write_event(tmp_path, "")
+    with (
+        patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        main()
+        mock_err.assert_called_once()
+        assert "empty" in mock_err.call_args[0][0]
+        mock_sum.assert_called_once()
+        assert "Compliance Failed" in mock_sum.call_args[0][0]
+
+
+def test_emit_error_on_autoclose(tmp_path: Path) -> None:
+    event_path = _write_event(tmp_path, "Fixes #42")
+    with (
+        patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        main()
+        mock_err.assert_called_once()
+        assert "auto-close" in mock_err.call_args[0][0]
+        mock_sum.assert_called_once()
+
+
+def test_emit_error_on_missing_linkage(tmp_path: Path) -> None:
+    event_path = _write_event(tmp_path, "Just a PR with no ref.")
+    with (
+        patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        main()
+        mock_err.assert_called_once()
+        assert "issue linkage" in mock_err.call_args[0][0]
+        mock_sum.assert_called_once()
+
+
+def test_no_summary_on_env_error() -> None:
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch(f"{_MOD}.emit_error"),
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        main()
+        mock_sum.assert_not_called()
+
+
+def test_no_summary_on_success(tmp_path: Path) -> None:
+    event_path = _write_event(tmp_path, "Ref #42\n")
+    with (
+        patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}),
+        patch(f"{_MOD}.emit_error") as mock_err,
+        patch(f"{_MOD}.write_summary") as mock_sum,
+    ):
+        main()
+        mock_err.assert_not_called()
+        mock_sum.assert_not_called()
