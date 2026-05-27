@@ -1,7 +1,9 @@
 """Resolve ecosystem metadata for a language.
 
-Prints build command, publish command, and credential secret name
-for the given language identifier.
+Resolves build command, publish command, and credential requirements
+for the given language identifier. In CI mode, outputs the credential
+secret name to $GITHUB_OUTPUT; interactively, only reports whether
+a credential is required.
 """
 
 from __future__ import annotations
@@ -33,16 +35,15 @@ def main(argv: list[str] | None = None) -> int:
 
     build_str = json.dumps(info.build_cmd) if info.build_cmd else ""
     publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
-    secret_name = info.credential_secret_name or ""
 
     if is_ci():
         write_output("build_cmd", build_str)
         write_output("publish_cmd", publish_str)
-        write_output("credential_secret_name", secret_name)
+        write_output("credential_secret_name", info.credential_secret_name or "")
     else:
         print(f"build_cmd: {build_str}")
         print(f"publish_cmd: {publish_str}")
-        print(f"credential_secret_name: {secret_name}")
+        print(f"credential_required: {info.credential_secret_name is not None}")
 
     return 0
 

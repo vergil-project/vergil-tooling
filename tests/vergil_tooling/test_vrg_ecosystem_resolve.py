@@ -21,7 +21,7 @@ def test_python_ecosystem_interactive(capsys: pytest.CaptureFixture[str]) -> Non
     assert rc == 0
     assert "build_cmd:" in captured.out
     assert "publish_cmd:" in captured.out
-    assert "credential_secret_name:" in captured.out
+    assert "credential_required: True" in captured.out
 
 
 def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
@@ -39,12 +39,13 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
     assert "credential_secret_name=" in content
 
 
-def test_go_ecosystem_no_publish(capsys: pytest.CaptureFixture[str]) -> None:
+def test_go_ecosystem_no_credential(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=False):
         rc = main(["go"])
     captured = capsys.readouterr()
     assert rc == 0
     assert "publish_cmd:" in captured.out
+    assert "credential_required: False" in captured.out
 
 
 def test_unknown_language_fails() -> None:
