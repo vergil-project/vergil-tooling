@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.63] - 2026-05-27
+
+### Bug fixes
+
+- output shell strings instead of JSON arrays
+- replace _checks_registered with SHA-pinned REST API query
+- make wait_for_checks commit-aware and drop fail-fast
+- update release subprocess wait_for_checks to use SHA-pinned flow
+- rename local variable to avoid CodeQL false positive
+
+### Documentation
+
+- add commit-aware check waiting design spec
+- apply pushback review findings to check-waiting spec
+- add commit-aware check waiting implementation plan
+
+### Features
+
+- host-path-preserving workspace mount and Claude sub-mounts
+- add head_sha() to resolve PR HEAD commit
+
+### Refactoring
+
+- remove unused _NO_CHECKS_PHRASE constant
+
+### Styling
+
+- apply ruff formatting to modified files
+
 ## [2.0.62] - 2026-05-27
 
 ### Bug fixes
