@@ -35,6 +35,17 @@ def test_parse_args_default_promote() -> None:
     assert args.no_promote is False
 
 
+def test_parse_args_skip_cd() -> None:
+    args = parse_args(["--skip-cd"])
+    assert args.skip_cd is True
+    assert args.version_override is None
+
+
+def test_parse_args_default_skip_cd() -> None:
+    args = parse_args([])
+    assert args.skip_cd is False
+
+
 def test_parse_args_no_promote_with_minor() -> None:
     args = parse_args(["--no-promote", "minor"])
     assert args.no_promote is True

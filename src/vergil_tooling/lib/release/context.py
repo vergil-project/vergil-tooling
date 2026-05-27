@@ -39,6 +39,7 @@ class ReleaseContext:
     develop_cd_run_url: str | None = None
 
     promote: bool = True
+    skip_cd: bool = False
 
 
 class ReleaseError(Exception):
