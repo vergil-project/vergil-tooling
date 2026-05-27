@@ -97,13 +97,13 @@ def test_resolve_identity_ambiguous(tmp_path: Path) -> None:
 
 
 def test_resolve_workspace_relative() -> None:
-    assert resolve_workspace("vergil-project/vergil-tooling") == (
-        "/projects/vergil-project/vergil-tooling"
+    assert resolve_workspace("vergil-project/vergil-tooling", "/home/user/dev") == (
+        "/home/user/dev/vergil-project/vergil-tooling"
     )
 
 
 def test_resolve_workspace_absolute() -> None:
-    assert resolve_workspace("/custom/path") == "/custom/path"
+    assert resolve_workspace("/custom/path", "/home/user/dev") == "/custom/path"
 
 
 def test_projects_dir_field(tmp_path: Path) -> None:

@@ -246,8 +246,12 @@ class TestFetchTemplate:
 
 
 class TestCreateVm:
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_constructs_create_command(self, mock: MagicMock) -> None:
+    def test_constructs_create_command(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm("vergil-agent", tpl, "/home/user/projects")
         mock.assert_called_once()
@@ -256,12 +260,48 @@ class TestCreateVm:
         assert "--name=vergil-agent" in args
         assert "--tty=false" in args
         assert str(tpl) in args
-        mount_arg = [a for a in args if ".mounts[0].location" in a]
-        assert len(mount_arg) == 1
-        assert "/home/user/projects" in mount_arg[0]
+        location_arg = [a for a in args if ".mounts[0].location" in a]
+        assert len(location_arg) == 1
+        assert "/home/user/projects" in location_arg[0]
+        mount_point_arg = [a for a in args if ".mounts[0].mountPoint" in a]
+        assert len(mount_point_arg) == 1
+        assert "/home/user/projects" in mount_point_arg[0]
 
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_passes_cpu_override(self, mock: MagicMock) -> None:
+    def test_adds_claude_submounts(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects")
+        args = mock.call_args[0]
+        claude_projects = str(tmp_path / ".claude" / "projects")
+        claude_skills = str(tmp_path / ".claude" / "skills")
+        assert f'--set=.mounts[1].location = "{claude_projects}"' in args
+        assert f'--set=.mounts[1].mountPoint = "{claude_projects}"' in args
+        assert "--set=.mounts[1].writable = true" in args
+        assert f'--set=.mounts[2].location = "{claude_skills}"' in args
+        assert f'--set=.mounts[2].mountPoint = "{claude_skills}"' in args
+        assert "--set=.mounts[2].writable = false" in args
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_creates_host_claude_dirs(
+        self, _mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects")
+        assert (tmp_path / ".claude" / "projects").is_dir()
+        assert (tmp_path / ".claude" / "skills").is_dir()
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_passes_cpu_override(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm("vergil-agent", tpl, "/home/user/projects", cpus=12)
         args = mock.call_args[0]
@@ -269,35 +309,51 @@ class TestCreateVm:
         assert len(cpu_args) == 1
         assert cpu_args[0] == "--set=.cpus = 12"
 
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_passes_memory_override(self, mock: MagicMock) -> None:
+    def test_passes_memory_override(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm("vergil-agent", tpl, "/home/user/projects", memory="32GiB")
         args = mock.call_args[0]
-        mem_args = [a for a in args if "memory" in a]
+        mem_args = [a for a in args if ".memory" in a]
         assert len(mem_args) == 1
         assert mem_args[0] == '--set=.memory = "32GiB"'
 
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_passes_disk_override(self, mock: MagicMock) -> None:
+    def test_passes_disk_override(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm("vergil-agent", tpl, "/home/user/projects", disk="100GiB")
         args = mock.call_args[0]
-        disk_args = [a for a in args if "disk" in a]
+        disk_args = [a for a in args if ".disk" in a]
         assert len(disk_args) == 1
         assert disk_args[0] == '--set=.disk = "100GiB"'
 
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_omits_none_overrides(self, mock: MagicMock) -> None:
+    def test_omits_none_overrides(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm("vergil-agent", tpl, "/home/user/projects")
         args = mock.call_args[0]
-        assert not any("cpus" in a for a in args)
-        assert not any("memory" in a for a in args)
-        assert not any("disk" in a for a in args)
+        assert not any(".cpus" in a for a in args)
+        assert not any(".memory" in a for a in args)
+        assert not any(".disk" in a for a in args)
 
+    @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
-    def test_passes_all_overrides(self, mock: MagicMock) -> None:
+    def test_passes_all_overrides(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
         tpl = Path("/tmp/template.yaml")  # noqa: S108
         create_vm(
             "vergil-agent",

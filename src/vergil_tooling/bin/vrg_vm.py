@@ -304,9 +304,9 @@ def _cmd_session(args: argparse.Namespace) -> int:
 
     workspace: str | None = None
     if args.workspace:
-        workspace = resolve_workspace(args.workspace)
+        workspace = resolve_workspace(args.workspace, identity.projects_dir)
 
-    workdir = workspace if workspace else "/projects"
+    workdir = workspace if workspace else identity.projects_dir
     cmd = ["limactl", "shell", "--start", f"--workdir={workdir}", identity.vm_instance]
 
     if workspace:
@@ -379,7 +379,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Connect even if the VM exceeds the staleness threshold",
     )
     p_session.add_argument(
-        "workspace", nargs="?", help="Workspace path (relative to /projects or absolute)"
+        "workspace", nargs="?", help="Workspace path (relative to projects_dir or absolute)"
     )
     p_session.add_argument("cmd", nargs=argparse.REMAINDER, help="Command to run inside the VM")
 
