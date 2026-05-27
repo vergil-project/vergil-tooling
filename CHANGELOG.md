@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.64] - 2026-05-27
+
+### Bug fixes
+
+- treat --tag as temporary override, not persistent
+- rename _ST_GIT_URL to _VRG_GIT_URL
+
+### Features
+
+- show status check delta instead of full lists (#1210)
+- show version delta on update
+
 ## [2.0.63] - 2026-05-27
 
 ### Bug fixes
