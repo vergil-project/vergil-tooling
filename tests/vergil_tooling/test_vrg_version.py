@@ -14,11 +14,12 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _write_toml(tmp_path: Path, language: str = "shell") -> None:
+def _write_toml(tmp_path: Path, language: str = "") -> None:
+    lang_line = f'primary-language = "{language}"\n' if language else ""
     (tmp_path / "vergil.toml").write_text(
         f'[project]\nrepository-type = "library"\nversioning-scheme = "semver"\n'
         f'branching-model = "library-release"\nrelease-model = "tagged-release"\n'
-        f'primary-language = "{language}"\n\n[dependencies]\nvergil = "v2.0"\n'
+        f'{lang_line}\n[dependencies]\nvergil = "v2.0"\n'
         f'\n[ci]\nversions = ["3.14"]\n'
     )
 

@@ -224,18 +224,13 @@ def test_unknown_language_returns_empty() -> None:
     assert cmds == []
 
 
-def test_shell_language_returns_empty() -> None:
-    cmds = language_commands("shell", CheckKind.LINT)
-    assert cmds == []
-
-
-def test_shell_install_commands() -> None:
-    cmds = language_commands("shell", CheckKind.INSTALL)
-    assert cmds == []
-
-
 def test_none_language_returns_empty() -> None:
-    cmds = language_commands("none", CheckKind.LINT)
+    cmds = language_commands(None, CheckKind.LINT)
+    assert cmds == []
+
+
+def test_none_language_install_returns_empty() -> None:
+    cmds = language_commands(None, CheckKind.INSTALL)
     assert cmds == []
 
 
@@ -296,13 +291,6 @@ def test_ecosystem_metadata_unknown_raises() -> None:
 
     with pytest.raises(ValueError, match="unsupported"):
         ecosystem_metadata("unknown")
-
-
-def test_ecosystem_metadata_shell_raises() -> None:
-    import pytest
-
-    with pytest.raises(ValueError, match="unsupported"):
-        ecosystem_metadata("shell")
 
 
 def test_language_commands_still_works_for_unknown() -> None:

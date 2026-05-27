@@ -169,7 +169,7 @@ def test_tag_protection_ruleset() -> None:
 
 def _project(
     *,
-    language: str = "python",
+    language: str | None = "python",
     release_model: str = "tagged-release",
 ) -> ProjectConfig:
     return ProjectConfig(
@@ -244,8 +244,8 @@ def test_ci_gates_codeql_for_supported_language() -> None:
     assert "security / codeql" in _check_names(r)
 
 
-def test_ci_gates_no_codeql_for_shell() -> None:
-    r = desired_ci_gates_ruleset(_project(language="shell"), _ci())
+def test_ci_gates_no_codeql_without_language() -> None:
+    r = desired_ci_gates_ruleset(_project(language=None), _ci())
     assert "security / codeql" not in _check_names(r)
 
 
@@ -286,8 +286,8 @@ def test_ci_gates_no_release_when_none() -> None:
     assert "version / version-bump" not in _check_names(r)
 
 
-def test_ci_gates_shell_has_no_versioned_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(language="shell"), _ci(versions=["latest"]))
+def test_ci_gates_no_language_has_no_versioned_checks() -> None:
+    r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]))
     names = _check_names(r)
     assert "quality / common" in names
     assert not any("quality / lint" in n for n in names)

@@ -220,7 +220,7 @@ def ecosystem_metadata(language: str) -> EcosystemInfo:
     return entry.ecosystem
 
 
-def language_commands(language: str, kind: CheckKind) -> list[list[str]]:
+def language_commands(language: str | None, kind: CheckKind) -> list[list[str]]:
     """Return the canonical commands for a language and check kind.
 
     Returns an empty list if the language is not in the registry or
