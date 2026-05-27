@@ -229,6 +229,8 @@ def language_commands(language: str | None, kind: CheckKind) -> list[list[str]]:
     Any argument containing ``{configs}`` is expanded to the resolved
     path of the ``vergil_tooling.configs`` package directory.
     """
+    if language is None:
+        return []
     entry = _REGISTRY.get(language)
     if entry is None:
         return []

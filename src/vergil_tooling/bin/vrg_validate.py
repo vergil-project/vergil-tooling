@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         vergil_config = config.read_config(repo_root)
         language = vergil_config.project.primary_language
     except FileNotFoundError:
-        language = ""
+        language = None
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -123,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     return _run_all_checks(language, repo_root)
 
 
-def _run_single_check(check: str, language: str, repo_root: Path) -> int:
+def _run_single_check(check: str, language: str | None, repo_root: Path) -> int:
     if check == "common":
         return _run_common_checks(repo_root)
 
@@ -131,7 +131,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
     assert kind is not None  # noqa: S101
     cmds = language_commands(language, kind)
     if not cmds:
-        print(f"No {check} commands for language '{language}'")
+        print(f"No {check} commands for language '{language or '<not set>'}'")
         return 0
 
     install_cmds = language_commands(language, CheckKind.INSTALL)
@@ -143,7 +143,7 @@ def _run_single_check(check: str, language: str, repo_root: Path) -> int:
     return _run_commands(cmds, check)
 
 
-def _run_all_checks(language: str, repo_root: Path) -> int:
+def _run_all_checks(language: str | None, repo_root: Path) -> int:
     print("=" * 40)
     print("vrg-validate")
     print(f"primary_language: {language or '<not set>'}")
