@@ -1,13 +1,13 @@
 """Resolve ecosystem metadata for a language.
 
-Resolves build command, publish command, and publish environment
-variable for the given language identifier.
+Resolves build command, publish command, and credential secret
+name for the given language identifier.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
+import shlex
 import sys
 
 from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
@@ -31,19 +31,18 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    build_str = json.dumps(info.build_cmd) if info.build_cmd else ""
-    publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
-    env_var = info.publish_env_var or ""
+    build_str = shlex.join(info.build_cmd) if info.build_cmd else ""
+    publish_str = shlex.join(info.publish_cmd) if info.publish_cmd else ""
+    env_name = info.publish_env_var or ""
 
     if is_ci():
-        write_output("build_cmd", build_str)
-        write_output("publish_cmd", publish_str)
-        write_output("publish_env_var", env_var)
+        write_output("build", build_str)
+        write_output("publish", publish_str)
+        write_output("credential-secret", env_name)
     else:
-        print(f"build_cmd: {build_str}")
-        print(f"publish_cmd: {publish_str}")
-        print(f"publish_env_var: {env_var}")
-        print(f"publish_requires_auth: {bool(env_var)}")
+        print(f"build: {build_str}")
+        print(f"publish: {publish_str}")
+        print(f"credential-secret: {env_name}")
 
     return 0
 

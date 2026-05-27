@@ -166,10 +166,7 @@ def resolve_vm_tag(config: IdentityConfig, identity: Identity) -> str:
     return resolve_vergil_version(config, identity)
 
 
-_PROJECTS_PREFIX = "/projects"
-
-
-def resolve_workspace(path: str) -> str:
+def resolve_workspace(path: str, projects_dir: str) -> str:
     if path.startswith("/"):
         return path
-    return f"{_PROJECTS_PREFIX}/{path}"
+    return f"{projects_dir}/{path}"
