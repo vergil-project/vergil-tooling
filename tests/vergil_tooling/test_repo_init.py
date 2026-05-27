@@ -11,6 +11,8 @@ from vergil_tooling.lib.config import _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
     _check_remote_steps,
+    _container_suffix,
+    _default_ci_versions,
     _load_existing_config,
     _remote_branch_exists,
     _sync_labels,
@@ -314,6 +316,14 @@ class TestRenderCiWorkflow:
         ctx.integration_tests = True
         content = render_ci_workflow(ctx)
         assert "ci-test.yml@v2.0" in content
+
+
+class TestContainerHelpers:
+    def test_container_suffix_none_returns_base(self) -> None:
+        assert _container_suffix(None) == "base"
+
+    def test_default_ci_versions_none_returns_latest(self) -> None:
+        assert _default_ci_versions(None) == "latest"
 
 
 class TestRenderCdWorkflow:

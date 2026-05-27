@@ -113,6 +113,19 @@ def test_show_mismatch_raises(tmp_path: Path) -> None:
         show(tmp_path)
 
 
+def test_show_secondary_file_mismatch_raises(tmp_path: Path) -> None:
+    _write_toml(tmp_path)
+    (tmp_path / "VERSION").write_text("1.0.0\n")
+    plugin_dir = tmp_path / ".claude-plugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "plugin.json").write_text('{\n  "name": "example",\n  "version": "9.9.9"\n}\n')
+    with pytest.raises(
+        VersionSyncError,
+        match="VERSION contains 1.0.0 but .claude-plugin/plugin.json contains 9.9.9",
+    ):
+        show(tmp_path)
+
+
 def test_show_missing_language_file_warns(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

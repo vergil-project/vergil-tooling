@@ -15,7 +15,7 @@ from vergil_tooling.bin.vrg_ecosystem_resolve import main
 
 
 def test_python_ecosystem_interactive(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+    with patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=False):
         rc = main(["python"])
     captured = capsys.readouterr()
     assert rc == 0
@@ -28,7 +28,7 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
     output_file = tmp_path / "github_output"
     output_file.write_text("")
     with (
-        patch("vergil_tooling.lib.output.is_ci", return_value=True),
+        patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
         patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_file)}),
     ):
         rc = main(["python"])
@@ -40,7 +40,7 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
 
 
 def test_go_ecosystem_no_publish(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+    with patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=False):
         rc = main(["go"])
     captured = capsys.readouterr()
     assert rc == 0
@@ -48,7 +48,7 @@ def test_go_ecosystem_no_publish(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_unknown_language_fails() -> None:
-    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+    with patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=False):
         rc = main(["unknown"])
     assert rc == 1
 

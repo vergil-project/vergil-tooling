@@ -49,6 +49,18 @@ def test_reports_all_failures(capsys: pytest.CaptureFixture[str]) -> None:
     assert rc == 1
 
 
+def test_container_tag_unsupported_language_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch("vergil_tooling.lib.output.is_ci", return_value=False),
+        patch(
+            "vergil_tooling.bin.vrg_release_validate_inputs._CONTAINER_LANGUAGES",
+            frozenset(),
+        ),
+    ):
+        rc = main(["python", "--container-tag", "v1.0.0"])
+    assert rc == 1
+
+
 def test_no_args_fails() -> None:
     import pytest
 
