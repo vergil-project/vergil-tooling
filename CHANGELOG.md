@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.65] - 2026-05-27
+
+### Features
+
+- forward terminal env vars in vrg-vm session
+
 ## [2.0.64] - 2026-05-27
 
 ### Bug fixes
