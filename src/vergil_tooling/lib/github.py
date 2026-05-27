@@ -312,8 +312,13 @@ def create_pr(*, base: str, title: str, body_file: str) -> str:
 def _checks_registered(repo: str, sha: str) -> bool:
     """Return True if at least one check run exists for *sha*."""
     result = _run_with_retry(
-        ("gh", "api", f"repos/{repo}/commits/{sha}/check-runs",  # noqa: S607
-         "--jq", ".total_count"),
+        (
+            "gh",
+            "api",
+            f"repos/{repo}/commits/{sha}/check-runs",  # noqa: S607
+            "--jq",
+            ".total_count",
+        ),
         check=True,
         text=True,
         capture_output=True,
@@ -413,9 +418,7 @@ def current_repo() -> str:
 
 def head_sha(pr: str) -> str:
     """Return the HEAD commit SHA for a PR."""
-    return read_output(
-        "pr", "view", pr, "--json", "headRefOid", "--jq", ".headRefOid"
-    )
+    return read_output("pr", "view", pr, "--json", "headRefOid", "--jq", ".headRefOid")
 
 
 def update_branch(pr: str) -> None:

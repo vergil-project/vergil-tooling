@@ -74,9 +74,7 @@ def test_wait_for_checks_resolves_sha_and_watches() -> None:
     ):
         github.wait_for_checks("https://github.com/pr/1")
     mock_sha.assert_called_once_with("https://github.com/pr/1")
-    mock_run.assert_called_once_with(
-        "pr", "checks", "https://github.com/pr/1", "--watch"
-    )
+    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
 
 
 def test_wait_for_checks_polls_until_registered() -> None:
@@ -93,9 +91,7 @@ def test_wait_for_checks_polls_until_registered() -> None:
         github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
     assert mock_sleep.call_count == 2
     mock_sleep.assert_called_with(5)
-    mock_run.assert_called_once_with(
-        "pr", "checks", "https://github.com/pr/1", "--watch"
-    )
+    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
 
 
 def test_wait_for_checks_passes_repo_and_sha_to_checks_registered() -> None:
