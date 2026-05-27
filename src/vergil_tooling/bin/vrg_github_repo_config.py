@@ -17,10 +17,12 @@ from vergil_tooling.lib import github
 from vergil_tooling.lib.config import VergilConfig, _parse_raw_config
 from vergil_tooling.lib.github_config import (
     ConfigDiff,
+    DiffItem,
     apply_desired_state,
     compute_desired_state,
     compute_diff,
     fetch_actual_state,
+    format_rules_delta,
 )
 from vergil_tooling.lib.repo_config import audit_local_config
 
@@ -85,6 +87,15 @@ def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
     return compute_diff(desired=desired, actual=result.state)
 
 
+def _format_item(item: DiffItem) -> str:
+    if item.field.startswith("rulesets.") and item.field.endswith(".rules"):
+        delta = format_rules_delta(item.expected, item.actual)
+        if delta is not None:
+            indented = "\n".join(f"      {line}" for line in delta.splitlines())
+            return f"    {item.field}:\n{indented}"
+    return f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}"
+
+
 def _print_local_diff(diff: ConfigDiff) -> None:
     """Print local config audit results."""
     if diff.is_compliant():
@@ -92,7 +103,7 @@ def _print_local_diff(diff: ConfigDiff) -> None:
         return
     print(f"  local: NON-COMPLIANT ({len(diff.items)} issues)")
     for item in diff.items:
-        print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+        print(_format_item(item))
 
 
 def _print_diff(repo: str, diff: ConfigDiff) -> None:
@@ -102,7 +113,7 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
     else:
         print(f"  {repo}: NON-COMPLIANT ({len(diff.items)} issues)")
         for item in diff.items:
-            print(f"    {item.field}: expected={item.expected!r}, actual={item.actual!r}")
+            print(_format_item(item))
     for field_name in diff.skipped:
         if field_name.startswith("security."):
             print(

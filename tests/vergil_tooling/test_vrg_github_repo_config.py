@@ -490,6 +490,153 @@ def test_audit_runs_local_when_repo_matches_cwd() -> None:
     assert result == 0
 
 
+# -- Issue #1210: delta output for status check mismatches -------------------
+
+
+def test_print_diff_shows_delta_for_rules_mismatch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    expected_rules: list[dict[str, object]] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {"context": "quality / common", "integration_id": 15368},
+                ],
+            },
+        },
+    ]
+    actual_rules: list[dict[str, object]] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {"context": "quality / common", "integration_id": 15368},
+                    {"context": "CodeQL", "integration_id": 57789},
+                ],
+            },
+        },
+    ]
+    diff = ConfigDiff(
+        items=[
+            DiffItem(
+                field="rulesets.CI gates.rules",
+                expected=expected_rules,
+                actual=actual_rules,
+            )
+        ]
+    )
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "extra (1)" in output
+    assert "CodeQL (integration_id: 57789)" in output
+    assert "missing (0)" in output
+
+
+def test_print_local_diff_shows_delta_for_rules_mismatch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vergil_tooling.bin.vrg_github_repo_config import _print_local_diff
+
+    expected_rules: list[dict[str, object]] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {"context": "quality / common", "integration_id": 15368},
+                    {"context": "security / trivy", "integration_id": 15368},
+                ],
+            },
+        },
+    ]
+    actual_rules: list[dict[str, object]] = [
+        {
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": True,
+                "required_status_checks": [
+                    {"context": "quality / common", "integration_id": 15368},
+                ],
+            },
+        },
+    ]
+    diff = ConfigDiff(
+        items=[
+            DiffItem(
+                field="rulesets.CI gates.rules",
+                expected=expected_rules,
+                actual=actual_rules,
+            )
+        ]
+    )
+    _print_local_diff(diff)
+    output = capsys.readouterr().out
+    assert "missing (1)" in output
+    assert "security / trivy (integration_id: 15368)" in output
+    assert "extra (0)" in output
+
+
+def test_print_diff_falls_back_for_rules_without_status_checks(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    expected_rules: list[dict[str, object]] = [{"type": "deletion"}]
+    actual_rules: list[dict[str, object]] = [
+        {"type": "deletion"},
+        {"type": "non_fast_forward"},
+    ]
+    diff = ConfigDiff(
+        items=[
+            DiffItem(
+                field="rulesets.Branch protection.rules",
+                expected=expected_rules,
+                actual=actual_rules,
+            )
+        ]
+    )
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "expected=" in output
+    assert "actual=" in output
+
+
+def test_print_diff_falls_back_for_non_rules_field(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    diff = ConfigDiff(
+        items=[DiffItem(field="repo_settings.allow_auto_merge", expected=False, actual=True)]
+    )
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        main(["audit", "--repo", "o/r"])
+    output = capsys.readouterr().out
+    assert "expected=False, actual=True" in output
+
+
+# -- Local check skip on --repo mismatch --------------------------------------
+
+
 def test_audit_skips_local_when_cwd_origin_unavailable() -> None:
     import subprocess
 
