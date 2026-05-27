@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import textwrap
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -687,7 +688,25 @@ class TestSession:
         assert args[0] == "limactl"
         assert "vergil-agent" in args[1]
         assert "--start" in args[1]
+        assert "--preserve-env" in args[1]
         assert "--workdir=/home/user/projects" in args[1]
+
+    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    def test_session_sets_terminal_env_forwarding(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file)])
+        allow = os.environ.get("LIMA_SHELLENV_ALLOW", "")
+        for var in ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"):
+            assert var in allow
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
