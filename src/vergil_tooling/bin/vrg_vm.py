@@ -24,6 +24,7 @@ from vergil_tooling.lib.lima import (
     create_vm,
     delete_vm,
     fetch_template,
+    get_tooling_version,
     inject_credentials,
     install_tooling,
     list_vms,
@@ -178,7 +179,18 @@ def _cmd_update(args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
     print(f"Updating vergil-tooling in VM '{identity.vm_instance}' (identity: {name})...")
+
+    before = get_tooling_version(identity.vm_instance)
     update_tooling(identity.vm_instance, tag, fallback_tag=fallback)
+    after = get_tooling_version(identity.vm_instance)
+
+    if before and after:
+        if before == after:
+            print(f"  vergil-tooling: {after} (already up to date)")
+        else:
+            print(f"  vergil-tooling: {before} → {after}")
+    elif after:
+        print(f"  vergil-tooling: {after}")
 
     print("Update complete.")
     return 0
