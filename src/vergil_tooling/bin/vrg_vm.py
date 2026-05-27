@@ -40,6 +40,8 @@ _default_config_path = default_config_path
 
 _DEFAULT_STALENESS_DAYS = 3
 
+_TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
+
 
 def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
     config_path = args.config if args.config else _default_config_path()
@@ -319,7 +321,17 @@ def _cmd_session(args: argparse.Namespace) -> int:
         workspace = resolve_workspace(args.workspace, identity.projects_dir)
 
     workdir = workspace if workspace else identity.projects_dir
-    cmd = ["limactl", "shell", "--start", f"--workdir={workdir}", identity.vm_instance]
+
+    os.environ["LIMA_SHELLENV_ALLOW"] = _TERMINAL_ENV_VARS
+
+    cmd = [
+        "limactl",
+        "shell",
+        "--start",
+        "--preserve-env",
+        f"--workdir={workdir}",
+        identity.vm_instance,
+    ]
 
     if workspace:
         source = ". ~/.config/vergil/claude.env 2>/dev/null;"
