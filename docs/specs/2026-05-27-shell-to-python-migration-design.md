@@ -58,8 +58,36 @@ same as interactive mode, but without color.
 
 ## Phase 1 — Foundation
 
-Covers issues #1184, #1185, #1190. Builds the shared infrastructure that
-all subsequent phases depend on.
+Covers issues #1184, #1185. Builds the shared infrastructure that all
+subsequent phases depend on.
+
+### Primary Language Enum Cleanup
+
+As part of the language metadata unification, clean up `config.py`'s
+`primary-language` enum. Today it allows `python`, `go`, `java`, `ruby`,
+`rust`, `shell`, `none`, and `claude-plugin`. The last three are not
+programming languages with toolchain support:
+
+- **`shell` and `none`** — identical behavior everywhere (base container,
+  no validation commands, no CodeQL, no ecosystem metadata). These are
+  the same thing with different labels.
+- **`claude-plugin`** — exists solely for dual-file version writes
+  (`VERSION` + `.claude-plugin/plugin.json`). All other behavior is
+  identical to `none`.
+
+**Change:** `primary-language` becomes optional, accepting only the five
+real languages: `python`, `go`, `java`, `ruby`, `rust`. Repos that
+currently use `shell`, `none`, or `claude-plugin` omit the field (or set
+it to an empty string). The `claude-plugin` version-file behavior moves
+to a separate config mechanism (e.g., `[publish].version-files`).
+
+This makes `primary-language` mean "a first-class programming language
+with build, test, lint, and publish toolchain support" — which is exactly
+what the unified language registry models.
+
+**Files affected:** `lib/config.py` (enum, validation), `lib/version.py`
+(dual-file writes, `_LANGUAGES_WITH_SEPARATE_VERSION`),
+`lib/repo_init.py` (container suffix map, CI templates).
 
 ### Unified Language Metadata Module
 
@@ -89,12 +117,15 @@ Commands are `list[str]` (subprocess argv), not shell strings — this
 eliminates the `eval "$PUBLISH_CMD"` pattern in the current action.
 
 **Registry:** Module-level `dict[str, Language]` replacing the current
-`_REGISTRY`. Populated with the same validation command data plus the new
-ecosystem fields.
+`_REGISTRY`. The registry contains exactly the five supported languages.
+Populated with the same validation command data plus the new ecosystem
+fields.
 
 **Public API:**
 
-- `supported_languages() -> frozenset[str]` — canonical language set.
+- `supported_languages() -> frozenset[str]` — the five languages that have
+  full toolchain support. This is the same set as `config.py`'s
+  `primary-language` enum after the cleanup.
 - `ecosystem_metadata(language: str) -> EcosystemInfo` — build/publish/credential
   for a language. Raises `ValueError` for unsupported languages.
 - `language_commands(language, kind) -> list[list[str]]` — existing API,
@@ -108,6 +139,9 @@ ecosystem fields.
 - `lib/repo_init.py` — imports from `validate_commands`
 - `lib/github_config.py` — imports from `validate_commands`
 - `lib/container_cache.py` — imports from `validate_commands`
+- `tests/vergil_tooling/test_validate_commands.py` — rename to
+  `test_languages.py`, update imports
+- `tests/vergil_tooling/test_vrg_validate.py` — imports `CheckKind`
 
 ### CLI: `vrg-ecosystem-resolve` (#1184)
 
@@ -130,25 +164,10 @@ Reports all validation failures (not just the first). Uses the output module.
 
 Entry point: `bin/vrg_release_validate_inputs.py`
 
-### Config Extension: vergil.toml Version Resolution (#1190)
-
-**Extend:** `lib/config.py`
-
-Add `resolve_tooling_version(repo_root: Path) -> str` — reads `vergil.toml`
-with `tomllib`, returns the version tag string. Raises a clear error if the
-file is missing or the version field is absent/malformed.
-
-Replaces the `sed -n` regex extraction in the vergil-tooling setup action.
-
-### CLI: `vrg-resolve-tooling-version` (#1190)
-
-Prints the resolved version string. Uses the output module.
-
-Entry point: `bin/vrg_resolve_tooling_version.py`
-
 ## Phase 2 — Extend Existing Code
 
-Covers issues #1188, #1189. Builds on existing modules with minimal new code.
+Covers issues #1188, #1189, #1190. Builds on existing modules with minimal
+new code.
 
 ### PR Body Compliance Retrofit (#1188)
 
@@ -181,9 +200,30 @@ is a normal success path, not an error.
 
 Accepts head version and main version as positional arguments. Main version
 is optional (missing = no prior release). Exit code: 0 = diverged or no
-prior release, 1 = versions equal (not bumped). Uses the output module.
+prior release, 1 = versions equal (not bumped).
+
+**Structured output:** In addition to exit codes, the CLI writes output
+keys so the calling action can distinguish between result states:
+- `write_output("status", "diverged" | "first-release" | "equal")`
+- `write_output("head_version", ...)`
+- `write_output("main_version", ...)` (empty string for first-release)
+
+Uses the output module.
 
 Entry point: `bin/vrg_version_divergence.py`
+
+### vergil.toml Version Resolution CLI (#1190)
+
+`config.py` already implements the version resolution logic via
+`vrg_install_tag(repo_root)` — reads `vergil.toml`, returns
+`[dependencies].vergil`, with an env var override
+(`VRG_DOCKER_INSTALL_TAG`). The tooling-side library function exists.
+
+The remaining work is a thin CLI entry point wrapping the existing
+function: `vrg-resolve-tooling-version` prints the resolved version
+string. Uses the output module.
+
+Entry point: `bin/vrg_resolve_tooling_version.py`
 
 ## Phase 3 — Standalone Utilities
 
@@ -207,6 +247,10 @@ Core functions:
 File collection is done once and shared between freeze and validate (fixing
 the duplication in the shell version).
 
+The exact regex patterns are derived from the existing `sed` expressions
+in the composite action. See vergil-actions#602 for the source of truth
+on pattern specifics (nested paths, already-frozen refs, SHA-pinned refs).
+
 **CLI:** `vrg-freeze-refs`
 
 Accepts `--owner-repo`, `--tag`, and optional `--scan-dirs` (defaults to
@@ -224,13 +268,17 @@ argument parsing, wrap with the output module.
 **CLI:** `vrg-docs-stage`
 
 Stages changelog and release notes into the docs build directory. Generates
-a semver-sorted release index.
+a semver-sorted release index. Key arguments (derived from the action's
+shell variable setup, see vergil-actions#599): `--version` (release
+version), `--docs-dir` (target docs directory), `--changelog` (path to
+changelog file), `--release-notes` (path to release notes).
 
 Entry point: `bin/vrg_docs_stage.py`
 
 **CLI:** `vrg-docs-patch-nav`
 
-Patches `mkdocs.yml` nav entries with release version links.
+Patches `mkdocs.yml` nav entries with release version links. Key arguments:
+`--version` (release version), `--mkdocs-yml` (path to mkdocs config).
 
 Entry point: `bin/vrg_docs_patch_nav.py`
 
@@ -345,6 +393,15 @@ The language metadata refactor includes backward-compatibility tests
 confirming that `language_commands()` returns identical results before and
 after the restructuring.
 
+**Testing tiers:** All tests above are Tier 1 (local, fast, mocked
+subprocesses). Phase 4's scan orchestrators (semgrep, Trivy) cannot be
+integration-tested against live tools without significant infrastructure.
+Tier 1 mocked tests verify argument construction, output parsing, and
+SARIF evaluation. Real-world validation will happen during rollout as
+actions adopt the new utilities. A dedicated integration testing framework
+for external tool orchestration is a future consideration, not a
+prerequisite for this migration.
+
 ## Implementation Order
 
 Each phase is independently shippable. The vergil-actions side can adopt
@@ -352,8 +409,8 @@ utilities as they land, tracked by the upstream issues.
 
 | Phase | Issues | Dependencies |
 |-------|--------|-------------|
-| 1 — Foundation | #1184, #1185, #1190 | None (output module built first within this phase) |
-| 2 — Extend existing | #1188, #1189 | Output module from Phase 1 |
+| 1 — Foundation | #1184, #1185 | None (output module built first within this phase) |
+| 2 — Extend existing | #1188, #1189, #1190 | Output module from Phase 1 |
 | 3 — Standalone | #1186, #1183 | Output module from Phase 1 |
 | 4 — Scan orchestration | #1182, #1181, #1191 | Output module from Phase 1; #1182 before #1181/#1191 |
 
