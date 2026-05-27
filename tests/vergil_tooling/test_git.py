@@ -19,7 +19,9 @@ def test_run_delegates_to_subprocess() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed()
         git.run("status")
-    mock_run.assert_called_once_with(("git", "status"), check=True, capture_output=True, text=True)
+    mock_run.assert_called_once_with(
+        ("git", "status"), check=True, capture_output=True, text=True, env=None
+    )
 
 
 def test_run_commit_no_env_var_gate() -> None:
@@ -110,7 +112,9 @@ def test_read_output_returns_stripped_stdout() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(stdout="  hello world  \n")
         assert git.read_output("log") == "hello world"
-    mock_run.assert_called_once_with(("git", "log"), check=True, text=True, capture_output=True)
+    mock_run.assert_called_once_with(
+        ("git", "log"), check=True, text=True, capture_output=True, env=None
+    )
 
 
 def test_repo_root_returns_path() -> None:
@@ -203,3 +207,106 @@ def test_working_tree_status_returns_porcelain_output() -> None:
 def test_working_tree_status_returns_empty_when_clean() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value=""):
         assert git.working_tree_status() == ""
+
+
+# -- remote credential injection -----------------------------------------------
+
+
+class TestRunRemoteCredentialInjection:
+    """git.run() injects credentials for remote-capable subcommands."""
+
+    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote"])
+    def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            git.run(subcmd, "origin", "main")
+        _, kwargs = mock_run.call_args
+        env = kwargs.get("env")
+        assert env is not None
+        assert env["GIT_CONFIG_COUNT"] == "1"
+        assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
+        assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+
+    @pytest.mark.parametrize("subcmd", ["status", "log", "diff", "add", "branch", "commit"])
+    def test_no_injection_for_local_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            git.run(subcmd)
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs or kwargs.get("env") is None
+
+    def test_no_injection_when_no_token(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            git.run("push", "origin", "main")
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs or kwargs.get("env") is None
+
+    def test_token_encodes_as_basic_auth(self) -> None:
+        import base64
+
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            git.run("push", "origin", "main")
+        _, kwargs = mock_run.call_args
+        header_value = kwargs["env"]["GIT_CONFIG_VALUE_0"]
+        expected = base64.b64encode(b"x-access-token:ghs_test_token").decode()
+        assert expected in header_value
+
+
+class TestReadOutputRemoteCredentialInjection:
+    """git.read_output() injects credentials for remote-capable subcommands."""
+
+    @pytest.mark.parametrize("subcmd", ["ls-remote", "fetch"])
+    def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="output\n")
+            git.read_output(subcmd, "origin")
+        _, kwargs = mock_run.call_args
+        env = kwargs.get("env")
+        assert env is not None
+        assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+
+    @pytest.mark.parametrize("subcmd", ["log", "rev-parse", "status"])
+    def test_no_injection_for_local_commands(self, subcmd: str) -> None:
+        with (
+            patch(
+                "vergil_tooling.lib.git.github.get_installation_token",
+                return_value="ghs_test_token",
+            ),
+            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed(stdout="output\n")
+            git.read_output(subcmd)
+        _, kwargs = mock_run.call_args
+        assert "env" not in kwargs or kwargs.get("env") is None
