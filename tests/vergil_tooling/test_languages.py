@@ -271,13 +271,13 @@ def test_ecosystem_metadata_python() -> None:
     assert isinstance(info, EcosystemInfo)
     assert info.build_cmd is not None
     assert info.publish_cmd is not None
-    assert info.credential_secret is not None
+    assert info.credential_secret_name is not None
 
 
 def test_ecosystem_metadata_go() -> None:
     info = ecosystem_metadata("go")
     assert isinstance(info, EcosystemInfo)
-    assert info.credential_secret is None
+    assert info.credential_secret_name is None
 
 
 def test_ecosystem_metadata_all_languages_have_entries() -> None:

@@ -27,7 +27,7 @@ class CheckKind(Enum):
 class EcosystemInfo:
     build_cmd: list[str] | None
     publish_cmd: list[str] | None
-    credential_secret: str | None
+    credential_secret_name: str | None
 
 
 @dataclass(frozen=True)
@@ -112,7 +112,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["uv", "build"],
             publish_cmd=["uv", "publish"],
-            credential_secret="PYPI_TOKEN",
+            credential_secret_name="PYPI_TOKEN",
         ),
     ),
     "go": Language(
@@ -141,7 +141,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["go", "build", "./..."],
             publish_cmd=None,
-            credential_secret=None,
+            credential_secret_name=None,
         ),
     ),
     "java": Language(
@@ -166,7 +166,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["./mvnw", "package", "-B"],
             publish_cmd=["./mvnw", "deploy", "-B"],
-            credential_secret="MAVEN_GPG_PASSPHRASE",
+            credential_secret_name="MAVEN_GPG_PASSPHRASE",
         ),
     ),
     "ruby": Language(
@@ -184,7 +184,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["gem", "build"],
             publish_cmd=["gem", "push"],
-            credential_secret="RUBYGEMS_API_KEY",
+            credential_secret_name="RUBYGEMS_API_KEY",
         ),
     ),
     "rust": Language(
@@ -202,7 +202,7 @@ _REGISTRY: dict[str, Language] = {
         ecosystem=EcosystemInfo(
             build_cmd=["cargo", "build", "--release"],
             publish_cmd=["cargo", "publish"],
-            credential_secret="CRATES_IO_TOKEN",
+            credential_secret_name="CRATES_IO_TOKEN",
         ),
     ),
 }
