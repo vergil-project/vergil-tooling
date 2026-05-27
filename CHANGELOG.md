@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.66] - 2026-05-27
+
+### Bug fixes
+
+- call trivy directly instead of wrapping in docker run
+
+### Features
+
+- mount ~/.claude/sessions into VM for session persistence
+
 ## [2.0.65] - 2026-05-27
 
 ### Features
