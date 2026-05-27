@@ -9,6 +9,7 @@ a credential is required.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import sys
@@ -35,17 +36,19 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    build_str = json.dumps(info.build_cmd) if info.build_cmd else ""
-    publish_str = json.dumps(info.publish_cmd) if info.publish_cmd else ""
+    eco = dataclasses.asdict(info)
+    build_str = json.dumps(eco["build_cmd"]) if eco["build_cmd"] else ""
+    publish_str = json.dumps(eco["publish_cmd"]) if eco["publish_cmd"] else ""
+    cred_name: str = eco["credential_secret_name"] or ""
 
     if is_ci():
         write_output("build_cmd", build_str)
         write_output("publish_cmd", publish_str)
-        _write_github_output("credential_secret_name", info.credential_secret_name or "")
+        _write_github_output("credential_secret_name", cred_name)
     else:
         print(f"build_cmd: {build_str}")
         print(f"publish_cmd: {publish_str}")
-        print(f"credential_required: {info.credential_secret_name is not None}")
+        print(f"credential_required: {bool(cred_name)}")
 
     return 0
 
