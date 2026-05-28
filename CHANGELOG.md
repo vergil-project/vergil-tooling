@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.69] - 2026-05-28
+
+### Bug fixes
+
+- make language optional in vrg-release-validate-inputs
+- add backward-compatible positional arg for transition
+
+### Documentation
+
+- add design spec and plan for cd-release language separation
+
 ## [2.0.68] - 2026-05-28
 
 ### Bug fixes
