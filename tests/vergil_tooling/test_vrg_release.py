@@ -46,10 +46,40 @@ def test_parse_args_default_skip_cd_docs() -> None:
     assert args.skip_cd_docs is False
 
 
+def test_parse_args_skip_audit() -> None:
+    args = parse_args(["--skip-audit"])
+    assert args.skip_audit is True
+    assert args.version_override is None
+
+
+def test_parse_args_default_skip_audit() -> None:
+    args = parse_args([])
+    assert args.skip_audit is False
+
+
 def test_parse_args_no_promote_with_minor() -> None:
     args = parse_args(["--no-promote", "minor"])
     assert args.no_promote is True
     assert args.version_override == "minor"
+
+
+def test_main_passes_skip_audit_to_preflight() -> None:
+    mock_root = Path("/tmp/repo")  # noqa: S108
+    with (
+        patch(_MOD + ".preflight") as mock_pf,
+        patch(_MOD + ".run_release"),
+        patch(_MOD + ".git.repo_root", return_value=mock_root),
+    ):
+        mock_pf.return_value = ReleaseContext(
+            repo="o/r",
+            version="1.0.0",
+            repo_root=mock_root,
+            version_override=None,
+        )
+        main(["--skip-audit"])
+    mock_pf.assert_called_once()
+    _, kwargs = mock_pf.call_args
+    assert kwargs["skip_audit"] is True
 
 
 def test_main_sets_promote_on_context() -> None:

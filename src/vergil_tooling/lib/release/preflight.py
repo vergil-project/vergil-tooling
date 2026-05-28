@@ -21,13 +21,15 @@ def preflight(
     version_override: str | None,
     repo_root: Path,
     verbose: bool = False,
+    skip_audit: bool = False,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext."""
     _check_host_prerequisites()
     repo = _check_gh_auth()
     _read_and_validate_config(repo_root)
     _check_branch_and_tree()
-    _audit_repo_config(repo)
+    if not skip_audit:
+        _audit_repo_config(repo)
 
     try:
         current_version = version.show(repo_root)

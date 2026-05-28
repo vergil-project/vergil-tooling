@@ -43,6 +43,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Skip docs job verification in CD workflows (release job still verified).",
     )
+    parser.add_argument(
+        "--skip-audit",
+        action="store_true",
+        default=False,
+        help="Skip the repo config audit in preflight.",
+    )
     return parser.parse_args(argv)
 
 
@@ -57,6 +63,7 @@ def main(argv: list[str] | None = None) -> int:
             version_override=args.version_override,
             repo_root=repo_root,
             verbose=args.verbose,
+            skip_audit=args.skip_audit,
         )
         ctx.promote = not args.no_promote
         ctx.skip_cd_docs = args.skip_cd_docs
