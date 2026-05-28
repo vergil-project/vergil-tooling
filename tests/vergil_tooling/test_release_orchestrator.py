@@ -48,81 +48,6 @@ def test_orchestrator_runs_all_phases() -> None:
     m_handoff.assert_called_once_with(ctx)
 
 
-def test_skip_cd_skips_confirm_phases() -> None:
-    ctx = _ctx()
-    ctx.skip_cd = True
-    with (
-        patch(_MOD + ".prepare") as m_prepare,
-        patch(_MOD + ".merge_release"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
-        patch(_MOD + ".confirm_main") as m_confirm_main,
-        patch(_MOD + ".back_merge_and_bump"),
-        patch(_MOD + ".confirm_develop") as m_confirm_develop,
-        patch(_MOD + ".promote"),
-        patch(_MOD + ".close_and_finalize"),
-        patch(_MOD + ".consumer_refresh"),
-        patch(_MOD + ".comment_phase_complete"),
-    ):
-        run_release(ctx)
-    m_prepare.assert_called_once()
-    m_confirm_main.assert_not_called()
-    m_confirm_develop.assert_not_called()
-
-
-def test_skip_cd_confirm_main_fetches_tags() -> None:
-    from vergil_tooling.lib.release.orchestrator import _confirm_main_phase
-
-    ctx = _ctx()
-    ctx.skip_cd = True
-    with (
-        patch(_MOD + ".git.run") as m_run,
-        patch(_MOD + ".git.ref_exists", return_value=True),
-    ):
-        _confirm_main_phase(ctx)
-    m_run.assert_called_once_with("fetch", "--tags", "--force", "origin")
-    assert ctx.tag == "v2.1.0"
-
-
-def test_skip_cd_confirm_main_no_tag() -> None:
-    from vergil_tooling.lib.release.orchestrator import _confirm_main_phase
-
-    ctx = _ctx()
-    ctx.skip_cd = True
-    with (
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
-    ):
-        _confirm_main_phase(ctx)
-    assert ctx.tag is None
-
-
-def test_promote_skips_when_skip_cd_and_no_tag() -> None:
-    from vergil_tooling.lib.release.orchestrator import _promote_phase
-
-    ctx = _ctx(promote=True)
-    ctx.skip_cd = True
-    with (
-        patch(_MOD + ".git.ref_exists", return_value=False),
-        patch(_MOD + ".promote") as mock_promote,
-    ):
-        _promote_phase(ctx)
-    mock_promote.assert_not_called()
-
-
-def test_promote_runs_when_skip_cd_and_tag_exists() -> None:
-    from vergil_tooling.lib.release.orchestrator import _promote_phase
-
-    ctx = _ctx(promote=True)
-    ctx.skip_cd = True
-    with (
-        patch(_MOD + ".git.ref_exists", return_value=True),
-        patch(_MOD + ".promote") as mock_promote,
-    ):
-        _promote_phase(ctx)
-    mock_promote.assert_called_once_with(ctx.version)
-
-
 def test_promote_phase_calls_promote_when_enabled() -> None:
     from vergil_tooling.lib.release.orchestrator import _promote_phase
 
@@ -180,27 +105,6 @@ def test_phase_details_confirm_main() -> None:
     details = _phase_details(ctx, "confirm-main")
     assert "v2.1.0" in details
     assert "runs/123" in details
-
-
-def test_phase_details_confirm_main_skip_cd_tag_found() -> None:
-    from vergil_tooling.lib.release.orchestrator import _phase_details
-
-    ctx = _ctx()
-    ctx.skip_cd = True
-    ctx.tag = "v2.1.0"
-    details = _phase_details(ctx, "confirm-main")
-    assert "skipped" in details.lower()
-    assert "v2.1.0" in details
-
-
-def test_phase_details_confirm_main_skip_cd_no_tag() -> None:
-    from vergil_tooling.lib.release.orchestrator import _phase_details
-
-    ctx = _ctx()
-    ctx.skip_cd = True
-    details = _phase_details(ctx, "confirm-main")
-    assert "skipped" in details.lower()
-    assert "not yet" in details.lower()
 
 
 def test_phase_details_back_merge_bump() -> None:

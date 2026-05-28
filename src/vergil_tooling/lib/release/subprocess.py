@@ -63,9 +63,16 @@ def wait_for_checks(pr: str, *, verbose: bool) -> None:
     )
 
 
-def watch_workflow(repo: str, run_id: str, *, verbose: bool) -> None:
+def watch_workflow(
+    repo: str,
+    run_id: str,
+    *,
+    verbose: bool,
+    check_status: bool = True,
+) -> None:
     """Block until a workflow run completes. Verbose controls output."""
-    _run_verbose(
-        ("gh", "run", "watch", "--repo", repo, "--exit-status", run_id),  # noqa: S607
-        verbose=verbose,
-    )
+    cmd: tuple[str, ...] = ("gh", "run", "watch", "--repo", repo)
+    if check_status:
+        cmd = (*cmd, "--exit-status")
+    cmd = (*cmd, run_id)
+    _run_verbose(cmd, verbose=verbose)  # noqa: S607

@@ -38,10 +38,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip rolling-tag promotion after release.",
     )
     parser.add_argument(
-        "--skip-cd",
+        "--skip-cd-docs",
         action="store_true",
         default=False,
-        help="Skip CD workflow verification (confirm-main and confirm-develop phases).",
+        help="Skip docs job verification in CD workflows (release job still verified).",
     )
     return parser.parse_args(argv)
 
@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
             verbose=args.verbose,
         )
         ctx.promote = not args.no_promote
-        ctx.skip_cd = args.skip_cd
+        ctx.skip_cd_docs = args.skip_cd_docs
         elapsed = time.monotonic() - start
         print(f"=== preflight: done ({_format_elapsed(elapsed)}) ===")
         run_release(ctx)
