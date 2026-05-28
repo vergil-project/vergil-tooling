@@ -13,7 +13,6 @@ from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error
 
 _CONTAINER_LANGUAGES = frozenset({"python", "java", "ruby", "rust", "go"})
-_NON_LANGUAGE_TYPES = frozenset({"base"})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -21,7 +20,11 @@ def main(argv: list[str] | None = None) -> int:
         prog="vrg-release-validate-inputs",
         description="Validate release workflow inputs.",
     )
-    parser.add_argument("language", help="Language identifier")
+    parser.add_argument(
+        "--language",
+        default="",
+        help="Programming language (go, java, python, ruby, rust). Omit for non-language projects.",
+    )
     parser.add_argument(
         "--container-tag",
         default="",
@@ -34,15 +37,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if not args.language:
+        return 0
+
     errors: list[str] = []
     langs = supported_languages()
 
-    if args.language in _NON_LANGUAGE_TYPES:
-        if args.registry_publish:
-            errors.append(f"--registry-publish is not supported for {args.language}")
-        if args.container_tag:
-            errors.append(f"--container-tag is not supported for {args.language}")
-    elif args.language not in langs:
+    if args.language not in langs:
         errors.append(
             f"unsupported language: {args.language} (supported: {', '.join(sorted(langs))})"
         )
