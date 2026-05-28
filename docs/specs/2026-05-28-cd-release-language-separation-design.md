@@ -112,13 +112,17 @@ vrg-release-validate-inputs "${args[@]}"
 
 ### Component 3: `vrg-release-validate-inputs` CLI (vergil-tooling)
 
-Remove `_NON_LANGUAGE_TYPES`. Change `language` from a required
-positional argument to an optional `--language` flag.
+Remove `_NON_LANGUAGE_TYPES`. Add an optional `--language` flag while
+keeping the deprecated positional argument for backward compatibility.
+The flag takes precedence over the positional.
 
 ```python
 parser.add_argument(
-    "--language",
-    default="",
+    "language_positional", nargs="?", default="",
+    help=argparse.SUPPRESS,
+)
+parser.add_argument(
+    "--language", default="", dest="language_flag",
     help="Programming language (go, java, python, ruby, rust). "
          "Omit for non-language projects.",
 )
@@ -129,8 +133,11 @@ Validation logic:
 - **Language is empty:** Return 0. No ecosystem to validate.
 - **Language is one of the five:** Validate `--registry-publish` and
   `--container-tag` against ecosystem metadata, same as today.
-- **Language is anything else:** Error. Typo protection — only the five
-  real languages are valid when a language is specified.
+- **Unknown language via `--language` flag:** Error. Typo protection.
+- **Unknown language via deprecated positional:** Return 0. This
+  handles the transition where the old action passes `base` as a
+  positional. The deprecated positional is lenient; the new flag
+  path is strict.
 
 ### Component 4: Consuming repos
 
@@ -143,20 +150,17 @@ Validation logic:
 
 ### Component 5: Tests (vergil-tooling)
 
-Update `test_vrg_release_validate_inputs.py`:
+Update `test_vrg_release_validate_inputs.py`. Three test groups:
 
-- **Remove** `test_base_language_accepted`, `test_base_rejects_registry_publish`,
-  `test_base_rejects_container_tag` — `base` is no longer a concept.
-- **Add** `test_no_language_passes`: `main([])` returns 0.
-- **Add** `test_no_language_ignores_flags`: `main(["--registry-publish"])`
-  and `main(["--container-tag", "latest"])` return 0 when no `--language`
-  is provided. No ecosystem means nothing to validate.
-- **Update** `test_no_args_fails` → becomes `test_no_language_passes`
-  (no required args means `main([])` succeeds).
-- **Keep** `test_unsupported_language_fails` — `main(["--language", "unknown"])`
-  still errors.
-- **Update** all existing tests to use `--language` flag syntax instead of
-  positional argument.
+- **`--language` flag tests** — all existing ecosystem validation tests
+  updated to use `--language` flag syntax. Typo protection: `--language
+  unknown` errors.
+- **No-language tests** — `main([])`, `main(["--registry-publish"])`,
+  and `main(["--container-tag", "latest"])` all return 0.
+- **Deprecated positional tests** — backward compatibility: `main(["python"])`
+  validates ecosystem, `main(["base"])` and `main(["base", "--container-tag",
+  "latest"])` skip validation and return 0, `main(["unknown"])` returns 0
+  (positional path is lenient).
 
 ## Rollout Order
 
@@ -172,11 +176,11 @@ breaking the release pipeline:
    to pass `container-suffix: base` instead of `language: base`.
    vergil-claude-plugin needs no change (defaults are now correct).
 
-No backward-compatibility shim is needed. Consuming repos pin
-vergil-actions at a tag (e.g., `@v2.0`). They update the tag reference
-and their `vergil.toml` dependency together via consumer-refresh, so
-the old action (positional arg) always pairs with the old CLI and the
-new action (`--language` flag) always pairs with the new CLI.
+The CLI is backward-compatible: it accepts both the old positional
+form and the new `--language` flag. This eliminates ordering
+constraints — each repository can merge and release independently.
+The deprecated positional form is lenient (unknown values silently
+pass); the new `--language` flag is strict (unknown values error).
 
 ## Out of Scope
 

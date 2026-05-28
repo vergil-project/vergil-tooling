@@ -10,6 +10,8 @@ if TYPE_CHECKING:
 
 from vergil_tooling.bin.vrg_release_validate_inputs import main
 
+# -- New --language flag form --------------------------------------------------
+
 
 def test_valid_python_release(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.lib.output.is_ci", return_value=False):
@@ -61,6 +63,9 @@ def test_container_tag_unsupported_language_fails(capsys: pytest.CaptureFixture[
     assert rc == 1
 
 
+# -- No language ---------------------------------------------------------------
+
+
 def test_no_language_passes(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.lib.output.is_ci", return_value=False):
         rc = main([])
@@ -76,4 +81,43 @@ def test_no_language_ignores_registry_publish(capsys: pytest.CaptureFixture[str]
 def test_no_language_ignores_container_tag(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.lib.output.is_ci", return_value=False):
         rc = main(["--container-tag", "latest"])
+    assert rc == 0
+
+
+# -- Deprecated positional form (backward compatibility) -----------------------
+
+
+def test_positional_python_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["python"])
+    assert rc == 0
+
+
+def test_positional_python_with_flags(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["python", "--registry-publish"])
+    assert rc == 0
+
+
+def test_positional_go_with_registry_publish_fails(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["go", "--registry-publish"])
+    assert rc == 1
+
+
+def test_positional_base_skips_validation(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["base"])
+    assert rc == 0
+
+
+def test_positional_base_with_container_tag_passes(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["base", "--container-tag", "latest"])
+    assert rc == 0
+
+
+def test_positional_unknown_skips_validation(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["unknown"])
     assert rc == 0
