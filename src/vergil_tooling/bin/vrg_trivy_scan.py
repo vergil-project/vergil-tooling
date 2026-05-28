@@ -53,7 +53,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    scan_result = run_scan(args.scan_type, args.target, args.output_dir)
+    scan_result = run_scan(
+        args.scan_type,
+        args.target,
+        args.output_dir,
+        severity=args.severity,
+        trivyignore=str(args.trivyignore) if args.trivyignore else None,
+    )
 
     if scan_result.returncode > 1:
         emit_error(f"trivy scan failed with exit code {scan_result.returncode}")

@@ -279,12 +279,16 @@ class TestCreateVm:
         args = mock.call_args[0]
         claude_projects = str(tmp_path / ".claude" / "projects")
         claude_skills = str(tmp_path / ".claude" / "skills")
+        claude_sessions = str(tmp_path / ".claude" / "sessions")
         assert f'--set=.mounts[1].location = "{claude_projects}"' in args
         assert f'--set=.mounts[1].mountPoint = "{claude_projects}"' in args
         assert "--set=.mounts[1].writable = true" in args
         assert f'--set=.mounts[2].location = "{claude_skills}"' in args
         assert f'--set=.mounts[2].mountPoint = "{claude_skills}"' in args
         assert "--set=.mounts[2].writable = false" in args
+        assert f'--set=.mounts[3].location = "{claude_sessions}"' in args
+        assert f'--set=.mounts[3].mountPoint = "{claude_sessions}"' in args
+        assert "--set=.mounts[3].writable = true" in args
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
@@ -296,6 +300,7 @@ class TestCreateVm:
         create_vm("vergil-agent", tpl, "/home/user/projects")
         assert (tmp_path / ".claude" / "projects").is_dir()
         assert (tmp_path / ".claude" / "skills").is_dir()
+        assert (tmp_path / ".claude" / "sessions").is_dir()
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
@@ -374,9 +379,17 @@ class TestCreateVm:
 class TestStartStopVm:
     @patch("vergil_tooling.lib.lima._limactl")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
-    def test_start_calls_limactl(self, _status: MagicMock, mock: MagicMock) -> None:
+    def test_start_calls_limactl_with_default_timeout(
+        self, _status: MagicMock, mock: MagicMock
+    ) -> None:
         start_vm("vergil-agent")
-        mock.assert_called_once_with("start", "vergil-agent")
+        mock.assert_called_once_with("start", "--timeout=30m", "vergil-agent")
+
+    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
+    def test_start_passes_custom_timeout(self, _status: MagicMock, mock: MagicMock) -> None:
+        start_vm("vergil-agent", timeout="1h")
+        mock.assert_called_once_with("start", "--timeout=1h", "vergil-agent")
 
     @patch("vergil_tooling.lib.lima._limactl")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
@@ -621,11 +634,20 @@ class TestInstallTooling:
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_installs_with_tag(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
         install_tooling("vergil-agent", "v2.0")
-        mock_run.assert_called_once()
-        args = mock_run.call_args[0]
-        cmd_str = " ".join(str(a) for a in args)
+        assert mock_run.call_count == 2
+        install_args = mock_run.call_args_list[0][0]
+        cmd_str = " ".join(str(a) for a in install_args)
         assert "uv tool install" in cmd_str
         assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_creates_tag_dir_before_write(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        install_tooling("vergil-agent", "v2.0")
+        assert mock_run.call_count == 2
+        mkdir_args = mock_run.call_args_list[1][0]
+        cmd_str = " ".join(str(a) for a in mkdir_args)
+        assert "mkdir -p" in cmd_str
 
     @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")
@@ -652,9 +674,10 @@ class TestUpdateTooling:
         mock_run.side_effect = [
             subprocess.CompletedProcess([], 0, stdout="v2.0\n", stderr=""),
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         ]
         update_tooling("vergil-agent")
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         cmd_str = " ".join(str(a) for a in mock_run.call_args_list[1][0])
         assert "uv tool install --reinstall" in cmd_str
         assert "v2.0" in cmd_str
@@ -673,6 +696,7 @@ class TestUpdateTooling:
         mock_run.side_effect = [
             subprocess.CompletedProcess([], 0, stdout="v2.1\n", stderr=""),
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         ]
         update_tooling("vergil-agent")
         mock_pipe.assert_called_once()
@@ -683,6 +707,7 @@ class TestUpdateTooling:
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_fallback_tag_persists_marker(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
         mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         ]
@@ -697,12 +722,26 @@ class TestUpdateTooling:
         mock_run.side_effect = [
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
             subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
         ]
         update_tooling("vergil-agent", fallback_tag="v2.0")
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         cmd_str = " ".join(str(a) for a in mock_run.call_args_list[1][0])
         assert "uv tool install --reinstall" in cmd_str
         assert "v2.0" in cmd_str
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_creates_tag_dir_before_write(self, mock_run: MagicMock, mock_pipe: MagicMock) -> None:
+        mock_run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="v2.0\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="", stderr=""),
+        ]
+        update_tooling("vergil-agent")
+        mkdir_args = mock_run.call_args_list[2][0]
+        cmd_str = " ".join(str(a) for a in mkdir_args)
+        assert "mkdir -p" in cmd_str
 
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_exits_if_no_tag_and_no_fallback(self, mock_run: MagicMock) -> None:

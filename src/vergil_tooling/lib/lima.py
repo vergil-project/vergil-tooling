@@ -155,10 +155,13 @@ def create_vm(
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
     claude_skills_path = Path.home() / ".claude" / "skills"
+    claude_sessions_path = Path.home() / ".claude" / "sessions"
     claude_projects_path.mkdir(parents=True, exist_ok=True)
     claude_skills_path.mkdir(parents=True, exist_ok=True)
+    claude_sessions_path.mkdir(parents=True, exist_ok=True)
     claude_projects = str(claude_projects_path)
     claude_skills = str(claude_skills_path)
+    claude_sessions = str(claude_sessions_path)
 
     args = [
         "create",
@@ -172,6 +175,9 @@ def create_vm(
         f'--set=.mounts[2].location = "{claude_skills}"',
         f'--set=.mounts[2].mountPoint = "{claude_skills}"',
         "--set=.mounts[2].writable = false",
+        f'--set=.mounts[3].location = "{claude_sessions}"',
+        f'--set=.mounts[3].mountPoint = "{claude_sessions}"',
+        "--set=.mounts[3].writable = true",
     ]
     if cpus is not None:
         args.append(f"--set=.cpus = {cpus}")
@@ -183,11 +189,11 @@ def create_vm(
     _limactl(*args)
 
 
-def start_vm(instance: str) -> None:
+def start_vm(instance: str, *, timeout: str = "30m") -> None:
     status = vm_status(instance)
     if status == "Running":
         return
-    _limactl("start", instance)
+    _limactl("start", f"--timeout={timeout}", instance)
 
 
 def stop_vm(instance: str) -> None:
@@ -338,6 +344,7 @@ def install_tooling(instance: str, tag: str) -> None:
         "-c",
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install "{install_spec}"',
     )
+    shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
     shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
@@ -367,6 +374,7 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
     )
     if not explicit:
+        shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
         shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
