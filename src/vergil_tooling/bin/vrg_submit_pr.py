@@ -28,6 +28,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--notes", default="", help="Additional notes")
     parser.add_argument("--title", required=True, help="PR title")
     parser.add_argument("--dry-run", action="store_true", help="Print without executing")
+    parser.add_argument("--base", default=None, help="Override auto-detected target branch")
     return parser.parse_args(argv)
 
 
@@ -46,7 +47,7 @@ def main(argv: list[str] | None = None) -> int:
     issue_ref = _resolve_issue_ref(args.issue)
     branch = git.current_branch()
 
-    target_branch = "main" if branch.startswith("release/") else "develop"
+    target_branch = args.base or ("main" if branch.startswith("release/") else "develop")
 
     title = args.title
 
