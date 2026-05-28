@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from vergil_tooling.lib import github
 
 _MAX_BRANCH_UPDATES = 5
+_MAX_UNKNOWN_RETRIES = 3
+_UNKNOWN_RETRY_DELAY = 5
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,11 +51,19 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("Branch is behind base — updating and re-checking...")
         github.update_branch(args.pr)
-    status = github.merge_status(args.pr)
-    if status["mergeStateStatus"] == "CLEAN":
+    for attempt in range(_MAX_UNKNOWN_RETRIES + 1):
+        status = github.merge_status(args.pr)
+        state = status["mergeStateStatus"]
+        if state != "UNKNOWN":
+            break
+        if attempt < _MAX_UNKNOWN_RETRIES:
+            print(
+                f"Mergeable state is UNKNOWN (transient) — retrying in {_UNKNOWN_RETRY_DELAY}s...",
+            )
+            time.sleep(_UNKNOWN_RETRY_DELAY)
+    if state == "CLEAN":
         print("All checks passed.")
         return 0
-    state = status["mergeStateStatus"]
     print(
         f"All checks passed, but PR is not mergeable ({state}).",
         file=sys.stderr,
