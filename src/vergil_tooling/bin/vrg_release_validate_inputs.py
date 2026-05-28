@@ -20,7 +20,18 @@ def main(argv: list[str] | None = None) -> int:
         prog="vrg-release-validate-inputs",
         description="Validate release workflow inputs.",
     )
-    parser.add_argument("language", help="Language identifier")
+    parser.add_argument(
+        "language_positional",
+        nargs="?",
+        default="",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--language",
+        default="",
+        dest="language_flag",
+        help="Programming language (go, java, python, ruby, rust). Omit for non-language projects.",
+    )
     parser.add_argument(
         "--container-tag",
         default="",
@@ -33,22 +44,30 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    language = args.language_flag or args.language_positional
+    used_flag = bool(args.language_flag)
+
+    if not language:
+        return 0
+
     errors: list[str] = []
     langs = supported_languages()
 
-    if args.language not in langs:
-        errors.append(
-            f"unsupported language: {args.language} (supported: {', '.join(sorted(langs))})"
-        )
+    if language not in langs:
+        if used_flag:
+            errors.append(
+                f"unsupported language: {language} (supported: {', '.join(sorted(langs))})"
+            )
+        else:
+            return 0
     else:
-        info = ecosystem_metadata(args.language)
+        info = ecosystem_metadata(language)
         if args.registry_publish and info.publish_cmd is None:
             errors.append(
-                f"--registry-publish is not supported for {args.language} "
-                f"(no publish command defined)"
+                f"--registry-publish is not supported for {language} (no publish command defined)"
             )
-        if args.container_tag and args.language not in _CONTAINER_LANGUAGES:
-            errors.append(f"--container-tag is not supported for {args.language}")
+        if args.container_tag and language not in _CONTAINER_LANGUAGES:
+            errors.append(f"--container-tag is not supported for {language}")
 
     if errors:
         for msg in errors:
