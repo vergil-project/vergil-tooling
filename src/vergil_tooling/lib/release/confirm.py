@@ -64,8 +64,6 @@ def _watch_cd(
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
 
-    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose, check_status=check_status)
-
     run_url = github.read_output(
         "run",
         "view",
@@ -77,6 +75,9 @@ def _watch_cd(
         "--jq",
         ".url",
     )
+    print(f"  Workflow run: {run_url}")
+
+    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose, check_status=check_status)
 
     if check_status:
         print(f"  CD workflow succeeded: {run_url}")
