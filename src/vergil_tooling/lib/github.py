@@ -202,6 +202,11 @@ def get_installation_token(org: str | None = None) -> str | None:
     return token
 
 
+def is_app_mode() -> bool:
+    """Return True when running with GitHub App credentials."""
+    return _load_app_config() is not None
+
+
 def _gh_env() -> dict[str, str] | None:
     """Return env dict with App installation token, or ``None`` for ambient auth."""
     token = get_installation_token()

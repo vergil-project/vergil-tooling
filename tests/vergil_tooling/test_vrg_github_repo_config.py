@@ -652,3 +652,29 @@ def test_audit_skips_local_when_cwd_origin_unavailable() -> None:
         result = main(["audit", "--repo", "other/repo"])
     mock_local.assert_not_called()
     assert result == 0
+
+
+# -- Issue #1288: bypass_actors skipped in App mode ---------------------------
+
+
+def test_audit_prints_skipped_bypass_actors(capsys: pytest.CaptureFixture[str]) -> None:
+    diff = ConfigDiff(
+        items=[],
+        skipped=[
+            "rulesets.Tag protection.bypass_actors",
+            "rulesets.Branch protection.bypass_actors",
+            "rulesets.CI gates.bypass_actors",
+        ],
+    )
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=diff),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._fetch_remote_config"),
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "bypass_actors: skipped" in output
+    assert "GitHub App credentials" in output
