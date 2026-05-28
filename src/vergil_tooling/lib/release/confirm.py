@@ -21,8 +21,13 @@ _CD_POLL_ATTEMPTS = 30
 
 def confirm_main(ctx: ReleaseContext) -> None:
     """Watch CD on main and verify publish artifacts."""
-    run_id, run_url = _watch_cd(ctx, branch="main")
-    _verify_jobs(ctx, run_id, _MAIN_EXPECTED_JOBS, phase="confirm-main")
+    skip_docs = ctx.skip_cd_docs
+    run_id, run_url = _watch_cd(ctx, branch="main", check_status=not skip_docs)
+    expected: tuple[str, ...] = _MAIN_EXPECTED_JOBS
+    if skip_docs:
+        expected = tuple(j for j in expected if j != "docs")
+        print("  Skipping docs job verification (--skip-cd-docs).")
+    _verify_jobs(ctx, run_id, expected, phase="confirm-main")
 
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
@@ -33,22 +38,33 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
 def confirm_develop(ctx: ReleaseContext) -> None:
     """Watch CD on develop after back-merge."""
-    run_id, run_url = _watch_cd(ctx, branch="develop")
-    _verify_jobs(ctx, run_id, _DEVELOP_EXPECTED_JOBS, phase="confirm-develop")
+    skip_docs = ctx.skip_cd_docs
+    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=not skip_docs)
+    expected: tuple[str, ...] = _DEVELOP_EXPECTED_JOBS
+    if skip_docs:
+        expected = tuple(j for j in expected if j != "docs")
+        print("  Skipping docs job verification (--skip-cd-docs).")
+    if expected:
+        _verify_jobs(ctx, run_id, expected, phase="confirm-develop")
 
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
     print("Develop CD verified.")
 
 
-def _watch_cd(ctx: ReleaseContext, *, branch: str) -> tuple[str, str]:
+def _watch_cd(
+    ctx: ReleaseContext,
+    *,
+    branch: str,
+    check_status: bool = True,
+) -> tuple[str, str]:
     print(f"Waiting for {_CD_WORKFLOW} on {branch}...")
     git.run("fetch", "origin", branch)
     head_sha = git.read_output("rev-parse", f"origin/{branch}")
 
     run_id = _poll_for_run(ctx.repo, branch, head_sha)
 
-    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose)
+    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose, check_status=check_status)
 
     run_url = github.read_output(
         "run",
@@ -62,7 +78,10 @@ def _watch_cd(ctx: ReleaseContext, *, branch: str) -> tuple[str, str]:
         ".url",
     )
 
-    print(f"  CD workflow succeeded: {run_url}")
+    if check_status:
+        print(f"  CD workflow succeeded: {run_url}")
+    else:
+        print(f"  CD workflow completed: {run_url}")
     return run_id, run_url
 
 

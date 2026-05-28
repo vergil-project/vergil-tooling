@@ -97,28 +97,14 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     return "\n".join(lines)
 
 
-def _confirm_main_phase(ctx: ReleaseContext) -> None:
-    if ctx.skip_cd:
-        print("Skipping CD verification (--skip-cd).")
-        return
-    confirm_main(ctx)
-
-
-def _confirm_develop_phase(ctx: ReleaseContext) -> None:
-    if ctx.skip_cd:
-        print("Skipping develop CD verification (--skip-cd).")
-        return
-    confirm_develop(ctx)
-
-
 def run_release(ctx: ReleaseContext) -> None:
     """Execute the release workflow phase by phase."""
     phases: list[tuple[str, Callable[[ReleaseContext], None]]] = [
         ("prepare", prepare),
         ("merge-release", merge_release),
-        ("confirm-main", _confirm_main_phase),
+        ("confirm-main", confirm_main),
         ("back-merge-bump", back_merge_and_bump),
-        ("confirm-develop", _confirm_develop_phase),
+        ("confirm-develop", confirm_develop),
         ("promote", _promote_phase),
         ("close-finalize", close_and_finalize),
         ("consumer-refresh", consumer_refresh),

@@ -13,6 +13,7 @@ from vergil_tooling.lib.languages import ecosystem_metadata, supported_languages
 from vergil_tooling.lib.output import emit_error
 
 _CONTAINER_LANGUAGES = frozenset({"python", "java", "ruby", "rust", "go"})
+_NON_LANGUAGE_TYPES = frozenset({"base"})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,7 +37,12 @@ def main(argv: list[str] | None = None) -> int:
     errors: list[str] = []
     langs = supported_languages()
 
-    if args.language not in langs:
+    if args.language in _NON_LANGUAGE_TYPES:
+        if args.registry_publish:
+            errors.append(f"--registry-publish is not supported for {args.language}")
+        if args.container_tag:
+            errors.append(f"--container-tag is not supported for {args.language}")
+    elif args.language not in langs:
         errors.append(
             f"unsupported language: {args.language} (supported: {', '.join(sorted(langs))})"
         )
