@@ -185,17 +185,38 @@ def test_main_fails_for_unstable(
     assert "UNSTABLE" in capsys.readouterr().err
 
 
-def test_main_fails_for_unknown(
+def test_main_retries_unknown_then_succeeds(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     with (
         patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
         patch(f"{_MOD}.github.wait_for_checks"),
-        patch(f"{_MOD}.github.merge_state_status", return_value="UNKNOWN"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
         patch(
             f"{_MOD}.github.merge_status",
-            return_value={"mergeStateStatus": "UNKNOWN", "reviewDecision": ""},
+            side_effect=[
+                {"mergeStateStatus": "UNKNOWN", "reviewDecision": ""},
+                {"mergeStateStatus": "CLEAN", "reviewDecision": ""},
+            ],
         ),
+        patch(f"{_MOD}.time.sleep") as mock_sleep,
+    ):
+        result = main([_PR])
+    assert result == 0
+    mock_sleep.assert_called_once()
+    assert "UNKNOWN" in capsys.readouterr().out
+
+
+def test_main_fails_after_unknown_retries_exhausted(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    unknown = {"mergeStateStatus": "UNKNOWN", "reviewDecision": ""}
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
+        patch(f"{_MOD}.github.merge_status", return_value=unknown),
+        patch(f"{_MOD}.time.sleep"),
     ):
         result = main([_PR])
     assert result == 1
