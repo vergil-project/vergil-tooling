@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.68] - 2026-05-28
+
+### Bug fixes
+
+- fetch tags and guard promote when --skip-cd is used
+- accept base as a valid language in validate-inputs
+
+### Chores
+
+- trigger CI after v2.0 tag rollback
+- trigger CI with updated vergil-actions v2.0
+
+### Features
+
+- replace --skip-cd with --skip-cd-docs
+
 ## [2.0.67] - 2026-05-27
 
 ### Bug fixes
