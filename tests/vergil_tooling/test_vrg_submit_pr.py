@@ -69,6 +69,75 @@ def test_parse_args_all_options() -> None:
     assert args.dry_run is True
 
 
+def test_parse_args_base_flag() -> None:
+    args = parse_args(
+        ["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--base", "develop"]
+    )
+    assert args.base == "develop"
+
+
+def test_parse_args_base_defaults_to_none() -> None:
+    args = parse_args(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+    assert args.base is None
+
+
+def test_base_flag_overrides_auto_detected_target(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A release/ branch normally targets main, but --base should override."""
+    with (
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+            return_value="release/post-2.1.3",
+        ),
+    ):
+        result = main(
+            [
+                "--issue",
+                "42",
+                "--summary",
+                "Back-merge",
+                "--title",
+                "chore: back-merge",
+                "--base",
+                "develop",
+                "--dry-run",
+            ]
+        )
+    assert result == 0
+    output = capsys.readouterr().out
+    assert "develop" in output
+    assert "main" not in output
+
+
+def test_base_flag_used_in_pr_creation(tmp_path: Path) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+        patch(
+            "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+            return_value="https://github.com/pr/1",
+        ) as mock_create_pr,
+    ):
+        main(
+            [
+                "--issue",
+                "42",
+                "--summary",
+                "Fix bug",
+                "--title",
+                "fix: bug",
+                "--base",
+                "main",
+            ]
+        )
+    mock_create_pr.assert_called_once()
+    call_kwargs = mock_create_pr.call_args
+    assert call_kwargs.kwargs["base"] == "main"
+
+
 def test_dry_run_body_has_no_testing_section(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
