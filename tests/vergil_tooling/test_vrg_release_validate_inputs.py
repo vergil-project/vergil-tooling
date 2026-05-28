@@ -61,6 +61,24 @@ def test_container_tag_unsupported_language_fails(capsys: pytest.CaptureFixture[
     assert rc == 1
 
 
+def test_base_language_accepted(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["base"])
+    assert rc == 0
+
+
+def test_base_rejects_registry_publish(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["base", "--registry-publish"])
+    assert rc == 1
+
+
+def test_base_rejects_container_tag(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("vergil_tooling.lib.output.is_ci", return_value=False):
+        rc = main(["base", "--container-tag", "v1.0.0"])
+    assert rc == 1
+
+
 def test_no_args_fails() -> None:
     import pytest
 
