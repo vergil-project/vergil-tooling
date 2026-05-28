@@ -73,6 +73,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--scope", required=True, help="Conventional commit scope")
     parser.add_argument("--message", required=True, help="Commit description")
     parser.add_argument("--body", default="", help="Detailed commit body")
+    parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        default=False,
+        help="Allow a commit with no staged changes (e.g. to re-trigger CI)",
+    )
     return parser.parse_args(argv)
 
 
@@ -186,7 +192,7 @@ def main(argv: list[str] | None = None) -> int:
 
     co_author = os.environ.get("VRG_CO_AUTHOR")
 
-    if not git.has_staged_changes():
+    if not args.allow_empty and not git.has_staged_changes():
         print(
             "ERROR: no staged changes. Stage files with 'git add' before committing.",
             file=sys.stderr,
@@ -204,7 +210,10 @@ def main(argv: list[str] | None = None) -> int:
         tmp_path = f.name
 
     try:
-        git.run("commit", "--file", tmp_path)
+        commit_args = ["commit", "--file", tmp_path]
+        if args.allow_empty:
+            commit_args.append("--allow-empty")
+        git.run(*commit_args)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 

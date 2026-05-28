@@ -75,6 +75,14 @@ def test_parse_args_required() -> None:
     assert args.scope == "core"
     assert args.message == "add thing"
     assert args.body == ""
+    assert args.allow_empty is False
+
+
+def test_parse_args_allow_empty() -> None:
+    args = parse_args(
+        ["--type", "chore", "--scope", "ci", "--message", "trigger rebuild", "--allow-empty"]
+    )
+    assert args.allow_empty is True
 
 
 def test_parse_args_with_scope_and_body() -> None:
@@ -109,6 +117,24 @@ def test_main_no_staged_changes(tmp_path: Path) -> None:
     with _commit_environment(tmp_path, has_staged=False):
         result = main(["--type", "feat", "--scope", "core", "--message", "test"])
     assert result == 1
+
+
+def test_main_allow_empty_skips_staged_check(tmp_path: Path) -> None:
+    git_args: list[tuple[str, ...]] = []
+
+    def capture_run(*args: str) -> None:
+        git_args.append(args)
+
+    with (
+        _commit_environment(tmp_path, has_staged=False),
+        patch("vergil_tooling.bin.vrg_commit.git.run", side_effect=capture_run),
+    ):
+        result = main(
+            ["--type", "chore", "--scope", "ci", "--message", "trigger rebuild", "--allow-empty"]
+        )
+    assert result == 0
+    commit_call = git_args[0]
+    assert "--allow-empty" in commit_call
 
 
 def test_main_with_staged_changes(tmp_path: Path) -> None:
