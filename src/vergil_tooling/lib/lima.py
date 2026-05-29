@@ -419,18 +419,38 @@ def copy_claude_config(instance: str, claude_dir: Path) -> None:
             )
 
 
-_CLAUDE_LINK_DIRS = ("projects", "sessions", "skills")
+# Subdirs symlinked to the path-preserved host mounts so they are shared with
+# the host and survive VM rebuilds. projects/ holds the conversation
+# transcripts (append writes, which work fine through the virtiofs mount);
+# skills/ is a read-only reference mount.
+_CLAUDE_LINK_DIRS = ("projects", "skills")
+
+# Subdirs that must NOT be symlinked onto the host mount and must stay
+# VM-local. Claude writes the sessions roster atomically (temp file in the
+# VM-local tmpdir, then rename() onto the target). Renaming across filesystems
+# (VM-local ext -> virtiofs mount) fails with EXDEV, so the roster write
+# silently fails and no file is ever produced. The roster is also per-platform
+# (pids only mean anything on the owning machine), so there is no value in
+# sharing it. We instead read each VM's local roster over `limactl shell` for
+# session detection. See vergil-tooling #1301 and vergil-vm #73.
+_CLAUDE_UNLINK_DIRS = ("sessions",)
 
 
 def link_claude_dirs(instance: str, claude_dir: Path) -> None:
-    """Point the VM's ~/.claude subdirs at the path-preserved host mounts.
+    """Point selected VM ~/.claude subdirs at the path-preserved host mounts.
 
-    The .claude/{projects,sessions,skills} mounts are path-preserved
+    The .claude/{projects,skills} mounts are path-preserved
     (mountPoint == host location), but the VM's HOME differs from the host's,
     so Claude inside the VM reads ~/.claude/... instead of the mounted host
-    path. Symlink the subdirs so session history is shared with the host and
-    survives VM rebuilds. Idempotent; an existing non-empty real directory is
-    left in place with a warning rather than clobbered.
+    path. Symlink those subdirs so they are shared with the host and survive
+    VM rebuilds. Idempotent; an existing non-empty real directory is left in
+    place with a warning rather than clobbered.
+
+    sessions/ is deliberately left VM-local (see _CLAUDE_UNLINK_DIRS): a
+    symlink onto the virtiofs mount breaks Claude's atomic roster write with
+    EXDEV. Any pre-existing sessions/ symlink (from an older build) is removed
+    so Claude recreates a real local directory; removing the symlink does not
+    touch the host target's contents.
     """
     if not claude_dir.is_dir():
         return
@@ -445,6 +465,9 @@ def link_claude_dirs(instance: str, claude_dir: Path) -> None:
             f'else echo "WARNING: ~/.claude/{sub} exists and is not empty;'
             f' not linking" >&2; fi'
         )
+    for sub in _CLAUDE_UNLINK_DIRS:
+        link = f'"$HOME/.claude/{sub}"'
+        parts.append(f"if [ -L {link} ]; then rm -f {link}; fi")
     shell_run(instance, "bash", "-c", " ; ".join(parts))
 
 
