@@ -335,7 +335,7 @@ def _list_sessions(config: IdentityConfig) -> int:
     return 0
 
 
-def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str) -> str:
+def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str, model: str) -> str:
     """Build the in-VM command: a raw override, or the session resolver."""
     source = ". ~/.config/vergil/claude.env 2>/dev/null;"
 
@@ -348,7 +348,10 @@ def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str) 
     if override and override[0] != "claude":
         return f"{source} exec {shlex.join(override)}"
 
-    extra = override[1:] if override[:1] == ["claude"] else []
+    passthrough = override[1:] if override[:1] == ["claude"] else []
+    # The resolved model is applied first; an explicit `-- claude --model X`
+    # passthrough comes after, so Claude's last --model wins.
+    extra = (["--model", model] if model else []) + passthrough
     resolve_cmd = [
         "vrg-vm-resolve-session",
         "--identity",
@@ -401,7 +404,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         identity.vm_instance,
         "bash",
         "-c",
-        _session_inner(args, name, rel_path),
+        _session_inner(args, name, rel_path, args.model or identity.model),
     ]
     os.execvp(cmd[0], cmd)  # noqa: S606, S607
     return 0  # unreachable, keeps the type checker happy
@@ -488,6 +491,11 @@ def main(argv: list[str] | None = None) -> int:
         "--fork",
         action="store_true",
         help="Fork the targeted --slot into a new session instead of resuming it",
+    )
+    p_session.add_argument(
+        "--model",
+        default="",
+        help="Claude model to launch (overrides the identity's 'model' default)",
     )
     p_session.add_argument(
         "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
