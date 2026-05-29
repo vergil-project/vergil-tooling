@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.45/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.43/">
+        <link rel="next" href="../v2.0.73/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.44 - VERGIL Tooling</title>
+        <title>2.0.74 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2044-2026-05-24" class="md-skip">
+        <a href="#release-2074-2026-05-29" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.44
+              2.0.74
             
           </span>
         </div>
@@ -856,10 +856,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.0.74/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.0.74
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -875,6 +902,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1640,37 +1698,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.44
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.44/" class="md-nav__link">
         
   
   
@@ -1686,48 +1717,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7009,21 +6998,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
+        Features
       
     </span>
   </a>
@@ -7047,15 +7025,11 @@
 
 
 
-<h1 id="release-2044-2026-05-24">Release 2.0.44 (2026-05-24)<a class="headerlink" href="#release-2044-2026-05-24" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2074-2026-05-29">Release 2.0.74 (2026-05-29)<a class="headerlink" href="#release-2074-2026-05-29" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>write .credentials.json for Claude Code interactive TUI auth</strong>
-The interactive TUI shows its login prompt when no ~/.claude/.credentials.json exists, even if CLAUDE_CODE_OAUTH_TOKEN is set. Write the credentials file during token injection so the TUI recognizes the stored auth.</li>
-</ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>bump version to 2.0.44</strong></li>
+<li><strong>make --model a first-class session argument</strong>
+Add an optional 'model' attribute to identities.toml and a --model flag to vrg-vm session. Resolution: --model wins, else the identity's model default, else no flag. The resolved model is injected into the Claude invocation the in-VM resolver execs (create/resume/fork); an explicit '-- claude --model X' passthrough still takes precedence, and raw non-claude overrides (-- bash) are unaffected. Ref #1313.</li>
 </ul>
 
 
