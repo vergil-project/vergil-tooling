@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.70] - 2026-05-29
+
+### Bug fixes
+
+- filter tracking issue search by exact title match
+- retry transient UNKNOWN mergeable state
+- skip bypass_actors audit with GitHub App credentials
+- symlink VM ~/.claude subdirs to path-preserved host mounts (#1296)
+
+### Documentation
+
+- add AI contribution compliance review
+- fix P4 evidence to match actual vrg-commit mechanism
+- agent permission model and identity architecture design spec
+- incorporate pushback review findings into design spec
+- add implementation plan for agent permission model (Track A tooling changes)
+- apply alignment resolutions to spec and plan
+
+### Features
+
+- add --allow-empty flag to vrg-commit
+- add --base flag to override auto-detected target branch
+- print CD workflow run URL before watching
+- add --skip-audit flag to bypass repo config audit in preflight
+
 ## [2.0.69] - 2026-05-28
 
 ### Bug fixes
