@@ -875,7 +875,7 @@ class TestCopyClaudeConfig:
 
 class TestLinkClaudeDirs:
     @patch("vergil_tooling.lib.lima.shell_run")
-    def test_links_all_subdirs(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_links_projects_and_skills(self, mock_run: MagicMock, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
 
@@ -888,10 +888,35 @@ class TestLinkClaudeDirs:
         assert args[2] == "-c"
         script = args[3]
         assert "mkdir -p ~/.claude" in script
-        for sub in ("projects", "sessions", "skills"):
+        for sub in ("projects", "skills"):
             assert f'"$HOME/.claude/{sub}"' in script
             assert str(claude_dir / sub) in script
         assert "ln -sfn" in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_does_not_link_sessions(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+
+        link_claude_dirs("vergil-agent", claude_dir)
+
+        script = mock_run.call_args[0][3]
+        # sessions must never be a symlink target (EXDEV breaks the roster write).
+        assert f"ln -sfn {claude_dir / 'sessions'}" not in script
+        assert str(claude_dir / "sessions") not in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_removes_existing_sessions_symlink(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+
+        link_claude_dirs("vergil-agent", claude_dir)
+
+        script = mock_run.call_args[0][3]
+        # A pre-existing sessions symlink (from #1296) is removed so Claude
+        # recreates a real VM-local directory.
+        assert '"$HOME/.claude/sessions"' in script
+        assert 'if [ -L "$HOME/.claude/sessions" ]; then rm -f "$HOME/.claude/sessions"' in script
 
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_skips_if_claude_dir_missing(self, mock_run: MagicMock, tmp_path: Path) -> None:
