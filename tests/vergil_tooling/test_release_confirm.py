@@ -293,3 +293,60 @@ def test_confirm_develop_skip_cd_docs_skips_verify() -> None:
 
 def test_poll_attempts_constant() -> None:
     assert _CD_POLL_ATTEMPTS == 30
+
+
+def test_confirm_main_prints_run_url_before_watching(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _ctx()
+    watch_output: list[str] = []
+
+    def fake_watch(*_args: object, **_kwargs: object) -> None:
+        watch_output.append(capsys.readouterr().out)
+
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "12345",
+                "https://github.com/o/r/actions/runs/12345",
+                "success",
+                "success",
+                "https://github.com/o/r/releases/tag/v2.1.0",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow", side_effect=fake_watch),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+    ):
+        confirm_main(ctx)
+
+    assert "https://github.com/o/r/actions/runs/12345" in watch_output[0]
+
+
+def test_confirm_develop_prints_run_url_before_watching(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _ctx()
+    watch_output: list[str] = []
+
+    def fake_watch(*_args: object, **_kwargs: object) -> None:
+        watch_output.append(capsys.readouterr().out)
+
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=[
+                "67890",
+                "https://github.com/o/r/actions/runs/67890",
+                "success",
+            ],
+        ),
+        patch(_MOD + ".watch_workflow", side_effect=fake_watch),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+    ):
+        confirm_develop(ctx)
+
+    assert "https://github.com/o/r/actions/runs/67890" in watch_output[0]

@@ -270,6 +270,39 @@ def test_audit_repo_config_success() -> None:
         _audit_repo_config("owner/repo")
 
 
+def test_preflight_skips_audit_when_requested() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + "._audit_repo_config") as mock_audit,
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_no_existing_tracking_issue"),
+    ):
+        ctx = preflight(version_override=None, repo_root=root, skip_audit=True)
+    assert ctx.repo == "owner/repo"
+    mock_audit.assert_not_called()
+
+
+def test_preflight_runs_audit_by_default() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + "._audit_repo_config") as mock_audit,
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged"),
+        patch(_MOD + "._check_no_existing_tracking_issue"),
+    ):
+        preflight(version_override=None, repo_root=root)
+    mock_audit.assert_called_once_with("owner/repo")
+
+
 def test_preflight_wraps_version_sync_error() -> None:
     from vergil_tooling.lib.version import VersionSyncError
 

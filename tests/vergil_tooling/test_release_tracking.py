@@ -51,17 +51,69 @@ def test_create_tracking_issue_extracts_number_from_url() -> None:
 
 def test_find_existing_tracking_issue_returns_url() -> None:
     with patch(
-        _MOD + ".github.read_output",
-        return_value="https://github.com/owner/repo/issues/10",
+        _MOD + ".github.read_json",
+        return_value=[
+            {"title": "release: 2.1.0", "url": "https://github.com/owner/repo/issues/10"},
+        ],
     ):
         result = find_existing_tracking_issue("owner/repo", "2.1.0")
     assert result == "https://github.com/owner/repo/issues/10"
 
 
 def test_find_existing_tracking_issue_returns_none() -> None:
-    with patch(_MOD + ".github.read_output", return_value=""):
+    with patch(_MOD + ".github.read_json", return_value=[]):
         result = find_existing_tracking_issue("owner/repo", "2.1.0")
     assert result is None
+
+
+def test_find_existing_tracking_issue_ignores_partial_title_match() -> None:
+    with patch(
+        _MOD + ".github.read_json",
+        return_value=[
+            {
+                "title": "chore(release): bump version to 2.1.0 for prod image rebuild",
+                "url": "https://github.com/owner/repo/issues/277",
+            },
+        ],
+    ):
+        result = find_existing_tracking_issue("owner/repo", "2.1.0")
+    assert result is None
+
+
+def test_find_existing_tracking_issue_skips_non_dict_items() -> None:
+    with patch(
+        _MOD + ".github.read_json",
+        return_value=[
+            "not-a-dict",
+            {"title": "release: 2.1.0", "url": "https://github.com/owner/repo/issues/10"},
+        ],
+    ):
+        result = find_existing_tracking_issue("owner/repo", "2.1.0")
+    assert result == "https://github.com/owner/repo/issues/10"
+
+
+def test_find_existing_tracking_issue_returns_none_for_dict_response() -> None:
+    with patch(_MOD + ".github.read_json", return_value={}):
+        result = find_existing_tracking_issue("owner/repo", "2.1.0")
+    assert result is None
+
+
+def test_find_existing_tracking_issue_picks_exact_match_among_multiple() -> None:
+    with patch(
+        _MOD + ".github.read_json",
+        return_value=[
+            {
+                "title": "chore(release): bump version to 2.1.0",
+                "url": "https://github.com/owner/repo/issues/277",
+            },
+            {
+                "title": "release: 2.1.0",
+                "url": "https://github.com/owner/repo/issues/300",
+            },
+        ],
+    ):
+        result = find_existing_tracking_issue("owner/repo", "2.1.0")
+    assert result == "https://github.com/owner/repo/issues/300"
 
 
 def test_comment_phase_complete() -> None:

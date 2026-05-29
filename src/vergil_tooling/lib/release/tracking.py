@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import github
 
@@ -14,8 +14,12 @@ if TYPE_CHECKING:
 
 
 def find_existing_tracking_issue(repo: str, version: str) -> str | None:
-    """Return the URL of an open 'release: <version>' issue, or None."""
-    result = github.read_output(
+    """Return the URL of an open 'release: <version>' issue, or None.
+
+    GitHub search tokenizes on punctuation, so the query is a broad net;
+    we filter client-side for an exact title match.
+    """
+    results = github.read_json(
         "issue",
         "list",
         "--repo",
@@ -25,11 +29,17 @@ def find_existing_tracking_issue(repo: str, version: str) -> str | None:
         "--state",
         "open",
         "--json",
-        "url",
-        "--jq",
-        ".[0].url",
+        "url,title",
     )
-    return result if result else None
+    expected_title = f"release: {version}"
+    if isinstance(results, list):
+        for item in results:
+            if not isinstance(item, dict):
+                continue
+            issue = cast("dict[str, object]", item)
+            if str(issue.get("title", "")) == expected_title:
+                return str(issue["url"])
+    return None
 
 
 def create_tracking_issue(ctx: ReleaseContext) -> None:

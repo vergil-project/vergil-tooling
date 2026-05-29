@@ -62,7 +62,7 @@ class DesiredRuleset:
     target: str
     enforcement: str
     ref_include: list[str]
-    bypass_actors: list[dict[str, object]]
+    bypass_actors: list[dict[str, object]] | None
     rules: list[dict[str, object]]
 
 
@@ -304,13 +304,19 @@ def desired_ci_gates_ruleset(
     )
 
 
-def compute_desired_state(config: VergilConfig, *, visibility: str, is_org: bool) -> DesiredState:
+def compute_desired_state(
+    config: VergilConfig, *, visibility: str, is_org: bool, app_mode: bool = False
+) -> DesiredState:
     """Compute the full desired GitHub configuration from a repo's VergilConfig."""
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
     rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
+
+    if app_mode:
+        for rs in rulesets:
+            rs.bypass_actors = None
 
     publish = DesiredPublishConfig(
         release=config.publish.release,
@@ -778,7 +784,7 @@ def _ruleset_body(ruleset: DesiredRuleset) -> dict[str, object]:
                 "exclude": [],
             },
         },
-        "bypass_actors": ruleset.bypass_actors,
+        "bypass_actors": ruleset.bypass_actors if ruleset.bypass_actors is not None else [],
         "rules": ruleset.rules,
     }
 

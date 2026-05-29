@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -416,6 +417,35 @@ def copy_claude_config(instance: str, claude_dir: Path) -> None:
                 f"cat > ~/.claude/{filename}",
                 content,
             )
+
+
+_CLAUDE_LINK_DIRS = ("projects", "sessions", "skills")
+
+
+def link_claude_dirs(instance: str, claude_dir: Path) -> None:
+    """Point the VM's ~/.claude subdirs at the path-preserved host mounts.
+
+    The .claude/{projects,sessions,skills} mounts are path-preserved
+    (mountPoint == host location), but the VM's HOME differs from the host's,
+    so Claude inside the VM reads ~/.claude/... instead of the mounted host
+    path. Symlink the subdirs so session history is shared with the host and
+    survives VM rebuilds. Idempotent; an existing non-empty real directory is
+    left in place with a warning rather than clobbered.
+    """
+    if not claude_dir.is_dir():
+        return
+    parts = ["mkdir -p ~/.claude"]
+    for sub in _CLAUDE_LINK_DIRS:
+        target = shlex.quote(str(claude_dir / sub))
+        link = f'"$HOME/.claude/{sub}"'
+        parts.append(
+            f"if [ -L {link} ] || [ ! -e {link} ]; then ln -sfn {target} {link}; "
+            f'elif [ -d {link} ] && [ -z "$(ls -A {link})" ]; then '
+            f"rmdir {link} && ln -s {target} {link}; "
+            f'else echo "WARNING: ~/.claude/{sub} exists and is not empty;'
+            f' not linking" >&2; fi'
+        )
+    shell_run(instance, "bash", "-c", " ; ".join(parts))
 
 
 def try_update_tooling(
