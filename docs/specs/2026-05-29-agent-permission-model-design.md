@@ -281,14 +281,16 @@ agent writes `.vergil/pr-template.yml`, the human sees it
 immediately on their host terminal. The VM is a credential sandbox
 with a shared filesystem, not an isolated environment.
 
-**Mode detection.** Each VM is provisioned with credentials and a
-mode indicator as part of its configuration. The vergil-vm repo
-owns this configuration. The tooling (`vrg-git`, `vrg-gh`,
-`vrg-submit-pr`) reads the mode from the VM's local configuration
-to determine which allowlists and credential paths apply. This is
-a VM provisioning concern, not a source code concern — `vergil.toml`
-is shared source code and must not contain per-user or per-VM
-configuration.
+**Mode detection.** Each VM is provisioned with a
+`VRG_IDENTITY_MODE` environment variable (values: `street`,
+`track`, `audit`) set by the VM build configuration in the
+vergil-vm repo. The variable is written into the user's shell
+profile during provisioning, making it ambient and persistent.
+The tooling (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) reads
+`VRG_IDENTITY_MODE` to select allowlists and behaviors. Absence
+of the variable (or an unrecognized value) implies human identity.
+This is a derived value from VM configuration, not a user-controlled
+flag — the agent does not choose its own mode.
 
 ## The `.vergil/` Scratch Convention
 
@@ -398,7 +400,7 @@ template.
 
 1. Read `.vergil/pr-template.yml` — fatal error if absent.
 2. Show the human a summary: title, body preview, issue linkage,
-   target branch, file list on the branch.
+   target branch.
 3. Prompt for confirmation.
 4. Create the PR via `gh pr create`.
 5. Delete the template file.
@@ -421,11 +423,14 @@ Layer 1 soft gate. The Layer 2 hard gate is `pull_requests: read`
 on the street-mode App, which causes the underlying `gh pr create`
 to fail server-side even if the soft gate is bypassed.
 
-**Hook guard feedback.** When blocking operations, the hook guard
-provides identity-aware denial messages. It does not mention
-`vrg-submit-pr` as a redirect if the identity lacks the right to
-use it — no information leakage about tools the agent should not
-know about.
+**Wrapper denial messages.** When `vrg-gh` blocks a subcommand, the
+denial message is identity-aware. For human identities, `pr create`
+says "use vrg-submit-pr." For agent identities, the same denial
+says "PR creation is a Race Director operation" — no mention of
+`vrg-submit-pr`, since agents should not know about tools they
+cannot use. (The hook guard itself is a dumb gate — it only
+redirects raw `git`/`gh` to the wrapper scripts and knows nothing
+about subcommands or identity.)
 
 ## `vrg-finalize-pr` (Renamed from `vrg-finalize-repo`)
 
@@ -491,9 +496,12 @@ permission creep ("I'm in admin mode so I might as well...").
 
 ### Mode Detection
 
-The `vrg-gh` wrapper detects mode from the credential environment.
-If `VRG_APP_ID` matches the audit App, the audit allowlist applies.
-No configuration flag — the VM's credentials determine the mode.
+The `vrg-gh` wrapper reads `VRG_IDENTITY_MODE` from the environment.
+If the value is `audit`, the audit allowlist applies. If `street` or
+`track`, the agent-restricted allowlist applies. Absence of the
+variable implies human identity, which retains the full allowlist.
+The environment variable is set by VM provisioning — the agent does
+not choose its own mode.
 
 ## Permission Delta Registry
 

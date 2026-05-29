@@ -244,6 +244,8 @@ vrg-commit --type feat --scope identity --message "add identity detection module
 - Modify: `src/vergil_tooling/bin/vrg_gh.py`
 - Modify: `tests/vergil_tooling/test_vrg_gh.py`
 
+**Architecture note:** This task modifies `vrg-gh`, the *wrapper script* layer — not the hook guard. The two layers have distinct responsibilities: (1) the hook guard (`vrg-hook-guard`) is a dumb gate that blocks raw `git`/`gh` and redirects to `vrg-git`/`vrg-gh` — it knows nothing about subcommands or identity; (2) the wrapper scripts (`vrg-gh`, `vrg-git`) parse subcommands, apply identity-aware allowlists, and redirect to custom tools like `vrg-submit-pr`. No changes to the hook guard are needed for this task.
+
 This task converts `vrg-gh` from a static allowlist to an identity-aware system:
 - Street/track agents lose: `issue close`, `issue reopen`, `issue edit`, `pr edit`, `pr merge`
 - Audit agents can only use: `pr view`, `pr diff`, `pr list`, `pr checks`, `pr comment`, `pr review`
@@ -272,11 +274,16 @@ Add a new test class after the existing tests:
 
 
 class TestAgentDenials:
-    """Commands blocked for street/track agent identities."""
+    """Commands blocked for street/track agent identities.
 
-    @pytest.fixture(autouse=True)
-    def _street_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
+    Both street and track modes share the same restricted allowlist.
+    The fixture parametrizes over both to ensure neither can bypass
+    agent-specific denials.
+    """
+
+    @pytest.fixture(autouse=True, params=["street", "track"])
+    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", request.param)
 
     @pytest.mark.parametrize(
         ("top", "sub"),
@@ -623,21 +630,90 @@ def main(argv: list[str] | None = None) -> int:
 
 - [ ] **Step 4: Update existing tests for compatibility**
 
-The existing `_ALLOWED_PAIRS` and `_DENIED_PAIRS` parametrized tests run without an identity mode set, so they default to human mode. Several tests need updates:
+The existing `_ALLOWED_PAIRS` and `_DENIED_PAIRS` parametrized tests run without an identity mode set, so they default to human mode. Six existing tests need updates:
 
-1. The existing `_ALLOWED_PAIRS` list includes `("pr", "merge")`. Since the `_validate_merge_context` function is removed, the `pr merge 42` test pattern changes. Update the allowed pair to include arguments:
+**4a.** Remove `("pr", "merge")` from `_ALLOWED_PAIRS` — it's tested separately in `TestHumanAllowlist`:
 
-Remove `("pr", "merge")` from `_ALLOWED_PAIRS` — it's tested separately in `TestHumanAllowlist`.
+Replace:
+```python
+_ALLOWED_PAIRS: list[tuple[str, str]] = [
+    ("issue", "view"),
+    ("issue", "create"),
+    ("issue", "close"),
+    ("issue", "reopen"),
+    ("issue", "edit"),
+    ("issue", "list"),
+    ("issue", "comment"),
+    ("pr", "view"),
+    ("pr", "checks"),
+    ("pr", "list"),
+    ("pr", "diff"),
+    ("pr", "comment"),
+    ("pr", "edit"),
+    ("run", "list"),
+    ("run", "view"),
+    ("run", "watch"),
+    ("repo", "view"),
+    ("repo", "list"),
+    ("label", "list"),
+    ("label", "create"),
+]
+```
 
-2. The existing `test_pr_merge_allowed_with_valid_context` test should now live in `TestHumanAllowlist` (already covered above).
+With (removed `pr merge`):
+```python
+_ALLOWED_PAIRS: list[tuple[str, str]] = [
+    ("issue", "view"),
+    ("issue", "create"),
+    ("issue", "close"),
+    ("issue", "reopen"),
+    ("issue", "edit"),
+    ("issue", "list"),
+    ("issue", "comment"),
+    ("pr", "view"),
+    ("pr", "checks"),
+    ("pr", "list"),
+    ("pr", "diff"),
+    ("pr", "comment"),
+    ("pr", "edit"),
+    ("run", "list"),
+    ("run", "view"),
+    ("run", "watch"),
+    ("repo", "view"),
+    ("repo", "list"),
+    ("label", "list"),
+    ("label", "create"),
+]
+```
 
-3. Remove the old `test_pr_merge_denied_without_args` — replaced by the human merge context check in the updated `main()`.
+**4b.** Remove `test_pr_merge_allowed_with_valid_context` — replaced by `TestHumanAllowlist.test_pr_merge_allowed_for_human_with_context`.
 
-4. Update `test_pr_create_denied_suggests_vrg_submit_pr` to be human-specific (already covered in `TestHumanAllowlist.test_pr_create_mentions_vrg_submit_pr`).
+**4c.** Remove `test_pr_merge_denied_without_args` — replaced by the human merge context check in the updated `main()`.
 
-5. The existing `test_pr_review_approve_denied` test needs an identity fixture. Without one, it defaults to human mode where approve IS allowed. Add `monkeypatch.setenv("VRG_IDENTITY_MODE", "street")` to that test.
+**4d.** Remove `test_pr_create_denied_suggests_vrg_submit_pr` — replaced by `TestHumanAllowlist.test_pr_create_mentions_vrg_submit_pr`.
 
-6. The existing `test_pr_review_no_flags_allowed` and `test_pr_review_comment_allowed` still work as-is (human mode, no --approve).
+**4e.** Update `test_pr_review_approve_denied` to set street identity (without it, human mode allows approve):
+
+Replace:
+```python
+def test_pr_review_approve_denied(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["pr", "review", "--approve"]) != 0
+    err = capsys.readouterr().err
+    assert "approve" in err.lower()
+```
+
+With:
+```python
+def test_pr_review_approve_denied_for_street(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
+    assert main(["pr", "review", "--approve"]) != 0
+    err = capsys.readouterr().err
+    assert "approve" in err.lower()
+```
+
+**4f.** `test_pr_review_no_flags_allowed` and `test_pr_review_comment_allowed` — no changes needed (human mode, no --approve).
 
 - [ ] **Step 5: Run all vrg-gh tests**
 
@@ -1374,13 +1450,44 @@ if __name__ == "__main__":
 
 - [ ] **Step 5: Update existing tests for compatibility**
 
-The existing tests pass `--issue`, `--summary`, `--title` as CLI args, so they use CLI mode. Several need adjustment:
+The existing tests pass `--issue`, `--summary`, `--title` as CLI args, so they use CLI mode. Three existing tests need updates:
 
-1. `test_parse_args_title_is_required` — Title is no longer `required` in argparse. This test should be replaced by `TestTemplateMode.test_partial_cli_args_errors` which tests that partial CLI args return an error from `main()`. Remove the old test.
+**5a.** Remove `test_parse_args_title_is_required` — title is no longer `required` in argparse. The equivalent validation is in `TestTemplateMode.test_partial_cli_args_errors` which tests that partial CLI args return an error from `main()`.
 
-2. All existing `test_main_*` tests default to human identity (no env var), so the identity gate does not fire. They should continue to pass.
+Replace:
+```python
+def test_parse_args_title_is_required() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--issue", "42", "--summary", "Fix bug"])
+```
 
-3. `test_parse_args_required` — The args are no longer `required` by argparse. Change this test to verify they parse correctly when provided (they do — just remove the "required" aspect from the test name and verify the values).
+With nothing — delete the test entirely.
+
+**5b.** Rename `test_parse_args_required` — the args are no longer `required` by argparse (they default to `None`). The test still validates that values parse correctly when provided:
+
+Replace:
+```python
+def test_parse_args_required() -> None:
+    args = parse_args(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+    assert args.issue == "42"
+    assert args.summary == "Fix bug"
+    assert args.title == "fix: bug"
+    assert args.linkage == "Ref"
+    assert args.dry_run is False
+```
+
+With:
+```python
+def test_parse_args_cli_fields() -> None:
+    args = parse_args(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+    assert args.issue == "42"
+    assert args.summary == "Fix bug"
+    assert args.title == "fix: bug"
+    assert args.linkage == "Ref"
+    assert args.dry_run is False
+```
+
+**5c.** All existing `test_main_*` tests default to human identity (no env var), so the identity gate does not fire. They should continue to pass without changes.
 
 - [ ] **Step 6: Run all vrg-submit-pr tests**
 
