@@ -27,6 +27,7 @@ from vergil_tooling.lib.lima import (
     get_tooling_version,
     inject_credentials,
     install_tooling,
+    link_claude_dirs,
     list_vms,
     start_vm,
     stop_vm,
@@ -89,6 +90,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
         print("  Starting VM...")
         start_vm(identity.vm_instance)
 
+        print("  Linking Claude config directories...")
+        link_claude_dirs(identity.vm_instance, Path.home() / ".claude")
+
         print("Injecting credentials...")
         inject_credentials(identity.vm_instance, identity)
 
@@ -133,6 +137,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
     claude_dir = Path.home() / ".claude"
     print("Copying Claude Code config...")
     copy_claude_config(identity.vm_instance, claude_dir)
+    link_claude_dirs(identity.vm_instance, claude_dir)
 
     fallback = resolve_vergil_version(config, identity)
     print("Updating vergil-tooling...")
@@ -267,6 +272,7 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
         claude_dir = Path.home() / ".claude"
         print("  Copying Claude Code config...")
         copy_claude_config(identity.vm_instance, claude_dir)
+        link_claude_dirs(identity.vm_instance, claude_dir)
     finally:
         template.unlink(missing_ok=True)
 
@@ -315,6 +321,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
 
     claude_dir = Path.home() / ".claude"
     copy_claude_config(identity.vm_instance, claude_dir)
+    link_claude_dirs(identity.vm_instance, claude_dir)
 
     workspace: str | None = None
     if args.workspace:

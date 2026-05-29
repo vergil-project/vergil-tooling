@@ -20,6 +20,7 @@ from vergil_tooling.lib.lima import (
     get_tooling_version,
     inject_credentials,
     install_tooling,
+    link_claude_dirs,
     list_vms,
     shell_pipe,
     shell_run,
@@ -870,6 +871,35 @@ class TestCopyClaudeConfig:
 
         mock_run.assert_not_called()
         mock_pipe.assert_not_called()
+
+
+class TestLinkClaudeDirs:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_links_all_subdirs(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir()
+
+        link_claude_dirs("vergil-agent", claude_dir)
+
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0]
+        assert args[0] == "vergil-agent"
+        assert args[1] == "bash"
+        assert args[2] == "-c"
+        script = args[3]
+        assert "mkdir -p ~/.claude" in script
+        for sub in ("projects", "sessions", "skills"):
+            assert f'"$HOME/.claude/{sub}"' in script
+            assert str(claude_dir / sub) in script
+        assert "ln -sfn" in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_skips_if_claude_dir_missing(self, mock_run: MagicMock, tmp_path: Path) -> None:
+        claude_dir = tmp_path / ".claude"
+
+        link_claude_dirs("vergil-agent", claude_dir)
+
+        mock_run.assert_not_called()
 
 
 class TestTryUpdateTooling:
