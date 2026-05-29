@@ -16,6 +16,7 @@ from vergil_tooling.lib.identity import (
     default_config_path,
     load_config,
     resolve_identity_by_name,
+    resolve_model,
     resolve_vergil_version,
     resolve_vm_tag,
     resolve_workspace,
@@ -404,7 +405,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         identity.vm_instance,
         "bash",
         "-c",
-        _session_inner(args, name, rel_path, args.model or identity.model),
+        _session_inner(args, name, rel_path, resolve_model(config, identity, args.model)),
     ]
     os.execvp(cmd[0], cmd)  # noqa: S606, S607
     return 0  # unreachable, keeps the type checker happy

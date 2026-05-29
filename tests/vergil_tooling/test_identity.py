@@ -15,6 +15,7 @@ from vergil_tooling.lib.identity import (
     load_config,
     resolve_identity,
     resolve_identity_by_name,
+    resolve_model,
     resolve_vergil_version,
     resolve_vm_tag,
     resolve_workspace,
@@ -514,3 +515,32 @@ def test_resource_validation_error_message(
     assert "vergil" in captured.err
     assert "memory" in captured.err
     assert "<number>GiB" in captured.err
+
+
+def test_top_level_model_parsed(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        model = "opus"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.model == "opus"
+    assert cfg.identities["vergil"].model == ""  # identity-level unset
+
+
+def test_resolve_model_precedence() -> None:
+    cfg = IdentityConfig(identities={}, model="config-model")
+    with_model = Identity(vm_instance="x", model="ident-model")
+    without_model = Identity(vm_instance="x")
+    assert resolve_model(cfg, with_model, "cli-model") == "cli-model"  # CLI wins
+    assert resolve_model(cfg, with_model) == "ident-model"  # then identity
+    assert resolve_model(cfg, without_model) == "config-model"  # then config
+
+
+def test_resolve_model_none_configured() -> None:
+    cfg = IdentityConfig(identities={})
+    assert resolve_model(cfg, Identity(vm_instance="x")) == ""

@@ -50,6 +50,23 @@ def config_file_model(tmp_path: Path) -> Path:
     return p
 
 
+@pytest.fixture()
+def config_file_top_model(tmp_path: Path) -> Path:
+    p = tmp_path / "identities-top-model.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+        model = "opus"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    return p
+
+
 class TestNoSubcommand:
     def test_prints_help_and_returns_1(self) -> None:
         assert main([]) == 1
@@ -990,6 +1007,19 @@ class TestSession:
         inner = self._inner(mock_exec)
         assert "--model opus" in inner
         assert "sonnet" not in inner
+
+    def test_session_top_level_model_default(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_top_model: Path,
+    ) -> None:
+        # identity has no model; the top-level config default is used
+        main(["session", "--config", str(config_file_top_model), "vergil-tooling"])
+        assert "--model opus" in self._inner(mock_exec)
 
 
 def test_session_inner_strips_leading_double_dash() -> None:
