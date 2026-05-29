@@ -49,6 +49,20 @@ def test_identity_fields(config_file: Path) -> None:
     assert ident.vm_instance == "vergil-agent"
     assert ident.auth_type == "app"
     assert ident.app_id == "12345"
+    assert ident.model == ""  # defaults to empty when unset
+
+
+def test_identity_model_parsed(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        model = "opus"
+    """)
+    )
+    ident = load_config(p).identities["vergil"]
+    assert ident.model == "opus"
 
 
 def test_missing_config_file(tmp_path: Path) -> None:

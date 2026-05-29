@@ -33,6 +33,23 @@ def config_file(tmp_path: Path) -> Path:
     return p
 
 
+@pytest.fixture()
+def config_file_model(tmp_path: Path) -> Path:
+    p = tmp_path / "identities-model.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+        model = "sonnet"
+    """)
+    )
+    return p
+
+
 class TestNoSubcommand:
     def test_prints_help_and_returns_1(self) -> None:
         assert main([]) == 1
@@ -924,6 +941,56 @@ class TestSession:
         assert "--fork" in inner
         assert "--slot 2" in inner
 
+    def test_session_no_model_no_flag(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file), "vergil-tooling"])
+        assert "--model" not in self._inner(mock_exec)
+
+    def test_session_cli_model_passed(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file), "--model", "opus", "vergil-tooling"])
+        assert "--model opus" in self._inner(mock_exec)
+
+    def test_session_config_model_default(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_model: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file_model), "vergil-tooling"])
+        assert "--model sonnet" in self._inner(mock_exec)
+
+    def test_session_cli_model_overrides_config(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_model: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file_model), "--model", "opus", "vergil-tooling"])
+        inner = self._inner(mock_exec)
+        assert "--model opus" in inner
+        assert "sonnet" not in inner
+
 
 def test_session_inner_strips_leading_double_dash() -> None:
     import argparse
@@ -931,6 +998,17 @@ def test_session_inner_strips_leading_double_dash() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False)
-    inner = _session_inner(ns, "vergil", "p")
+    inner = _session_inner(ns, "vergil", "p", "")
     assert "exec bash" in inner
     assert "vrg-vm-resolve-session" not in inner
+
+
+def test_session_inner_raw_override_ignores_model() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False)
+    inner = _session_inner(ns, "vergil", "p", "opus")
+    assert "exec bash" in inner
+    assert "--model" not in inner
