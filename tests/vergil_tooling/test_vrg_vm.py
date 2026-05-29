@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import textwrap
 from typing import TYPE_CHECKING
@@ -588,6 +589,58 @@ class TestList:
         output = capsys.readouterr().out
         assert "Not Created" in output
 
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_merges_liveness(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {
+                        "identity": "vergil",
+                        "slot": 1,
+                        "path": "vergil-project/vm",
+                        "sessionId": "s1",
+                        "active": True,
+                    }
+                ]
+            )
+        )
+        mock_names.return_value = {
+            "s1": "vergil:01:vergil-project/vm",
+            "s2": "vergil:02:tooling",
+        }
+        result = main(["list", "--sessions", "--config", str(config_file)])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "WORKSPACE" in out
+        assert "vergil-project/vm" in out
+        assert "active" in out
+        assert "idle" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_skips_stopped_vms(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        _names: MagicMock,
+        config_file: Path,
+    ) -> None:
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Stopped"}]
+        result = main(["list", "--sessions", "--config", str(config_file)])
+        assert result == 0
+        mock_shell.assert_not_called()
+
 
 class TestUpdate:
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
@@ -669,6 +722,7 @@ class TestUpdate:
 
 class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
@@ -677,16 +731,18 @@ class TestSessionStaleness:
         _age: MagicMock,
         _copy: MagicMock,
         _update: MagicMock,
+        _link: MagicMock,
         _exec: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        result = main(["session", "--config", str(config_file)])
+        result = main(["session", "--config", str(config_file), "."])
         assert result == 1
         captured = capsys.readouterr()
         assert "--allow-stale-vm" in captured.err
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
@@ -695,13 +751,15 @@ class TestSessionStaleness:
         _age: MagicMock,
         _copy: MagicMock,
         _update: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file), "--allow-stale-vm"])
+        main(["session", "--config", str(config_file), "--allow-stale-vm", "."])
         mock_exec.assert_called_once()
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -710,27 +768,34 @@ class TestSessionStaleness:
         _age: MagicMock,
         _copy: MagicMock,
         _update: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file)])
+        main(["session", "--config", str(config_file), "."])
         mock_exec.assert_called_once()
 
 
+@patch("vergil_tooling.bin.vrg_vm.os.execvp")
+@patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+@patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+@patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+@patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
 class TestSession:
-    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    def _inner(self, mock_exec: MagicMock) -> str:
+        cmd = mock_exec.call_args[0][1]
+        return cmd[cmd.index("-c") + 1]
+
     def test_session_basic(
         self,
         _age: MagicMock,
         mock_update: MagicMock,
         _copy: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file)])
+        main(["session", "--config", str(config_file), "."])
         mock_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
@@ -740,75 +805,56 @@ class TestSession:
         assert "--preserve-env" in args[1]
         assert "--workdir=/home/user/projects" in args[1]
 
-    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_sets_terminal_env_forwarding(
         self,
         _age: MagicMock,
         _update: MagicMock,
         _copy: MagicMock,
+        _link: MagicMock,
         _exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file)])
+        main(["session", "--config", str(config_file), "."])
         allow = os.environ.get("LIMA_SHELLENV_ALLOW", "")
         for var in ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"):
             assert var in allow
 
-    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
-    def test_session_with_workspace(
+    def test_session_default_launches_resolver(
         self,
         _age: MagicMock,
-        _mock_update: MagicMock,
+        _update: MagicMock,
         _copy: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling"])
         cmd = mock_exec.call_args[0][1]
         assert "--workdir=/home/user/projects/vergil-tooling" in cmd
-        assert "bash" in cmd
-        assert "-c" in cmd
-        inner = cmd[cmd.index("-c") + 1]
+        inner = self._inner(mock_exec)
         assert "claude.env" in inner
-        assert "cd /home/user/projects/vergil-tooling" in inner
-        assert "exec bash --login" in inner
+        assert "vrg-vm-resolve-session --identity vergil --path vergil-tooling" in inner
+        assert "bash --login" not in inner
 
-    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
-    def test_session_with_command(
+    def test_session_explicit_claude_uses_resolver(
         self,
         _age: MagicMock,
-        _mock_update: MagicMock,
+        _update: MagicMock,
         _copy: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "vergil-tooling", "claude"])
-        cmd = mock_exec.call_args[0][1]
-        assert "bash" in cmd
-        assert "-c" in cmd
-        inner = cmd[cmd.index("-c") + 1]
-        assert "claude.env" in inner
-        assert "cd /home/user/projects/vergil-tooling" in inner
-        assert "exec claude" in inner
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session" in inner
 
-    @patch("vergil_tooling.bin.vrg_vm.os.execvp")
-    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
-    def test_session_command_with_flags(
+    def test_session_claude_with_flags_passes_extra(
         self,
         _age: MagicMock,
-        _mock_update: MagicMock,
+        _update: MagicMock,
         _copy: MagicMock,
+        _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
@@ -823,7 +869,68 @@ class TestSession:
                 "opus",
             ]
         )
-        cmd = mock_exec.call_args[0][1]
-        inner = cmd[cmd.index("-c") + 1]
-        assert "claude.env" in inner
-        assert "exec claude --model opus" in inner
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session" in inner
+        assert "-- --model opus" in inner
+
+    def test_session_raw_command_override(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file), "vergil-tooling", "--", "bash"])
+        inner = self._inner(mock_exec)
+        assert "exec bash" in inner
+        assert "vrg-vm-resolve-session" not in inner
+
+    def test_session_slot_passed_to_resolver(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(["session", "--config", str(config_file), "--slot", "3", "vergil-tooling"])
+        inner = self._inner(mock_exec)
+        assert "--slot 3" in inner
+
+    def test_session_fork_passed_to_resolver(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(
+            [
+                "session",
+                "--config",
+                str(config_file),
+                "--slot",
+                "2",
+                "--fork",
+                "vergil-tooling",
+            ]
+        )
+        inner = self._inner(mock_exec)
+        assert "--fork" in inner
+        assert "--slot 2" in inner
+
+
+def test_session_inner_strips_leading_double_dash() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False)
+    inner = _session_inner(ns, "vergil", "p")
+    assert "exec bash" in inner
+    assert "vrg-vm-resolve-session" not in inner
