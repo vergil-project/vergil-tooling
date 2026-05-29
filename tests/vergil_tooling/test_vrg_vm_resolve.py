@@ -1,0 +1,266 @@
+from __future__ import annotations
+
+import json
+import os
+from typing import TYPE_CHECKING
+
+import pytest
+
+from vergil_tooling.bin import vrg_vm_resolve as r
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+# --- _last_agent_name ---
+
+
+def test_last_agent_name_last_wins(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        "\n".join(
+            [
+                '{"type":"agent-name","agentName":"id:01:a","sessionId":"s"}',
+                '{"type":"user","message":"hi"}',
+                "",  # blank line skipped
+                "not even close to json but has agent-name token? no",
+                '{"type":"agent-name","agentName":"id:02:b","sessionId":"s"}',
+            ]
+        )
+    )
+    assert r._last_agent_name(f) == "id:02:b"
+
+
+def test_last_agent_name_skips_malformed_json(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"agent-name", BROKEN "agentName":"x"}\n')
+    assert r._last_agent_name(f) is None
+
+
+def test_last_agent_name_ignores_non_string_value(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"agent-name","agentName":123}\n')
+    assert r._last_agent_name(f) is None
+
+
+def test_last_agent_name_missing_file_returns_none(tmp_path: Path) -> None:
+    assert r._last_agent_name(tmp_path / "nope.jsonl") is None
+
+
+def test_last_agent_name_ignores_other_type_with_token(tmp_path: Path) -> None:
+    # line carries the "agent-name" substring but is not an agent-name entry
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"user","agent-name":"not really"}\n')
+    assert r._last_agent_name(f) is None
+
+
+def test_claude_dir_points_at_dot_claude() -> None:
+    assert r._claude_dir().name == ".claude"
+
+
+# --- name_by_session ---
+
+
+def test_name_by_session_missing_dir(tmp_path: Path) -> None:
+    assert r.name_by_session(tmp_path / "absent") == {}
+
+
+def test_name_by_session_maps_stem_to_name(tmp_path: Path) -> None:
+    slug = tmp_path / "slug"
+    slug.mkdir()
+    (slug / "s1.jsonl").write_text('{"type":"agent-name","agentName":"id:01:a","sessionId":"s1"}\n')
+    (slug / "s2.jsonl").write_text('{"type":"user"}\n')  # no name -> skipped
+    assert r.name_by_session(tmp_path) == {"s1": "id:01:a"}
+
+
+# --- read_roster ---
+
+
+def test_read_roster_missing_dir(tmp_path: Path) -> None:
+    assert r.read_roster(tmp_path / "absent") == []
+
+
+def test_read_roster_filters_bad_files(tmp_path: Path) -> None:
+    (tmp_path / "ok.json").write_text('{"pid": 1, "sessionId": "s"}')
+    (tmp_path / "broken.json").write_text("{not json")
+    (tmp_path / "list.json").write_text("[1, 2, 3]")  # not a dict
+    entries = r.read_roster(tmp_path)
+    assert entries == [{"pid": 1, "sessionId": "s"}]
+
+
+# --- _parse_starttime ---
+
+
+def test_parse_starttime_extracts_field() -> None:
+    # synthetic: "(comm)" then fields; state 'S' is field 3, starttime field 22
+    tail = " ".join(["x"] * 19 + ["START"] + ["y"] * 5)
+    assert r._parse_starttime(f"123 (claude) {tail}") == "START"
+
+
+def test_parse_starttime_no_paren() -> None:
+    assert r._parse_starttime("garbage with no paren") is None
+
+
+def test_parse_starttime_too_short() -> None:
+    assert r._parse_starttime("123 (c) S 1 2 3") is None
+
+
+# --- _proc_start / _is_live ---
+
+
+def test_proc_start_real_process_is_digits() -> None:
+    val = r._proc_start(os.getpid())
+    assert val is not None and val.isdigit()
+
+
+def test_proc_start_missing_pid() -> None:
+    assert r._proc_start(2**30) is None
+
+
+def test_is_live_dead_pid(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r, "_proc_start", lambda _pid: None)
+    assert r._is_live(123, "999") is False
+
+
+def test_is_live_without_procstart(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r, "_proc_start", lambda _pid: "555")
+    assert r._is_live(123, None) is True
+
+
+def test_is_live_matching_and_mismatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r, "_proc_start", lambda _pid: "555")
+    assert r._is_live(123, "555") is True
+    assert r._is_live(123, "777") is False
+
+
+# --- active_session_ids ---
+
+
+def test_active_session_ids_filters_and_checks_liveness(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(r, "_is_live", lambda pid, _ps: pid == 10)
+    roster: list[dict[str, object]] = [
+        {"pid": 10, "sessionId": "live", "procStart": "1"},
+        {"pid": 20, "sessionId": "dead", "procStart": "2"},
+        {"pid": "x", "sessionId": "bad-pid"},  # wrong type
+        {"pid": 30},  # no sessionId
+    ]
+    assert r.active_session_ids(roster) == {"live"}
+
+
+# --- resolve ---
+
+
+@pytest.fixture()
+def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(os, "execvp", lambda _f, argv: calls.append(argv))
+    return calls
+
+
+def test_resolve_create(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    assert r.resolve("id", "p", None, False, ["--model", "opus"]) == 0
+    assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
+
+
+def test_resolve_resume(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set()))
+    assert r.resolve("id", "p", None, False, []) == 0
+    assert capture_exec == [["claude", "--resume", "s1"]]
+
+
+def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
+    assert r.resolve("id", "p", 1, True, []) == 0
+    assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
+
+
+def test_resolve_refuse(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    assert r.resolve("id", "p", None, True, []) == 1  # fork without slot
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
+    assert r._exec_claude(["-n", "x"]) == 0
+    assert capture_exec == [["claude", "-n", "x"]]
+
+
+# --- list_json ---
+
+
+def test_list_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
+    assert r.list_json() == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows == [{"identity": "id", "slot": 1, "path": "p", "sessionId": "s1", "active": True}]
+
+
+# --- _read_state integration ---
+
+
+def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    (projects / "s1.jsonl").write_text(
+        '{"type":"agent-name","agentName":"id:01:p","sessionId":"s1"}\n'
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "100.json").write_text('{"pid": 100, "sessionId": "s1"}')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
+    names, active = r._read_state()
+    assert names == {"s1": "id:01:p"}
+    assert active == {"s1"}
+
+
+# --- main ---
+
+
+def test_main_list_json(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    assert r.main(["--list-json"]) == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_main_requires_identity_and_path(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert r.main(["--identity", "id"]) == 1
+    assert "required" in capsys.readouterr().err
+
+
+def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+
+    def fake_resolve(identity, path, slot, fork, extra):  # noqa: ANN001, ANN202
+        seen.update(identity=identity, path=path, slot=slot, fork=fork, extra=extra)
+        return 0
+
+    monkeypatch.setattr(r, "resolve", fake_resolve)
+    assert r.main(["--identity", "id", "--path", "p", "--slot", "2", "x"]) == 0
+    assert seen == {
+        "identity": "id",
+        "path": "p",
+        "slot": 2,
+        "fork": False,
+        "extra": ["x"],
+    }
+
+
+def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(
+        r,
+        "resolve",
+        lambda i, p, s, f, extra: captured.update(extra=extra) or 0,  # noqa: ARG005
+    )
+    r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
+    assert captured["extra"] == ["claude", "--model", "opus"]

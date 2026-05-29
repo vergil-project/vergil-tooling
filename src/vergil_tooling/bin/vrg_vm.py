@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import sys
 from pathlib import Path
 
+from vergil_tooling.bin.vrg_vm_resolve import name_by_session
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
     default_config_path,
     load_config,
-    resolve_identity,
     resolve_identity_by_name,
     resolve_vergil_version,
     resolve_vm_tag,
@@ -29,6 +30,7 @@ from vergil_tooling.lib.lima import (
     install_tooling,
     link_claude_dirs,
     list_vms,
+    shell_run,
     start_vm,
     stop_vm,
     try_update_tooling,
@@ -36,6 +38,7 @@ from vergil_tooling.lib.lima import (
     vm_age_days,
     vm_status,
 )
+from vergil_tooling.lib.session import list_rows
 
 _default_config_path = default_config_path
 
@@ -284,6 +287,9 @@ def _cmd_list(args: argparse.Namespace) -> int:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
 
+    if args.sessions:
+        return _list_sessions(config)
+
     vms = list_vms()
     vm_map = {vm["name"]: vm["status"] for vm in vms}
 
@@ -297,16 +303,74 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_session(args: argparse.Namespace) -> int:
-    config_path = args.config if args.config else _default_config_path()
-    config = load_config(config_path)
-    identity = resolve_identity(config, args.identity)
+def _vm_active_session_ids(instance: str) -> set[str]:
+    """Active session ids reported by a running VM's in-VM resolver."""
+    result = shell_run(instance, "vrg-vm-resolve-session", "--list-json")
+    rows = json.loads(result.stdout)
+    return {row["sessionId"] for row in rows if row.get("active")}
 
-    allow_stale = getattr(args, "allow_stale_vm", False)
-    if not allow_stale:
+
+def _list_sessions(config: IdentityConfig) -> int:
+    """List named Claude sessions across all identity VMs.
+
+    Transcripts are shared (host-backed), so names come from the host store;
+    liveness is queried per running VM, since each VM owns its own roster.
+    """
+    vm_map = {vm["name"]: vm["status"] for vm in list_vms()}
+    active: set[str] = set()
+    for identity in config.identities.values():
+        if vm_map.get(identity.vm_instance) == "Running":
+            active |= _vm_active_session_ids(identity.vm_instance)
+
+    names = name_by_session(Path.home() / ".claude" / "projects")
+    rows = list_rows(names, active)
+
+    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<36} {'STATE':<8}")
+    print(f"{'─' * 16} {'─' * 6} {'─' * 36} {'─' * 8}")
+    for row in rows:
+        slot = f"{row.slot:02d}"
+        state = "active" if row.active else "idle"
+        print(f"{row.identity:<16} {slot:<6} {row.path:<36} {state:<8}")
+
+    return 0
+
+
+def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str) -> str:
+    """Build the in-VM command: a raw override, or the session resolver."""
+    source = ". ~/.config/vergil/claude.env 2>/dev/null;"
+
+    override = list(args.cmd)
+    if override and override[0] == "--":
+        override = override[1:]
+
+    # Any non-claude command runs raw (the `-- bash` escape hatch). A bare
+    # `claude` (or no command) goes through the resolver for naming/resume.
+    if override and override[0] != "claude":
+        return f"{source} exec {shlex.join(override)}"
+
+    extra = override[1:] if override[:1] == ["claude"] else []
+    resolve_cmd = [
+        "vrg-vm-resolve-session",
+        "--identity",
+        identity_name,
+        "--path",
+        rel_path,
+    ]
+    if args.slot is not None:
+        resolve_cmd += ["--slot", str(args.slot)]
+    if args.fork:
+        resolve_cmd += ["--fork"]
+    if extra:
+        resolve_cmd += ["--", *extra]
+    return f"{source} exec {shlex.join(resolve_cmd)}"
+
+
+def _cmd_session(args: argparse.Namespace) -> int:
+    name, identity, config = _resolve(args)
+
+    if not args.allow_stale_vm:
         age = vm_age_days(identity.vm_instance)
         if age is not None and age > _DEFAULT_STALENESS_DAYS:
-            name = args.identity or config.default_identity or "default"
             print(
                 f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
                 f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
@@ -323,11 +387,8 @@ def _cmd_session(args: argparse.Namespace) -> int:
     copy_claude_config(identity.vm_instance, claude_dir)
     link_claude_dirs(identity.vm_instance, claude_dir)
 
-    workspace: str | None = None
-    if args.workspace:
-        workspace = resolve_workspace(args.workspace, identity.projects_dir)
-
-    workdir = workspace if workspace else identity.projects_dir
+    workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
+    rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
 
     os.environ["LIMA_SHELLENV_ALLOW"] = _TERMINAL_ENV_VARS
 
@@ -336,20 +397,14 @@ def _cmd_session(args: argparse.Namespace) -> int:
         "shell",
         "--start",
         "--preserve-env",
-        f"--workdir={workdir}",
+        f"--workdir={workspace_abs}",
         identity.vm_instance,
+        "bash",
+        "-c",
+        _session_inner(args, name, rel_path),
     ]
-
-    if workspace:
-        source = ". ~/.config/vergil/claude.env 2>/dev/null;"
-        if args.cmd:
-            inner = f"{source} cd {shlex.quote(workspace)} && exec {shlex.join(args.cmd)}"
-        else:
-            inner = f"{source} cd {shlex.quote(workspace)} && exec bash --login"
-        cmd.extend(["bash", "-c", inner])
-
     os.execvp(cmd[0], cmd)  # noqa: S606, S607
-    return 0  # unreachable, keeps mypy happy
+    return 0  # unreachable, keeps the type checker happy
 
 
 def _add_identity_args(parser: argparse.ArgumentParser) -> None:
@@ -411,8 +466,13 @@ def main(argv: list[str] | None = None) -> int:
 
     p_list = sub.add_parser("list", help="List all identity VMs and their status")
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
+    p_list.add_argument(
+        "--sessions",
+        action="store_true",
+        help="List named Claude sessions across identity VMs instead of VMs",
+    )
 
-    p_session = sub.add_parser("session", help="Shell into a VM")
+    p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
     _add_identity_args(p_session)
     p_session.add_argument(
         "--allow-stale-vm",
@@ -420,9 +480,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Connect even if the VM exceeds the staleness threshold",
     )
     p_session.add_argument(
-        "workspace", nargs="?", help="Workspace path (relative to projects_dir or absolute)"
+        "--slot",
+        type=int,
+        help="Session slot number (1-99); default picks the lowest idle/free slot",
     )
-    p_session.add_argument("cmd", nargs=argparse.REMAINDER, help="Command to run inside the VM")
+    p_session.add_argument(
+        "--fork",
+        action="store_true",
+        help="Fork the targeted --slot into a new session instead of resuming it",
+    )
+    p_session.add_argument(
+        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
+    )
+    p_session.add_argument(
+        "cmd",
+        nargs=argparse.REMAINDER,
+        help="Optional command override after '--' (e.g. -- bash)",
+    )
 
     args = parser.parse_args(argv)
     if args.command is None:
