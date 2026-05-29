@@ -154,6 +154,7 @@ def test_tag_protection_ruleset() -> None:
     assert r.name == "Tag protection"
     assert r.target == "tag"
     assert r.ref_include == ["refs/tags/v*.*.*"]
+    assert r.bypass_actors is not None
     assert len(r.bypass_actors) == 1
     assert r.bypass_actors[0]["actor_type"] == "RepositoryRole"
     assert r.bypass_actors[0]["actor_id"] == 5
@@ -1583,3 +1584,54 @@ def test_format_rules_delta_identical_checks() -> None:
     assert result is not None
     assert "extra (0)" in result
     assert "missing (0)" in result
+
+
+# ---------------------------------------------------------------------------
+# Issue #1288: App mode bypass_actors skipping
+# ---------------------------------------------------------------------------
+
+
+def test_compute_desired_state_app_mode_nulls_bypass_actors() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True, app_mode=True)
+    for rs in state.rulesets:
+        assert rs.bypass_actors is None
+
+
+def test_compute_desired_state_no_app_mode_keeps_bypass_actors() -> None:
+    state = compute_desired_state(
+        _vergil_config(), visibility="public", is_org=True, app_mode=False
+    )
+    tag_rs = next(rs for rs in state.rulesets if rs.name == "Tag protection")
+    assert tag_rs.bypass_actors is not None
+    assert len(tag_rs.bypass_actors) == 1
+
+
+def test_diff_skips_bypass_actors_when_desired_is_none() -> None:
+    desired = compute_desired_state(
+        _vergil_config(), visibility="public", is_org=True, app_mode=True
+    )
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    diff = compute_diff(desired=desired, actual=actual)
+    assert not any(d.field.endswith(".bypass_actors") for d in diff.items)
+    assert any(s.endswith(".bypass_actors") for s in diff.skipped)
+
+
+def test_diff_reports_bypass_actors_mismatch_without_app_mode() -> None:
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual.rulesets[1].bypass_actors = []
+    diff = compute_diff(desired=desired, actual=actual)
+    assert any(d.field == "rulesets.Tag protection.bypass_actors" for d in diff.items)
+
+
+def test_ruleset_body_none_bypass_actors_becomes_empty_list() -> None:
+    ruleset = DesiredRuleset(
+        name="Test",
+        target="branch",
+        enforcement="active",
+        ref_include=[],
+        bypass_actors=None,
+        rules=[],
+    )
+    body = _ruleset_body(ruleset)
+    assert body["bypass_actors"] == []

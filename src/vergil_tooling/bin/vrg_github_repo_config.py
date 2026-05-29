@@ -83,7 +83,9 @@ def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
     """Compute diff between desired and actual GitHub state for a repo."""
     result = fetch_actual_state(repo)
     is_org = result.owner_type == "Organization"
-    desired = compute_desired_state(config, visibility=result.visibility, is_org=is_org)
+    desired = compute_desired_state(
+        config, visibility=result.visibility, is_org=is_org, app_mode=github.is_app_mode()
+    )
     return compute_diff(desired=desired, actual=result.state)
 
 
@@ -119,6 +121,8 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
             print(
                 f"    {field_name}: skipped (requires GitHub Advanced Security for private repos)"
             )
+        elif field_name.endswith(".bypass_actors"):
+            print(f"    {field_name}: skipped (not visible with GitHub App credentials)")
 
 
 def _apply_repo(repo: str, config: VergilConfig) -> list[str]:
