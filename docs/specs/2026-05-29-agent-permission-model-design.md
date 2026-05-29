@@ -38,6 +38,35 @@ Three problems converge:
    consistency, coding standards compliance) requires LLM-based
    review.
 
+### Compliance alignment
+
+The AI contribution compliance review
+(`2026-05-27-ai-contribution-compliance-design.md`, #1223) assessed
+Vergil's posture against the CPython AI contribution guidelines and
+found:
+
+- **P1 (human accountability):** "Structured" — the workflow
+  encourages but does not mechanically enforce human ownership of
+  submissions.
+- **P2 (review before submission):** "Structured" — no mechanism
+  forces the human to actually review the diff before it becomes
+  a PR.
+- **P3 (explainability):** "Advisory" — nothing verifies the human
+  understands what they are merging.
+
+This design directly addresses P1 and P2 by moving PR creation to a
+human-triggered tool, mechanically enforcing that the human acts to
+submit. It moves both from "Structured" to "Enforced." The
+`vrg-submit-pr` redesign is also the natural place to address the
+P3 follow-up (a structured self-attestation step) proposed in the
+compliance spec.
+
+More broadly, the principle of minimizing agent write permissions and
+inserting the human at critical decision points aligns with the
+emerging industry consensus on AI-assisted engineering: the human
+contributor bears full responsibility for all submissions, and the
+tooling should enforce — not merely encourage — that accountability.
+
 ## Design Principles
 
 **Minimize agent write permissions.** Every write permission granted
@@ -64,6 +93,60 @@ agents the ability to perform trivial operations (closing issues,
 editing labels) that the human can do with a few clicks is
 wasteful. The system should be designed to minimize token expense,
 not maximize agent autonomy.
+
+## Three-Layer Security Model
+
+The permission architecture is built on three layers of control with
+decreasing trust and increasing hardness. Every permission decision
+in this spec references which layers protect it.
+
+**Layer 1 — VM-internal controls (soft gates).** Wrapper scripts
+(`vrg-git`, `vrg-gh`), hook guards, subcommand allowlists,
+identity-aware tool behavior. These provide early feedback for a
+well-behaved agent — like real-time linting that catches mistakes
+as you type rather than days later in review. Against an adversarial
+agent, these are trivially bypassed: the agent can become root inside
+the VM, find the raw binaries, and reverse-engineer the wrappers.
+We accept this. Soft gates correct behavior; they do not contain
+threats.
+
+**Layer 2 — Server-side controls (hard gates).** GitHub App
+permissions, branch protection rules, collaborator access levels.
+These are the real security boundary. The agent cannot bypass them
+from inside the VM — they are enforced by GitHub's infrastructure,
+outside the agent's control. When a soft gate has a corresponding
+hard gate, the soft gate is defense-in-depth. When a soft gate has
+no corresponding hard gate, this is a documented gap.
+
+**Layer 3 — Operational auditing (detection).** Periodic review of
+operations performed within the environment of layers 1 and 2.
+Validates that controls are working. Detects moments when soft gates
+were bypassed, whether hard gates caught the attempt, and whether
+any gaps were exploited. This is the ultimate safety net. Even when
+all hard gates are working, auditing confirms they are working and
+surfaces patterns that indicate drift or attack.
+
+### Documented gaps
+
+Where a soft gate exists without a corresponding hard gate, this
+spec documents it explicitly. Known gaps:
+
+- **Audit App `pull_requests: write` grants more than review.**
+  GitHub does not offer a "review-only" PR permission. The soft gate
+  (vrg-gh audit allowlist) restricts to view/comment/review, but the
+  server-side permits PR creation, editing, and closing. Mitigation:
+  the audit identity is a Read-level collaborator and cannot merge
+  anything it creates. This is a Mimir validation target.
+
+- **Agent can attempt `vrg-submit-pr`.** The soft gate is
+  identity-aware tool rejection. The hard gate is `pull_requests:
+  read` on the street-mode App, which causes the underlying
+  `gh pr create` to fail server-side. This gap is fully covered
+  by a hard gate.
+
+Additional gaps will be documented as they are discovered. Mimir
+testing is specifically designed to find and exploit undocumented
+gaps.
 
 ## The Racetrack Model
 
@@ -130,7 +213,7 @@ mode switch command.
 | `issues` | write | Create and comment on issues |
 | `pull_requests` | read | View PRs, check status |
 | `metadata` | read | Required baseline |
-| `workflows` | none | Server-side blocks workflow file pushes |
+| `workflows` | none | Server-side hard gate blocks workflow file pushes |
 
 **Track-mode App (`vergil-admin-app`):**
 
@@ -155,6 +238,14 @@ mode switch command.
 The audit App has an inverted permission shape compared to street
 mode: more PR permission (write vs. read) but less code permission
 (read vs. write). The permissions are shaped exactly for the role.
+
+**Provisional status.** The audit identity's architectural position
+(third identity, inverted permission shape, Officials role) is
+load-bearing for the overall design and is defined here. The
+specific permissions and vrg-gh allowlist are provisional — they
+are based on the one confirmed use case (PR standards review) and
+are subject to revision as additional use cases emerge and the
+triggering mechanism is designed.
 
 ### VM Architecture
 
@@ -182,6 +273,22 @@ distinct — the human must never be uncertain about which mode they
 are in. Specific visual treatment (color scheme, prompt indicator,
 login banner) is an implementation detail, but the requirement is
 ambient, persistent differentiation.
+
+**Shared filesystem.** All VMs mount the host's project directory
+tree at the same path. The agent writes to the same filesystem the
+human sees — there is no file sync or handover mechanism. When the
+agent writes `.vergil/pr-template.yml`, the human sees it
+immediately on their host terminal. The VM is a credential sandbox
+with a shared filesystem, not an isolated environment.
+
+**Mode detection.** Each VM is provisioned with credentials and a
+mode indicator as part of its configuration. The vergil-vm repo
+owns this configuration. The tooling (`vrg-git`, `vrg-gh`,
+`vrg-submit-pr`) reads the mode from the VM's local configuration
+to determine which allowlists and credential paths apply. This is
+a VM provisioning concern, not a source code concern — `vergil.toml`
+is shared source code and must not contain per-user or per-VM
+configuration.
 
 ## The `.vergil/` Scratch Convention
 
@@ -239,8 +346,9 @@ Agent                              Human (Race Director)
 1. Write code
 2. Commit (vrg-commit)
 3. Push branch (vrg-git push)
-   └─ Server rejects if workflow
-      files changed (tripwire)
+   └─ If push fails (workflow files
+      changed): agent stops, reports
+      failure, escalates to human
 4. Write .vergil/pr-template.yml
 5. Signal: "ready for PR"
                                    6. Review template, edit if needed
@@ -251,6 +359,16 @@ Agent                              Human (Race Director)
 
 The agent's boundary is step 5. Everything after that is a human
 operation triggered by `vrg-*` CLI tools.
+
+**Push failure handling.** When `vrg-git push` fails because the
+App token lacks `workflows` permission, the wrapper detects the
+specific GitHub error and provides identity-aware feedback: the
+agent is told its identity is not permitted to push workflow file
+changes, and it must stop and escalate to the Race Director. The
+agent must not attempt to work around the failure (e.g., by
+removing workflow files from the commit and re-pushing). The human
+decides whether to use the track-mode VM or remove the workflow
+changes from scope.
 
 ### Track Mode (Elevated Operations)
 
@@ -295,13 +413,19 @@ changes without an agent.
 
 **Neither template nor args:** Fatal error. The tool does not guess.
 
-**Credential selection:** `vrg-submit-pr` is a human-triggered tool.
-When the street-mode App has `pull_requests: read`, the server-side
-rejects PR creation attempts regardless of client-side credential
-selection. This is the hard gate. The tool's credential logic is
-defense-in-depth — it should select the human's PAT when creating
-PRs, but even if it selected the wrong credential, the server would
-reject it. The agent never invokes `vrg-submit-pr` directly.
+**Identity-aware enforcement.** `vrg-submit-pr` checks the
+credential environment on startup. If it detects any agent identity
+(driver, admin, or audit), it aborts immediately with a clear
+message: PR submission is a Race Director operation. This is a
+Layer 1 soft gate. The Layer 2 hard gate is `pull_requests: read`
+on the street-mode App, which causes the underlying `gh pr create`
+to fail server-side even if the soft gate is bypassed.
+
+**Hook guard feedback.** When blocking operations, the hook guard
+provides identity-aware denial messages. It does not mention
+`vrg-submit-pr` as a redirect if the identity lacks the right to
+use it — no information leakage about tools the agent should not
+know about.
 
 ## `vrg-finalize-pr` (Renamed from `vrg-finalize-repo`)
 
@@ -398,6 +522,57 @@ a justification.
    a justified use case is discovered.
 3. Deltas are reviewed whenever the permission model is modified.
 
+## Migration Strategy
+
+### Identity transition
+
+The new identities (`<user>-vergil-user`, `<user>-vergil-admin`,
+`<user>-vergil-audit`) are created from scratch alongside the
+existing `<user>-vergil` identity. Both sets operate in parallel
+during the transition:
+
+- **Phase 1:** Create the three new GitHub accounts and GitHub
+  Apps. Provision new VMs with the new credentials. The existing
+  `<user>-vergil` identity and tooling on 2.0.x continue unchanged.
+
+- **Phase 2:** Build the tooling changes (Track A below) as a 2.1
+  release using the 2.0 tooling. The new 2.1 tooling is used in the
+  new VMs; the old 2.0 tooling continues in the existing VM.
+
+- **Phase 3:** Retire the old `<user>-vergil` identity and 2.0
+  tooling. The new VMs and 2.1 become the default.
+
+### Version-gated cutover
+
+The permission model changes land as a minor version upgrade:
+2.0.x → 2.1. This provides a clean boundary:
+
+- 2.0.x: existing identity, existing permissions, `vrg-finalize-repo`
+- 2.1: new identities, reduced permissions, `vrg-finalize-pr`
+
+During the transition window, `vrg-finalize-repo` ships as a
+deprecated alias that prints a warning and calls `vrg-finalize-pr`.
+The alias is removed in a subsequent minor version.
+
+### Consuming repo migration
+
+When a consuming repo upgrades from vergil-tooling 2.0 to 2.1,
+the following must be updated:
+
+- **CLAUDE.md:** Update agent instructions to reflect reduced
+  capabilities (no PR submission, no issue close/reopen/edit).
+- **Memory files:** Audit for stale entries that reference old
+  workflows, old tool names, or workarounds for behaviors that no
+  longer apply.
+- **Documentation:** Update any references to `vrg-finalize-repo`,
+  agent PR submission workflows, or identity naming.
+- **`.gitignore`:** Add `.vergil/` entry.
+- **Skills/hooks:** Update any skills that reference agent PR
+  submission or the old identity naming convention.
+
+A migration checklist will be maintained as part of the 2.1
+release documentation.
+
 ## Implementation Approach
 
 Parallel tracks with safe sequencing:
@@ -433,7 +608,7 @@ the triggering and integration details are a follow-up design.
 
 **Immediate safe restriction:** Remove `workflows` permission from
 the street-mode App now. No workflow changes are queued, so this
-costs nothing and activates the server-side tripwire immediately.
+costs nothing and activates the server-side hard gate immediately.
 
 ## Open Questions
 
