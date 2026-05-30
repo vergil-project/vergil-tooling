@@ -178,11 +178,36 @@ def active_session_ids(roster: list[dict[str, object]]) -> set[str]:
     return out
 
 
-def _read_state() -> tuple[dict[str, str], set[str]]:
+def projects_glob(projects_dir: Path, session_id: str) -> Path:
+    """Path to a session's transcript (``<slug>/<sessionId>.jsonl``)."""
+    matches = sorted(projects_dir.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if matches else projects_dir / f"{session_id}.jsonl"
+
+
+def _roster_updated_at(roster: list[dict[str, object]]) -> dict[str, float]:
+    """Map session id to last-active epoch seconds from roster ``updatedAt`` (ms)."""
+    out: dict[str, float] = {}
+    for entry in roster:
+        sid = entry.get("sessionId")
+        upd = entry.get("updatedAt")
+        if isinstance(sid, str) and isinstance(upd, (int, float)):
+            out[sid] = float(upd) / 1000.0
+    return out
+
+
+def _read_state() -> tuple[dict[str, str], set[str], dict[str, float]]:
     cdir = _claude_dir()
-    names = name_by_session(cdir / "projects")
-    active = active_session_ids(read_roster(cdir / "sessions"))
-    return names, active
+    projects = cdir / "projects"
+    names = name_by_session(projects)
+    roster = read_roster(cdir / "sessions")
+    active = active_session_ids(roster)
+    last_active = _roster_updated_at(roster)
+    for sid in names:
+        if sid not in last_active:
+            ts = _last_activity(projects_glob(projects, sid))
+            if ts is not None:
+                last_active[sid] = ts
+    return names, active, last_active
 
 
 def _exec_claude(args: list[str]) -> int:
@@ -198,7 +223,7 @@ def resolve(
     extra: list[str],
 ) -> int:
     """Classify, decide, and exec Claude for one identity + path."""
-    names, active = _read_state()
+    names, active, _last = _read_state()
     slots = build_slots(identity, path, names, active)
     decision = select(identity, path, slots, requested_slot, fork)
     if isinstance(decision, Refuse):
@@ -223,7 +248,7 @@ def resolve(
 
 def list_json() -> int:
     """Print every named session's state as JSON (for ``list --sessions``)."""
-    names, active = _read_state()
+    names, active, _last = _read_state()
     rows = [
         {
             "identity": r.identity,

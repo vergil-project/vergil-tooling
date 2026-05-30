@@ -38,8 +38,7 @@ def test_last_activity_missing_file(tmp_path: Path) -> None:
 def test_last_activity_skips_malformed_json(tmp_path: Path) -> None:
     f = tmp_path / "s.jsonl"
     f.write_text(
-        '{"type":"x","timestamp": BROKEN}\n'
-        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"x","timestamp": BROKEN}\n{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
     )
     assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
 
@@ -209,19 +208,19 @@ def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 
 
 def test_resolve_create(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
     assert r.resolve("id", "p", None, False, ["--model", "opus"]) == 0
     assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
 
 
 def test_resolve_resume(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set()))
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set(), {}))
     assert r.resolve("id", "p", None, False, []) == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
 
 
 def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
     assert r.resolve("id", "p", 1, True, []) == 0
     assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
 
@@ -229,7 +228,7 @@ def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[s
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
     assert r.resolve("id", "p", None, True, []) == 1  # fork without slot
     assert "ERROR" in capsys.readouterr().err
 
@@ -243,7 +242,7 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
 
 
 def test_list_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
     assert r.list_json() == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows == [{"identity": "id", "slot": 1, "path": "p", "sessionId": "s1", "active": True}]
@@ -263,9 +262,27 @@ def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     (sessions / "100.json").write_text('{"pid": 100, "sessionId": "s1"}')
     monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
     monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
-    names, active = r._read_state()
+    names, active, _la = r._read_state()
     assert names == {"s1": "id:01:p"}
     assert active == {"s1"}
+
+
+def test_read_state_returns_last_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    (projects / "s1.jsonl").write_text('{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n')
+    (projects / "s2.jsonl").write_text(
+        '{"type":"agent-name","agentName":"vergil:02:p","sessionId":"s2"}\n'
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "100.json").write_text('{"pid":100,"sessionId":"s2","updatedAt":1748000000000}')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
+    names, active, last_active = r._read_state()
+    assert active == {"s2"}
+    assert last_active["s2"] == 1748000000.0
+    assert last_active["s1"] == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
 
 
 # --- main ---
@@ -274,7 +291,7 @@ def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_main_list_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
     assert r.main(["--list-json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
 
