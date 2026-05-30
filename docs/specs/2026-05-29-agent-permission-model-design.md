@@ -47,7 +47,11 @@ the human, whose rights are the superset of every agent's — folded
 into the human-triggered `vrg-submit-pr` (see Ensure-pushed below).
 The most common workflow-touching change — bumping pinned action
 versions — is absorbed by the mechanized, human-run
-`vrg-dependency-update` (#918). An elevated "admin" identity remains
+`vrg-dependency-update` (#918). That tool is an ergonomic
+optimization, not a prerequisite: until it exists, action-pin bumps
+flow through the same ensure-pushed path as any other
+workflow-touching change, so this permission model does not block on
+#918. An elevated "admin" identity remains
 **defined as a reserved architectural slot**, filled only when a
 concrete use case requires it. This is the YAGNI-disciplined
 outcome: we keep the slot and its governing invariant, not a
@@ -82,18 +86,51 @@ emerging industry consensus on AI-assisted engineering: the human
 contributor bears full responsibility for all submissions, and the
 tooling should enforce — not merely encourage — that accountability.
 
+## Foundational Assumption
+
+The entire architecture rests on one assumption, stated here so that
+nothing downstream has to restate it: **the human who operates the
+host is the owner, and holds the maximum set of developer and
+administrative rights over every resource in play** — the
+repositories, the GitHub organization, the Apps, the VMs, the host
+itself. The human is the all-powerful party. Everything else is
+defined relative to that.
+
+From this, three things follow and are true everywhere in this spec:
+
+1. **Agents are sandboxed minions holding a strict subset.** An agent
+   is never the owner. Each agent identity is granted a deliberately
+   minimal subset of the human's rights, scoped to its role. It can
+   never be granted a right the human does not have.
+
+2. **Delegation to the host is the mechanism, not a workaround.** The
+   host is precisely where commands run under *human* control rather
+   than *agent* control. When an operation is too dangerous to hand an
+   agent, it is delegated to a human-triggered tool on the host — and
+   that tool can always carry it, because the host runs with the
+   owner's full rights. `vrg-submit-pr`'s ensure-pushed is the worked
+   example: it pushes with the human's superset credentials a change
+   the agent's subset would have been rejected for.
+
+3. **If the human lacks a required right, the architecture does not
+   function — by design.** This is not a gap to be patched with a
+   fallback or a runtime probe. If the operator is not the owner with
+   the umbrella rights this model assumes, the model is the wrong
+   model for that situation, and that is the correct, intended
+   outcome. We do not build degraded modes for a non-owner operator;
+   we assume the owner.
+
+The corollary used throughout: **if the human cannot perform an
+action, neither can the agent.**
+
 ## Design Principles
 
-**Agent rights are a subset of the human's.** The human operates the
-infrastructure with the full set of administrative rights — that is
-simply what it means to be the developer working on their own host.
-Sandboxing exists to contain that full access into a deliberately
-minimal subset for each agent identity, as basic risk management.
-The agent is never granted a right the human lacks, and — the
-operative corollary — **if the human cannot perform an action,
-neither can the agent.** This is why a human-triggered tool can
-always carry an operation the agent could not: the human is the
-superset.
+**Agent rights are a subset of the human's.** Per the Foundational
+Assumption above, the human operates the host with the full set of
+ownership rights, and sandboxing exists to contain that full access
+into a minimal per-identity subset. The agent is never granted a
+right the human lacks. This is why a human-triggered tool can always
+carry an operation the agent could not: the human is the superset.
 
 **Minimize agent write permissions.** Every write permission granted
 to the agent must have a documented, real-world justification. Read
@@ -114,6 +151,21 @@ their own privileges or perform the operations that really matter and
 cause damage. Those are encapsulated in `vrg-*` tools the human
 invokes deliberately, which concentrates human attention on the
 higher-risk work.
+
+**Human chokepoints are verification points.** Every high-risk,
+irreversible operation is denied to agents and reserved to a
+human-triggered `vrg-*` tool on the host. Because that tool runs in
+the owner's trusted context — outside any agent's reach — it is also
+the place to impose programmatic verification the hard gates cannot.
+Where GitHub's permission model is too coarse to *prevent* an unwanted
+agent action (the documented gaps), the human-run tool at the
+chokepoint can *detect* it before the irreversible step and refuse to
+proceed. Each destructive operation thus becomes a sanity-check
+opportunity: the merge gate verifies a PR's provenance, a release gate
+could verify a release's, and so on. This is the architectural answer
+to gaps that cannot be closed server-side — and it complements CI
+gates, which check the *content* of a change, by adding host-side
+checks on the *conduct* of the identities that produced it.
 
 **Correctness over cost.** Token cost is a real constraint. Granting
 agents the ability to perform trivial operations (closing issues,
@@ -151,7 +203,12 @@ Validates that controls are working. Detects moments when soft gates
 were bypassed, whether hard gates caught the attempt, and whether
 any gaps were exploited. This is the ultimate safety net. Even when
 all hard gates are working, auditing confirms they are working and
-surfaces patterns that indicate drift or attack.
+surfaces patterns that indicate drift or attack. Detection need not
+be purely retrospective: at a human-run chokepoint (such as merge), a
+detection check can be promoted into a *synchronous gate* that runs
+before the irreversible operation and refuses to proceed — see
+`vrg-finalize-pr`'s pre-merge provenance check. This is how Layer 3
+closes specific gaps that Layer 2 cannot.
 
 ### Documented gaps
 
@@ -165,8 +222,10 @@ spec documents it explicitly. Known gaps:
   allowlist) restricts the audit identity to view/comment/review, but
   server-side the permission also permits PR creation, editing, and
   closing. Mitigation: the audit identity is a Read-level
-  collaborator and cannot merge anything it creates. This is the
-  sharpest known hard-gate gap — and because audit is the identity we
+  collaborator and cannot merge anything it creates, and
+  `vrg-finalize-pr`'s pre-merge provenance check detects and blocks
+  any out-of-role audit action on a PR before the human merges it (see
+  that section). This is the sharpest known hard-gate gap — and because audit is the identity we
   most want to run with minimal human attention, it warrants the most
   Mimir scrutiny. It is also a candidate for upstream infrastructure
   advocacy: the correct fix is for GitHub to expose finer-grained PR
@@ -335,8 +394,16 @@ profile during provisioning, making it ambient and persistent.
 The tooling (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) reads
 `VRG_IDENTITY_MODE` to select allowlists and behaviors. Absence
 of the variable (or an unrecognized value) implies human identity.
-This is a derived value from VM configuration, not a user-controlled
-flag — the agent does not choose its own mode.
+
+`VRG_IDENTITY_MODE` is set by VM provisioning rather than chosen by
+the agent, but it is a **Layer 1 ergonomic, not a security control**.
+An adversarial agent that becomes root inside the VM can set or unset
+it and thereby relax the soft-gate allowlists. This changes nothing
+that matters: the identity boundary is the App credential provisioned
+to the VM, not the variable. No value of `VRG_IDENTITY_MODE` alters
+which private key is present, so none of it alters what GitHub will
+actually permit. Spoofing the mode loosens soft gates the spec
+already treats as bypassable; the hard gate is untouched.
 
 ## The `.vergil/` Scratch Convention
 
@@ -488,11 +555,12 @@ touches `.github/workflows/` — which the agent's own push would have
 been rejected for. This is precisely how workflow-touching changes
 reach the remote without any agent holding `workflows: write`.
 
-This depends on a credential assumption made explicit by the
-subset-of-human-rights principle: `vrg-submit-pr` runs in the human's
-host context with the human's full GitHub credentials. The whole
-model relies on the agent's rights being a subset of these — if the
-human cannot push a change, neither tool nor agent can.
+This is the Foundational Assumption in action, not a separate
+credential requirement: `vrg-submit-pr` runs on the host, in the
+owner's context, with the human's full GitHub credentials. The push
+succeeds because the human holds the superset. If the human cannot
+push the change, neither tool nor agent can — and that is the correct
+behavior, not a failure to handle.
 
 **Identity-aware enforcement.** `vrg-submit-pr` checks the
 credential environment on startup. If it detects any agent identity
@@ -516,12 +584,28 @@ about subcommands or identity.)
 The rename signals the scope change. This tool finalizes a specific
 PR:
 
-1. Merge the PR (or confirm already merged).
-2. Delete the feature branch (local and remote).
-3. Prune remote references.
-4. Post-merge housekeeping.
+1. **Pre-merge provenance check.** Fetch the PR's action history —
+   reviews and timeline events, each attributed by GitHub to the
+   identity that performed it — and cross-check every agent action
+   against what that identity's role permits. The audit identity must
+   never have created, edited, closed, or reopened the PR; if it did,
+   the tool aborts with the offending action named. An audit *approval*
+   is permitted but surfaced explicitly, so the human knows a green
+   review came from an advisory identity, not an authoritative one. The
+   human can override — they hold every right — but only consciously,
+   with the violation in front of them.
+2. Merge the PR (or confirm already merged).
+3. Delete the feature branch (local and remote).
+4. Prune remote references.
+5. Post-merge housekeeping.
 
-This is a human (Race Director) operation. No agent invokes it.
+This is a human (Race Director) operation. No agent invokes it. The
+pre-merge provenance check is the worked example of the "human
+chokepoints are verification points" principle: at the irreversible
+step it closes the audit identity's `pull_requests: write` hard-gate
+gap that GitHub's permission model cannot. It generalizes beyond
+audit — the check verifies that *no* agent identity performed an
+action its role forbids on the PR being merged.
 
 ## `vrg-gh` Restriction Changes
 
@@ -727,6 +811,15 @@ The slot is instantiated only when a concrete elevated-access use
 case appears, and its design must pair the elevated rights with
 heightened human involvement.
 
+**Programmatic PR review at the merge gate.** The pre-merge
+provenance check in `vrg-finalize-pr` establishes a host-side
+insertion point that runs before merge. Today the PR-quality strategy
+relies almost entirely on CI gates; the PR *review* process is not yet
+leveraged for substantive review of AI-authored changes. The same
+chokepoint is the natural home for future programmatic or agentic
+review of the PR's *content*, not just its provenance. Scope and
+mechanism are a follow-up design.
+
 **Visual differentiation specifics.** The requirement is that each
 VM is visually distinct. The specific treatment (color scheme, prompt
 indicators, login banners) needs design and user testing.
@@ -763,6 +856,13 @@ demonstrate that:
   (server-side).
 - The audit identity cannot modify code or escalate privileges.
 
+Mimir is expected to defeat every Layer 1 soft gate trivially —
+becoming root, finding the raw binaries, spoofing `VRG_IDENTITY_MODE`,
+reverse-engineering the wrappers — and that is the point: the soft
+gates are not where containment lives. Mimir's real work is sustained
+pressure on the Layer 2 hard gates and the documented gaps, which is
+where the architecture either holds or fails.
+
 Documenting known attack surfaces for Mimir rather than waiting for
 discovery is part of the validation strategy. (Mimir's own
 implementation is out of scope here and will be designed separately.)
@@ -777,6 +877,19 @@ would let any AI-assisted workflow contain agents more tightly. The
 architecture is, in part, an opportunity to make the current limits
 of AI-safety tooling visible and argue — with data — for taking them
 seriously.
+
+**Radical transparency about weak controls.** This spec deliberately
+documents its own soft spots loudly rather than burying them — a
+strategic choice, not an admission of sloppiness. The current state of
+AI-agent security tooling is alarmingly immature; much of what ships
+as a "control" is trivially bypassable, and in important respects the
+field has regressed against security ground that was settled decades
+ago. Naming our gaps precisely is how we prioritize closing them and
+how we build the evidence to argue the field must do better. The
+documented gaps are a work list, not a disclaimer. Where
+vendor-provided agent controls are weak, we say so plainly and route
+real containment to the hard gates we control rather than pretending
+the soft ones suffice.
 
 **Human accountability.** Every contribution standard reviewed
 (including CPython's) requires human accountability. This
