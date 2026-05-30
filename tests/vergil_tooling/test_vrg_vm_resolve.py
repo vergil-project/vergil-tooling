@@ -270,7 +270,10 @@ def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_read_state_returns_last_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     projects = tmp_path / "projects" / "slug"
     projects.mkdir(parents=True)
-    (projects / "s1.jsonl").write_text('{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n')
+    (projects / "s1.jsonl").write_text(
+        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n'
+    )
     (projects / "s2.jsonl").write_text(
         '{"type":"agent-name","agentName":"vergil:02:p","sessionId":"s2"}\n'
     )
