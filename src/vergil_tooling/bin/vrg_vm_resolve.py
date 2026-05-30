@@ -23,12 +23,16 @@ from pathlib import Path
 from vergil_tooling.lib.session import (
     Create,
     Fork,
+    PlanAction,
+    PromptStale,
     Refuse,
     Resume,
+    Slot,
     build_slots,
     list_rows,
     make_archived_name,
-    select,
+    parse_name,
+    plan_session,
 )
 
 
@@ -234,35 +238,78 @@ def _exec_claude(args: list[str]) -> int:
     return 0  # reached only when execvp is stubbed (tests)
 
 
+def _now() -> float:
+    return datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _prompt_stale(path: str, slot: int, age_days: int) -> str:
+    """Return ``'r'`` (resume), ``'f'`` (fresh), or ``'c'`` (cancel). Non-TTY -> ``'r'``."""
+    if not sys.stdin.isatty():
+        return "r"
+    print(
+        f"Slot {slot:02d} for {path} was last active {age_days} days ago.",
+        file=sys.stderr,
+    )
+    answer = input("[r]esume / [f]resh / [c]ancel? ").strip().lower()
+    return {"r": "r", "f": "f", "c": "c"}.get(answer[:1], "c")
+
+
+def _run_sweep(slots: list[Slot]) -> None:
+    timestamp = _now_iso()
+    for slot in slots:
+        print(f"auto-archiving slot {slot.slot:02d} ({slot.session_id})…", file=sys.stderr)
+        _archive_session(slot.session_id, timestamp)
+
+
+def _slot_num(name: str) -> int:
+    parsed = parse_name(name)
+    return parsed[1] if parsed else 0
+
+
+def _execute(path: str, action: PlanAction, extra: list[str]) -> int:
+    if isinstance(action, Refuse):
+        print(f"ERROR: {action.message}", file=sys.stderr)
+        return 1
+    if isinstance(action, Create):
+        return _exec_claude(["-n", action.name, *extra])
+    if isinstance(action, Resume):
+        return _exec_claude(["--resume", action.session_id, *extra])
+    if isinstance(action, Fork):
+        return _exec_claude(
+            ["--resume", action.session_id, "--fork-session", "-n", action.name, *extra]
+        )
+    prompt: PromptStale = action
+    choice = _prompt_stale(path, _slot_num(prompt.name), prompt.age_days)
+    if choice == "c":
+        return 0
+    if choice == "f":
+        _archive_session(prompt.session_id, _now_iso())
+        return _exec_claude(["-n", prompt.name, *extra])
+    return _exec_claude(["--resume", prompt.session_id, *extra])
+
+
 def resolve(
     identity: str,
     path: str,
     requested_slot: int | None,
     fork: bool,
+    fresh: bool,
     extra: list[str],
+    stale_days: int,
+    archive_days: int,
 ) -> int:
-    """Classify, decide, and exec Claude for one identity + path."""
-    names, active, _last = _read_state()
-    slots = build_slots(identity, path, names, active)
-    decision = select(identity, path, slots, requested_slot, fork)
-    if isinstance(decision, Refuse):
-        print(f"ERROR: {decision.message}", file=sys.stderr)
-        return 1
-    if isinstance(decision, Create):
-        return _exec_claude(["-n", decision.name, *extra])
-    if isinstance(decision, Resume):
-        return _exec_claude(["--resume", decision.session_id, *extra])
-    fork_decision: Fork = decision
-    return _exec_claude(
-        [
-            "--resume",
-            fork_decision.session_id,
-            "--fork-session",
-            "-n",
-            fork_decision.name,
-            *extra,
-        ]
+    """Plan, auto-archive stale cold slots, then exec Claude for one identity + path."""
+    names, active, last_active = _read_state()
+    slots = build_slots(identity, path, names, active, last_active)
+    plan = plan_session(
+        identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
     )
+    _run_sweep(plan.auto_archive)
+    return _execute(path, plan.action, extra)
 
 
 def list_json() -> int:

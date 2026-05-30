@@ -227,21 +227,37 @@ def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return calls
 
 
+DAY = 86400.0
+
+
+def _resolve(identity: str, path: str, **kw: object) -> int:
+    defaults: dict[str, object] = {
+        "requested_slot": None,
+        "fork": False,
+        "fresh": False,
+        "extra": [],
+        "stale_days": 7,
+        "archive_days": 14,
+    }
+    defaults.update(kw)
+    return r.resolve(identity, path, **defaults)  # type: ignore[arg-type]
+
+
 def test_resolve_create(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
-    assert r.resolve("id", "p", None, False, ["--model", "opus"]) == 0
+    assert _resolve("id", "p", extra=["--model", "opus"]) == 0
     assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
 
 
 def test_resolve_resume(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set(), {}))
-    assert r.resolve("id", "p", None, False, []) == 0
+    assert _resolve("id", "p") == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
 
 
 def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
-    assert r.resolve("id", "p", 1, True, []) == 0
+    assert _resolve("id", "p", requested_slot=1, fork=True) == 0
     assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
 
 
@@ -249,8 +265,83 @@ def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
-    assert r.resolve("id", "p", None, True, []) == 1  # fork without slot
+    assert _resolve("id", "p", fork=True) == 1  # fork without slot
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_resolve_sweeps_stale_and_creates(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    capture_exec: list[list[str]],
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"old": "vergil:01:p"}, set(), {"old": now - 20 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
+    archived: list[str] = []
+    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
+    assert _resolve("vergil", "p") == 0
+    assert archived == ["old"]
+    assert capture_exec == [["claude", "-n", "vergil:01:p"]]
+    assert "auto-archiving" in capsys.readouterr().err
+
+
+def test_resolve_warn_prompt_resume(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
+    assert _resolve("vergil", "p") == 0
+    assert capture_exec == [["claude", "--resume", "s1"]]
+
+
+def test_resolve_warn_prompt_fresh(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "f")
+    archived: list[str] = []
+    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
+    assert _resolve("vergil", "p") == 0
+    assert archived == ["s1"]
+    assert capture_exec == [["claude", "-n", "vergil:01:p"]]
+
+
+def test_resolve_warn_prompt_cancel(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "c")
+    assert _resolve("vergil", "p") == 0
+    assert capture_exec == []
+
+
+def test_prompt_stale_non_tty_returns_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: False)
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "r"
+
+
+def test_prompt_stale_tty_reads_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p: "f")
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "f"
+    monkeypatch.setattr("builtins.input", lambda _p: "")  # unrecognized -> cancel
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "c"
 
 
 def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
