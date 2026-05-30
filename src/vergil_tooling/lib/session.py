@@ -14,6 +14,7 @@ workspace paths, even though dashes and slashes are common inside both fields.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 
 SLOT_MIN = 1
@@ -182,6 +183,26 @@ def list_rows(
         if existing is None or (active and not existing.active):
             best[key] = SessionRow(identity, slot, path, session_id, active, la.get(session_id))
     return sorted(best.values(), key=lambda r: (r.identity, r.slot, r.path))
+
+
+class AgeBand(enum.Enum):
+    FRESH = "fresh"
+    WARN = "warn"
+    STALE = "stale"
+
+
+def classify_age(
+    now: float, last_active: float | None, stale_days: int, archive_days: int
+) -> AgeBand:
+    """Classify a session's age. Unknown age is treated as FRESH (never swept)."""
+    if last_active is None:
+        return AgeBand.FRESH
+    age_days = (now - last_active) / 86400.0
+    if age_days < stale_days:
+        return AgeBand.FRESH
+    if archive_days != 0 and age_days >= archive_days:
+        return AgeBand.STALE
+    return AgeBand.WARN
 
 
 def _lowest_free(slots: dict[int, Slot]) -> int | None:

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from vergil_tooling.lib.session import (
     SLOT_MAX,
+    AgeBand,
     Create,
+    classify_age,
     Fork,
     Refuse,
     Resume,
@@ -252,3 +254,26 @@ def test_build_slots_last_active_defaults_none() -> None:
 def test_list_rows_attaches_last_active() -> None:
     rows = list_rows({"s1": "vergil:01:p"}, active_sessions=set(), last_active={"s1": 5.0})
     assert rows[0].last_active == 5.0
+
+
+DAY = 86400.0
+
+
+def test_classify_age_fresh() -> None:
+    assert classify_age(100 * DAY, 99 * DAY, 7, 14) == AgeBand.FRESH
+
+
+def test_classify_age_warn() -> None:
+    assert classify_age(100 * DAY, 90 * DAY, 7, 14) == AgeBand.WARN
+
+
+def test_classify_age_stale() -> None:
+    assert classify_age(100 * DAY, 80 * DAY, 7, 14) == AgeBand.STALE
+
+
+def test_classify_age_unknown_is_fresh() -> None:
+    assert classify_age(100 * DAY, None, 7, 14) == AgeBand.FRESH
+
+
+def test_classify_age_archive_zero_never_stale() -> None:
+    assert classify_age(100 * DAY, 0.0, 7, 0) == AgeBand.WARN
