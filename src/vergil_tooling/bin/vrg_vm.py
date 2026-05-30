@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import shlex
 import sys
 from pathlib import Path
+from typing import cast
 
-from vergil_tooling.bin.vrg_vm_resolve import name_by_session
+from vergil_tooling.bin.vrg_vm_resolve import (
+    _archived_rows,
+    _last_activity,
+    name_by_session,
+    projects_glob,
+)
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -17,6 +24,8 @@ from vergil_tooling.lib.identity import (
     load_config,
     resolve_identity_by_name,
     resolve_model,
+    resolve_session_archive_days,
+    resolve_session_stale_days,
     resolve_vergil_version,
     resolve_vm_tag,
     resolve_workspace,
@@ -289,7 +298,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     config = load_config(config_path)
 
     if args.sessions:
-        return _list_sessions(config)
+        return _list_sessions(config, args)
 
     vms = list_vms()
     vm_map = {vm["name"]: vm["status"] for vm in vms}
@@ -304,39 +313,91 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _vm_active_session_ids(instance: str) -> set[str]:
-    """Active session ids reported by a running VM's in-VM resolver."""
+def _vm_active_sessions(instance: str) -> dict[str, float]:
+    """Map active session id -> last-active epoch from a running VM's resolver."""
     result = shell_run(instance, "vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
-    return {row["sessionId"] for row in rows if row.get("active")}
+    out: dict[str, float] = {}
+    for row in rows:
+        if row.get("state") == "active":
+            out[row["sessionId"]] = row.get("lastActive") or 0.0
+    return out
 
 
-def _list_sessions(config: IdentityConfig) -> int:
+def _format_age(last_active: float | None, now: float) -> str:
+    if last_active is None:
+        return "unknown"
+    days = (now - last_active) / 86400.0
+    if days < 1:
+        return f"{int(days * 24)}h"
+    return f"{int(days)}d"
+
+
+def _selected_states(args: argparse.Namespace) -> set[str]:
+    if args.all:
+        return {"active", "idle", "archived"}
+    states = {s for s in ("active", "idle", "archived") if getattr(args, s)}
+    return states or {"active", "idle"}
+
+
+def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     """List named Claude sessions across all identity VMs.
 
-    Transcripts are shared (host-backed), so names come from the host store;
-    liveness is queried per running VM, since each VM owns its own roster.
+    Transcripts are shared (host-backed), so names, idle ages, and archived rows
+    come from the host store; active liveness + updatedAt are queried per running
+    VM, since each VM owns its own roster.
     """
     vm_map = {vm["name"]: vm["status"] for vm in list_vms()}
-    active: set[str] = set()
+    active_updated: dict[str, float] = {}
     for identity in config.identities.values():
         if vm_map.get(identity.vm_instance) == "Running":
-            active |= _vm_active_session_ids(identity.vm_instance)
+            active_updated.update(_vm_active_sessions(identity.vm_instance))
 
-    names = name_by_session(Path.home() / ".claude" / "projects")
-    rows = list_rows(names, active)
+    projects = Path.home() / ".claude" / "projects"
+    names = name_by_session(projects)
+    last_active = dict(active_updated)
+    for sid in names:
+        if sid not in last_active:
+            ts = _last_activity(projects_glob(projects, sid))
+            if ts is not None:
+                last_active[sid] = ts
 
-    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<36} {'STATE':<8}")
-    print(f"{'─' * 16} {'─' * 6} {'─' * 36} {'─' * 8}")
-    for row in rows:
-        slot = f"{row.slot:02d}"
-        state = "active" if row.active else "idle"
-        print(f"{row.identity:<16} {slot:<6} {row.path:<36} {state:<8}")
+    active = set(active_updated)
+    rows: list[dict[str, object]] = [
+        {
+            "identity": row.identity,
+            "slot": row.slot,
+            "path": row.path,
+            "state": "active" if row.active else "idle",
+            "lastActive": row.last_active,
+        }
+        for row in list_rows(names, active, last_active)
+    ]
+    rows.extend(_archived_rows(names, last_active))
+
+    wanted = _selected_states(args)
+    rows = [r for r in rows if r["state"] in wanted]
+    rows.sort(key=lambda r: (str(r["identity"]), cast("int", r["slot"]), str(r["path"])))
+
+    now = datetime.datetime.now(tz=datetime.UTC).timestamp()
+    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<36} {'STATE':<9} {'LAST ACTIVE':<12}")
+    print(f"{'─' * 16} {'─' * 6} {'─' * 36} {'─' * 9} {'─' * 12}")
+    for r in rows:
+        slot = f"{cast('int', r['slot']):02d}"
+        age = _format_age(cast("float | None", r.get("lastActive")), now)
+        print(f"{r['identity']!s:<16} {slot:<6} {r['path']!s:<36} {r['state']!s:<9} {age:<12}")
 
     return 0
 
 
-def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str, model: str) -> str:
+def _session_inner(
+    args: argparse.Namespace,
+    identity_name: str,
+    rel_path: str,
+    model: str,
+    stale_days: int,
+    archive_days: int,
+) -> str:
     """Build the in-VM command: a raw override, or the session resolver."""
     source = ". ~/.config/vergil/claude.env 2>/dev/null;"
 
@@ -364,6 +425,9 @@ def _session_inner(args: argparse.Namespace, identity_name: str, rel_path: str, 
         resolve_cmd += ["--slot", str(args.slot)]
     if args.fork:
         resolve_cmd += ["--fork"]
+    if args.fresh:
+        resolve_cmd += ["--fresh"]
+    resolve_cmd += ["--stale-days", str(stale_days), "--archive-days", str(archive_days)]
     if extra:
         resolve_cmd += ["--", *extra]
     return f"{source} exec {shlex.join(resolve_cmd)}"
@@ -396,6 +460,14 @@ def _cmd_session(args: argparse.Namespace) -> int:
 
     os.environ["LIMA_SHELLENV_ALLOW"] = _TERMINAL_ENV_VARS
 
+    inner = _session_inner(
+        args,
+        name,
+        rel_path,
+        resolve_model(config, identity, args.model),
+        resolve_session_stale_days(config, identity),
+        resolve_session_archive_days(config, identity),
+    )
     cmd = [
         "limactl",
         "shell",
@@ -405,7 +477,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         identity.vm_instance,
         "bash",
         "-c",
-        _session_inner(args, name, rel_path, resolve_model(config, identity, args.model)),
+        inner,
     ]
     os.execvp(cmd[0], cmd)  # noqa: S606, S607
     return 0  # unreachable, keeps the type checker happy
@@ -475,6 +547,10 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="List named Claude sessions across identity VMs instead of VMs",
     )
+    p_list.add_argument("--active", action="store_true", help="With --sessions: only active")
+    p_list.add_argument("--idle", action="store_true", help="With --sessions: only idle")
+    p_list.add_argument("--archived", action="store_true", help="With --sessions: only archived")
+    p_list.add_argument("--all", action="store_true", help="With --sessions: include archived too")
 
     p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
     _add_identity_args(p_session)
@@ -492,6 +568,11 @@ def main(argv: list[str] | None = None) -> int:
         "--fork",
         action="store_true",
         help="Fork the targeted --slot into a new session instead of resuming it",
+    )
+    p_session.add_argument(
+        "--fresh",
+        action="store_true",
+        help="Start a brand-new session, archiving the old one and reclaiming its name",
     )
     p_session.add_argument(
         "--model",
