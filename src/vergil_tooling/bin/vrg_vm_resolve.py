@@ -14,6 +14,7 @@ is VM-local, so every ``pid`` belongs to this VM and liveness is checkable here.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -66,6 +67,52 @@ def name_by_session(projects_dir: Path) -> dict[str, str]:
         if name is not None:
             result[transcript.stem] = name
     return result
+
+
+def _parse_ts(value: object) -> float | None:
+    """Parse an ISO-8601 (``Z`` or offset) timestamp string to epoch seconds."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _last_activity(transcript: Path) -> float | None:
+    """Epoch seconds of the last *timestamped* entry, via a bounded tail read.
+
+    Reads the file end-first in chunks so large transcripts stay cheap, scanning
+    backward for the most recent line that carries a ``timestamp``.
+    """
+    try:
+        with transcript.open("rb") as fh:
+            fh.seek(0, 2)
+            pos = fh.tell()
+            block = 64 * 1024
+            data = b""
+            while pos > 0:
+                step = min(block, pos)
+                pos -= step
+                fh.seek(pos)
+                data = fh.read(step) + data
+                lines = data.split(b"\n")
+                data = lines[0] if pos > 0 else b""
+                candidates = lines[1:] if pos > 0 else lines
+                for raw in reversed(candidates):
+                    line = raw.strip()
+                    if not line or b'"timestamp"' not in line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = _parse_ts(entry.get("timestamp"))
+                    if ts is not None:
+                        return ts
+    except OSError:
+        return None
+    return None
 
 
 def read_roster(sessions_dir: Path) -> list[dict[str, object]]:

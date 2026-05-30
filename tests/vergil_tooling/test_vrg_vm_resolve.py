@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 from typing import TYPE_CHECKING
@@ -10,6 +11,54 @@ from vergil_tooling.bin import vrg_vm_resolve as r
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+UTC = datetime.timezone.utc
+
+
+def test_last_activity_reads_last_timestamped_entry(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"user","timestamp":"2026-05-01T00:00:00.000Z"}\n'
+        '{"type":"assistant","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s"}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_last_activity_none_when_no_timestamp(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s"}\n')
+    assert r._last_activity(f) is None
+
+
+def test_last_activity_missing_file(tmp_path: Path) -> None:
+    assert r._last_activity(tmp_path / "nope.jsonl") is None
+
+
+def test_last_activity_skips_malformed_json(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"x","timestamp": BROKEN}\n'
+        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_last_activity_handles_large_file_via_tail(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    pad = "x" * 1000
+    lines = [
+        '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","pad":"%s"}' % pad
+        for _ in range(5000)
+    ]
+    lines.append('{"type":"assistant","timestamp":"2026-05-30T12:00:00.000Z"}')
+    f.write_text("\n".join(lines) + "\n")
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 30, 12, tzinfo=UTC).timestamp()
+
+
+def test_parse_ts_invalid_returns_none() -> None:
+    assert r._parse_ts("not a date") is None
+    assert r._parse_ts(12345) is None
 
 
 # --- _last_agent_name ---
