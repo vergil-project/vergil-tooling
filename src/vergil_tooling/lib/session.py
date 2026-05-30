@@ -75,6 +75,7 @@ class Slot:
     slot: int
     session_id: str
     active: bool  # a live Claude client is attached
+    last_active: float | None = None  # epoch seconds; None when age is unknown
 
 
 @dataclass(frozen=True)
@@ -118,13 +119,16 @@ class SessionRow:
     path: str
     session_id: str
     active: bool
+    last_active: float | None = None  # epoch seconds; None when age is unknown
 
 
-def _merge_slot(slots: dict[int, Slot], slot: int, session_id: str, active: bool) -> None:
+def _merge_slot(
+    slots: dict[int, Slot], slot: int, session_id: str, active: bool, last_active: float | None
+) -> None:
     """Insert/replace a slot, letting an active session win a slot collision."""
     existing = slots.get(slot)
     if existing is None or (active and not existing.active):
-        slots[slot] = Slot(slot, session_id, active)
+        slots[slot] = Slot(slot, session_id, active, last_active)
 
 
 def build_slots(
@@ -132,14 +136,17 @@ def build_slots(
     path: str,
     name_by_session: dict[str, str],
     active_sessions: set[str],
+    last_active: dict[str, float] | None = None,
 ) -> dict[int, Slot]:
     """Build the slot map for one ``identity`` + ``path``.
 
     ``name_by_session`` maps session id to its current name (last ``agent-name``
     per transcript). ``active_sessions`` is the set of session ids with a live
-    roster entry. Names that do not parse, or that belong to another identity or
-    path, are ignored. On a slot collision an active session wins.
+    roster entry. ``last_active`` optionally maps session id to epoch seconds.
+    Names that do not parse, or that belong to another identity or path, are
+    ignored. On a slot collision an active session wins.
     """
+    la = last_active or {}
     slots: dict[int, Slot] = {}
     for session_id, name in name_by_session.items():
         parsed = parse_name(name)
@@ -148,19 +155,21 @@ def build_slots(
         row_identity, slot, row_path = parsed
         if row_identity != identity or row_path != path:
             continue
-        _merge_slot(slots, slot, session_id, session_id in active_sessions)
+        _merge_slot(slots, slot, session_id, session_id in active_sessions, la.get(session_id))
     return slots
 
 
 def list_rows(
     name_by_session: dict[str, str],
     active_sessions: set[str],
+    last_active: dict[str, float] | None = None,
 ) -> list[SessionRow]:
     """All named sessions as sorted rows, deduped per (identity, slot, path).
 
     On a duplicate (identity, slot, path) an active session wins. Rows are
     sorted by identity, then slot, then path for stable display.
     """
+    la = last_active or {}
     best: dict[tuple[str, int, str], SessionRow] = {}
     for session_id, name in name_by_session.items():
         parsed = parse_name(name)
@@ -171,7 +180,7 @@ def list_rows(
         key = (identity, slot, path)
         existing = best.get(key)
         if existing is None or (active and not existing.active):
-            best[key] = SessionRow(identity, slot, path, session_id, active)
+            best[key] = SessionRow(identity, slot, path, session_id, active, la.get(session_id))
     return sorted(best.values(), key=lambda r: (r.identity, r.slot, r.path))
 
 

@@ -235,3 +235,20 @@ def test_list_rows_keeps_active_when_idle_follows() -> None:
     name_by_session = {"live": "vergil:01:p", "idle": "vergil:01:p"}
     rows = list_rows(name_by_session, active_sessions={"live"})
     assert rows == [SessionRow("vergil", 1, "p", "live", active=True)]
+
+
+def test_build_slots_attaches_last_active() -> None:
+    slots = build_slots(
+        "vergil", "p", {"s1": "vergil:01:p"}, active_sessions=set(), last_active={"s1": 1000.0}
+    )
+    assert slots[1].last_active == 1000.0
+
+
+def test_build_slots_last_active_defaults_none() -> None:
+    slots = build_slots("vergil", "p", {"s1": "vergil:01:p"}, active_sessions=set())
+    assert slots[1].last_active is None
+
+
+def test_list_rows_attaches_last_active() -> None:
+    rows = list_rows({"s1": "vergil:01:p"}, active_sessions=set(), last_active={"s1": 5.0})
+    assert rows[0].last_active == 5.0
