@@ -19,19 +19,41 @@ from dataclasses import dataclass
 SLOT_MIN = 1
 SLOT_MAX = 99
 
+_ARCHIVED_PREFIX = "archived@"
+
 
 def make_name(identity: str, slot: int, path: str) -> str:
     """Build a session name ``<identity>:<NN>:<path>`` (slot zero-padded)."""
     return f"{identity}:{slot:02d}:{path}"
 
 
+def make_archived_name(name: str, timestamp: str) -> str:
+    """Archived label: ``archived@<timestamp>@<original-name>``."""
+    return f"{_ARCHIVED_PREFIX}{timestamp}@{name}"
+
+
+def parse_archived(name: str) -> tuple[str, str] | None:
+    """Parse an archived label into ``(timestamp, original_name)`` or ``None``.
+
+    Splits on the first two ``@`` so a workspace path containing ``@`` is safe.
+    """
+    if not name.startswith(_ARCHIVED_PREFIX):
+        return None
+    parts = name.split("@", 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
+
+
 def parse_name(name: str) -> tuple[str, int, str] | None:
     """Parse ``<identity>:<NN>:<path>`` into its fields.
 
-    Returns ``None`` for any string that does not match the scheme (wrong field
-    count, empty identity/path, or a slot that is not a two-digit number in
-    range).
+    Returns ``None`` for any string that does not match the scheme (an archived
+    label, wrong field count, empty identity/path, or a slot that is not a
+    two-digit number in range).
     """
+    if name.startswith(_ARCHIVED_PREFIX):
+        return None
     parts = name.split(":", 2)
     if len(parts) != 3:
         return None

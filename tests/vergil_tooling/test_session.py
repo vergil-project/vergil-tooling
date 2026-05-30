@@ -10,10 +10,38 @@ from vergil_tooling.lib.session import (
     Slot,
     build_slots,
     list_rows,
+    make_archived_name,
     make_name,
+    parse_archived,
     parse_name,
     select,
 )
+
+
+def test_make_archived_name() -> None:
+    assert (
+        make_archived_name("vergil:01:a/b", "2026-05-30T14:23:07Z")
+        == "archived@2026-05-30T14:23:07Z@vergil:01:a/b"
+    )
+
+
+def test_parse_name_rejects_archived_prefix() -> None:
+    assert parse_name("archived@2026-05-30T14:23:07Z@vergil:01:a/b") is None
+
+
+def test_parse_archived_roundtrip() -> None:
+    label = "archived@2026-05-30T14:23:07Z@vergil:01:a/b"
+    assert parse_archived(label) == ("2026-05-30T14:23:07Z", "vergil:01:a/b")
+
+
+def test_parse_archived_path_with_at_sign() -> None:
+    label = "archived@2026-05-30T14:23:07Z@vergil:01:clients/acme@2024"
+    assert parse_archived(label) == ("2026-05-30T14:23:07Z", "vergil:01:clients/acme@2024")
+
+
+def test_parse_archived_returns_none_for_non_archived() -> None:
+    assert parse_archived("vergil:01:a/b") is None
+    assert parse_archived("archived@only-two-parts") is None
 
 
 def test_make_name_zero_pads_slot() -> None:
