@@ -623,6 +623,7 @@ class TestList:
         output = capsys.readouterr().out
         assert "Not Created" in output
 
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=1700000000.0)
     @patch("vergil_tooling.bin.vrg_vm.name_by_session")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
@@ -631,6 +632,7 @@ class TestList:
         mock_list: MagicMock,
         mock_shell: MagicMock,
         mock_names: MagicMock,
+        _age: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -643,8 +645,17 @@ class TestList:
                         "slot": 1,
                         "path": "vergil-project/vm",
                         "sessionId": "s1",
-                        "active": True,
-                    }
+                        "state": "active",
+                        "lastActive": 1748000000.0,
+                    },
+                    {
+                        "identity": "vergil",
+                        "slot": 2,
+                        "path": "vergil-project/tooling",
+                        "sessionId": "s2",
+                        "state": "idle",
+                        "lastActive": 1700000000.0,
+                    },
                 ]
             )
         )
@@ -656,9 +667,40 @@ class TestList:
         assert result == 0
         out = capsys.readouterr().out
         assert "WORKSPACE" in out
+        assert "LAST ACTIVE" in out
         assert "vergil-project/vm" in out
         assert "active" in out
         assert "idle" in out
+
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_archived_filter(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        _age: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(stdout=json.dumps([]))
+        mock_names.return_value = {
+            "s1": "vergil:01:vergil-project/vm",
+            "a1": "archived@2026-05-01T00:00:00Z@vergil:03:tooling",
+        }
+        # default view hides archived
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        out = capsys.readouterr().out
+        assert "vergil-project/vm" in out
+        assert "tooling" not in out
+        # --archived shows only archived
+        assert main(["list", "--sessions", "--archived", "--config", str(config_file)]) == 0
+        out = capsys.readouterr().out
+        assert "tooling" in out
+        assert "archived" in out
 
     @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
@@ -1027,8 +1069,8 @@ def test_session_inner_strips_leading_double_dash() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False)
-    inner = _session_inner(ns, "vergil", "p", "")
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False)
+    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
     assert "exec bash" in inner
     assert "vrg-vm-resolve-session" not in inner
 
@@ -1038,7 +1080,53 @@ def test_session_inner_raw_override_ignores_model() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False)
-    inner = _session_inner(ns, "vergil", "p", "opus")
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False)
+    inner = _session_inner(ns, "vergil", "p", "opus", 7, 14)
     assert "exec bash" in inner
     assert "--model" not in inner
+
+
+def test_session_inner_includes_thresholds() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False)
+    inner = _session_inner(ns, "vergil", "p", "", 5, 30)
+    assert "--stale-days 5" in inner
+    assert "--archive-days 30" in inner
+
+
+def test_session_inner_fresh_flag() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=True)
+    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    assert "--fresh" in inner
+
+
+def test_format_age() -> None:
+    from vergil_tooling.bin.vrg_vm import _format_age
+
+    now = 100 * 86400.0
+    assert _format_age(None, now) == "unknown"
+    assert _format_age(now - 2 * 3600.0, now) == "2h"  # < 1 day
+    assert _format_age(now - 5 * 86400.0, now) == "5d"  # >= 1 day
+
+
+def test_selected_states() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _selected_states
+
+    def ns(**kw: bool) -> argparse.Namespace:
+        base = {"all": False, "active": False, "idle": False, "archived": False}
+        base.update(kw)
+        return argparse.Namespace(**base)
+
+    assert _selected_states(ns()) == {"active", "idle"}  # default
+    assert _selected_states(ns(all=True)) == {"active", "idle", "archived"}
+    assert _selected_states(ns(active=True)) == {"active"}
+    assert _selected_states(ns(idle=True, archived=True)) == {"idle", "archived"}

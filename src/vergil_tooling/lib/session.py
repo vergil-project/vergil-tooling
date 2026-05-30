@@ -14,10 +14,13 @@ workspace paths, even though dashes and slashes are common inside both fields.
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass
 
 SLOT_MIN = 1
 SLOT_MAX = 99
+
+_ARCHIVED_PREFIX = "archived@"
 
 
 def make_name(identity: str, slot: int, path: str) -> str:
@@ -25,13 +28,33 @@ def make_name(identity: str, slot: int, path: str) -> str:
     return f"{identity}:{slot:02d}:{path}"
 
 
+def make_archived_name(name: str, timestamp: str) -> str:
+    """Archived label: ``archived@<timestamp>@<original-name>``."""
+    return f"{_ARCHIVED_PREFIX}{timestamp}@{name}"
+
+
+def parse_archived(name: str) -> tuple[str, str] | None:
+    """Parse an archived label into ``(timestamp, original_name)`` or ``None``.
+
+    Splits on the first two ``@`` so a workspace path containing ``@`` is safe.
+    """
+    if not name.startswith(_ARCHIVED_PREFIX):
+        return None
+    parts = name.split("@", 2)
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
+
+
 def parse_name(name: str) -> tuple[str, int, str] | None:
     """Parse ``<identity>:<NN>:<path>`` into its fields.
 
-    Returns ``None`` for any string that does not match the scheme (wrong field
-    count, empty identity/path, or a slot that is not a two-digit number in
-    range).
+    Returns ``None`` for any string that does not match the scheme (an archived
+    label, wrong field count, empty identity/path, or a slot that is not a
+    two-digit number in range).
     """
+    if name.startswith(_ARCHIVED_PREFIX):
+        return None
     parts = name.split(":", 2)
     if len(parts) != 3:
         return None
@@ -53,6 +76,7 @@ class Slot:
     slot: int
     session_id: str
     active: bool  # a live Claude client is attached
+    last_active: float | None = None  # epoch seconds; None when age is unknown
 
 
 @dataclass(frozen=True)
@@ -96,13 +120,16 @@ class SessionRow:
     path: str
     session_id: str
     active: bool
+    last_active: float | None = None  # epoch seconds; None when age is unknown
 
 
-def _merge_slot(slots: dict[int, Slot], slot: int, session_id: str, active: bool) -> None:
+def _merge_slot(
+    slots: dict[int, Slot], slot: int, session_id: str, active: bool, last_active: float | None
+) -> None:
     """Insert/replace a slot, letting an active session win a slot collision."""
     existing = slots.get(slot)
     if existing is None or (active and not existing.active):
-        slots[slot] = Slot(slot, session_id, active)
+        slots[slot] = Slot(slot, session_id, active, last_active)
 
 
 def build_slots(
@@ -110,14 +137,17 @@ def build_slots(
     path: str,
     name_by_session: dict[str, str],
     active_sessions: set[str],
+    last_active: dict[str, float] | None = None,
 ) -> dict[int, Slot]:
     """Build the slot map for one ``identity`` + ``path``.
 
     ``name_by_session`` maps session id to its current name (last ``agent-name``
     per transcript). ``active_sessions`` is the set of session ids with a live
-    roster entry. Names that do not parse, or that belong to another identity or
-    path, are ignored. On a slot collision an active session wins.
+    roster entry. ``last_active`` optionally maps session id to epoch seconds.
+    Names that do not parse, or that belong to another identity or path, are
+    ignored. On a slot collision an active session wins.
     """
+    la = last_active or {}
     slots: dict[int, Slot] = {}
     for session_id, name in name_by_session.items():
         parsed = parse_name(name)
@@ -126,19 +156,21 @@ def build_slots(
         row_identity, slot, row_path = parsed
         if row_identity != identity or row_path != path:
             continue
-        _merge_slot(slots, slot, session_id, session_id in active_sessions)
+        _merge_slot(slots, slot, session_id, session_id in active_sessions, la.get(session_id))
     return slots
 
 
 def list_rows(
     name_by_session: dict[str, str],
     active_sessions: set[str],
+    last_active: dict[str, float] | None = None,
 ) -> list[SessionRow]:
     """All named sessions as sorted rows, deduped per (identity, slot, path).
 
     On a duplicate (identity, slot, path) an active session wins. Rows are
     sorted by identity, then slot, then path for stable display.
     """
+    la = last_active or {}
     best: dict[tuple[str, int, str], SessionRow] = {}
     for session_id, name in name_by_session.items():
         parsed = parse_name(name)
@@ -149,8 +181,28 @@ def list_rows(
         key = (identity, slot, path)
         existing = best.get(key)
         if existing is None or (active and not existing.active):
-            best[key] = SessionRow(identity, slot, path, session_id, active)
+            best[key] = SessionRow(identity, slot, path, session_id, active, la.get(session_id))
     return sorted(best.values(), key=lambda r: (r.identity, r.slot, r.path))
+
+
+class AgeBand(enum.Enum):
+    FRESH = "fresh"
+    WARN = "warn"
+    STALE = "stale"
+
+
+def classify_age(
+    now: float, last_active: float | None, stale_days: int, archive_days: int
+) -> AgeBand:
+    """Classify a session's age. Unknown age is treated as FRESH (never swept)."""
+    if last_active is None:
+        return AgeBand.FRESH
+    age_days = (now - last_active) / 86400.0
+    if age_days < stale_days:
+        return AgeBand.FRESH
+    if archive_days != 0 and age_days >= archive_days:
+        return AgeBand.STALE
+    return AgeBand.WARN
 
 
 def _lowest_free(slots: dict[int, Slot]) -> int | None:
@@ -224,3 +276,109 @@ def _select_fork(identity: str, path: str, slots: dict[int, Slot], slot: int | N
     if free is None:
         return _all_in_use(identity, path)
     return Fork(info.session_id, make_name(identity, free, path))
+
+
+@dataclass(frozen=True)
+class PromptStale:
+    """Warn-band: the resolver must prompt resume/fresh/cancel, then act."""
+
+    session_id: str  # resume this on [r]
+    name: str  # reclaim this name on [f] (archive session_id, then create name)
+    age_days: int
+
+
+PlanAction = Create | Resume | Fork | Refuse | PromptStale
+
+
+@dataclass(frozen=True)
+class SessionPlan:
+    """A full session decision: cold slots to auto-archive, then an action."""
+
+    auto_archive: list[Slot]
+    action: PlanAction
+
+
+def _idle_by_recency(slots: dict[int, Slot]) -> list[Slot]:
+    """Idle slots, most-recently-active first (unknown age sorts oldest)."""
+    idle = [s for s in slots.values() if not s.active]
+    return sorted(
+        idle,
+        key=lambda s: (s.last_active is not None, s.last_active or 0.0),
+        reverse=True,
+    )
+
+
+def plan_session(
+    identity: str,
+    path: str,
+    slots: dict[int, Slot],
+    now: float,
+    stale_days: int,
+    archive_days: int,
+    requested_slot: int | None = None,
+    fork: bool = False,
+    fresh: bool = False,
+) -> SessionPlan:
+    """Plan a session launch: which cold slots to archive, then what to do."""
+    if fork:
+        return SessionPlan([], _select_fork(identity, path, slots, requested_slot))
+    if fresh:
+        return _plan_fresh(identity, path, slots, requested_slot)
+    if requested_slot is not None:
+        return SessionPlan([], _select_explicit(identity, path, slots, requested_slot))
+
+    sweep = [
+        s
+        for s in slots.values()
+        if not s.active
+        and classify_age(now, s.last_active, stale_days, archive_days) == AgeBand.STALE
+    ]
+    swept = {s.slot for s in sweep}
+    remaining = {n: s for n, s in slots.items() if n not in swept}
+    return SessionPlan(
+        sweep, _select_auto(identity, path, remaining, now, stale_days, archive_days)
+    )
+
+
+def _select_auto(
+    identity: str,
+    path: str,
+    slots: dict[int, Slot],
+    now: float,
+    stale_days: int,
+    archive_days: int,
+) -> PlanAction:
+    """Most-recent idle in FRESH resumes; in WARN prompts; else create free."""
+    for slot in _idle_by_recency(slots):
+        band = classify_age(now, slot.last_active, stale_days, archive_days)
+        if band == AgeBand.FRESH:
+            return Resume(slot.session_id)
+        age_days = int((now - (slot.last_active or now)) / 86400.0)
+        return PromptStale(slot.session_id, make_name(identity, slot.slot, path), age_days)
+    free = _lowest_free(slots)
+    if free is None:
+        return _all_in_use(identity, path)
+    return Create(make_name(identity, free, path))
+
+
+def _plan_fresh(
+    identity: str, path: str, slots: dict[int, Slot], requested_slot: int | None
+) -> SessionPlan:
+    """``--fresh``: archive the (cold) target and create fresh in that slot."""
+    if requested_slot is not None:
+        if not SLOT_MIN <= requested_slot <= SLOT_MAX:
+            return SessionPlan([], _bad_range())
+        target = slots.get(requested_slot)
+        slot_no = requested_slot
+    else:
+        idle = _idle_by_recency(slots)
+        target = idle[0] if idle else None
+        slot_no = target.slot if target else (_lowest_free(slots) or 0)
+    if slot_no == 0:
+        return SessionPlan([], _all_in_use(identity, path))
+    if target is not None and target.active:
+        return SessionPlan(
+            [], Refuse(f"slot {slot_no:02d} is active; cannot start fresh over a live session")
+        )
+    archive = [target] if target is not None else []
+    return SessionPlan(archive, Create(make_name(identity, slot_no, path)))

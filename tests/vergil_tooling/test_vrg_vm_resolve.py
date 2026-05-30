@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import json
 import os
 from typing import TYPE_CHECKING
@@ -10,6 +11,95 @@ from vergil_tooling.bin import vrg_vm_resolve as r
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+UTC = datetime.UTC
+
+
+def test_last_activity_reads_last_timestamped_entry(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"user","timestamp":"2026-05-01T00:00:00.000Z"}\n'
+        '{"type":"assistant","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s"}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_last_activity_none_when_no_timestamp(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s"}\n')
+    assert r._last_activity(f) is None
+
+
+def test_last_activity_missing_file(tmp_path: Path) -> None:
+    assert r._last_activity(tmp_path / "nope.jsonl") is None
+
+
+def test_last_activity_skips_malformed_json(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"x","timestamp": BROKEN}\n{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_last_activity_handles_large_file_via_tail(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    pad = "x" * 1000
+    lines = [
+        f'{{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","pad":"{pad}"}}'
+        for _ in range(5000)
+    ]
+    lines.append('{"type":"assistant","timestamp":"2026-05-30T12:00:00.000Z"}')
+    f.write_text("\n".join(lines) + "\n")
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 30, 12, tzinfo=UTC).timestamp()
+
+
+def test_parse_ts_invalid_returns_none() -> None:
+    assert r._parse_ts("not a date") is None
+    assert r._parse_ts(12345) is None
+
+
+def test_last_activity_skips_bad_timestamp_lines(tmp_path: Path) -> None:
+    # from the end: malformed JSON, then non-string timestamp, then a valid one
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"a","timestamp":123}\n'
+        '{"type":"b","timestamp": BROKEN}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_archive_session_append_oserror_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    (projects / "adir.jsonl").mkdir()  # a directory -> open("a") raises OSError
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_last_agent_name", lambda _t: "vergil:01:p")
+    r._archive_session("adir", "2026-05-30T14:23:07Z")  # must not raise
+
+
+def test_archive_session_appends_archived_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    t = projects / "s1.jsonl"
+    t.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    r._archive_session("s1", "2026-05-30T14:23:07Z")
+    assert r._last_agent_name(t) == "archived@2026-05-30T14:23:07Z@vergil:01:p"
+
+
+def test_archive_session_missing_transcript_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "projects").mkdir()
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    r._archive_session("ghost", "2026-05-30T14:23:07Z")  # must not raise
 
 
 # --- _last_agent_name ---
@@ -159,30 +249,121 @@ def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     return calls
 
 
+DAY = 86400.0
+
+
+def _resolve(identity: str, path: str, **kw: object) -> int:
+    defaults: dict[str, object] = {
+        "requested_slot": None,
+        "fork": False,
+        "fresh": False,
+        "extra": [],
+        "stale_days": 7,
+        "archive_days": 14,
+    }
+    defaults.update(kw)
+    return r.resolve(identity, path, **defaults)  # type: ignore[arg-type]
+
+
 def test_resolve_create(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
-    assert r.resolve("id", "p", None, False, ["--model", "opus"]) == 0
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
+    assert _resolve("id", "p", extra=["--model", "opus"]) == 0
     assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
 
 
 def test_resolve_resume(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set()))
-    assert r.resolve("id", "p", None, False, []) == 0
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set(), {}))
+    assert _resolve("id", "p") == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
 
 
 def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
-    assert r.resolve("id", "p", 1, True, []) == 0
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
+    assert _resolve("id", "p", requested_slot=1, fork=True) == 0
     assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
 
 
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
-    assert r.resolve("id", "p", None, True, []) == 1  # fork without slot
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
+    assert _resolve("id", "p", fork=True) == 1  # fork without slot
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_resolve_sweeps_stale_and_creates(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    capture_exec: list[list[str]],
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"old": "vergil:01:p"}, set(), {"old": now - 20 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
+    archived: list[str] = []
+    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
+    assert _resolve("vergil", "p") == 0
+    assert archived == ["old"]
+    assert capture_exec == [["claude", "-n", "vergil:01:p"]]
+    assert "auto-archiving" in capsys.readouterr().err
+
+
+def test_resolve_warn_prompt_resume(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
+    assert _resolve("vergil", "p") == 0
+    assert capture_exec == [["claude", "--resume", "s1"]]
+
+
+def test_resolve_warn_prompt_fresh(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "f")
+    archived: list[str] = []
+    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
+    assert _resolve("vergil", "p") == 0
+    assert archived == ["s1"]
+    assert capture_exec == [["claude", "-n", "vergil:01:p"]]
+
+
+def test_resolve_warn_prompt_cancel(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    now = 100 * DAY
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+    )
+    monkeypatch.setattr(r, "_now", lambda: now)
+    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "c")
+    assert _resolve("vergil", "p") == 0
+    assert capture_exec == []
+
+
+def test_prompt_stale_non_tty_returns_resume(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: False)
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "r"
+
+
+def test_prompt_stale_tty_reads_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _p: "f")
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "f"
+    monkeypatch.setattr("builtins.input", lambda _p: "")  # unrecognized -> cancel
+    assert r._prompt_stale("vergil-project/p", 1, 9) == "c"
 
 
 def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
@@ -193,11 +374,45 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
 # --- list_json ---
 
 
-def test_list_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}))
+def test_list_json_includes_age_and_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        r,
+        "_read_state",
+        lambda: (
+            {"s1": "vergil:01:p", "a1": "archived@2026-05-01T00:00:00Z@vergil:03:p"},
+            {"s1"},
+            {"s1": 1748000000.0, "a1": 1746000000.0},
+        ),
+    )
     assert r.list_json() == 0
     rows = json.loads(capsys.readouterr().out)
-    assert rows == [{"identity": "id", "slot": 1, "path": "p", "sessionId": "s1", "active": True}]
+    by = {(x["identity"], x["slot"], x["state"]): x for x in rows}
+    assert ("vergil", 1, "active") in by
+    assert by[("vergil", 1, "active")]["lastActive"] == 1748000000.0
+    assert ("vergil", 3, "archived") in by
+    assert by[("vergil", 3, "archived")]["archivedAt"] == "2026-05-01T00:00:00Z"
+
+
+def test_list_json_idle_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {}))
+    assert r.list_json() == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["state"] == "idle"
+
+
+def test_archived_rows_skips_unparseable_original(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # archived label whose embedded "original" is not a valid slot name
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"a1": "archived@2026-05-01T00:00:00Z@garbage"}, set(), {})
+    )
+    assert r.list_json() == 0
+    assert json.loads(capsys.readouterr().out) == []
 
 
 # --- _read_state integration ---
@@ -214,9 +429,30 @@ def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
     (sessions / "100.json").write_text('{"pid": 100, "sessionId": "s1"}')
     monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
     monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
-    names, active = r._read_state()
+    names, active, _la = r._read_state()
     assert names == {"s1": "id:01:p"}
     assert active == {"s1"}
+
+
+def test_read_state_returns_last_active(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    (projects / "s1.jsonl").write_text(
+        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n'
+    )
+    (projects / "s2.jsonl").write_text(
+        '{"type":"agent-name","agentName":"vergil:02:p","sessionId":"s2"}\n'
+    )
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "100.json").write_text('{"pid":100,"sessionId":"s2","updatedAt":1748000000000}')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
+    names, active, last_active = r._read_state()
+    assert active == {"s2"}
+    assert last_active["s2"] == 1748000000.0
+    assert last_active["s1"] == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
 
 
 # --- main ---
@@ -225,7 +461,7 @@ def test_read_state_combines(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 def test_main_list_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set()))
+    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
     assert r.main(["--list-json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
 
@@ -240,19 +476,30 @@ def test_main_requires_identity_and_path(
 def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_resolve(identity, path, slot, fork, extra):  # noqa: ANN001, ANN202
-        seen.update(identity=identity, path=path, slot=slot, fork=fork, extra=extra)
+    def fake_resolve(*args: object) -> int:
+        seen["args"] = args
         return 0
 
     monkeypatch.setattr(r, "resolve", fake_resolve)
-    assert r.main(["--identity", "id", "--path", "p", "--slot", "2", "x"]) == 0
-    assert seen == {
-        "identity": "id",
-        "path": "p",
-        "slot": 2,
-        "fork": False,
-        "extra": ["x"],
-    }
+    code = r.main(
+        [
+            "--identity",
+            "id",
+            "--path",
+            "p",
+            "--slot",
+            "2",
+            "--fresh",
+            "--stale-days",
+            "7",
+            "--archive-days",
+            "14",
+            "x",
+        ]
+    )
+    assert code == 0
+    # args order: identity, path, slot, fork, fresh, extra, stale_days, archive_days
+    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14)
 
 
 def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -260,7 +507,7 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         r,
         "resolve",
-        lambda i, p, s, f, extra: captured.update(extra=extra) or 0,  # noqa: ARG005
+        lambda *args: captured.update(extra=args[5]) or 0,  # noqa: ARG005
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]

@@ -14,6 +14,7 @@ is VM-local, so every ``pid`` belongs to this VM and liveness is checkable here.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -22,11 +23,17 @@ from pathlib import Path
 from vergil_tooling.lib.session import (
     Create,
     Fork,
+    PlanAction,
+    PromptStale,
     Refuse,
     Resume,
+    Slot,
     build_slots,
     list_rows,
-    select,
+    make_archived_name,
+    parse_archived,
+    parse_name,
+    plan_session,
 )
 
 
@@ -66,6 +73,52 @@ def name_by_session(projects_dir: Path) -> dict[str, str]:
         if name is not None:
             result[transcript.stem] = name
     return result
+
+
+def _parse_ts(value: object) -> float | None:
+    """Parse an ISO-8601 (``Z`` or offset) timestamp string to epoch seconds."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def _last_activity(transcript: Path) -> float | None:
+    """Epoch seconds of the last *timestamped* entry, via a bounded tail read.
+
+    Reads the file end-first in chunks so large transcripts stay cheap, scanning
+    backward for the most recent line that carries a ``timestamp``.
+    """
+    try:
+        with transcript.open("rb") as fh:
+            fh.seek(0, 2)
+            pos = fh.tell()
+            block = 64 * 1024
+            data = b""
+            while pos > 0:
+                step = min(block, pos)
+                pos -= step
+                fh.seek(pos)
+                data = fh.read(step) + data
+                lines = data.split(b"\n")
+                data = lines[0] if pos > 0 else b""
+                candidates = lines[1:] if pos > 0 else lines
+                for raw in reversed(candidates):
+                    line = raw.strip()
+                    if not line or b'"timestamp"' not in line:
+                        continue
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    ts = _parse_ts(entry.get("timestamp"))
+                    if ts is not None:
+                        return ts
+    except OSError:
+        return None
+    return None
 
 
 def read_roster(sessions_dir: Path) -> list[dict[str, object]]:
@@ -131,11 +184,54 @@ def active_session_ids(roster: list[dict[str, object]]) -> set[str]:
     return out
 
 
-def _read_state() -> tuple[dict[str, str], set[str]]:
+def projects_glob(projects_dir: Path, session_id: str) -> Path:
+    """Path to a session's transcript (``<slug>/<sessionId>.jsonl``)."""
+    matches = sorted(projects_dir.glob(f"*/{session_id}.jsonl"))
+    return matches[0] if matches else projects_dir / f"{session_id}.jsonl"
+
+
+def _roster_updated_at(roster: list[dict[str, object]]) -> dict[str, float]:
+    """Map session id to last-active epoch seconds from roster ``updatedAt`` (ms)."""
+    out: dict[str, float] = {}
+    for entry in roster:
+        sid = entry.get("sessionId")
+        upd = entry.get("updatedAt")
+        if isinstance(sid, str) and isinstance(upd, (int, float)):
+            out[sid] = float(upd) / 1000.0
+    return out
+
+
+def _read_state() -> tuple[dict[str, str], set[str], dict[str, float]]:
     cdir = _claude_dir()
-    names = name_by_session(cdir / "projects")
-    active = active_session_ids(read_roster(cdir / "sessions"))
-    return names, active
+    projects = cdir / "projects"
+    names = name_by_session(projects)
+    roster = read_roster(cdir / "sessions")
+    active = active_session_ids(roster)
+    last_active = _roster_updated_at(roster)
+    for sid in names:
+        if sid not in last_active:
+            ts = _last_activity(projects_glob(projects, sid))
+            if ts is not None:
+                last_active[sid] = ts
+    return names, active, last_active
+
+
+def _archive_session(session_id: str, timestamp: str) -> None:
+    """Relabel a cold session by appending an archived ``agent-name`` entry."""
+    transcript = projects_glob(_claude_dir() / "projects", session_id)
+    current = _last_agent_name(transcript)
+    if current is None:
+        return
+    entry = {
+        "type": "agent-name",
+        "agentName": make_archived_name(current, timestamp),
+        "sessionId": session_id,
+    }
+    try:
+        with transcript.open("a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        return
 
 
 def _exec_claude(args: list[str]) -> int:
@@ -143,50 +239,121 @@ def _exec_claude(args: list[str]) -> int:
     return 0  # reached only when execvp is stubbed (tests)
 
 
+def _now() -> float:
+    return datetime.datetime.now(tz=datetime.UTC).timestamp()
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _prompt_stale(path: str, slot: int, age_days: int) -> str:
+    """Return ``'r'`` (resume), ``'f'`` (fresh), or ``'c'`` (cancel). Non-TTY -> ``'r'``."""
+    if not sys.stdin.isatty():
+        return "r"
+    print(
+        f"Slot {slot:02d} for {path} was last active {age_days} days ago.",
+        file=sys.stderr,
+    )
+    answer = input("[r]esume / [f]resh / [c]ancel? ").strip().lower()
+    return {"r": "r", "f": "f", "c": "c"}.get(answer[:1], "c")
+
+
+def _run_sweep(slots: list[Slot]) -> None:
+    timestamp = _now_iso()
+    for slot in slots:
+        print(f"auto-archiving slot {slot.slot:02d} ({slot.session_id})…", file=sys.stderr)
+        _archive_session(slot.session_id, timestamp)
+
+
+def _slot_num(name: str) -> int:
+    parsed = parse_name(name)
+    return parsed[1] if parsed else 0
+
+
+def _execute(path: str, action: PlanAction, extra: list[str]) -> int:
+    if isinstance(action, Refuse):
+        print(f"ERROR: {action.message}", file=sys.stderr)
+        return 1
+    if isinstance(action, Create):
+        return _exec_claude(["-n", action.name, *extra])
+    if isinstance(action, Resume):
+        return _exec_claude(["--resume", action.session_id, *extra])
+    if isinstance(action, Fork):
+        return _exec_claude(
+            ["--resume", action.session_id, "--fork-session", "-n", action.name, *extra]
+        )
+    prompt: PromptStale = action
+    choice = _prompt_stale(path, _slot_num(prompt.name), prompt.age_days)
+    if choice == "c":
+        return 0
+    if choice == "f":
+        _archive_session(prompt.session_id, _now_iso())
+        return _exec_claude(["-n", prompt.name, *extra])
+    return _exec_claude(["--resume", prompt.session_id, *extra])
+
+
 def resolve(
     identity: str,
     path: str,
     requested_slot: int | None,
     fork: bool,
+    fresh: bool,
     extra: list[str],
+    stale_days: int,
+    archive_days: int,
 ) -> int:
-    """Classify, decide, and exec Claude for one identity + path."""
-    names, active = _read_state()
-    slots = build_slots(identity, path, names, active)
-    decision = select(identity, path, slots, requested_slot, fork)
-    if isinstance(decision, Refuse):
-        print(f"ERROR: {decision.message}", file=sys.stderr)
-        return 1
-    if isinstance(decision, Create):
-        return _exec_claude(["-n", decision.name, *extra])
-    if isinstance(decision, Resume):
-        return _exec_claude(["--resume", decision.session_id, *extra])
-    fork_decision: Fork = decision
-    return _exec_claude(
-        [
-            "--resume",
-            fork_decision.session_id,
-            "--fork-session",
-            "-n",
-            fork_decision.name,
-            *extra,
-        ]
+    """Plan, auto-archive stale cold slots, then exec Claude for one identity + path."""
+    names, active, last_active = _read_state()
+    slots = build_slots(identity, path, names, active, last_active)
+    plan = plan_session(
+        identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
     )
+    _run_sweep(plan.auto_archive)
+    return _execute(path, plan.action, extra)
+
+
+def _archived_rows(names: dict[str, str], last_active: dict[str, float]) -> list[dict[str, object]]:
+    """Rows for archived sessions, parsed from ``archived@`` labels."""
+    out: list[dict[str, object]] = []
+    for session_id, name in names.items():
+        parsed = parse_archived(name)
+        if parsed is None:
+            continue
+        timestamp, original = parsed
+        slot = parse_name(original)
+        if slot is None:
+            continue
+        identity, num, path = slot
+        out.append(
+            {
+                "identity": identity,
+                "slot": num,
+                "path": path,
+                "sessionId": session_id,
+                "state": "archived",
+                "archivedAt": timestamp,
+                "lastActive": last_active.get(session_id),
+            }
+        )
+    return out
 
 
 def list_json() -> int:
     """Print every named session's state as JSON (for ``list --sessions``)."""
-    names, active = _read_state()
-    rows = [
+    names, active, last_active = _read_state()
+    rows: list[dict[str, object]] = [
         {
-            "identity": r.identity,
-            "slot": r.slot,
-            "path": r.path,
-            "sessionId": r.session_id,
-            "active": r.active,
+            "identity": row.identity,
+            "slot": row.slot,
+            "path": row.path,
+            "sessionId": row.session_id,
+            "state": "active" if row.active else "idle",
+            "lastActive": row.last_active,
         }
-        for r in list_rows(names, active)
+        for row in list_rows(names, active, last_active)
     ]
+    rows.extend(_archived_rows(names, last_active))
     print(json.dumps(rows))
     return 0
 
@@ -197,6 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path")
     parser.add_argument("--slot", type=int)
     parser.add_argument("--fork", action="store_true")
+    parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--stale-days", type=int, default=7, dest="stale_days")
+    parser.add_argument("--archive-days", type=int, default=14, dest="archive_days")
     parser.add_argument("--list-json", action="store_true", dest="list_json")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -211,7 +381,16 @@ def main(argv: list[str] | None = None) -> int:
     extra = args.extra
     if extra and extra[0] == "--":
         extra = extra[1:]
-    return resolve(args.identity, args.path, args.slot, args.fork, extra)
+    return resolve(
+        args.identity,
+        args.path,
+        args.slot,
+        args.fork,
+        args.fresh,
+        extra,
+        args.stale_days,
+        args.archive_days,
+    )
 
 
 if __name__ == "__main__":
