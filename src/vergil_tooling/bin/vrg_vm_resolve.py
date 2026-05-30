@@ -31,6 +31,7 @@ from vergil_tooling.lib.session import (
     build_slots,
     list_rows,
     make_archived_name,
+    parse_archived,
     parse_name,
     plan_session,
 )
@@ -312,19 +313,47 @@ def resolve(
     return _execute(path, plan.action, extra)
 
 
+def _archived_rows(names: dict[str, str], last_active: dict[str, float]) -> list[dict[str, object]]:
+    """Rows for archived sessions, parsed from ``archived@`` labels."""
+    out: list[dict[str, object]] = []
+    for session_id, name in names.items():
+        parsed = parse_archived(name)
+        if parsed is None:
+            continue
+        timestamp, original = parsed
+        slot = parse_name(original)
+        if slot is None:
+            continue
+        identity, num, path = slot
+        out.append(
+            {
+                "identity": identity,
+                "slot": num,
+                "path": path,
+                "sessionId": session_id,
+                "state": "archived",
+                "archivedAt": timestamp,
+                "lastActive": last_active.get(session_id),
+            }
+        )
+    return out
+
+
 def list_json() -> int:
     """Print every named session's state as JSON (for ``list --sessions``)."""
-    names, active, _last = _read_state()
-    rows = [
+    names, active, last_active = _read_state()
+    rows: list[dict[str, object]] = [
         {
-            "identity": r.identity,
-            "slot": r.slot,
-            "path": r.path,
-            "sessionId": r.session_id,
-            "active": r.active,
+            "identity": row.identity,
+            "slot": row.slot,
+            "path": row.path,
+            "sessionId": row.session_id,
+            "state": "active" if row.active else "idle",
+            "lastActive": row.last_active,
         }
-        for r in list_rows(names, active)
+        for row in list_rows(names, active, last_active)
     ]
+    rows.extend(_archived_rows(names, last_active))
     print(json.dumps(rows))
     return 0
 

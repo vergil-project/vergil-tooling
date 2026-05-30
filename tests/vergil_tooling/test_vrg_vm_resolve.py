@@ -352,11 +352,45 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
 # --- list_json ---
 
 
-def test_list_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
+def test_list_json_includes_age_and_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        r,
+        "_read_state",
+        lambda: (
+            {"s1": "vergil:01:p", "a1": "archived@2026-05-01T00:00:00Z@vergil:03:p"},
+            {"s1"},
+            {"s1": 1748000000.0, "a1": 1746000000.0},
+        ),
+    )
     assert r.list_json() == 0
     rows = json.loads(capsys.readouterr().out)
-    assert rows == [{"identity": "id", "slot": 1, "path": "p", "sessionId": "s1", "active": True}]
+    by = {(x["identity"], x["slot"], x["state"]): x for x in rows}
+    assert ("vergil", 1, "active") in by
+    assert by[("vergil", 1, "active")]["lastActive"] == 1748000000.0
+    assert ("vergil", 3, "archived") in by
+    assert by[("vergil", 3, "archived")]["archivedAt"] == "2026-05-01T00:00:00Z"
+
+
+def test_list_json_idle_state(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {}))
+    assert r.list_json() == 0
+    rows = json.loads(capsys.readouterr().out)
+    assert rows[0]["state"] == "idle"
+
+
+def test_archived_rows_skips_unparseable_original(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # archived label whose embedded "original" is not a valid slot name
+    monkeypatch.setattr(
+        r, "_read_state", lambda: ({"a1": "archived@2026-05-01T00:00:00Z@garbage"}, set(), {})
+    )
+    assert r.list_json() == 0
+    assert json.loads(capsys.readouterr().out) == []
 
 
 # --- _read_state integration ---
