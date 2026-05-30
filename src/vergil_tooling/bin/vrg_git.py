@@ -5,11 +5,12 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.git import _git_auth_env
 
 _ALLOWED_SIMPLE: set[str] = {
@@ -196,6 +197,23 @@ def _check_worktree_convention(subcmd: str, args: list[str]) -> str | None:
     )
 
 
+_WORKFLOW_PERMISSION_RE = re.compile(
+    r"refusing to allow.*workflow.*without.*workflows.*permission",
+    re.IGNORECASE,
+)
+
+
+def _print_workflow_push_guidance() -> None:
+    mode = identity_mode.current_mode()
+    print(
+        f"\nvrg-git: Push rejected — workflow file changes require elevated permissions.\n"
+        f"  Your identity ({mode.value}) is not permitted to push workflow file changes.\n"
+        f"  Stop and escalate to the Race Director. Do not attempt to work around\n"
+        f"  this failure (e.g., by removing workflow files from the commit).",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -253,5 +271,25 @@ def main(argv: list[str] | None = None) -> int:
         token = github.get_installation_token()
         if token is not None:
             env = _git_auth_env(token)
+
+    if subcmd == "push":
+        result = subprocess.run(  # noqa: S603, S607
+            ["git", *argv],
+            check=False,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.stdout:
+            sys.stdout.write(result.stdout)
+        if result.returncode != 0 and _WORKFLOW_PERMISSION_RE.search(result.stderr or ""):
+            if result.stderr:
+                sys.stderr.write(result.stderr)
+            _print_workflow_push_guidance()
+            return result.returncode
+        if result.stderr:
+            sys.stderr.write(result.stderr)
+        return result.returncode
+
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode
