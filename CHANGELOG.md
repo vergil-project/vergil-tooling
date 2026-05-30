@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.75] - 2026-05-30
+
+### Chores
+
+- re-sync PR head with develop to clear stale out-of-date state
+
+### Features
+
+- let model cascade from a top-level identities.toml default
+
 ## [2.0.74] - 2026-05-29
 
 ### Features
