@@ -20,22 +20,24 @@
 |---|---|
 | `src/vergil_tooling/lib/identity.py` | Identity mode detection from environment — `current_mode()`, `is_agent()`, `is_human()` |
 | `src/vergil_tooling/lib/pr_template.py` | Read, write, delete `.vergil/pr-template.yml` — simple YAML-subset parser |
-| `src/vergil_tooling/bin/vrg_finalize_pr.py` | Renamed from `vrg_finalize_repo.py` — all logic moves here |
+| `src/vergil_tooling/lib/pr_provenance.py` | Pre-merge PR provenance check — classify identities, evaluate forbidden/advisory actions |
+| `src/vergil_tooling/bin/vrg_finalize_pr.py` | Consolidation of `vrg_finalize_repo.py` cleanup + merge + provenance check |
 | `tests/vergil_tooling/test_identity.py` | Tests for identity module |
 | `tests/vergil_tooling/test_pr_template.py` | Tests for PR template module |
-| `tests/vergil_tooling/test_vrg_finalize_pr.py` | Tests for renamed tool (moved from `test_vrg_finalize_repo.py`) |
+| `tests/vergil_tooling/test_pr_provenance.py` | Tests for PR provenance module |
+| `tests/vergil_tooling/test_vrg_finalize_pr.py` | Tests for consolidated tool (cleanup + merge + provenance) |
 
 **Modified files:**
 
 | File | Change |
 |---|---|
 | `.gitignore` | Add `.vergil/` entry |
-| `src/vergil_tooling/bin/vrg_gh.py` | Identity-aware allowlists and denial messages |
+| `src/vergil_tooling/bin/vrg_gh.py` | Identity-aware allowlists, denial messages, and `gh api` access (human full / audit GET / user denied) |
 | `src/vergil_tooling/bin/vrg_submit_pr.py` | Template mode, identity gate, refactored into CLI/template paths |
 | `src/vergil_tooling/bin/vrg_git.py` | Push workflow-error detection with identity-aware feedback |
 | `src/vergil_tooling/bin/vrg_finalize_repo.py` | Reduced to deprecated alias that imports `vrg_finalize_pr` |
 | `src/vergil_tooling/lib/release/finalize.py` | Update subprocess call from `vrg-finalize-repo` to `vrg-finalize-pr` |
-| `src/vergil_tooling/lib/github.py` | Update docstring reference to `vrg-finalize-pr` |
+| `src/vergil_tooling/lib/github.py` | Add `pr_state` helper; update merge docstring reference to `vrg-finalize-pr` |
 | `pyproject.toml` | Add `vrg-finalize-pr` console script entry |
 | `tests/vergil_tooling/test_vrg_gh.py` | Update allowed/denied pairs, add identity-aware tests |
 | `tests/vergil_tooling/test_vrg_submit_pr.py` | Add template mode, identity gate, and confirmation tests |
@@ -89,13 +91,9 @@ from vergil_tooling.lib.identity import IdentityMode, current_mode, is_agent, is
 
 
 class TestCurrentMode:
-    def test_street_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
-        assert current_mode() == IdentityMode.STREET
-
-    def test_track_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "track")
-        assert current_mode() == IdentityMode.TRACK
+    def test_user_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        assert current_mode() == IdentityMode.USER
 
     def test_audit_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
@@ -106,27 +104,27 @@ class TestCurrentMode:
         monkeypatch.delenv("VRG_APP_ID", raising=False)
         assert current_mode() == IdentityMode.HUMAN
 
-    def test_fallback_to_street_with_app_credentials(
+    def test_fallback_to_user_with_app_credentials(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.setenv("VRG_APP_ID", "12345")
-        assert current_mode() == IdentityMode.STREET
+        assert current_mode() == IdentityMode.USER
 
     def test_case_insensitive(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "TRACK")
-        assert current_mode() == IdentityMode.TRACK
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "USER")
+        assert current_mode() == IdentityMode.USER
 
     def test_whitespace_stripped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "  audit  ")
         assert current_mode() == IdentityMode.AUDIT
 
-    def test_invalid_mode_with_app_creds_falls_back_to_street(
+    def test_invalid_mode_with_app_creds_falls_back_to_user(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "invalid")
         monkeypatch.setenv("VRG_APP_ID", "12345")
-        assert current_mode() == IdentityMode.STREET
+        assert current_mode() == IdentityMode.USER
 
     def test_invalid_mode_without_app_creds_falls_back_to_human(
         self, monkeypatch: pytest.MonkeyPatch
@@ -137,12 +135,8 @@ class TestCurrentMode:
 
 
 class TestIsAgent:
-    def test_street_is_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
-        assert is_agent() is True
-
-    def test_track_is_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "track")
+    def test_user_is_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         assert is_agent() is True
 
     def test_audit_is_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,7 +156,7 @@ class TestIsHuman:
         assert is_human() is True
 
     def test_agent_is_not_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         assert is_human() is False
 ```
 
@@ -181,6 +175,13 @@ Create `src/vergil_tooling/lib/identity.py`:
 The VM provisioning sets ``VRG_IDENTITY_MODE`` alongside the GitHub App
 credentials. The mode determines which allowlists and behaviors apply
 in identity-aware tools (``vrg-gh``, ``vrg-submit-pr``, ``vrg-git``).
+
+``VRG_IDENTITY_MODE`` is a Layer 1 ergonomic, not a security control.
+An adversarial agent that becomes root inside the VM can set or unset
+it; doing so only relaxes soft-gate allowlists. The real identity
+boundary is the GitHub App credential provisioned to the VM, which no
+value of this variable can change. See the design spec's Three-Layer
+Security Model.
 """
 
 from __future__ import annotations
@@ -191,12 +192,11 @@ import os
 
 class IdentityMode(enum.Enum):
     HUMAN = "human"
-    STREET = "street"
-    TRACK = "track"
+    USER = "user"
     AUDIT = "audit"
 
 
-_AGENT_MODES = frozenset({IdentityMode.STREET, IdentityMode.TRACK, IdentityMode.AUDIT})
+_AGENT_MODES = frozenset({IdentityMode.USER, IdentityMode.AUDIT})
 
 _ENV_VAR = "VRG_IDENTITY_MODE"
 
@@ -210,7 +210,7 @@ def current_mode() -> IdentityMode:
         except ValueError:
             pass
     if os.environ.get("VRG_APP_ID"):
-        return IdentityMode.STREET
+        return IdentityMode.USER
     return IdentityMode.HUMAN
 
 
@@ -247,10 +247,10 @@ vrg-commit --type feat --scope identity --message "add identity detection module
 **Architecture note:** This task modifies `vrg-gh`, the *wrapper script* layer — not the hook guard. The two layers have distinct responsibilities: (1) the hook guard (`vrg-hook-guard`) is a dumb gate that blocks raw `git`/`gh` and redirects to `vrg-git`/`vrg-gh` — it knows nothing about subcommands or identity; (2) the wrapper scripts (`vrg-gh`, `vrg-git`) parse subcommands, apply identity-aware allowlists, and redirect to custom tools like `vrg-submit-pr`. No changes to the hook guard are needed for this task.
 
 This task converts `vrg-gh` from a static allowlist to an identity-aware system:
-- Street/track agents lose: `issue close`, `issue reopen`, `issue edit`, `pr edit`, `pr merge`
+- User agents lose: `issue close`, `issue reopen`, `issue edit`, `pr edit`, `pr merge`
 - Audit agents can only use: `pr view`, `pr diff`, `pr list`, `pr checks`, `pr comment`, `pr review`
 - `pr create` denied message stops mentioning `vrg-submit-pr` for agent identities
-- `pr review --approve` is allowed for audit and human identities, denied for street/track
+- `pr review --approve` is allowed for audit and human identities, denied for the user identity
 - Human identity retains the full current allowlist
 
 The approach: keep `_ALLOWED` as the human-level allowlist (maximum permissions). Add a `_denied_pairs()` function that returns identity-specific denied pairs. For audit mode, use a separate restricted allowlist. The denied-pairs check runs before the allowlist check, so agent-specific denials take precedence.
@@ -274,16 +274,11 @@ Add a new test class after the existing tests:
 
 
 class TestAgentDenials:
-    """Commands blocked for street/track agent identities.
+    """Commands blocked for the user agent identity."""
 
-    Both street and track modes share the same restricted allowlist.
-    The fixture parametrizes over both to ensure neither can bypass
-    agent-specific denials.
-    """
-
-    @pytest.fixture(autouse=True, params=["street", "track"])
-    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", request.param)
+    @pytest.fixture(autouse=True)
+    def _agent_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
 
     @pytest.mark.parametrize(
         ("top", "sub"),
@@ -441,12 +436,70 @@ class TestAuditAllowlist:
         self, top: str, sub: str, capsys: pytest.CaptureFixture[str]
     ) -> None:
         assert main([top, sub]) != 0
+
+
+class TestApiAccess:
+    """`gh api` is identity-aware: human full, audit GET-only, user denied."""
+
+    def test_user_api_denied(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        rc = main(["api", "repos/o/r/pulls/1/reviews"])
+        assert rc == 1
+        assert "denied for the user identity" in capsys.readouterr().err
+
+    def test_audit_api_get_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["api", "repos/o/r/pulls/1/reviews"])
+        assert rc == 0
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["-X", "POST"],
+            ["--method", "DELETE"],
+            ["-f", "title=x"],
+            ["--field", "body=y"],
+        ],
+    )
+    def test_audit_api_write_denied(
+        self, extra: list[str], monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        rc = main(["api", "repos/o/r/issues/1/comments", *extra])
+        assert rc == 1
+        assert "read-only GET" in capsys.readouterr().err
+
+    def test_human_api_allowed(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["api", "repos/o/r/pulls/1/merge", "-X", "PUT"])
+        assert rc == 0
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py::TestAgentDenials -v`
 Expected: FAIL — `vrg_gh` does not read identity mode yet.
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py::TestApiAccess -v`
+Expected: FAIL — `gh api` is not yet identity-aware.
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_gh.py::TestAuditAllowlist -v`
 Expected: FAIL — no audit allowlist.
@@ -513,9 +566,13 @@ _DENIED_HUMAN: dict[str, dict[str, str]] = {
 }
 
 _DENIED_TOP: dict[str, str] = {
-    "api": "gh api is denied by vrg-gh.",
     "auth": "gh auth is denied by vrg-gh.",
 }
+
+# `gh api` is identity-aware (handled in main, not in _DENIED_TOP):
+#   human -> full; audit -> read-only GET; user/other agent -> denied.
+# These flags flip gh's default verb from GET to POST.
+_API_WRITE_FLAGS: set[str] = {"-f", "-F", "--field", "--raw-field", "--input"}
 
 
 def _get_allowed() -> dict[str, set[str]]:
@@ -538,6 +595,59 @@ def _get_denied_pairs() -> dict[str, dict[str, str]]:
     return merged
 
 
+def _api_is_get(argv: list[str]) -> bool:
+    """Return True if a ``gh api`` invocation is a read-only GET.
+
+    gh defaults to GET, flips to POST when fields are present, and
+    honors an explicit ``-X``/``--method``.
+    """
+    method: str | None = None
+    has_fields = False
+    i = 1
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-X", "--method"):
+            if i + 1 < len(argv):
+                method = argv[i + 1].upper()
+            i += 2
+            continue
+        if arg.startswith("--method="):
+            method = arg.split("=", 1)[1].upper()
+        elif arg in _API_WRITE_FLAGS or arg.startswith(("--field=", "--raw-field=")):
+            has_fields = True
+        i += 1
+    if method is not None:
+        return method == "GET"
+    return not has_fields
+
+
+def _exec_gh(argv: list[str]) -> int:
+    """Inject the installation token and execute ``gh`` with retry."""
+    token = github.get_installation_token()
+    env: dict[str, str] | None = None
+    if token is not None:
+        env = {**os.environ, "GH_TOKEN": token}
+    try:
+        result = retry.run_with_retry(
+            ["gh", *argv],  # noqa: S607
+            env=env,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stdout:
+            sys.stdout.write(exc.stdout)
+        if exc.stderr:
+            sys.stderr.write(exc.stderr)
+        return exc.returncode
+    if result.stdout:
+        sys.stdout.write(result.stdout)
+    if result.stderr:
+        sys.stderr.write(result.stderr)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -552,6 +662,27 @@ def main(argv: list[str] | None = None) -> int:
         msg = _DENIED_TOP[top]
         print(f"vrg-gh: {top} is denied. {msg}", file=sys.stderr)
         return 1
+
+    # Identity-aware `gh api`: the broad escape hatch is gated per identity.
+    if top == "api":
+        mode = identity.current_mode()
+        if mode == identity.IdentityMode.USER:
+            print(
+                "vrg-gh: gh api is denied for the user identity "
+                "(broad write-capable escape hatch).",
+                file=sys.stderr,
+            )
+            return 1
+        if mode == identity.IdentityMode.AUDIT and not _api_is_get(argv):
+            print(
+                "vrg-gh: gh api is restricted to read-only GET calls "
+                "for the audit identity.",
+                file=sys.stderr,
+            )
+            return 1
+        # human (full) or audit GET: execute directly, bypassing the
+        # subcommand-pair allowlist (api has no fixed sub-actions).
+        return _exec_gh(argv)
 
     allowed = _get_allowed()
 
@@ -603,34 +734,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-    token = github.get_installation_token()
-    env: dict[str, str] | None = None
-    if token is not None:
-        env = {**os.environ, "GH_TOKEN": token}
-    try:
-        result = retry.run_with_retry(
-            ["gh", *argv],  # noqa: S607
-            env=env,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        if exc.stdout:
-            sys.stdout.write(exc.stdout)
-        if exc.stderr:
-            sys.stderr.write(exc.stderr)
-        return exc.returncode
-    if result.stdout:
-        sys.stdout.write(result.stdout)
-    if result.stderr:
-        sys.stderr.write(result.stderr)
-    return 0
+    return _exec_gh(argv)
 ```
 
 - [ ] **Step 4: Update existing tests for compatibility**
 
-The existing `_ALLOWED_PAIRS` and `_DENIED_PAIRS` parametrized tests run without an identity mode set, so they default to human mode. Six existing tests need updates:
+The existing `_ALLOWED_PAIRS` and `_DENIED_PAIRS` parametrized tests run without an identity mode set, so they default to human mode. Seven existing tests need updates:
 
 **4a.** Remove `("pr", "merge")` from `_ALLOWED_PAIRS` — it's tested separately in `TestHumanAllowlist`:
 
@@ -692,7 +801,7 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
 
 **4d.** Remove `test_pr_create_denied_suggests_vrg_submit_pr` — replaced by `TestHumanAllowlist.test_pr_create_mentions_vrg_submit_pr`.
 
-**4e.** Update `test_pr_review_approve_denied` to set street identity (without it, human mode allows approve):
+**4e.** Update `test_pr_review_approve_denied` to set the user identity (without it, human mode allows approve):
 
 Replace:
 ```python
@@ -704,16 +813,18 @@ def test_pr_review_approve_denied(capsys: pytest.CaptureFixture[str]) -> None:
 
 With:
 ```python
-def test_pr_review_approve_denied_for_street(
+def test_pr_review_approve_denied_for_user(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
+    monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
     assert main(["pr", "review", "--approve"]) != 0
     err = capsys.readouterr().err
     assert "approve" in err.lower()
 ```
 
 **4f.** `test_pr_review_no_flags_allowed` and `test_pr_review_comment_allowed` — no changes needed (human mode, no --approve).
+
+**4g.** Remove `test_api_denied` — `gh api` is no longer denied unconditionally. With no identity mode set the test defaulted to human, where `api` is now allowed. The identity-aware behavior is covered by `TestApiAccess` (user denied, audit GET-only, human full).
 
 - [ ] **Step 5: Run all vrg-gh tests**
 
@@ -1038,11 +1149,12 @@ vrg-commit --type feat --scope pr-template --message "add PR template library fo
 - Modify: `src/vergil_tooling/bin/vrg_submit_pr.py`
 - Modify: `tests/vergil_tooling/test_vrg_submit_pr.py`
 
-The tool gains two major changes:
+The tool gains three major changes:
 1. **Identity gate:** Aborts immediately for any agent identity.
-2. **Template mode:** When no `--issue`/`--summary`/`--title` CLI args are provided, reads `.vergil/pr-template.yml` instead. Template mode does NOT push (agent already pushed). Template mode prompts for confirmation before creating the PR.
+2. **Template mode:** When no `--issue`/`--summary`/`--title` CLI args are provided, reads `.vergil/pr-template.yml` instead. Template mode prompts for confirmation before creating the PR.
+3. **Ensure-pushed:** Before creating the PR, the tool pushes the branch to the remote using the human's host credentials. Because `vrg-submit-pr` runs in the human's context (the superset of any agent's rights, per the spec's Foundational Assumption), this push succeeds even when the branch touches `.github/workflows/` — which the agent's own push would have been rejected for. This is how workflow-touching changes reach the remote without any agent holding `workflows: write`. The agent never pushed (its push of a workflow-touching branch would fail), so template mode must push, not assume the branch is already on the remote.
 
-CLI argument mode (existing behavior) is preserved for direct human use and does push.
+CLI argument mode (existing behavior) is preserved for direct human use and also pushes.
 
 - [ ] **Step 1: Write failing tests for identity gate**
 
@@ -1052,20 +1164,13 @@ Add to `tests/vergil_tooling/test_vrg_submit_pr.py`:
 class TestIdentityGate:
     """Agent identities are blocked from PR submission."""
 
-    def test_street_mode_blocked(
+    def test_user_mode_blocked(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "street")
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result != 0
         assert "race director" in capsys.readouterr().err.lower()
-
-    def test_track_mode_blocked(
-        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        monkeypatch.setenv("VRG_IDENTITY_MODE", "track")
-        result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
-        assert result != 0
 
     def test_audit_mode_blocked(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1168,7 +1273,7 @@ class TestTemplateMode:
         assert result == 1
         assert (vergil / "pr-template.yml").exists()
 
-    def test_template_does_not_push(self, tmp_path: Path) -> None:
+    def test_template_ensures_pushed(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
         (vergil / "pr-template.yml").write_text(
@@ -1184,11 +1289,17 @@ class TestTemplateMode:
             patch(
                 "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
                 return_value="https://github.com/pr/1",
-            ),
+            ) as mock_pr,
             patch("builtins.input", return_value="y"),
         ):
             main([])
-        mock_git_run.assert_not_called()
+        # Ensure-pushed: the branch is pushed with the human's credentials
+        # before the PR is created.
+        push_calls = [
+            c for c in mock_git_run.call_args_list if c.args and c.args[0] == "push"
+        ]
+        assert push_calls, "expected vrg-submit-pr to push the branch"
+        mock_pr.assert_called_once()
 
     def test_no_template_and_no_args_errors(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
@@ -1243,9 +1354,15 @@ Replace `src/vergil_tooling/bin/vrg_submit_pr.py`:
 
 Supports two modes:
 - **Template mode** (no CLI args): reads ``.vergil/pr-template.yml``,
-  shows a summary, prompts for confirmation, creates the PR.
+  shows a summary, prompts for confirmation, pushes the branch, and
+  creates the PR.
 - **CLI argument mode** (args provided): existing direct invocation
   for human emergency use.
+
+Both modes ensure the branch is pushed using the human's host
+credentials before creating the PR. Because the human is the superset
+of any agent's rights, this carries workflow-touching pushes that the
+agent's own credentials would be rejected for.
 
 Agent identities are blocked — PR submission is a Race Director
 (human) operation.
@@ -1400,6 +1517,13 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     if answer != "y":
         print("Aborted.")
         return 1
+
+    # Ensure-pushed: push with the human's host credentials before creating
+    # the PR. The human is the superset of any agent's rights, so this push
+    # succeeds even for branches that touch .github/workflows/ — which the
+    # agent's own push would have been rejected for.
+    print(f"Ensuring branch '{branch}' is pushed to origin...")
+    git.run("push", "-u", "origin", branch)
 
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
@@ -1682,24 +1806,304 @@ vrg-commit --type feat --scope vrg-git --message "detect workflow permission err
 
 ---
 
-### Task 7: `vrg-finalize-pr` Rename
+### Task 7: `vrg-finalize-pr` (merge consolidation + pre-merge provenance check)
+
+This is not a rename — it is a consolidation. `vrg-finalize-repo` was
+post-merge cleanup only (branch deletion, prune, validation, CD
+check); the human merged the PR by hand on the web first. We collapse
+both into one human tool, `vrg-finalize-pr`, and add a pre-merge
+provenance check — the host-side "human chokepoint" verification from
+the design spec that closes gaps GitHub's coarse permission model
+cannot enforce server-side.
+
+The tool has two modes, keyed on whether a PR argument is given:
+
+- **`vrg-finalize-pr <PR>`** (human feature-PR path): run the pre-merge
+  provenance check, then merge the PR (or confirm it is already
+  merged), then run the existing cleanup. This replaces the manual web
+  merge + `vrg-finalize-repo`.
+- **`vrg-finalize-pr`** (no PR — release path, backward compatible):
+  cleanup only, exactly as `vrg-finalize-repo` did today. The release
+  workflow already merges programmatically, so it must not merge again;
+  it calls this no-argument form for cleanup.
+
+**Provenance check.** Fetch the PR's action history with read-only
+`gh api` GET calls (running in the human context, where the API is
+available) and verify no agent identity performed an action its role
+forbids. Identities are recognized by account naming convention
+(`*-vergil-user`, `*-vergil-audit`); everything else is human and
+never forbidden. The audit identity must never have created, edited,
+closed, reopened, or merged the PR; an audit *approval* is permitted
+but surfaced as advisory. A fetch failure must abort the merge — never
+silently pass (no silent failures).
 
 **Files:**
+- Create: `src/vergil_tooling/lib/pr_provenance.py`
+- Create: `tests/vergil_tooling/test_pr_provenance.py`
 - Create: `src/vergil_tooling/bin/vrg_finalize_pr.py`
 - Modify: `src/vergil_tooling/bin/vrg_finalize_repo.py` (becomes deprecated alias)
 - Create: `tests/vergil_tooling/test_vrg_finalize_pr.py`
 - Modify: `tests/vergil_tooling/test_vrg_finalize_repo.py` (reduce to alias test)
+- Modify: `src/vergil_tooling/lib/github.py` (add `pr_state` helper; update merge docstring)
 - Modify: `src/vergil_tooling/lib/release/finalize.py` (update subprocess call)
-- Modify: `src/vergil_tooling/lib/github.py:448` (update docstring)
 - Modify: `tests/vergil_tooling/test_release_finalize.py:94` (update match string)
 - Modify: `pyproject.toml:25` (add entry point)
 
-- [ ] **Step 1: Copy the implementation file**
+- [ ] **Step 1: Write failing tests for `pr_provenance`**
 
-Copy `src/vergil_tooling/bin/vrg_finalize_repo.py` to `src/vergil_tooling/bin/vrg_finalize_pr.py`. In the new file, update:
+Create `tests/vergil_tooling/test_pr_provenance.py`. These tests cover
+the pure classification logic (`classify_login`, `evaluate`) and the
+API-collection path (`check_pr`, with `github` mocked).
 
-1. The module docstring (first line): `"""Finalize a pull request after merge."""`
-2. The error message at line 151: change `vrg-finalize-repo` to `vrg-finalize-pr`
+```python
+"""Tests for vergil_tooling.lib.pr_provenance."""
+
+from __future__ import annotations
+
+import json
+from unittest.mock import patch
+
+from vergil_tooling.lib import pr_provenance
+from vergil_tooling.lib.pr_provenance import Action, Role
+
+
+def test_classify_login_user() -> None:
+    assert pr_provenance.classify_login("alice-vergil-user") is Role.USER
+
+
+def test_classify_login_audit() -> None:
+    assert pr_provenance.classify_login("alice-vergil-audit") is Role.AUDIT
+
+
+def test_classify_login_human() -> None:
+    assert pr_provenance.classify_login("alice") is Role.HUMAN
+
+
+def test_evaluate_human_actions_ignored() -> None:
+    actions = [Action("alice", Role.HUMAN, "created"), Action("alice", Role.HUMAN, "merged")]
+    result = pr_provenance.evaluate(actions)
+    assert result.ok
+    assert not result.violations
+    assert not result.advisories
+
+
+def test_evaluate_audit_approval_is_advisory() -> None:
+    actions = [Action("a-vergil-audit", Role.AUDIT, "approved")]
+    result = pr_provenance.evaluate(actions)
+    assert result.ok
+    assert len(result.advisories) == 1
+    assert not result.violations
+
+
+def test_evaluate_audit_close_is_violation() -> None:
+    actions = [Action("a-vergil-audit", Role.AUDIT, "closed")]
+    result = pr_provenance.evaluate(actions)
+    assert not result.ok
+    assert len(result.violations) == 1
+
+
+def test_evaluate_user_approval_is_violation() -> None:
+    actions = [Action("a-vergil-user", Role.USER, "approved")]
+    result = pr_provenance.evaluate(actions)
+    assert not result.ok
+    assert len(result.violations) == 1
+
+
+def test_check_pr_flags_audit_close() -> None:
+    reviews = json.dumps([])
+    timeline = json.dumps([{"event": "closed", "actor": {"login": "a-vergil-audit"}}])
+
+    def fake_read_output(*args: str, **_: object) -> str:
+        if args[0] == "api" and args[1].endswith("/reviews"):
+            return reviews
+        if args[0] == "api" and args[1].endswith("/timeline"):
+            return timeline
+        if args[:2] == ("pr", "view") and "number" in args:
+            return "42"
+        if args[:2] == ("pr", "view") and "author" in args:
+            return "alice"  # human author
+        raise AssertionError(f"unexpected call: {args}")
+
+    with (
+        patch("vergil_tooling.lib.pr_provenance.github.current_repo", return_value="o/r"),
+        patch("vergil_tooling.lib.pr_provenance.github.read_output", side_effect=fake_read_output),
+    ):
+        result = pr_provenance.check_pr("42")
+    assert not result.ok
+    assert result.violations[0].action == "closed"
+```
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_pr_provenance.py -v`
+Expected: FAIL (module does not exist yet).
+
+- [ ] **Step 2: Implement `pr_provenance`**
+
+Create `src/vergil_tooling/lib/pr_provenance.py`:
+
+```python
+"""Pre-merge provenance verification for vrg-finalize-pr.
+
+Fetches a PR's action history (reviews and timeline events) from
+GitHub and verifies that no agent identity performed an action its
+role forbids on the PR being merged. Agent identities are recognized
+by the account naming convention (``*-vergil-user`` and
+``*-vergil-audit``); everything else is treated as human and is never
+forbidden — the human holds every right.
+
+This is the host-side "human chokepoint" verification described in
+docs/specs/2026-05-29-agent-permission-model-design.md: it closes the
+gap the coarse GitHub permission model cannot enforce server-side
+(notably the audit identity's ``pull_requests: write`` scope, which
+GitHub cannot narrow to "review but never author/close/merge").
+
+Read-only ``gh api`` GET calls back this check. They run in the human
+context where the API is available; the same endpoints are reachable
+from the audit context under the identity-aware API allowance. A fetch
+failure propagates (``github.read_output`` raises on nonzero exit) so a
+broken check aborts the merge rather than silently passing.
+"""
+
+from __future__ import annotations
+
+import enum
+import json
+from dataclasses import dataclass, field
+
+from vergil_tooling.lib import github
+
+
+class Role(enum.Enum):
+    HUMAN = "human"
+    USER = "user"
+    AUDIT = "audit"
+
+
+def classify_login(login: str) -> Role:
+    """Map a GitHub login to an identity role by naming convention."""
+    if login.endswith("-vergil-audit"):
+        return Role.AUDIT
+    if login.endswith("-vergil-user"):
+        return Role.USER
+    return Role.HUMAN
+
+
+# Actions an agent role must never perform on a PR it is merging.
+_FORBIDDEN: dict[Role, frozenset[str]] = {
+    Role.USER: frozenset({"created", "edited", "closed", "reopened", "merged", "approved"}),
+    Role.AUDIT: frozenset({"created", "edited", "closed", "reopened", "merged"}),
+}
+
+# Actions permitted but advisory — surfaced to the human, not blocked.
+_ADVISORY: dict[Role, frozenset[str]] = {
+    Role.AUDIT: frozenset({"approved"}),
+}
+
+
+@dataclass(frozen=True)
+class Action:
+    """A single agent-attributed action on the PR."""
+
+    login: str
+    role: Role
+    action: str
+
+
+@dataclass
+class ProvenanceResult:
+    violations: list[Action] = field(default_factory=list)
+    advisories: list[Action] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return not self.violations
+
+
+_EVENT_MAP = {
+    "closed": "closed",
+    "reopened": "reopened",
+    "merged": "merged",
+    "renamed": "edited",
+}
+
+
+def _collect_actions(pr: str) -> list[Action]:
+    """Collect agent-attributed actions on *pr* from GitHub."""
+    repo = github.current_repo()
+    number = github.read_output("pr", "view", pr, "--json", "number", "--jq", ".number").strip()
+    actions: list[Action] = []
+
+    author = github.read_output(
+        "pr", "view", pr, "--json", "author", "--jq", ".author.login"
+    ).strip()
+    if author:
+        actions.append(Action(author, classify_login(author), "created"))
+
+    reviews_raw = github.read_output("api", f"repos/{repo}/pulls/{number}/reviews")
+    for review in json.loads(reviews_raw or "[]"):
+        if review.get("state") == "APPROVED":
+            login = (review.get("user") or {}).get("login", "")
+            if login:
+                actions.append(Action(login, classify_login(login), "approved"))
+
+    timeline_raw = github.read_output("api", f"repos/{repo}/issues/{number}/timeline")
+    for event in json.loads(timeline_raw or "[]"):
+        mapped = _EVENT_MAP.get(event.get("event", ""))
+        if mapped is None:
+            continue
+        login = (event.get("actor") or {}).get("login", "")
+        if login:
+            actions.append(Action(login, classify_login(login), mapped))
+
+    return actions
+
+
+def evaluate(actions: list[Action]) -> ProvenanceResult:
+    """Partition *actions* into violations and advisories. Pure."""
+    result = ProvenanceResult()
+    for act in actions:
+        if act.role is Role.HUMAN:
+            continue
+        if act.action in _ADVISORY.get(act.role, frozenset()):
+            result.advisories.append(act)
+        elif act.action in _FORBIDDEN.get(act.role, frozenset()):
+            result.violations.append(act)
+    return result
+
+
+def check_pr(pr: str) -> ProvenanceResult:
+    """Verify PR provenance by fetching and evaluating its action history."""
+    return evaluate(_collect_actions(pr))
+```
+
+- [ ] **Step 3: Run `pr_provenance` tests**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_pr_provenance.py -v`
+Expected: All tests PASS.
+
+- [ ] **Step 4: Add `pr_state` helper and update merge docstring in `github.py`**
+
+In `src/vergil_tooling/lib/github.py`, add a small helper near `merge`:
+
+```python
+def pr_state(pr: str) -> str:
+    """Return the PR state: ``OPEN``, ``CLOSED``, or ``MERGED``."""
+    return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
+```
+
+And update the `merge` docstring (was `vrg-finalize-repo`):
+
+```python
+    Does not pass ``--delete-branch`` — branch cleanup is handled by
+    ``vrg-finalize-pr`` after the merge completes.
+```
+
+- [ ] **Step 5: Create `vrg_finalize_pr.py` from `vrg_finalize_repo.py`**
+
+Copy `src/vergil_tooling/bin/vrg_finalize_repo.py` to `src/vergil_tooling/bin/vrg_finalize_pr.py`. Then apply the changes below.
+
+Update the module docstring (first line): `"""Finalize a pull request: provenance check, merge, and cleanup."""`
+
+Update the error message at line 151: change `vrg-finalize-repo` to `vrg-finalize-pr`:
 
 ```python
         print(
@@ -1710,7 +2114,254 @@ Copy `src/vergil_tooling/bin/vrg_finalize_repo.py` to `src/vergil_tooling/bin/vr
         )
 ```
 
-- [ ] **Step 2: Replace `vrg_finalize_repo.py` with deprecated alias**
+Add the new imports at the top alongside the existing ones:
+
+```python
+from vergil_tooling.lib import config, git, github, pr_provenance
+```
+
+Extend `parse_args` with the PR argument and merge controls:
+
+```python
+    parser.add_argument(
+        "pr",
+        nargs="?",
+        default=None,
+        help="PR number or URL to merge and finalize. Omit for cleanup-only (release path).",
+    )
+    parser.add_argument(
+        "--strategy",
+        default="squash",
+        choices=["merge", "squash", "rebase"],
+        help="Merge strategy for the PR (feature PRs default to squash)",
+    )
+    parser.add_argument(
+        "--allow-provenance-violation",
+        action="store_true",
+        help="Proceed despite provenance violations (conscious human override)",
+    )
+```
+
+Add the provenance-check-and-merge helper:
+
+```python
+def _finalize_specific_pr(args: argparse.Namespace) -> int:
+    """Run the pre-merge provenance check, then merge (or confirm merged).
+
+    Returns 0 to continue to cleanup, nonzero to abort.
+    """
+    print(f"Checking provenance for PR {args.pr}...")
+    result = pr_provenance.check_pr(args.pr)
+
+    for adv in result.advisories:
+        print(
+            f"  ADVISORY: {adv.login} ({adv.role.value}) performed '{adv.action}' "
+            "— permitted but advisory.",
+            file=sys.stderr,
+        )
+
+    if result.violations:
+        print(f"ERROR: PR {args.pr} has provenance violations:", file=sys.stderr)
+        for v in result.violations:
+            print(
+                f"  {v.login} ({v.role.value}) performed forbidden action '{v.action}'.",
+                file=sys.stderr,
+            )
+        if not args.allow_provenance_violation:
+            print(
+                "\n  Aborting merge. Re-run with --allow-provenance-violation to\n"
+                "  override consciously — you hold every right, but the violation\n"
+                "  is in front of you.",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            "  Overriding provenance violations per --allow-provenance-violation.",
+            file=sys.stderr,
+        )
+
+    if github.pr_state(args.pr) == "MERGED":
+        print(f"PR {args.pr} already merged.")
+    elif args.dry_run:
+        print(f"  [dry-run] merge PR {args.pr} (--{args.strategy})")
+    else:
+        print(f"Merging PR {args.pr} (--{args.strategy})...")
+        github.merge(args.pr, strategy=args.strategy)
+
+    return 0
+```
+
+Wire it into `main`, immediately after the main-worktree guard and before the cleanup flow (i.e., right after `root = git.repo_root()`):
+
+```python
+    if args.pr is not None:
+        rc = _finalize_specific_pr(args)
+        if rc != 0:
+            return rc
+```
+
+The existing cleanup flow (switch branch, pull, delete merged branches, prune, validation, CD check) runs unchanged afterward in both modes.
+
+- [ ] **Step 6: Write failing tests for `vrg_finalize_pr` merge + provenance integration**
+
+Create `tests/vergil_tooling/test_vrg_finalize_pr.py` by copying
+`tests/vergil_tooling/test_vrg_finalize_repo.py` and applying these
+replacements throughout:
+
+| Old | New |
+|---|---|
+| `vergil_tooling.bin.vrg_finalize_repo` | `vergil_tooling.bin.vrg_finalize_pr` |
+| `_MOD = "vergil_tooling.bin.vrg_finalize_repo"` | `_MOD = "vergil_tooling.bin.vrg_finalize_pr"` |
+| `from vergil_tooling.bin.vrg_finalize_repo import` | `from vergil_tooling.bin.vrg_finalize_pr import` |
+| `"""Tests for vergil_tooling.bin.vrg_finalize_repo."""` | `"""Tests for vergil_tooling.bin.vrg_finalize_pr."""` |
+
+The copied tests exercise the no-PR cleanup-only path (backward
+compatibility — they pass no positional argument, so `args.pr` is
+`None` and the merge path is skipped). Then add the merge + provenance
+tests below.
+
+```python
+from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+
+
+def _clean() -> ProvenanceResult:
+    return ProvenanceResult()
+
+
+def _with_violation() -> ProvenanceResult:
+    return ProvenanceResult(violations=[Action("a-vergil-audit", Role.AUDIT, "closed")])
+
+
+def _with_advisory() -> ProvenanceResult:
+    return ProvenanceResult(advisories=[Action("a-vergil-audit", Role.AUDIT, "approved")])
+
+
+def test_pr_arg_runs_provenance_then_merges() -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()) as mock_check,
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value="/tmp/repo"),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}.subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value.returncode = 0
+        result = main(["42"])
+    assert result == 0
+    mock_check.assert_called_once_with("42")
+    mock_merge.assert_called_once()
+
+
+def test_provenance_violation_aborts_without_merge(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_with_violation()),
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.github.merge") as mock_merge,
+    ):
+        result = main(["42"])
+    assert result == 1
+    mock_merge.assert_not_called()
+    err = capsys.readouterr().err
+    assert "provenance violation" in err.lower()
+    assert "closed" in err
+
+
+def test_provenance_violation_override_merges() -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_with_violation()),
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value="/tmp/repo"),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}.subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value.returncode = 0
+        result = main(["42", "--allow-provenance-violation"])
+    assert result == 0
+    mock_merge.assert_called_once()
+
+
+def test_advisory_surfaced_and_merge_proceeds(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_with_advisory()),
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value="/tmp/repo"),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}.subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value.returncode = 0
+        result = main(["42"])
+    assert result == 0
+    mock_merge.assert_called_once()
+    assert "advisory" in capsys.readouterr().err.lower()
+
+
+def test_already_merged_skips_merge() -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
+        patch(f"{_MOD}.github.pr_state", return_value="MERGED"),
+        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value="/tmp/repo"),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}.subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value.returncode = 0
+        result = main(["42"])
+    assert result == 0
+    mock_merge.assert_not_called()
+
+
+def test_no_pr_arg_is_cleanup_only() -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr") as mock_check,
+        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.git.working_tree_status", return_value=""),
+        patch(f"{_MOD}.git.repo_root", return_value="/tmp/repo"),
+        patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
+        patch(f"{_MOD}.subprocess.run") as mock_sub,
+    ):
+        mock_sub.return_value.returncode = 0
+        result = main([])
+    assert result == 0
+    mock_check.assert_not_called()
+    mock_merge.assert_not_called()
+```
+
+Note: the copied tests assume the autouse `is_main_worktree` fixture
+from the original file is preserved. If the original file lacks one,
+add `patch(f"{_MOD}.git.is_main_worktree", return_value=True)` to each
+new test (or as an autouse fixture).
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_finalize_pr.py -v`
+Expected: FAIL (merge/provenance wiring not yet present, or module missing).
+
+- [ ] **Step 7: Run `vrg_finalize_pr` tests**
+
+After Step 5's implementation is in place, run:
+`vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_finalize_pr.py -v`
+Expected: All tests PASS.
+
+- [ ] **Step 8: Replace `vrg_finalize_repo.py` with deprecated alias**
 
 Replace the contents of `src/vergil_tooling/bin/vrg_finalize_repo.py` with:
 
@@ -1740,20 +2391,7 @@ if __name__ == "__main__":
     sys.exit(main())
 ```
 
-- [ ] **Step 3: Copy and update the test file**
-
-Copy `tests/vergil_tooling/test_vrg_finalize_repo.py` to `tests/vergil_tooling/test_vrg_finalize_pr.py`.
-
-In the new test file, make these replacements throughout:
-
-| Old | New |
-|---|---|
-| `vergil_tooling.bin.vrg_finalize_repo` | `vergil_tooling.bin.vrg_finalize_pr` |
-| `_MOD = "vergil_tooling.bin.vrg_finalize_repo"` | `_MOD = "vergil_tooling.bin.vrg_finalize_pr"` |
-| `from vergil_tooling.bin.vrg_finalize_repo import` | `from vergil_tooling.bin.vrg_finalize_pr import` |
-| `"""Tests for vergil_tooling.bin.vrg_finalize_repo."""` | `"""Tests for vergil_tooling.bin.vrg_finalize_pr."""` |
-
-- [ ] **Step 4: Reduce `test_vrg_finalize_repo.py` to a deprecated-alias test**
+- [ ] **Step 9: Reduce `test_vrg_finalize_repo.py` to a deprecated-alias test**
 
 Replace `tests/vergil_tooling/test_vrg_finalize_repo.py` with:
 
@@ -1803,9 +2441,10 @@ def test_deprecated_alias_prints_warning(capsys: pytest.CaptureFixture[str]) -> 
     assert "vrg-finalize-pr" in err
 ```
 
-- [ ] **Step 5: Update `release/finalize.py`**
+- [ ] **Step 10: Update `release/finalize.py`**
 
-In `src/vergil_tooling/lib/release/finalize.py`, update all references:
+In `src/vergil_tooling/lib/release/finalize.py`, update all references
+(the release path still calls the no-argument cleanup-only form):
 
 Line 1: `"""Phase 5: Close tracking issue and run vrg-finalize-pr."""`
 
@@ -1817,21 +2456,7 @@ Line 33: `command="vrg-finalize-pr",`
 
 Line 34: `message="vrg-finalize-pr failed.",`
 
-- [ ] **Step 6: Update `lib/github.py` docstring**
-
-In `src/vergil_tooling/lib/github.py` at line 448, change:
-
-```python
-    """Merge a PR synchronously (without ``--auto``).
-
-    ...
-
-    Does not pass ``--delete-branch`` — branch cleanup is handled by
-    ``vrg-finalize-pr`` after the merge completes.
-    """
-```
-
-- [ ] **Step 7: Update `test_release_finalize.py`**
+- [ ] **Step 11: Update `test_release_finalize.py`**
 
 In `tests/vergil_tooling/test_release_finalize.py` at line 94, change the match string:
 
@@ -1839,7 +2464,7 @@ In `tests/vergil_tooling/test_release_finalize.py` at line 94, change the match 
         pytest.raises(ReleaseError, match="vrg-finalize-pr"),
 ```
 
-- [ ] **Step 8: Add `vrg-finalize-pr` entry point to `pyproject.toml`**
+- [ ] **Step 12: Add `vrg-finalize-pr` entry point to `pyproject.toml`**
 
 In `pyproject.toml`, add the new entry point after the existing `vrg-finalize-repo` line:
 
@@ -1848,24 +2473,26 @@ vrg-finalize-pr = "vergil_tooling.bin.vrg_finalize_pr:main"
 vrg-finalize-repo = "vergil_tooling.bin.vrg_finalize_repo:main"
 ```
 
-- [ ] **Step 9: Run all affected tests**
+- [ ] **Step 13: Run all affected tests**
 
-Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_finalize_pr.py tests/vergil_tooling/test_vrg_finalize_repo.py tests/vergil_tooling/test_release_finalize.py -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_pr_provenance.py tests/vergil_tooling/test_vrg_finalize_pr.py tests/vergil_tooling/test_vrg_finalize_repo.py tests/vergil_tooling/test_release_finalize.py -v`
 Expected: All tests PASS.
 
-- [ ] **Step 10: Commit**
+- [ ] **Step 14: Commit**
 
 ```bash
 vrg-git add \
+  src/vergil_tooling/lib/pr_provenance.py \
   src/vergil_tooling/bin/vrg_finalize_pr.py \
   src/vergil_tooling/bin/vrg_finalize_repo.py \
   src/vergil_tooling/lib/release/finalize.py \
   src/vergil_tooling/lib/github.py \
+  tests/vergil_tooling/test_pr_provenance.py \
   tests/vergil_tooling/test_vrg_finalize_pr.py \
   tests/vergil_tooling/test_vrg_finalize_repo.py \
   tests/vergil_tooling/test_release_finalize.py \
   pyproject.toml
-vrg-commit --type refactor --scope finalize --message "rename vrg-finalize-repo to vrg-finalize-pr with deprecated alias"
+vrg-commit --type feat --scope finalize --message "consolidate merge + cleanup into vrg-finalize-pr with pre-merge provenance check"
 ```
 
 ---

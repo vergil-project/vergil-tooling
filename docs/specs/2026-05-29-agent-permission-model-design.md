@@ -38,6 +38,25 @@ Three problems converge:
    consistency, coding standards compliance) requires LLM-based
    review.
 
+### Resolution adopted
+
+This spec does **not** create an elevated identity that carries
+`workflows: write`. Instead, no agent identity holds `workflows` at
+all. The rare push that touches `.github/workflows/` is carried by
+the human, whose rights are the superset of every agent's — folded
+into the human-triggered `vrg-submit-pr` (see Ensure-pushed below).
+The most common workflow-touching change — bumping pinned action
+versions — is absorbed by the mechanized, human-run
+`vrg-dependency-update` (#918). That tool is an ergonomic
+optimization, not a prerequisite: until it exists, action-pin bumps
+flow through the same ensure-pushed path as any other
+workflow-touching change, so this permission model does not block on
+#918. An elevated "admin" identity remains
+**defined as a reserved architectural slot**, filled only when a
+concrete use case requires it. This is the YAGNI-disciplined
+outcome: we keep the slot and its governing invariant, not a
+speculative implementation.
+
 ### Compliance alignment
 
 The AI contribution compliance review
@@ -67,7 +86,51 @@ emerging industry consensus on AI-assisted engineering: the human
 contributor bears full responsibility for all submissions, and the
 tooling should enforce — not merely encourage — that accountability.
 
+## Foundational Assumption
+
+The entire architecture rests on one assumption, stated here so that
+nothing downstream has to restate it: **the human who operates the
+host is the owner, and holds the maximum set of developer and
+administrative rights over every resource in play** — the
+repositories, the GitHub organization, the Apps, the VMs, the host
+itself. The human is the all-powerful party. Everything else is
+defined relative to that.
+
+From this, three things follow and are true everywhere in this spec:
+
+1. **Agents are sandboxed minions holding a strict subset.** An agent
+   is never the owner. Each agent identity is granted a deliberately
+   minimal subset of the human's rights, scoped to its role. It can
+   never be granted a right the human does not have.
+
+2. **Delegation to the host is the mechanism, not a workaround.** The
+   host is precisely where commands run under *human* control rather
+   than *agent* control. When an operation is too dangerous to hand an
+   agent, it is delegated to a human-triggered tool on the host — and
+   that tool can always carry it, because the host runs with the
+   owner's full rights. `vrg-submit-pr`'s ensure-pushed is the worked
+   example: it pushes with the human's superset credentials a change
+   the agent's subset would have been rejected for.
+
+3. **If the human lacks a required right, the architecture does not
+   function — by design.** This is not a gap to be patched with a
+   fallback or a runtime probe. If the operator is not the owner with
+   the umbrella rights this model assumes, the model is the wrong
+   model for that situation, and that is the correct, intended
+   outcome. We do not build degraded modes for a non-owner operator;
+   we assume the owner.
+
+The corollary used throughout: **if the human cannot perform an
+action, neither can the agent.**
+
 ## Design Principles
+
+**Agent rights are a subset of the human's.** Per the Foundational
+Assumption above, the human operates the host with the full set of
+ownership rights, and sandboxing exists to contain that full access
+into a minimal per-identity subset. The agent is never granted a
+right the human lacks. This is why a human-triggered tool can always
+carry an operation the agent could not: the human is the superset.
 
 **Minimize agent write permissions.** Every write permission granted
 to the agent must have a documented, real-world justification. Read
@@ -83,10 +146,26 @@ trigger operational tools. Every step that "really matters and causes
 damage" is encapsulated in a `vrg-*` CLI utility that the human
 invokes. `vrg-release` is the model.
 
-**The human switches, the agent doesn't.** Agents never decide to
-escalate their own privileges. The human makes a conscious decision
-to use elevated-access tooling, which concentrates attention on the
+**The human triggers; the agent doesn't.** Agents never escalate
+their own privileges or perform the operations that really matter and
+cause damage. Those are encapsulated in `vrg-*` tools the human
+invokes deliberately, which concentrates human attention on the
 higher-risk work.
+
+**Human chokepoints are verification points.** Every high-risk,
+irreversible operation is denied to agents and reserved to a
+human-triggered `vrg-*` tool on the host. Because that tool runs in
+the owner's trusted context — outside any agent's reach — it is also
+the place to impose programmatic verification the hard gates cannot.
+Where GitHub's permission model is too coarse to *prevent* an unwanted
+agent action (the documented gaps), the human-run tool at the
+chokepoint can *detect* it before the irreversible step and refuse to
+proceed. Each destructive operation thus becomes a sanity-check
+opportunity: the merge gate verifies a PR's provenance, a release gate
+could verify a release's, and so on. This is the architectural answer
+to gaps that cannot be closed server-side — and it complements CI
+gates, which check the *content* of a change, by adding host-side
+checks on the *conduct* of the identities that produced it.
 
 **Correctness over cost.** Token cost is a real constraint. Granting
 agents the ability to perform trivial operations (closing issues,
@@ -124,7 +203,12 @@ Validates that controls are working. Detects moments when soft gates
 were bypassed, whether hard gates caught the attempt, and whether
 any gaps were exploited. This is the ultimate safety net. Even when
 all hard gates are working, auditing confirms they are working and
-surfaces patterns that indicate drift or attack.
+surfaces patterns that indicate drift or attack. Detection need not
+be purely retrospective: at a human-run chokepoint (such as merge), a
+detection check can be promoted into a *synchronous gate* that runs
+before the irreversible operation and refuses to proceed — see
+`vrg-finalize-pr`'s pre-merge provenance check. This is how Layer 3
+closes specific gaps that Layer 2 cannot.
 
 ### Documented gaps
 
@@ -132,17 +216,26 @@ Where a soft gate exists without a corresponding hard gate, this
 spec documents it explicitly. Known gaps:
 
 - **Audit App `pull_requests: write` grants more than review.**
-  GitHub does not offer a "review-only" PR permission. The soft gate
-  (vrg-gh audit allowlist) restricts to view/comment/review, but the
-  server-side permits PR creation, editing, and closing. Mitigation:
-  the audit identity is a Read-level collaborator and cannot merge
-  anything it creates. This is a Mimir validation target.
+  GitHub offers no "review-only" PR permission and — more
+  fundamentally — does not separate *merging* a PR (an administrative
+  act) from *writing or updating* one. The soft gate (vrg-gh audit
+  allowlist) restricts the audit identity to view/comment/review, but
+  server-side the permission also permits PR creation, editing, and
+  closing. Mitigation: the audit identity is a Read-level
+  collaborator and cannot merge anything it creates, and
+  `vrg-finalize-pr`'s pre-merge provenance check detects and blocks
+  any out-of-role audit action on a PR before the human merges it (see
+  that section). This is the sharpest known hard-gate gap — and because audit is the identity we
+  most want to run with minimal human attention, it warrants the most
+  Mimir scrutiny. It is also a candidate for upstream infrastructure
+  advocacy: the correct fix is for GitHub to expose finer-grained PR
+  permissions. Documenting it precisely builds the data to make that
+  case.
 
 - **Agent can attempt `vrg-submit-pr`.** The soft gate is
   identity-aware tool rejection. The hard gate is `pull_requests:
-  read` on the street-mode App, which causes the underlying
-  `gh pr create` to fail server-side. This gap is fully covered
-  by a hard gate.
+  read` on the user App, which causes the underlying `gh pr create`
+  to fail server-side. This gap is fully covered by a hard gate.
 
 Additional gaps will be documented as they are discovered. Mimir
 testing is specifically designed to find and exploit undocumented
@@ -153,38 +246,44 @@ gaps.
 The identity architecture uses a motorsport analogy as its conceptual
 framework. This is not decoration — the analogy maps cleanly to the
 trust relationships and decision authority in the system, and the
-documentation uses these terms as the primary vocabulary.
+documentation uses these terms as the primary vocabulary. The model
+is still evolving; the terms below describe the current roles, not a
+fixed law derived from first principles.
 
 | Racing role | Description | Vergil identity |
 |---|---|---|
-| **Driver** | On track, makes tactical decisions, follows the rules | `<user>-vergil-user` — daily development agent |
-| **Track mode** | Driver with safety systems off, Race Director on radio | `<user>-vergil-admin` — elevated rights, human supervising |
+| **Driver** | Competes on track, makes tactical decisions, works within the rules | `<user>-vergil-user` — daily development agent |
 | **Officials** | Walk pit lane, observe, report infractions — cannot penalize | `<user>-vergil-audit` — reviews PRs, comments on violations |
 | **Race Director** | Full authority over the event, makes the calls | `<user>` — human, ultimate authority |
+| **Admin** (reserved) | A competitor granted escorted access to a normally off-limits area | reserved slot — not provisioned |
 
-**Driver (street mode):** The agent in its normal operating mode.
-Restricted write permissions, safe for autonomous and unattended
-work. The safety nannies are on. This is the 24/7 mode.
+**Driver (the user identity):** The everyday agent — the workhorse,
+used all the time. Restricted write permissions, safe for autonomous
+and unattended work within those limits. This is the 24/7 identity.
 
-**Track mode:** The same driver in a more powerful car. The human
-(Race Director) made the conscious decision to use the elevated-access
-VM. Attention is concentrated. You don't use this for routine work —
-you use it for specific tasks that require elevated rights, then shut
-it down. Like turning off traction control at the racetrack: you
-accept more risk, so your behavior adjusts accordingly.
+**Officials (the audit identity):** An independent observer that can
+only watch and report. Officials walk pit lane looking for
+violations. They can flag "you dropped a lug nut" but cannot issue
+penalties themselves — they report to Race Control (the human). The
+audit identity reads code, reviews PRs against standards, and
+comments. It cannot modify code, create PRs, or close issues.
+Deliberately scoped for the smallest blast radius, because it is the
+identity we most want to run close to unattended.
 
-**Officials (audit mode):** An independent observer that can only
-watch and report. Officials walk pit lane looking for violations.
-They can flag "you dropped a lug nut" but cannot issue penalties
-themselves — they report to Race Control (the human). The audit
-identity reads code, reviews PRs against standards, and comments.
-It cannot modify code, create PRs, or close issues.
+**Race Director (the human):** The ultimate authority. Reviews
+reports from Officials, makes merge/release/strategy decisions,
+triggers operational tools. No one overrules the Race Director. The
+Driver and Officials never interact directly — everything goes
+through Race Control.
 
-**Race Director (human):** The ultimate authority. Reviews reports
-from Officials, makes merge/release/strategy decisions, triggers
-operational tools. No one overrules the Race Director. The Driver
-and Officials never interact directly — everything goes through
-Race Control.
+**Admin (a reserved slot, not a built identity):** This is *not* a
+faster car. It is the same development role granted escorted access
+to a normally off-limits area — the regulated CI/CD infrastructure a
+competitor never touches unsupervised. The slot is defined but
+unoccupied. It is instantiated only when a concrete use case requires
+elevated access, and its governing constraint is fixed in advance:
+**elevated access is paired with an elevated level of human control
+and interaction.** Access and supervision are the same dial.
 
 ## Identity Architecture
 
@@ -192,40 +291,36 @@ Race Control.
 
 | Identity | Account pattern | Collaborator access | Purpose |
 |---|---|---|---|
-| Driver | `<user>-vergil-user` | Outside collaborator, Write | Daily development |
-| Admin | `<user>-vergil-admin` | Outside collaborator, Write | Elevated operations |
-| Audit | `<user>-vergil-audit` | Outside collaborator, Read | PR review |
-| Human | `<user>` | Owner/Admin | Ultimate authority |
+| User (Driver) | `<user>-vergil-user` | Outside collaborator, Write | Daily development |
+| Audit (Officials) | `<user>-vergil-audit` | Outside collaborator, Read | PR review |
+| Human (Race Director) | `<user>` | Owner/Admin | Ultimate authority |
+| Admin (reserved) | `<user>-vergil-admin` | — | Reserved — not provisioned until a use case requires it |
 | Release bot | `vergil-release[bot]` | GitHub App | Release automation |
 
 ### GitHub App Configuration
 
-Three separate GitHub Apps, each with distinct permission sets.
-Each VM gets exactly one App's credentials. The credential
-environment determines the operating mode — no config flag, no
-mode switch command.
+Two GitHub Apps are provisioned today (user, audit); a third (admin)
+is a reserved slot. Each VM gets exactly one App's credentials. The
+credential environment determines the operating mode — no config
+flag, no mode switch command.
 
-**Street-mode App (`vergil-app`):**
+**User App (`vergil-app`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
-| `contents` | write | Push feature branches |
+| `contents` | write | Push feature branches; push code fixes to iterate on CI |
 | `issues` | write | Create and comment on issues |
 | `pull_requests` | read | View PRs, check status |
 | `metadata` | read | Required baseline |
 | `workflows` | none | Server-side hard gate blocks workflow file pushes |
 
-**Track-mode App (`vergil-admin-app`):**
+Note that `contents: write` — not `workflows: write` — is what lets
+the agent handle a failing CI gate: it pushes *code fixes* to
+re-trigger CI. Editing the workflow files themselves is never part of
+fixing a gate; that would be changing the rules to pass, the exact
+escape hatch we are closing.
 
-| Permission | Level | Rationale |
-|---|---|---|
-| `contents` | write | Push feature branches |
-| `issues` | write | Create and comment on issues |
-| `pull_requests` | read | View PRs, check status |
-| `metadata` | read | Required baseline |
-| `workflows` | write | Push workflow file changes under human supervision |
-
-**Audit-mode App (`vergil-audit-app`):**
+**Audit App (`vergil-audit-app`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
@@ -235,13 +330,25 @@ mode switch command.
 | `metadata` | read | Required baseline |
 | `workflows` | none | No need |
 
-The audit App has an inverted permission shape compared to street
-mode: more PR permission (write vs. read) but less code permission
+The audit App has an inverted permission shape compared to the user
+App: more PR permission (write vs. read) but less code permission
 (read vs. write). The permissions are shaped exactly for the role.
 
-**Provisional status.** The audit identity's architectural position
-(third identity, inverted permission shape, Officials role) is
-load-bearing for the overall design and is defined here. The
+**Admin App (`vergil-admin-app`) — reserved, not provisioned.**
+
+This is a defined architectural slot, not a built identity. Its
+permissions are intentionally left undefined: there is no concrete
+use case yet that requires elevated agent access, and guessing the
+permission set would bake in speculation we cannot justify. The one
+property fixed now is its governing invariant — elevated access is
+paired with an elevated level of human control and interaction. When
+a real use case appears, the App is created with the minimal
+permissions that case requires, and its delta is recorded in the
+Permission Delta Registry.
+
+**Provisional status (audit).** The audit identity's architectural
+position (second agent identity, inverted permission shape, Officials
+role) is load-bearing for the overall design and is defined here. The
 specific permissions and vrg-gh allowlist are provisional — they
 are based on the one confirmed use case (PR standards review) and
 are subject to revision as additional use cases emerge and the
@@ -251,28 +358,26 @@ triggering mechanism is designed.
 
 ```text
 Human host
-├── Street-mode VM  (daily use, always available)
+├── User VM  (daily use, always available)
 │   ├── VRG_APP_ID → vergil-app
 │   ├── VRG_PRIVATE_KEY_PATH → vergil-app key
 │   └── Agent operates as <user>-vergil-user
 │
-├── Track-mode VM  (on-demand, human supervising)
-│   ├── VRG_APP_ID → vergil-admin-app
-│   ├── VRG_PRIVATE_KEY_PATH → vergil-admin-app key
-│   └── Agent operates as <user>-vergil-admin
+├── Audit VM  (persistent or on-demand)
+│   ├── VRG_APP_ID → vergil-audit-app
+│   ├── VRG_PRIVATE_KEY_PATH → vergil-audit-app key
+│   └── Agent operates as <user>-vergil-audit
 │
-└── Audit VM  (persistent or on-demand)
-    ├── VRG_APP_ID → vergil-audit-app
-    ├── VRG_PRIVATE_KEY_PATH → vergil-audit-app key
-    └── Agent operates as <user>-vergil-audit
+└── Admin VM  (reserved — not provisioned)
+    └── Created only when the admin slot is filled
 ```
 
 The human launches each VM deliberately. There is no mode-switching
 within a running session. The visual presentation of each VM must be
-distinct — the human must never be uncertain about which mode they
-are in. Specific visual treatment (color scheme, prompt indicator,
-login banner) is an implementation detail, but the requirement is
-ambient, persistent differentiation.
+distinct — the human must never be uncertain about which identity
+they are in. Specific visual treatment (color scheme, prompt
+indicator, login banner) is an implementation detail, but the
+requirement is ambient, persistent differentiation.
 
 **Shared filesystem.** All VMs mount the host's project directory
 tree at the same path. The agent writes to the same filesystem the
@@ -282,15 +387,23 @@ immediately on their host terminal. The VM is a credential sandbox
 with a shared filesystem, not an isolated environment.
 
 **Mode detection.** Each VM is provisioned with a
-`VRG_IDENTITY_MODE` environment variable (values: `street`,
-`track`, `audit`) set by the VM build configuration in the
+`VRG_IDENTITY_MODE` environment variable (values: `user`, `audit`;
+`admin` reserved) set by the VM build configuration in the
 vergil-vm repo. The variable is written into the user's shell
 profile during provisioning, making it ambient and persistent.
 The tooling (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) reads
 `VRG_IDENTITY_MODE` to select allowlists and behaviors. Absence
 of the variable (or an unrecognized value) implies human identity.
-This is a derived value from VM configuration, not a user-controlled
-flag — the agent does not choose its own mode.
+
+`VRG_IDENTITY_MODE` is set by VM provisioning rather than chosen by
+the agent, but it is a **Layer 1 ergonomic, not a security control**.
+An adversarial agent that becomes root inside the VM can set or unset
+it and thereby relax the soft-gate allowlists. This changes nothing
+that matters: the identity boundary is the App credential provisioned
+to the VM, not the variable. No value of `VRG_IDENTITY_MODE` alters
+which private key is present, so none of it alters what GitHub will
+actually permit. Spoofing the mode loosens soft gates the spec
+already treats as bypassable; the hard gate is untouched.
 
 ## The `.vergil/` Scratch Convention
 
@@ -314,11 +427,11 @@ created on demand by whichever tool writes to it first.
 # .vergil/pr-template.yml
 # Generated by agent — review and edit before running vrg-submit-pr
 issue: 1289
-title: "feat(permissions): remove workflow permission from street-mode App"
+title: "feat(permissions): remove workflow permission from user App"
 summary: |
-  Removes the workflows permission from the street-mode GitHub App
-  and adds vrg-gh restrictions to block issue close/reopen/edit
-  in street mode.
+  Removes the workflows permission from the user GitHub App and adds
+  vrg-gh restrictions to block issue close/reopen/edit for the user
+  identity.
 linkage: Ref
 notes: |
   This PR does not include workflow file changes.
@@ -340,7 +453,7 @@ The template file is ephemeral:
 
 ## Revised Agent Workflow
 
-### Street Mode (Daily Development)
+### User Identity (Daily Development)
 
 ```text
 Agent                              Human (Race Director)
@@ -354,7 +467,7 @@ Agent                              Human (Race Director)
 4. Write .vergil/pr-template.yml
 5. Signal: "ready for PR"
                                    6. Review template, edit if needed
-                                   7. Run vrg-submit-pr (creates PR)
+                                   7. Run vrg-submit-pr (push + PR)
                                    8. Review PR + CI results
                                    9. Merge (vrg-finalize-pr)
 ```
@@ -366,20 +479,37 @@ operation triggered by `vrg-*` CLI tools.
 App token lacks `workflows` permission, the wrapper detects the
 specific GitHub error and provides identity-aware feedback: the
 agent is told its identity is not permitted to push workflow file
-changes, and it must stop and escalate to the Race Director. The
-agent must not attempt to work around the failure (e.g., by
-removing workflow files from the commit and re-pushing). The human
-decides whether to use the track-mode VM or remove the workflow
-changes from scope.
+changes, and it must stop and escalate to the human. The agent must
+not attempt to work around the failure (e.g., by removing workflow
+files from the commit and re-pushing). The human carries the
+workflow-touching push themselves — in practice via `vrg-submit-pr`,
+which pushes the branch with the human's credentials before opening
+the PR (see Ensure-pushed below). For the common case of action-pin
+bumps, the human runs `vrg-dependency-update` (#918), which
+mechanizes the whole update. The escalation must not silently drop
+the workflow change: the agent reports clearly what is blocked and
+why.
 
-### Track Mode (Elevated Operations)
+### Workflow File Changes
 
-Same workflow, except step 3 succeeds for workflow file changes
-because the admin App has `workflows:write`. The human is actively
-supervising because they made the conscious decision to use the
-track-mode VM.
+No agent identity can push changes under `.github/workflows/` — the
+server rejects the entire push (not just the offending file) when the
+App token lacks `workflows`. This is deliberate: workflow files
+define CI/CD containment, so altering them is reserved to the human.
+The human carries such pushes via `vrg-submit-pr`'s ensure-pushed
+behavior, and the routine action-pin case is mechanized in
+`vrg-dependency-update` (#918).
 
-### Audit Mode (PR Review)
+One honest cost: a branch that mixes workflow changes with code
+cannot be pushed — and therefore cannot be CI-iterated — by the agent
+at all until the human pushes it. In practice workflow changes are
+usually isolated, so this rarely bites; when it does, it is the kind
+of change that warrants human attention anyway. The anticipated first
+trigger for filling the reserved admin slot is this friction becoming
+common enough to justify a supervised elevated identity — but the
+mechanized dependency update is expected to absorb most of it.
+
+### Audit Identity (PR Review)
 
 The triggering mechanism is a separate design problem (see Open
 Questions). For v1, the human directs the audit agent to review
@@ -394,7 +524,7 @@ agent can fix them before submission.
 ## `vrg-submit-pr` Changes
 
 The tool gains a new operating mode driven by the `.vergil/`
-template.
+template, and an ensure-pushed step.
 
 **Template mode (no CLI args):**
 
@@ -402,9 +532,10 @@ template.
 2. Show the human a summary: title, body preview, issue linkage,
    target branch.
 3. Prompt for confirmation.
-4. Create the PR via `gh pr create`.
-5. Delete the template file.
-6. Print the PR URL.
+4. Ensure-pushed (see below).
+5. Create the PR via `gh pr create`.
+6. Delete the template file.
+7. Print the PR URL.
 
 **CLI argument mode (args provided):**
 
@@ -415,13 +546,29 @@ changes without an agent.
 
 **Neither template nor args:** Fatal error. The tool does not guess.
 
+**Ensure-pushed.** Before creating the PR, `vrg-submit-pr` verifies
+the branch is fully pushed to the remote. If the branch has commits
+not yet on the remote, it performs the push using the human's host
+credentials, then creates the PR. Because the human's credentials are
+the superset of any agent's, this push succeeds even when the branch
+touches `.github/workflows/` — which the agent's own push would have
+been rejected for. This is precisely how workflow-touching changes
+reach the remote without any agent holding `workflows: write`.
+
+This is the Foundational Assumption in action, not a separate
+credential requirement: `vrg-submit-pr` runs on the host, in the
+owner's context, with the human's full GitHub credentials. The push
+succeeds because the human holds the superset. If the human cannot
+push the change, neither tool nor agent can — and that is the correct
+behavior, not a failure to handle.
+
 **Identity-aware enforcement.** `vrg-submit-pr` checks the
 credential environment on startup. If it detects any agent identity
-(driver, admin, or audit), it aborts immediately with a clear
-message: PR submission is a Race Director operation. This is a
-Layer 1 soft gate. The Layer 2 hard gate is `pull_requests: read`
-on the street-mode App, which causes the underlying `gh pr create`
-to fail server-side even if the soft gate is bypassed.
+(user or audit), it aborts immediately with a clear message: PR
+submission is a Race Director operation. This is a Layer 1 soft gate.
+The Layer 2 hard gate is `pull_requests: read` on the user App, which
+causes the underlying `gh pr create` to fail server-side even if the
+soft gate is bypassed.
 
 **Wrapper denial messages.** When `vrg-gh` blocks a subcommand, the
 denial message is identity-aware. For human identities, `pr create`
@@ -432,21 +579,60 @@ cannot use. (The hook guard itself is a dumb gate — it only
 redirects raw `git`/`gh` to the wrapper scripts and knows nothing
 about subcommands or identity.)
 
-## `vrg-finalize-pr` (Renamed from `vrg-finalize-repo`)
+## `vrg-finalize-pr` (Consolidates merge + cleanup, formerly `vrg-finalize-repo`)
 
-The rename signals the scope change. This tool finalizes a specific
-PR:
+This is not a rename — it is a consolidation. Previously two separate
+human actions finished a PR: the human merged it by hand (on the web),
+then ran `vrg-finalize-repo` to clean up the branch and prune refs.
+Both collapse into one human tool. Moving the merge off the web and
+into a `vrg-*` tool is the same move applied everywhere in this design:
+take a mechanized operation that really matters and put it behind a
+human-triggered command. It also creates the exact insertion point the
+provenance check needs — a single place, under human control, that
+performs the merge and can gate it.
 
-1. Merge the PR (or confirm already merged).
-2. Delete the feature branch (local and remote).
-3. Prune remote references.
-4. Post-merge housekeeping.
+Until now the implicit merge rule was "if the CI gates are green, merge
+it" — sound only because every sanity check was assumed to live in the
+GitHub CI gates, which today is true. The provenance check is the first
+sanity check that *cannot* live in a CI gate (GitHub attributes
+identity actions outside the PR's own checks), so it runs in the tool
+that performs the merge, immediately before the merge.
 
-This is a human (Race Director) operation. No agent invokes it.
+This tool finalizes a specific PR:
+
+1. **Pre-merge provenance check.** Fetch the PR's action history —
+   reviews and timeline events, each attributed by GitHub to the
+   identity that performed it — and cross-check every agent action
+   against what that identity's role permits. The audit identity must
+   never have created, edited, closed, or reopened the PR; if it did,
+   the tool aborts with the offending action named. An audit *approval*
+   is permitted but surfaced explicitly, so the human knows a green
+   review came from an advisory identity, not an authoritative one. The
+   human can override — they hold every right — but only consciously,
+   with the violation in front of them.
+2. Merge the PR (or confirm already merged).
+3. Delete the feature branch (local and remote).
+4. Prune remote references.
+5. Post-merge housekeeping.
+
+The action history is fetched with read-only `gh api` GET calls to
+the PR reviews and issue timeline endpoints. This is available because
+the tool runs in the human context, and the same calls are reachable
+from the audit context under the identity-aware API allowance (see
+"Identity-aware API access") — without ever granting the user agent a
+raw-API escape hatch.
+
+This is a human (Race Director) operation. No agent invokes it. The
+pre-merge provenance check is the worked example of the "human
+chokepoints are verification points" principle: at the irreversible
+step it closes the audit identity's `pull_requests: write` hard-gate
+gap that GitHub's permission model cannot. It generalizes beyond
+audit — the check verifies that *no* agent identity performed an
+action its role forbids on the PR being merged.
 
 ## `vrg-gh` Restriction Changes
 
-### Street Mode Subcommand Allowlist
+### User Identity Subcommand Allowlist
 
 | Command | Status | Rationale |
 |---|---|---|
@@ -473,16 +659,9 @@ This is a human (Race Director) operation. No agent invokes it.
 | `run watch` | allowed | Read operation |
 | `repo view` | allowed | Read operation |
 | `repo list` | allowed | Read operation |
+| `api` | **blocked** | Raw API is a broad escape hatch — abusable by a compromised user agent to reach endpoints the subcommand allowlist would otherwise gate |
 
-### Track Mode Subcommand Allowlist
-
-Identical to street mode. Track mode does not relax the `vrg-gh`
-allowlist. The only difference is server-side: workflow file pushes
-succeed via `vrg-git push` because the admin App has
-`workflows:write`. This keeps the design simple and avoids
-permission creep ("I'm in admin mode so I might as well...").
-
-### Audit Mode Subcommand Allowlist
+### Audit Identity Subcommand Allowlist
 
 | Command | Status | Rationale |
 |---|---|---|
@@ -492,31 +671,64 @@ permission creep ("I'm in admin mode so I might as well...").
 | `pr checks` | allowed | Check CI status |
 | `pr comment` | allowed | Post review findings |
 | `pr review` | allowed | Submit formal review (including approval) |
+| `api` (GET only) | allowed | Read-only API access for review tooling (e.g., PR reviews and timeline endpoints). The audit App's narrow permissions (`contents: read`, `pull_requests: write`, `issues: read`) bound what any API call can reach, so the raw API is low-risk for this identity |
 | Everything else | **blocked** | Audit is read-and-comment only |
+
+### Admin Identity Subcommand Allowlist
+
+Reserved. Defined when the admin slot is filled, scoped to the
+minimal set its use case requires.
 
 ### Mode Detection
 
 The `vrg-gh` wrapper reads `VRG_IDENTITY_MODE` from the environment.
-If the value is `audit`, the audit allowlist applies. If `street` or
-`track`, the agent-restricted allowlist applies. Absence of the
-variable implies human identity, which retains the full allowlist.
-The environment variable is set by VM provisioning — the agent does
-not choose its own mode.
+If the value is `audit`, the audit allowlist applies. If `user`, the
+user allowlist applies. Absence of the variable implies human
+identity, which retains the full allowlist. The environment variable
+is set by VM provisioning — the agent does not choose its own mode.
+
+### Identity-aware API access
+
+The raw `gh api` escape hatch is gated per identity rather than
+denied wholesale. This is the general principle that the `vrg-gh`
+allow/disallow decision is a function of identity, not a single
+fixed list:
+
+- **User** — blocked. The user App holds `contents: write`, so a
+  compromised user agent with raw API access could reach write
+  endpoints that the curated subcommand allowlist deliberately
+  withholds. The broad surface is not worth the ergonomic gain.
+- **Audit** — allowed for read (GET) calls. The audit App's
+  permissions are narrow and mostly read-only (`contents: read`,
+  `issues: read`, with `pull_requests: write` the only write
+  scope), so even the raw API cannot reach anything the identity
+  is not already trusted with. This is what makes read-only API
+  access safe to grant here but not to the user.
+- **Human** — full, as with every other subcommand.
+
+This identity-aware allowance is what lets the pre-merge provenance
+check in `vrg-finalize-pr` query GitHub's review and timeline
+endpoints (see that section). The check runs in the human context,
+where the API is available; the same endpoints are reachable from
+the audit context for review tooling without granting the user
+agent a write-capable escape hatch.
 
 ## Permission Delta Registry
 
 Every difference between identities is explicitly documented with
 a justification.
 
-### Street → Admin Delta
+### Reserved: User → Admin Delta
 
-| Permission | Street | Admin | Justification | Added |
-|---|---|---|---|---|
-| `workflows` | none | write | Workflow files define CI/CD containment. Changes require elevated access under direct human supervision in the track-mode VM. | 2026-05-29 |
+The admin identity is a reserved slot with no permissions granted
+today, so there is no delta to record yet. When the slot is filled,
+its delta is added here with a documented use case, per the rules
+below. The governing constraint is fixed in advance: any admin delta
+must pair elevated access with elevated human involvement.
 
-### Street → Audit Delta
+### User → Audit Delta
 
-| Permission | Street | Audit | Justification | Added |
+| Permission | User | Audit | Justification | Added |
 |---|---|---|---|---|
 | `contents` | write | read | Audit reads code but must not modify it. | 2026-05-29 |
 | `pull_requests` | read | write | Audit must comment on and submit reviews. | 2026-05-29 |
@@ -534,14 +746,15 @@ a justification.
 
 ### Identity transition
 
-The new identities (`<user>-vergil-user`, `<user>-vergil-admin`,
-`<user>-vergil-audit`) are created from scratch alongside the
-existing `<user>-vergil` identity. Both sets operate in parallel
-during the transition:
+The new identities (`<user>-vergil-user`, `<user>-vergil-audit`) are
+created from scratch alongside the existing `<user>-vergil` identity.
+(The admin identity is a reserved slot — not created until a use case
+requires it.) Both sets operate in parallel during the transition:
 
-- **Phase 1:** Create the three new GitHub accounts and GitHub
-  Apps. Provision new VMs with the new credentials. The existing
-  `<user>-vergil` identity and tooling on 2.0.x continue unchanged.
+- **Phase 1:** Create the two new GitHub accounts and GitHub Apps
+  (user, audit). Provision new VMs with the new credentials. The
+  existing `<user>-vergil` identity and tooling on 2.0.x continue
+  unchanged.
 
 - **Phase 2:** Build the tooling changes (Track A below) as a 2.1
   release using the 2.0 tooling. The new 2.1 tooling is used in the
@@ -587,20 +800,25 @@ Parallel tracks with safe sequencing:
 
 **Track A — Tooling changes:**
 
-- Build revised `vrg-submit-pr` (template mode, human-triggered).
+- Build revised `vrg-submit-pr` (template mode + ensure-pushed,
+  human-triggered).
 - Implement `.vergil/` scratch convention.
 - Update `vrg-gh` subcommand allowlists (block issue close/reopen/edit,
   block PR merge unconditionally, block PR create/edit/close).
-- Rename `vrg-finalize-repo` to `vrg-finalize-pr`.
-- Define the audit mode `vrg-gh` allowlist.
+- Make `vrg-gh`'s `gh api` allowance identity-aware: full for human,
+  read-only GET for audit, denied for user.
+- Consolidate the merge and post-merge cleanup into `vrg-finalize-pr`
+  (formerly `vrg-finalize-repo`): the tool now performs the merge and
+  runs the pre-merge provenance check immediately before it, fetching
+  the PR's action history via read-only `gh api` calls.
+- Define the audit identity `vrg-gh` allowlist.
 
 **Track B — Identity and permissions:**
 
-- Create `vergil-admin-app` GitHub App with the documented permissions.
 - Create `vergil-audit-app` GitHub App with the documented permissions.
-- Set up `<user>-vergil-admin` and `<user>-vergil-audit` GitHub accounts.
-- Configure track-mode and audit-mode VMs with respective credentials.
-- Remove `workflows` permission from the street-mode App.
+- Set up `<user>-vergil-user` and `<user>-vergil-audit` GitHub accounts.
+- Configure user and audit VMs with respective credentials.
+- Confirm the user App holds no `workflows` permission.
 - Implement visual differentiation for each VM.
 
 **Track C — Audit integration (deferred details):**
@@ -614,8 +832,8 @@ Tracks A and B proceed in parallel. Track C is architecturally
 defined in this spec (identity, permissions, vrg-gh allowlist) but
 the triggering and integration details are a follow-up design.
 
-**Immediate safe restriction:** Remove `workflows` permission from
-the street-mode App now. No workflow changes are queued, so this
+**Immediate safe restriction:** Ensure the user App holds no
+`workflows` permission now. No workflow changes are queued, so this
 costs nothing and activates the server-side hard gate immediately.
 
 ## Open Questions
@@ -640,6 +858,24 @@ branch protection could require audit approval before merge. This
 adds a quality gate but also adds a dependency — if the audit agent
 is down or slow, merges are blocked.
 
+**When does the admin slot get filled?** The reserved admin identity
+has no permissions today. The anticipated first trigger is workflow
+iteration becoming too tedious to route through the human on every CI
+turn — but the common case (action-pin bumps) is already handled by
+`vrg-dependency-update` (#918), so the trigger may not arrive soon.
+The slot is instantiated only when a concrete elevated-access use
+case appears, and its design must pair the elevated rights with
+heightened human involvement.
+
+**Programmatic PR review at the merge gate.** The pre-merge
+provenance check in `vrg-finalize-pr` establishes a host-side
+insertion point that runs before merge. Today the PR-quality strategy
+relies almost entirely on CI gates; the PR *review* process is not yet
+leveraged for substantive review of AI-authored changes. The same
+chokepoint is the natural home for future programmatic or agentic
+review of the PR's *content*, not just its provenance. Scope and
+mechanism are a follow-up design.
+
 **Visual differentiation specifics.** The requirement is that each
 VM is visually distinct. The specific treatment (color scheme, prompt
 indicators, login banners) needs design and user testing.
@@ -657,17 +893,59 @@ output. As local LLM infrastructure matures (Ollama on developer
 hardware), the audit identity becomes cost-neutral. The architecture
 should not assume cloud API access.
 
+**Cooperative vs. adversarial agents.** The model assumes a
+cooperative agent (Vergil) for routine operation, but does not *rely*
+on cooperation for containment. A prompt injection can transiently
+turn a cooperative agent into an adversarial one (Mimir) for the
+duration of the compromise. Soft gates correct a cooperative agent;
+the server-side hard gates must contain a momentarily-hostile one.
+Where a hard gate is missing (the documented gaps), that is a known,
+accepted, and tracked exposure — not an oversight. The dependence on
+agent good behavior inside the VM is a strategic risk we name
+explicitly rather than pretend away.
+
 **Mimir validation.** The Mimir identity (adversarial testing agent)
 will be used to validate this permission model. Mimir should
 demonstrate that:
 
-- In street mode, workflow file pushes are rejected (server-side).
-- In track mode, an adversarial agent can exploit elevated rights —
-  confirming why track mode requires active human supervision.
+- In the user identity, workflow file pushes are rejected
+  (server-side).
 - The audit identity cannot modify code or escalate privileges.
 
+Mimir is expected to defeat every Layer 1 soft gate trivially —
+becoming root, finding the raw binaries, spoofing `VRG_IDENTITY_MODE`,
+reverse-engineering the wrappers — and that is the point: the soft
+gates are not where containment lives. Mimir's real work is sustained
+pressure on the Layer 2 hard gates and the documented gaps, which is
+where the architecture either holds or fails.
+
 Documenting known attack surfaces for Mimir rather than waiting for
-discovery is part of the validation strategy.
+discovery is part of the validation strategy. (Mimir's own
+implementation is out of scope here and will be designed separately.)
+
+**Infrastructure advocacy.** Some gaps cannot be closed from inside
+this architecture because the underlying platform lacks the needed
+control — the GitHub PR-permission granularity gap is the clearest
+example. Documenting these precisely serves a second purpose beyond
+our own validation: it builds the evidence to advocate for the
+platform improvements (e.g., separating PR merge from PR write) that
+would let any AI-assisted workflow contain agents more tightly. The
+architecture is, in part, an opportunity to make the current limits
+of AI-safety tooling visible and argue — with data — for taking them
+seriously.
+
+**Radical transparency about weak controls.** This spec deliberately
+documents its own soft spots loudly rather than burying them — a
+strategic choice, not an admission of sloppiness. The current state of
+AI-agent security tooling is alarmingly immature; much of what ships
+as a "control" is trivially bypassable, and in important respects the
+field has regressed against security ground that was settled decades
+ago. Naming our gaps precisely is how we prioritize closing them and
+how we build the evidence to argue the field must do better. The
+documented gaps are a work list, not a disclaimer. Where
+vendor-provided agent controls are weak, we say so plainly and route
+real containment to the hard gates we control rather than pretending
+the soft ones suffice.
 
 **Human accountability.** Every contribution standard reviewed
 (including CPython's) requires human accountability. This
