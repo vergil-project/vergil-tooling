@@ -33,6 +33,7 @@ class IdentityConfig:
     default_identity: str | None = None
     vergil: str = ""
     vergil_vm: str = ""
+    model: str = ""
 
 
 def _validate_identity_resources(name: str, identity: Identity) -> None:
@@ -64,6 +65,7 @@ def load_config(path: Path) -> IdentityConfig:
     default_identity = raw.get("default_identity")
     vergil = raw.get("vergil", "")
     vergil_vm = raw.get("vergil-vm", "")
+    model = raw.get("model", "")
 
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
@@ -87,6 +89,7 @@ def load_config(path: Path) -> IdentityConfig:
         default_identity=default_identity,
         vergil=vergil,
         vergil_vm=vergil_vm,
+        model=model,
     )
 
 
@@ -166,6 +169,18 @@ def resolve_vm_tag(config: IdentityConfig, identity: Identity) -> str:
     if config.vergil_vm:
         return config.vergil_vm
     return resolve_vergil_version(config, identity)
+
+
+def resolve_model(config: IdentityConfig, identity: Identity, cli_model: str = "") -> str:
+    """Return the Claude model: CLI override, then identity, then config-level.
+
+    Returns ``""`` when none is configured, meaning no ``--model`` flag is passed.
+    """
+    if cli_model:
+        return cli_model
+    if identity.model:
+        return identity.model
+    return config.model
 
 
 def resolve_workspace(path: str, projects_dir: str) -> str:
