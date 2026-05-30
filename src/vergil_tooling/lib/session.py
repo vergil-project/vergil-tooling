@@ -276,3 +276,109 @@ def _select_fork(identity: str, path: str, slots: dict[int, Slot], slot: int | N
     if free is None:
         return _all_in_use(identity, path)
     return Fork(info.session_id, make_name(identity, free, path))
+
+
+@dataclass(frozen=True)
+class PromptStale:
+    """Warn-band: the resolver must prompt resume/fresh/cancel, then act."""
+
+    session_id: str  # resume this on [r]
+    name: str  # reclaim this name on [f] (archive session_id, then create name)
+    age_days: int
+
+
+PlanAction = Create | Resume | Fork | Refuse | PromptStale
+
+
+@dataclass(frozen=True)
+class SessionPlan:
+    """A full session decision: cold slots to auto-archive, then an action."""
+
+    auto_archive: list[Slot]
+    action: PlanAction
+
+
+def _idle_by_recency(slots: dict[int, Slot]) -> list[Slot]:
+    """Idle slots, most-recently-active first (unknown age sorts oldest)."""
+    idle = [s for s in slots.values() if not s.active]
+    return sorted(
+        idle,
+        key=lambda s: (s.last_active is not None, s.last_active or 0.0),
+        reverse=True,
+    )
+
+
+def plan_session(
+    identity: str,
+    path: str,
+    slots: dict[int, Slot],
+    now: float,
+    stale_days: int,
+    archive_days: int,
+    requested_slot: int | None = None,
+    fork: bool = False,
+    fresh: bool = False,
+) -> SessionPlan:
+    """Plan a session launch: which cold slots to archive, then what to do."""
+    if fork:
+        return SessionPlan([], _select_fork(identity, path, slots, requested_slot))
+    if fresh:
+        return _plan_fresh(identity, path, slots, requested_slot)
+    if requested_slot is not None:
+        return SessionPlan([], _select_explicit(identity, path, slots, requested_slot))
+
+    sweep = [
+        s
+        for s in slots.values()
+        if not s.active
+        and classify_age(now, s.last_active, stale_days, archive_days) == AgeBand.STALE
+    ]
+    swept = {s.slot for s in sweep}
+    remaining = {n: s for n, s in slots.items() if n not in swept}
+    return SessionPlan(
+        sweep, _select_auto(identity, path, remaining, now, stale_days, archive_days)
+    )
+
+
+def _select_auto(
+    identity: str,
+    path: str,
+    slots: dict[int, Slot],
+    now: float,
+    stale_days: int,
+    archive_days: int,
+) -> PlanAction:
+    """Most-recent idle in FRESH resumes; in WARN prompts; else create free."""
+    for slot in _idle_by_recency(slots):
+        band = classify_age(now, slot.last_active, stale_days, archive_days)
+        if band == AgeBand.FRESH:
+            return Resume(slot.session_id)
+        age_days = int((now - (slot.last_active or now)) / 86400.0)
+        return PromptStale(slot.session_id, make_name(identity, slot.slot, path), age_days)
+    free = _lowest_free(slots)
+    if free is None:
+        return _all_in_use(identity, path)
+    return Create(make_name(identity, free, path))
+
+
+def _plan_fresh(
+    identity: str, path: str, slots: dict[int, Slot], requested_slot: int | None
+) -> SessionPlan:
+    """``--fresh``: archive the (cold) target and create fresh in that slot."""
+    if requested_slot is not None:
+        if not SLOT_MIN <= requested_slot <= SLOT_MAX:
+            return SessionPlan([], _bad_range())
+        target = slots.get(requested_slot)
+        slot_no = requested_slot
+    else:
+        idle = _idle_by_recency(slots)
+        target = idle[0] if idle else None
+        slot_no = target.slot if target else (_lowest_free(slots) or 0)
+    if slot_no == 0:
+        return SessionPlan([], _all_in_use(identity, path))
+    if target is not None and target.active:
+        return SessionPlan(
+            [], Refuse(f"slot {slot_no:02d} is active; cannot start fresh over a live session")
+        )
+    archive = [target] if target is not None else []
+    return SessionPlan(archive, Create(make_name(identity, slot_no, path)))
