@@ -454,19 +454,30 @@ def test_main_requires_identity_and_path(
 def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
 
-    def fake_resolve(identity, path, slot, fork, extra):  # noqa: ANN001, ANN202
-        seen.update(identity=identity, path=path, slot=slot, fork=fork, extra=extra)
+    def fake_resolve(*args: object) -> int:
+        seen["args"] = args
         return 0
 
     monkeypatch.setattr(r, "resolve", fake_resolve)
-    assert r.main(["--identity", "id", "--path", "p", "--slot", "2", "x"]) == 0
-    assert seen == {
-        "identity": "id",
-        "path": "p",
-        "slot": 2,
-        "fork": False,
-        "extra": ["x"],
-    }
+    code = r.main(
+        [
+            "--identity",
+            "id",
+            "--path",
+            "p",
+            "--slot",
+            "2",
+            "--fresh",
+            "--stale-days",
+            "7",
+            "--archive-days",
+            "14",
+            "x",
+        ]
+    )
+    assert code == 0
+    # resolve(identity, path, slot, fork, fresh, extra, stale_days, archive_days)
+    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14)
 
 
 def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -474,7 +485,7 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         r,
         "resolve",
-        lambda i, p, s, f, extra: captured.update(extra=extra) or 0,  # noqa: ARG005
+        lambda *args: captured.update(extra=args[5]) or 0,  # noqa: ARG005
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]

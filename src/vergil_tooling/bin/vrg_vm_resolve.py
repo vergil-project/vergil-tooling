@@ -364,6 +364,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--path")
     parser.add_argument("--slot", type=int)
     parser.add_argument("--fork", action="store_true")
+    parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--stale-days", type=int, default=7, dest="stale_days")
+    parser.add_argument("--archive-days", type=int, default=14, dest="archive_days")
     parser.add_argument("--list-json", action="store_true", dest="list_json")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -378,7 +381,16 @@ def main(argv: list[str] | None = None) -> int:
     extra = args.extra
     if extra and extra[0] == "--":
         extra = extra[1:]
-    return resolve(args.identity, args.path, args.slot, args.fork, extra)
+    return resolve(
+        args.identity,
+        args.path,
+        args.slot,
+        args.fork,
+        args.fresh,
+        extra,
+        args.stale_days,
+        args.archive_days,
+    )
 
 
 if __name__ == "__main__":
