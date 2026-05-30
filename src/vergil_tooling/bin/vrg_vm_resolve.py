@@ -27,6 +27,7 @@ from vergil_tooling.lib.session import (
     Resume,
     build_slots,
     list_rows,
+    make_archived_name,
     select,
 )
 
@@ -208,6 +209,24 @@ def _read_state() -> tuple[dict[str, str], set[str], dict[str, float]]:
             if ts is not None:
                 last_active[sid] = ts
     return names, active, last_active
+
+
+def _archive_session(session_id: str, timestamp: str) -> None:
+    """Relabel a cold session by appending an archived ``agent-name`` entry."""
+    transcript = projects_glob(_claude_dir() / "projects", session_id)
+    current = _last_agent_name(transcript)
+    if current is None:
+        return
+    entry = {
+        "type": "agent-name",
+        "agentName": make_archived_name(current, timestamp),
+        "sessionId": session_id,
+    }
+    try:
+        with transcript.open("a") as fh:
+            fh.write(json.dumps(entry) + "\n")
+    except OSError:
+        return
 
 
 def _exec_claude(args: list[str]) -> int:

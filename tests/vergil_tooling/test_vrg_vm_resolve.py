@@ -60,6 +60,26 @@ def test_parse_ts_invalid_returns_none() -> None:
     assert r._parse_ts(12345) is None
 
 
+def test_archive_session_appends_archived_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    t = projects / "s1.jsonl"
+    t.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    r._archive_session("s1", "2026-05-30T14:23:07Z")
+    assert r._last_agent_name(t) == "archived@2026-05-30T14:23:07Z@vergil:01:p"
+
+
+def test_archive_session_missing_transcript_is_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "projects").mkdir()
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    r._archive_session("ghost", "2026-05-30T14:23:07Z")  # must not raise
+
+
 # --- _last_agent_name ---
 
 
