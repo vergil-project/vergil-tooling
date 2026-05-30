@@ -1196,7 +1196,28 @@ Compute in `_cmd_session`:
     ... _session_inner(args, name, rel_path, model, stale, archive)
 ```
 
-- Extend `_list_sessions` to request rows (already does), filter by `args` state flags (default active+idle), and print a `LAST ACTIVE` column rendered from `lastActive` epoch via a relative-age formatter:
+**List architecture (keep the merged host-side approach; extend it).** The
+shipped `_list_sessions` reads transcripts **host-side** and queries each running
+VM only for active session ids. Preserve that and extend for age + archived —
+do **not** switch to per-VM full-row merge (every VM returns all shared
+transcripts, so that duplicates rows). Concretely:
+
+- **Host-side, once** (the projects store is shared and host-readable): reuse the
+  resolver's `name_by_session`, `_last_activity`, and `parse_archived` against
+  `Path.home() / ".claude" / "projects"` to get names, idle ages, and archived
+  rows. (Import these from `vergil_tooling.bin.vrg_vm_resolve`.)
+- **Per running VM**: extend `_vm_active_session_ids` → `_vm_active_sessions`
+  returning `{sessionId: updatedAt_seconds}` (parse the `--list-json` rows where
+  `state == "active"`, reading their `lastActive`). Union across VMs; a session
+  is active if any VM reports it active.
+- **Merge**: `active = set(union.keys())`; `last_active` = host idle ages
+  overlaid with the VM `updatedAt` for active ids. Then
+  `rows = list_rows(names, active, last_active)` — `list_rows` already dedups by
+  `(identity, slot, path)` with active-wins, so **no separate dedup and no
+  duplicate-state rows**. Append archived rows from the host-side
+  `_archived_rows(names, last_active)`.
+
+Render with a relative-age formatter and the state filters:
 
 ```python
 def _format_age(last_active: float | None, now: float) -> str:
@@ -1208,9 +1229,10 @@ def _format_age(last_active: float | None, now: float) -> str:
     return f"{int(days)}d"
 ```
 
-State filtering: default keep `state in {"active","idle"}`; `--archived` → `{"archived"}`; `--all` → all; `--active`/`--idle` narrow accordingly. Header row gains `LAST ACTIVE` and (for archived view) `ARCHIVED`.
-
-> Worker note: `_list_sessions` currently merges only active session ids. Now the resolver `--list-json` returns full state, so the host can render directly per running VM. Keep the cross-VM merge: a (identity,slot,path) is `active` if any VM reports it active. Dedupe by (identity,slot,path,state).
+State filtering: default keep `state in {"active","idle"}`; `--archived` →
+`{"archived"}`; `--all` → all; `--active`/`--idle` narrow accordingly. Header
+row gains `LAST ACTIVE`, and the archived view adds an `ARCHIVED` column (the
+`archivedAt` timestamp).
 
 - [ ] **Step 4: Run, verify pass** → PASS.
 
