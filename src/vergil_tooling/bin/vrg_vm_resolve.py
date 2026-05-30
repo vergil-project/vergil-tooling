@@ -240,11 +240,11 @@ def _exec_claude(args: list[str]) -> int:
 
 
 def _now() -> float:
-    return datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+    return datetime.datetime.now(tz=datetime.UTC).timestamp()
 
 
 def _now_iso() -> str:
-    return datetime.datetime.now(tz=datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _prompt_stale(path: str, slot: int, age_days: int) -> str:

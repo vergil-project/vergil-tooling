@@ -569,8 +569,11 @@ def test_session_thresholds_parsed(tmp_path: Path) -> None:
 def test_resolve_session_thresholds_cascade() -> None:
     cfg = IdentityConfig(identities={}, session_stale_days=5, session_archive_days=30)
     ident = Identity(vm_instance="x", session_stale_days=2)
-    assert resolve_session_stale_days(cfg, ident) == 2
-    assert resolve_session_archive_days(cfg, ident) == 30
+    assert resolve_session_stale_days(cfg, ident) == 2  # identity override
+    assert resolve_session_archive_days(cfg, ident) == 30  # falls back to config
+    # identity-level archive override
+    ident2 = Identity(vm_instance="x", session_archive_days=20)
+    assert resolve_session_archive_days(cfg, ident2) == 20
 
 
 def test_resolve_session_thresholds_builtin_defaults() -> None:

@@ -623,6 +623,7 @@ class TestList:
         output = capsys.readouterr().out
         assert "Not Created" in output
 
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=1700000000.0)
     @patch("vergil_tooling.bin.vrg_vm.name_by_session")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
@@ -631,6 +632,7 @@ class TestList:
         mock_list: MagicMock,
         mock_shell: MagicMock,
         mock_names: MagicMock,
+        _age: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -645,7 +647,15 @@ class TestList:
                         "sessionId": "s1",
                         "state": "active",
                         "lastActive": 1748000000.0,
-                    }
+                    },
+                    {
+                        "identity": "vergil",
+                        "slot": 2,
+                        "path": "vergil-project/tooling",
+                        "sessionId": "s2",
+                        "state": "idle",
+                        "lastActive": 1700000000.0,
+                    },
                 ]
             )
         )

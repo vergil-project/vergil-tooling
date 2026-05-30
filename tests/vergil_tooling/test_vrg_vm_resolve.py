@@ -12,7 +12,7 @@ from vergil_tooling.bin import vrg_vm_resolve as r
 if TYPE_CHECKING:
     from pathlib import Path
 
-UTC = datetime.timezone.utc
+UTC = datetime.UTC
 
 
 def test_last_activity_reads_last_timestamped_entry(tmp_path: Path) -> None:
@@ -47,7 +47,7 @@ def test_last_activity_handles_large_file_via_tail(tmp_path: Path) -> None:
     f = tmp_path / "s.jsonl"
     pad = "x" * 1000
     lines = [
-        '{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","pad":"%s"}' % pad
+        f'{{"type":"user","timestamp":"2020-01-01T00:00:00.000Z","pad":"{pad}"}}'
         for _ in range(5000)
     ]
     lines.append('{"type":"assistant","timestamp":"2026-05-30T12:00:00.000Z"}')
@@ -58,6 +58,28 @@ def test_last_activity_handles_large_file_via_tail(tmp_path: Path) -> None:
 def test_parse_ts_invalid_returns_none() -> None:
     assert r._parse_ts("not a date") is None
     assert r._parse_ts(12345) is None
+
+
+def test_last_activity_skips_bad_timestamp_lines(tmp_path: Path) -> None:
+    # from the end: malformed JSON, then non-string timestamp, then a valid one
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"user","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"a","timestamp":123}\n'
+        '{"type":"b","timestamp": BROKEN}\n'
+    )
+    assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_archive_session_append_oserror_is_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    (projects / "adir.jsonl").mkdir()  # a directory -> open("a") raises OSError
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_last_agent_name", lambda _t: "vergil:01:p")
+    r._archive_session("adir", "2026-05-30T14:23:07Z")  # must not raise
 
 
 def test_archive_session_appends_archived_name(
@@ -476,7 +498,7 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     assert code == 0
-    # resolve(identity, path, slot, fork, fresh, extra, stale_days, archive_days)
+    # args order: identity, path, slot, fork, fresh, extra, stale_days, archive_days
     assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14)
 
 

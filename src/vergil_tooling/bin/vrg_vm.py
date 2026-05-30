@@ -9,6 +9,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import cast
 
 from vergil_tooling.bin.vrg_vm_resolve import (
     _archived_rows,
@@ -376,14 +377,14 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
 
     wanted = _selected_states(args)
     rows = [r for r in rows if r["state"] in wanted]
-    rows.sort(key=lambda r: (str(r["identity"]), int(r["slot"]), str(r["path"])))
+    rows.sort(key=lambda r: (str(r["identity"]), cast("int", r["slot"]), str(r["path"])))
 
-    now = datetime.datetime.now(tz=datetime.timezone.utc).timestamp()
+    now = datetime.datetime.now(tz=datetime.UTC).timestamp()
     print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<36} {'STATE':<9} {'LAST ACTIVE':<12}")
     print(f"{'─' * 16} {'─' * 6} {'─' * 36} {'─' * 9} {'─' * 12}")
     for r in rows:
-        slot = f"{int(r['slot']):02d}"
-        age = _format_age(r.get("lastActive"), now)  # type: ignore[arg-type]
+        slot = f"{cast('int', r['slot']):02d}"
+        age = _format_age(cast("float | None", r.get("lastActive")), now)
         print(f"{r['identity']!s:<16} {slot:<6} {r['path']!s:<36} {r['state']!s:<9} {age:<12}")
 
     return 0
