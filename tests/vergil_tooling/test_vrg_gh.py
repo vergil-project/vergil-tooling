@@ -363,9 +363,7 @@ class TestAgentDenials:
         err = capsys.readouterr().err
         assert "denied" in err.lower()
 
-    def test_issue_close_says_race_director(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_issue_close_says_race_director(self, capsys: pytest.CaptureFixture[str]) -> None:
         main(["issue", "close", "42"])
         err = capsys.readouterr().err
         assert "race director" in err.lower()
@@ -377,9 +375,7 @@ class TestAgentDenials:
         err = capsys.readouterr().err
         assert "denied" in err.lower()
 
-    def test_pr_create_no_vrg_submit_pr_mention(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_pr_create_no_vrg_submit_pr_mention(self, capsys: pytest.CaptureFixture[str]) -> None:
         main(["pr", "create"])
         err = capsys.readouterr().err
         assert "vrg-submit-pr" not in err
@@ -433,9 +429,7 @@ class TestHumanAllowlist:
         err = capsys.readouterr().err
         assert "denied" in err.lower()
 
-    def test_pr_create_mentions_vrg_submit_pr(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_pr_create_mentions_vrg_submit_pr(self, capsys: pytest.CaptureFixture[str]) -> None:
         main(["pr", "create"])
         err = capsys.readouterr().err
         assert "vrg-submit-pr" in err
@@ -535,9 +529,7 @@ class TestApiAccess:
             rc = main(["api", "repos/o/r/pulls/1/reviews"])
         assert rc == 0
 
-    def test_audit_api_explicit_get_method_allowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_audit_api_explicit_get_method_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
         with (
             patch(
@@ -550,9 +542,7 @@ class TestApiAccess:
             rc = main(["api", "repos/o/r/pulls/1", "--method=GET"])
         assert rc == 0
 
-    def test_audit_api_trailing_method_flag_allowed(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_audit_api_trailing_method_flag_allowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # A dangling ``-X`` with no value leaves the verb at gh's GET default.
         monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
         with (

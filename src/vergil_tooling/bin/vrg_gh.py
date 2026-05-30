@@ -162,8 +162,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         if mode == identity_mode.IdentityMode.AUDIT and not _api_is_get(argv):
             print(
-                "vrg-gh: gh api is restricted to read-only GET calls "
-                "for the audit identity.",
+                "vrg-gh: gh api is restricted to read-only GET calls for the audit identity.",
                 file=sys.stderr,
             )
             return 1
@@ -182,8 +181,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if len(argv) < 2:  # noqa: PLR2004
         print(
-            f"vrg-gh: {top} requires a subcommand. "
-            f"Allowed: {', '.join(sorted(allowed[top]))}",
+            f"vrg-gh: {top} requires a subcommand. Allowed: {', '.join(sorted(allowed[top]))}",
             file=sys.stderr,
         )
         return 1
@@ -198,8 +196,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if sub not in allowed[top]:
         print(
-            f"vrg-gh: {top} {sub} is not recognized. "
-            f"Allowed: {', '.join(sorted(allowed[top]))}",
+            f"vrg-gh: {top} {sub} is not recognized. Allowed: {', '.join(sorted(allowed[top]))}",
             file=sys.stderr,
         )
         return 1

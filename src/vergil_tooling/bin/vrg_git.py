@@ -273,23 +273,20 @@ def main(argv: list[str] | None = None) -> int:
             env = _git_auth_env(token)
 
     if subcmd == "push":
-        result = subprocess.run(  # noqa: S603, S607
-            ["git", *argv],
+        push_result = subprocess.run(  # noqa: S603
+            ["git", *argv],  # noqa: S607
             check=False,
             env=env,
             capture_output=True,
             text=True,
         )
-        if result.stdout:
-            sys.stdout.write(result.stdout)
-        if result.returncode != 0 and _WORKFLOW_PERMISSION_RE.search(result.stderr or ""):
-            if result.stderr:
-                sys.stderr.write(result.stderr)
+        if push_result.stdout:
+            sys.stdout.write(push_result.stdout)
+        if push_result.stderr:
+            sys.stderr.write(push_result.stderr)
+        if push_result.returncode != 0 and _WORKFLOW_PERMISSION_RE.search(push_result.stderr or ""):
             _print_workflow_push_guidance()
-            return result.returncode
-        if result.stderr:
-            sys.stderr.write(result.stderr)
-        return result.returncode
+        return push_result.returncode
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode

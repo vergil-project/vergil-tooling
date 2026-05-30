@@ -530,9 +530,7 @@ class TestPushWorkflowErrorDetection:
         assert "workflow" in err.lower()
         assert "escalate" in err.lower() or "race director" in err.lower()
 
-    def test_workflow_error_shows_original_stderr(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_workflow_error_shows_original_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
         with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
             mock_run.return_value = subprocess.CompletedProcess(
                 args=["git", "push"],
