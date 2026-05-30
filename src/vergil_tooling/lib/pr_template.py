@@ -8,7 +8,10 @@ blocks. This is sufficient for the PR template format.
 from __future__ import annotations
 
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _TEMPLATE_DIR = ".vergil"
 _TEMPLATE_FILE = "pr-template.yml"
@@ -41,9 +44,7 @@ def _parse(text: str) -> dict[str, str]:
             while i < len(lines):
                 if lines[i] and not lines[i][0].isspace():
                     break
-                block_lines.append(
-                    lines[i][2:] if len(lines[i]) > 2 else lines[i].strip()
-                )
+                block_lines.append(lines[i][2:] if len(lines[i]) > 2 else lines[i].strip())
                 i += 1
             result[key] = "\n".join(block_lines).strip()
         else:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.identity_mode import (
     IdentityMode,
@@ -10,6 +10,9 @@ from vergil_tooling.lib.identity_mode import (
     is_agent,
     is_human,
 )
+
+if TYPE_CHECKING:
+    import pytest
 
 
 class TestCurrentMode:
@@ -26,9 +29,7 @@ class TestCurrentMode:
         monkeypatch.delenv("VRG_APP_ID", raising=False)
         assert current_mode() == IdentityMode.HUMAN
 
-    def test_fallback_to_user_with_app_credentials(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_fallback_to_user_with_app_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.setenv("VRG_APP_ID", "12345")
         assert current_mode() == IdentityMode.USER
