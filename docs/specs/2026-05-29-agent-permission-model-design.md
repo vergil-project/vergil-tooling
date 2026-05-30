@@ -579,10 +579,26 @@ cannot use. (The hook guard itself is a dumb gate — it only
 redirects raw `git`/`gh` to the wrapper scripts and knows nothing
 about subcommands or identity.)
 
-## `vrg-finalize-pr` (Renamed from `vrg-finalize-repo`)
+## `vrg-finalize-pr` (Consolidates merge + cleanup, formerly `vrg-finalize-repo`)
 
-The rename signals the scope change. This tool finalizes a specific
-PR:
+This is not a rename — it is a consolidation. Previously two separate
+human actions finished a PR: the human merged it by hand (on the web),
+then ran `vrg-finalize-repo` to clean up the branch and prune refs.
+Both collapse into one human tool. Moving the merge off the web and
+into a `vrg-*` tool is the same move applied everywhere in this design:
+take a mechanized operation that really matters and put it behind a
+human-triggered command. It also creates the exact insertion point the
+provenance check needs — a single place, under human control, that
+performs the merge and can gate it.
+
+Until now the implicit merge rule was "if the CI gates are green, merge
+it" — sound only because every sanity check was assumed to live in the
+GitHub CI gates, which today is true. The provenance check is the first
+sanity check that *cannot* live in a CI gate (GitHub attributes
+identity actions outside the PR's own checks), so it runs in the tool
+that performs the merge, immediately before the merge.
+
+This tool finalizes a specific PR:
 
 1. **Pre-merge provenance check.** Fetch the PR's action history —
    reviews and timeline events, each attributed by GitHub to the
@@ -598,6 +614,13 @@ PR:
 3. Delete the feature branch (local and remote).
 4. Prune remote references.
 5. Post-merge housekeeping.
+
+The action history is fetched with read-only `gh api` GET calls to
+the PR reviews and issue timeline endpoints. This is available because
+the tool runs in the human context, and the same calls are reachable
+from the audit context under the identity-aware API allowance (see
+"Identity-aware API access") — without ever granting the user agent a
+raw-API escape hatch.
 
 This is a human (Race Director) operation. No agent invokes it. The
 pre-merge provenance check is the worked example of the "human
@@ -636,6 +659,7 @@ action its role forbids on the PR being merged.
 | `run watch` | allowed | Read operation |
 | `repo view` | allowed | Read operation |
 | `repo list` | allowed | Read operation |
+| `api` | **blocked** | Raw API is a broad escape hatch — abusable by a compromised user agent to reach endpoints the subcommand allowlist would otherwise gate |
 
 ### Audit Identity Subcommand Allowlist
 
@@ -647,6 +671,7 @@ action its role forbids on the PR being merged.
 | `pr checks` | allowed | Check CI status |
 | `pr comment` | allowed | Post review findings |
 | `pr review` | allowed | Submit formal review (including approval) |
+| `api` (GET only) | allowed | Read-only API access for review tooling (e.g., PR reviews and timeline endpoints). The audit App's narrow permissions (`contents: read`, `pull_requests: write`, `issues: read`) bound what any API call can reach, so the raw API is low-risk for this identity |
 | Everything else | **blocked** | Audit is read-and-comment only |
 
 ### Admin Identity Subcommand Allowlist
@@ -661,6 +686,32 @@ If the value is `audit`, the audit allowlist applies. If `user`, the
 user allowlist applies. Absence of the variable implies human
 identity, which retains the full allowlist. The environment variable
 is set by VM provisioning — the agent does not choose its own mode.
+
+### Identity-aware API access
+
+The raw `gh api` escape hatch is gated per identity rather than
+denied wholesale. This is the general principle that the `vrg-gh`
+allow/disallow decision is a function of identity, not a single
+fixed list:
+
+- **User** — blocked. The user App holds `contents: write`, so a
+  compromised user agent with raw API access could reach write
+  endpoints that the curated subcommand allowlist deliberately
+  withholds. The broad surface is not worth the ergonomic gain.
+- **Audit** — allowed for read (GET) calls. The audit App's
+  permissions are narrow and mostly read-only (`contents: read`,
+  `issues: read`, with `pull_requests: write` the only write
+  scope), so even the raw API cannot reach anything the identity
+  is not already trusted with. This is what makes read-only API
+  access safe to grant here but not to the user.
+- **Human** — full, as with every other subcommand.
+
+This identity-aware allowance is what lets the pre-merge provenance
+check in `vrg-finalize-pr` query GitHub's review and timeline
+endpoints (see that section). The check runs in the human context,
+where the API is available; the same endpoints are reachable from
+the audit context for review tooling without granting the user
+agent a write-capable escape hatch.
 
 ## Permission Delta Registry
 
@@ -754,7 +805,12 @@ Parallel tracks with safe sequencing:
 - Implement `.vergil/` scratch convention.
 - Update `vrg-gh` subcommand allowlists (block issue close/reopen/edit,
   block PR merge unconditionally, block PR create/edit/close).
-- Rename `vrg-finalize-repo` to `vrg-finalize-pr`.
+- Make `vrg-gh`'s `gh api` allowance identity-aware: full for human,
+  read-only GET for audit, denied for user.
+- Consolidate the merge and post-merge cleanup into `vrg-finalize-pr`
+  (formerly `vrg-finalize-repo`): the tool now performs the merge and
+  runs the pre-merge provenance check immediately before it, fetching
+  the PR's action history via read-only `gh api` calls.
 - Define the audit identity `vrg-gh` allowlist.
 
 **Track B — Identity and permissions:**
