@@ -5,6 +5,42 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.76] - 2026-05-31
+
+### Chores
+
+- add .vergil/ scratch directory to gitignore
+
+### Documentation
+
+- rework permission model around subset-of-human-rights, drop track mode
+- add foundational host-as-owner assumption and merge-time provenance gate
+- consolidate merge into vrg-finalize-pr with provenance check; make gh api identity-aware
+- add stale-session lifecycle implementation plan
+- align list --sessions task with merged host-side architecture
+
+### Features
+
+- add identity-mode detection module for VM mode awareness
+- add PR template library for .vergil/ scratch convention
+- add session_stale_days/session_archive_days config
+- parse archived session labels; guard parse_name
+- add last_active to Slot and SessionRow
+- add session age-band classifier
+- add plan_session: bands, sweep, most-recent resume, --fresh
+- tail-read last timestamped entry for session age
+- compute last_active map in resolver state
+- compute last_active map in resolver state
+- archive a session by appending an archived agent-name
+- execute session plan: sweep, stale prompt, resume/create/fork
+- emit age + state (active/idle/archived) in --list-json
+- wire --fresh, thresholds, and list --sessions states/age
+
+### Testing
+
+- satisfy lint and reach full coverage for foundation modules
+- complete branch coverage for stale-lifecycle
+
 ## [2.0.75] - 2026-05-30
 
 ### Chores
