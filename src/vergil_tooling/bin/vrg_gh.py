@@ -37,14 +37,14 @@ _DENIED_ALWAYS: dict[str, dict[str, str]] = {
 
 _DENIED_AGENT: dict[str, dict[str, str]] = {
     "pr": {
-        "create": "PR creation is a Race Director operation.",
-        "edit": "PR edit is a Race Director operation.",
-        "merge": "PR merge is a Race Director operation.",
+        "create": "PR creation requires a human maintainer.",
+        "edit": "PR edit requires a human maintainer.",
+        "merge": "PR merge requires a human maintainer.",
     },
     "issue": {
-        "close": "Issue close is a Race Director operation.",
-        "reopen": "Issue reopen is a Race Director operation.",
-        "edit": "Issue edit is a Race Director operation.",
+        "close": "Issue close requires a human maintainer.",
+        "reopen": "Issue reopen requires a human maintainer.",
+        "edit": "Issue edit requires a human maintainer.",
     },
 }
 
@@ -211,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
     ):
         print(
             "vrg-gh: pr review --approve is denied. "
-            "Only Officials (audit) or the Race Director can approve PRs.",
+            "PR approval is restricted to the audit identity or a human maintainer.",
             file=sys.stderr,
         )
         return 1

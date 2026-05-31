@@ -528,7 +528,8 @@ class TestPushWorkflowErrorDetection:
         assert rc == 1
         err = capsys.readouterr().err
         assert "workflow" in err.lower()
-        assert "escalate" in err.lower() or "race director" in err.lower()
+        assert "escalate" in err.lower()
+        assert "human maintainer" in err.lower()
 
     def test_workflow_error_shows_original_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
         with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:

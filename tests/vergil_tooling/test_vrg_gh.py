@@ -363,10 +363,10 @@ class TestAgentDenials:
         err = capsys.readouterr().err
         assert "denied" in err.lower()
 
-    def test_issue_close_says_race_director(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_issue_close_says_human_maintainer(self, capsys: pytest.CaptureFixture[str]) -> None:
         main(["issue", "close", "42"])
         err = capsys.readouterr().err
-        assert "race director" in err.lower()
+        assert "human maintainer" in err.lower()
 
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]

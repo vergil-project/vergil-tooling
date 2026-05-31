@@ -52,5 +52,5 @@ def is_agent() -> bool:
 
 
 def is_human() -> bool:
-    """Return True if running as the human (Race Director)."""
+    """Return True if running as the human (Chief Steward)."""
     return current_mode() == IdentityMode.HUMAN

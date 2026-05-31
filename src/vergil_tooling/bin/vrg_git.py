@@ -208,7 +208,7 @@ def _print_workflow_push_guidance() -> None:
     print(
         f"\nvrg-git: Push rejected — workflow file changes require elevated permissions.\n"
         f"  Your identity ({mode.value}) is not permitted to push workflow file changes.\n"
-        f"  Stop and escalate to the Race Director. Do not attempt to work around\n"
+        f"  Stop and escalate to a human maintainer. Do not attempt to work around\n"
         f"  this failure (e.g., by removing workflow files from the commit).",
         file=sys.stderr,
     )
