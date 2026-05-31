@@ -271,15 +271,22 @@ def _slot_num(name: str) -> int:
     return parsed[1] if parsed else 0
 
 
-def _execute(path: str, action: PlanAction, extra: list[str]) -> int:
+def _note(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _execute(path: str, action: PlanAction, extra: list[str], names: dict[str, str]) -> int:
     if isinstance(action, Refuse):
         print(f"ERROR: {action.message}", file=sys.stderr)
         return 1
     if isinstance(action, Create):
+        _note(f"Creating session {action.name}")
         return _exec_claude(["-n", action.name, *extra])
     if isinstance(action, Resume):
+        _note(f"Resuming session {names.get(action.session_id, action.session_id)}")
         return _exec_claude(["--resume", action.session_id, *extra])
     if isinstance(action, Fork):
+        _note(f"Forking session {names.get(action.session_id, action.session_id)} -> {action.name}")
         return _exec_claude(
             ["--resume", action.session_id, "--fork-session", "-n", action.name, *extra]
         )
@@ -288,8 +295,11 @@ def _execute(path: str, action: PlanAction, extra: list[str]) -> int:
     if choice == "c":
         return 0
     if choice == "f":
+        _note(f"Archiving session {prompt.name}")
         _archive_session(prompt.session_id, _now_iso())
+        _note(f"Creating session {prompt.name}")
         return _exec_claude(["-n", prompt.name, *extra])
+    _note(f"Resuming session {prompt.name}")
     return _exec_claude(["--resume", prompt.session_id, *extra])
 
 
@@ -310,7 +320,7 @@ def resolve(
         identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
     )
     _run_sweep(plan.auto_archive)
-    return _execute(path, plan.action, extra)
+    return _execute(path, plan.action, extra, names)
 
 
 def _archived_rows(names: dict[str, str], last_active: dict[str, float]) -> list[dict[str, object]]:

@@ -265,22 +265,37 @@ def _resolve(identity: str, path: str, **kw: object) -> int:
     return r.resolve(identity, path, **defaults)  # type: ignore[arg-type]
 
 
-def test_resolve_create(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+def test_resolve_create(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
     assert _resolve("id", "p", extra=["--model", "opus"]) == 0
     assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
+    assert "Creating session id:01:p" in capsys.readouterr().err
 
 
-def test_resolve_resume(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+def test_resolve_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set(), {}))
     assert _resolve("id", "p") == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
+    assert "Resuming session id:01:p" in capsys.readouterr().err
 
 
-def test_resolve_fork(monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]) -> None:
+def test_resolve_fork(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
     assert _resolve("id", "p", requested_slot=1, fork=True) == 0
     assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
+    assert "Forking session id:01:p -> id:02:p" in capsys.readouterr().err
 
 
 def test_resolve_refuse(
@@ -307,11 +322,15 @@ def test_resolve_sweeps_stale_and_creates(
     assert _resolve("vergil", "p") == 0
     assert archived == ["old"]
     assert capture_exec == [["claude", "-n", "vergil:01:p"]]
-    assert "auto-archiving" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "auto-archiving" in err
+    assert "Creating session vergil:01:p" in err
 
 
 def test_resolve_warn_prompt_resume(
-    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
@@ -321,10 +340,13 @@ def test_resolve_warn_prompt_resume(
     monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
     assert _resolve("vergil", "p") == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
+    assert "Resuming session vergil:01:p" in capsys.readouterr().err
 
 
 def test_resolve_warn_prompt_fresh(
-    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
@@ -338,6 +360,9 @@ def test_resolve_warn_prompt_fresh(
     assert _resolve("vergil", "p") == 0
     assert archived == ["s1"]
     assert capture_exec == [["claude", "-n", "vergil:01:p"]]
+    err = capsys.readouterr().err
+    assert "Archiving session vergil:01:p" in err
+    assert "Creating session vergil:01:p" in err
 
 
 def test_resolve_warn_prompt_cancel(
