@@ -2,18 +2,51 @@ from __future__ import annotations
 
 from vergil_tooling.lib.session import (
     SLOT_MAX,
+    AgeBand,
     Create,
     Fork,
+    PromptStale,
     Refuse,
     Resume,
+    SessionPlan,
     SessionRow,
     Slot,
     build_slots,
+    classify_age,
     list_rows,
+    make_archived_name,
     make_name,
+    parse_archived,
     parse_name,
+    plan_session,
     select,
 )
+
+
+def test_make_archived_name() -> None:
+    assert (
+        make_archived_name("vergil:01:a/b", "2026-05-30T14:23:07Z")
+        == "archived@2026-05-30T14:23:07Z@vergil:01:a/b"
+    )
+
+
+def test_parse_name_rejects_archived_prefix() -> None:
+    assert parse_name("archived@2026-05-30T14:23:07Z@vergil:01:a/b") is None
+
+
+def test_parse_archived_roundtrip() -> None:
+    label = "archived@2026-05-30T14:23:07Z@vergil:01:a/b"
+    assert parse_archived(label) == ("2026-05-30T14:23:07Z", "vergil:01:a/b")
+
+
+def test_parse_archived_path_with_at_sign() -> None:
+    label = "archived@2026-05-30T14:23:07Z@vergil:01:clients/acme@2024"
+    assert parse_archived(label) == ("2026-05-30T14:23:07Z", "vergil:01:clients/acme@2024")
+
+
+def test_parse_archived_returns_none_for_non_archived() -> None:
+    assert parse_archived("vergil:01:a/b") is None
+    assert parse_archived("archived@only-two-parts") is None
 
 
 def test_make_name_zero_pads_slot() -> None:
@@ -207,3 +240,163 @@ def test_list_rows_keeps_active_when_idle_follows() -> None:
     name_by_session = {"live": "vergil:01:p", "idle": "vergil:01:p"}
     rows = list_rows(name_by_session, active_sessions={"live"})
     assert rows == [SessionRow("vergil", 1, "p", "live", active=True)]
+
+
+def test_build_slots_attaches_last_active() -> None:
+    slots = build_slots(
+        "vergil", "p", {"s1": "vergil:01:p"}, active_sessions=set(), last_active={"s1": 1000.0}
+    )
+    assert slots[1].last_active == 1000.0
+
+
+def test_build_slots_last_active_defaults_none() -> None:
+    slots = build_slots("vergil", "p", {"s1": "vergil:01:p"}, active_sessions=set())
+    assert slots[1].last_active is None
+
+
+def test_list_rows_attaches_last_active() -> None:
+    rows = list_rows({"s1": "vergil:01:p"}, active_sessions=set(), last_active={"s1": 5.0})
+    assert rows[0].last_active == 5.0
+
+
+DAY = 86400.0
+
+
+def test_classify_age_fresh() -> None:
+    assert classify_age(100 * DAY, 99 * DAY, 7, 14) == AgeBand.FRESH
+
+
+def test_classify_age_warn() -> None:
+    assert classify_age(100 * DAY, 90 * DAY, 7, 14) == AgeBand.WARN
+
+
+def test_classify_age_stale() -> None:
+    assert classify_age(100 * DAY, 80 * DAY, 7, 14) == AgeBand.STALE
+
+
+def test_classify_age_unknown_is_fresh() -> None:
+    assert classify_age(100 * DAY, None, 7, 14) == AgeBand.FRESH
+
+
+def test_classify_age_archive_zero_never_stale() -> None:
+    assert classify_age(100 * DAY, 0.0, 7, 0) == AgeBand.WARN
+
+
+NOW = 100 * DAY
+
+
+def _slot(n: int, sid: str, active: bool = False, age_days: float = 0.0) -> Slot:
+    return Slot(n, sid, active, NOW - age_days * DAY)
+
+
+def _plan(slots: dict[int, Slot], **kw: object) -> SessionPlan:
+    defaults: dict[str, object] = {
+        "now": NOW,
+        "stale_days": 7,
+        "archive_days": 14,
+        "requested_slot": None,
+        "fork": False,
+        "fresh": False,
+    }
+    defaults.update(kw)
+    return plan_session("vergil", "p", slots, **defaults)  # type: ignore[arg-type]
+
+
+def test_plan_resume_most_recent_idle() -> None:
+    slots = {1: _slot(1, "old", age_days=3), 2: _slot(2, "new", age_days=0.1)}
+    plan = _plan(slots)
+    assert plan.auto_archive == []
+    assert plan.action == Resume("new")
+
+
+def test_plan_warn_band_prompts() -> None:
+    plan = _plan({1: _slot(1, "s1", age_days=9)})
+    assert plan.auto_archive == []
+    assert plan.action == PromptStale("s1", "vergil:01:p", 9)
+
+
+def test_plan_stale_is_swept_then_fresh() -> None:
+    slots = {1: _slot(1, "s1", age_days=20)}
+    plan = _plan(slots)
+    assert plan.auto_archive == [slots[1]]
+    assert plan.action == Create("vergil:01:p")
+
+
+def test_plan_sweep_only_stale_keeps_fresh() -> None:
+    slots = {1: _slot(1, "s1", age_days=20), 2: _slot(2, "s2", age_days=0.1)}
+    plan = _plan(slots)
+    assert plan.auto_archive == [slots[1]]
+    assert plan.action == Resume("s2")
+
+
+def test_plan_never_sweeps_active() -> None:
+    plan = _plan({1: _slot(1, "s1", active=True, age_days=20)})
+    assert plan.auto_archive == []
+    assert plan.action == Create("vergil:02:p")
+
+
+def test_plan_explicit_slot_no_sweep_no_prompt() -> None:
+    slots = {1: _slot(1, "s1", age_days=20), 2: _slot(2, "s2", age_days=20)}
+    plan = _plan(slots, requested_slot=1)
+    assert plan.auto_archive == []
+    assert plan.action == Resume("s1")
+
+
+def test_plan_fresh_with_slot_archives_then_creates() -> None:
+    slots = {1: _slot(1, "s1", age_days=1)}
+    plan = _plan(slots, requested_slot=1, fresh=True)
+    assert plan.auto_archive == [slots[1]]
+    assert plan.action == Create("vergil:01:p")
+
+
+def test_plan_fresh_no_slot_archives_most_recent_idle() -> None:
+    slots = {1: _slot(1, "s1", age_days=5), 2: _slot(2, "s2", age_days=1)}
+    plan = _plan(slots, fresh=True)
+    assert plan.auto_archive == [slots[2]]
+    assert plan.action == Create("vergil:02:p")
+
+
+def test_plan_fresh_no_idle_creates_lowest_free() -> None:
+    plan = _plan({}, fresh=True)
+    assert plan.auto_archive == []
+    assert plan.action == Create("vergil:01:p")
+
+
+def test_plan_fresh_active_slot_refused() -> None:
+    plan = _plan({1: _slot(1, "s1", active=True, age_days=1)}, requested_slot=1, fresh=True)
+    assert plan.auto_archive == []
+    assert isinstance(plan.action, Refuse)
+
+
+def test_plan_fresh_bad_range_refused() -> None:
+    plan = _plan({}, requested_slot=0, fresh=True)
+    assert isinstance(plan.action, Refuse)
+
+
+def test_plan_fresh_all_slots_in_use() -> None:
+    slots = {n: _slot(n, f"s{n}", active=True, age_days=1) for n in range(1, SLOT_MAX + 1)}
+    plan = _plan(slots, fresh=True)
+    assert isinstance(plan.action, Refuse)
+
+
+def test_plan_fork_unchanged() -> None:
+    plan = _plan({1: _slot(1, "s1", active=True, age_days=1)}, requested_slot=1, fork=True)
+    assert plan.auto_archive == []
+    assert plan.action == Fork("s1", "vergil:02:p")
+
+
+def test_plan_no_slots_creates_first() -> None:
+    plan = _plan({})
+    assert plan.action == Create("vergil:01:p")
+
+
+def test_plan_all_active_creates_next_free() -> None:
+    slots = {1: _slot(1, "s1", active=True), 2: _slot(2, "s2", active=True)}
+    plan = _plan(slots)
+    assert plan.action == Create("vergil:03:p")
+
+
+def test_plan_all_slots_active_refused() -> None:
+    slots = {n: _slot(n, f"s{n}", active=True) for n in range(1, SLOT_MAX + 1)}
+    plan = _plan(slots)
+    assert isinstance(plan.action, Refuse)
