@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.73/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.71/">
+        <link rel="next" href="../v2.0.77/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.72 - VERGIL Tooling</title>
+        <title>2.0.78 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2072-2026-05-29" class="md-skip">
+        <a href="#release-2078-2026-06-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.72
+              2.0.78
             
           </span>
         </div>
@@ -864,10 +864,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.0.78/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.0.78
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -883,6 +910,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1032,19 +1090,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.72/" class="md-nav__link">
         
   
   
@@ -1060,7 +1109,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -7063,6 +7111,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -7078,7 +7145,14 @@
 
 
 
-<h1 id="release-2072-2026-05-29">Release 2.0.72 (2026-05-29)<a class="headerlink" href="#release-2072-2026-05-29" title="Permanent link">&para;</a></h1>
+<h1 id="release-2078-2026-06-01">Release 2.0.78 (2026-06-01)<a class="headerlink" href="#release-2078-2026-06-01" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>scope session resolve to the current cwd's project slug</strong>
+<code>vrg-vm session &lt;workspace&gt;</code> could hard-fail with "No conversation found with session ID: <uuid>" — and then refuse to start or resume anything.</li>
+</ul>
+<p>The in-VM resolver discovered sessions by globbing every project slug and matched them to a workspace by the path embedded in each session's agent-name, never checking that the transcript physically lives under the slug <code>claude --resume</code> searches (the current cwd's slug). A name-path that points elsewhere than its transcript (from an out-of-band <code>/name</code> rename or running the resolver in a different directory) made the resolver build a slot and exec <code>claude --resume &lt;id&gt;</code> from a cwd where the transcript doesn't exist.</p>
+<p>Scope discovery in the resolve path to the current cwd's project slug, the same directory <code>claude --resume</code> reads. <code>list --sessions</code> keeps its full-scan view. This turns the hard failure into the correct fallback: create a fresh session when none is resumable for the workspace.</p>
 
 
 
