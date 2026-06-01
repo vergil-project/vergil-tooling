@@ -41,6 +41,17 @@ def _claude_dir() -> Path:
     return Path.home() / ".claude"
 
 
+def _project_slug(cwd: str) -> str:
+    """Encode a cwd into Claude's project-slug form.
+
+    Claude stores each session's transcript under
+    ``~/.claude/projects/<slug>/`` where ``<slug>`` is the cwd with every
+    non-alphanumeric character (slashes, dots, etc.) replaced by ``-`` — the
+    same directory ``claude --resume`` searches.
+    """
+    return "".join(c if c.isalnum() else "-" for c in cwd)
+
+
 def _last_agent_name(transcript: Path) -> str | None:
     """Return the last ``agent-name`` value in a transcript, or ``None``."""
     last: str | None = None
@@ -63,12 +74,17 @@ def _last_agent_name(transcript: Path) -> str | None:
     return last
 
 
-def name_by_session(projects_dir: Path) -> dict[str, str]:
-    """Map session id (transcript stem) to its current name."""
+def name_by_session(projects_dir: Path, slug: str | None = None) -> dict[str, str]:
+    """Map session id (transcript stem) to its current name.
+
+    With ``slug`` set, only that one project slug's transcripts are read — the
+    scoping ``claude --resume`` itself uses. Without it, every slug is scanned.
+    """
     result: dict[str, str] = {}
     if not projects_dir.is_dir():
         return result
-    for transcript in sorted(projects_dir.glob("*/*.jsonl")):
+    pattern = f"{slug}/*.jsonl" if slug is not None else "*/*.jsonl"
+    for transcript in sorted(projects_dir.glob(pattern)):
         name = _last_agent_name(transcript)
         if name is not None:
             result[transcript.stem] = name
@@ -201,10 +217,12 @@ def _roster_updated_at(roster: list[dict[str, object]]) -> dict[str, float]:
     return out
 
 
-def _read_state() -> tuple[dict[str, str], set[str], dict[str, float]]:
+def _read_state(
+    slug: str | None = None,
+) -> tuple[dict[str, str], set[str], dict[str, float]]:
     cdir = _claude_dir()
     projects = cdir / "projects"
-    names = name_by_session(projects)
+    names = name_by_session(projects, slug)
     roster = read_roster(cdir / "sessions")
     active = active_session_ids(roster)
     last_active = _roster_updated_at(roster)
@@ -314,7 +332,7 @@ def resolve(
     archive_days: int,
 ) -> int:
     """Plan, auto-archive stale cold slots, then exec Claude for one identity + path."""
-    names, active, last_active = _read_state()
+    names, active, last_active = _read_state(_project_slug(str(Path.cwd())))
     slots = build_slots(identity, path, names, active, last_active)
     plan = plan_session(
         identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
