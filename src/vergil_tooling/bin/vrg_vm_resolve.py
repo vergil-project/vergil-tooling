@@ -217,13 +217,33 @@ def _roster_updated_at(roster: list[dict[str, object]]) -> dict[str, float]:
     return out
 
 
+def roster_names(roster: list[dict[str, object]]) -> dict[str, str]:
+    """Map session id to its roster ``name`` (authoritative for live sessions).
+
+    The roster records each live session's current name directly, so a session
+    that has not yet written an ``agent-name`` event to its transcript — e.g. a
+    freshly created session with no turns, hence no transcript at all — is still
+    named here. Transcript names, by contrast, only cover sessions that have run.
+    """
+    out: dict[str, str] = {}
+    for entry in roster:
+        sid = entry.get("sessionId")
+        name = entry.get("name")
+        if isinstance(sid, str) and isinstance(name, str):
+            out[sid] = name
+    return out
+
+
 def _read_state(
     slug: str | None = None,
 ) -> tuple[dict[str, str], set[str], dict[str, float]]:
     cdir = _claude_dir()
     projects = cdir / "projects"
-    names = name_by_session(projects, slug)
     roster = read_roster(cdir / "sessions")
+    # Roster names are authoritative for live sessions and cover ones with no
+    # transcript yet; transcript names cover dead/archived sessions absent from
+    # the roster. Union them, letting the live roster name win on overlap.
+    names = {**name_by_session(projects, slug), **roster_names(roster)}
     active = active_session_ids(roster)
     last_active = _roster_updated_at(roster)
     for sid in names:

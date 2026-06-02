@@ -673,6 +673,43 @@ class TestList:
         assert "idle" in out
 
     @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_names_vm_session_without_host_transcript(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        _names: MagicMock,
+        _age: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A session a running VM reports (named from its roster) but for which
+        # the host has no transcript must still be listed. The host learns the
+        # name only from the VM's report, never from the (absent) transcript.
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {
+                        "identity": "vergil",
+                        "slot": 2,
+                        "path": "vergil-project/tooling",
+                        "sessionId": "s2",
+                        "state": "active",
+                        "lastActive": 1748000000.0,
+                    }
+                ]
+            )
+        )
+        result = main(["list", "--sessions", "--config", str(config_file)])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "vergil-project/tooling" in out
+        assert "active" in out
+
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.name_by_session")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")

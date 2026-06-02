@@ -178,6 +178,19 @@ def test_read_roster_filters_bad_files(tmp_path: Path) -> None:
     assert entries == [{"pid": 1, "sessionId": "s"}]
 
 
+# --- roster_names ---
+
+
+def test_roster_names_maps_session_to_name() -> None:
+    roster: list[dict[str, object]] = [
+        {"sessionId": "s1", "name": "vergil:02:p"},
+        {"sessionId": "s2"},  # no name -> skipped
+        {"name": "vergil:03:p"},  # no sessionId -> skipped
+        {"sessionId": 5, "name": "vergil:04:p"},  # non-string sessionId -> skipped
+    ]
+    assert r.roster_names(roster) == {"s1": "vergil:02:p"}
+
+
 # --- _parse_starttime ---
 
 
@@ -478,6 +491,24 @@ def test_read_state_returns_last_active(monkeypatch: pytest.MonkeyPatch, tmp_pat
     assert active == {"s2"}
     assert last_active["s2"] == 1748000000.0
     assert last_active["s1"] == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
+
+
+def test_read_state_names_roster_session_without_transcript(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A live session named in the roster but with no transcript yet (a freshly
+    # created session, zero turns) must still be named and reported active.
+    (tmp_path / "projects").mkdir()
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    (sessions / "100.json").write_text(
+        '{"pid":100,"sessionId":"s1","name":"vergil:02:vergil-project/tooling"}'
+    )
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    monkeypatch.setattr(r, "_is_live", lambda _pid, _ps: True)
+    names, active, _la = r._read_state()
+    assert names == {"s1": "vergil:02:vergil-project/tooling"}
+    assert active == {"s1"}
 
 
 # --- main ---
