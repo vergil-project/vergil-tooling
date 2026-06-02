@@ -35,18 +35,13 @@ def test_resolve_zero() -> None:
         _resolve_issue_ref("0")
 
 
-def test_parse_args_required() -> None:
+def test_parse_args_cli_fields() -> None:
     args = parse_args(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
     assert args.issue == "42"
     assert args.summary == "Fix bug"
     assert args.title == "fix: bug"
     assert args.linkage == "Ref"
     assert args.dry_run is False
-
-
-def test_parse_args_title_is_required() -> None:
-    with pytest.raises(SystemExit):
-        parse_args(["--issue", "42", "--summary", "Fix bug"])
 
 
 def test_parse_args_all_options() -> None:
@@ -248,3 +243,178 @@ def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
             ]
         )
     assert result == 0
+
+
+class TestIdentityGate:
+    """Agent identities are blocked from PR submission."""
+
+    def test_user_mode_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
+        assert result != 0
+        assert "human maintainer" in capsys.readouterr().err.lower()
+
+    def test_audit_mode_blocked(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
+        assert result != 0
+
+    def test_human_mode_allowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+        ):
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--dry-run"])
+        assert result == 0
+
+
+class TestTemplateMode:
+    """Template mode reads .vergil/pr-template.yml when no CLI args given."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_template_dry_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nlinkage: Ref\n"
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+        ):
+            result = main(["--dry-run"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "fix: bug" in out
+        assert "#42" in out
+
+    def test_template_creates_pr_on_confirm(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\n"
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/1",
+            ) as mock_pr,
+            patch("builtins.input", return_value="y"),
+        ):
+            result = main([])
+        assert result == 0
+        mock_pr.assert_called_once()
+        assert not (vergil / "pr-template.yml").exists()
+
+    def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("builtins.input", return_value="n"),
+        ):
+            result = main([])
+        assert result == 1
+        assert (vergil / "pr-template.yml").exists()
+
+    def test_template_aborts_on_eof(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("builtins.input", side_effect=EOFError),
+        ):
+            result = main([])
+        assert result == 1
+        assert (vergil / "pr-template.yml").exists()
+
+    def test_missing_issue_arg_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        result = main(["--summary", "Fix", "--title", "fix: bug"])
+        assert result != 0
+        err = capsys.readouterr().err
+        assert "--issue" in err
+
+    def test_template_ensures_pushed(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run") as mock_git_run,
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/1",
+            ) as mock_pr,
+            patch("builtins.input", return_value="y"),
+        ):
+            main([])
+        push_calls = [c for c in mock_git_run.call_args_list if c.args and c.args[0] == "push"]
+        assert push_calls, "expected vrg-submit-pr to push the branch"
+        mock_pr.assert_called_once()
+
+    def test_no_template_and_no_args_errors(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path):
+            result = main([])
+        assert result != 0
+        assert "pr-template.yml" in capsys.readouterr().err
+
+    def test_partial_cli_args_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
+        result = main(["--issue", "42"])
+        assert result != 0
+        assert "required" in capsys.readouterr().err.lower()
+
+    def test_template_base_override(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+        ):
+            result = main(["--base", "main", "--dry-run"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "main" in out
