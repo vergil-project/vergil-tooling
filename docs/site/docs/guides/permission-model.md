@@ -263,17 +263,22 @@ trail. They do not stop an adversary.
 ### The Actual Security Boundary
 
 The only enforcement an agent cannot edit its way out of is
-**server-side**: GitHub's own permissions, branch protection
-rulesets, and collaborator access controls.
+**server-side**: the GitHub App's installation permission shape and
+branch protection rulesets.
 
-- The agent account is an outside collaborator with Write access.
-  It physically cannot merge, approve, or access admin settings —
-  GitHub rejects the API call regardless of what happens locally.
+- Each agent is a GitHub App whose installation token is bounded by
+  its declared permission shape. The user App holds
+  `pull_requests: read`, so it physically cannot open, approve, or
+  merge a PR; the audit App holds `contents: read`, so it cannot
+  write code or merge (merging through the API requires
+  `contents: write`). Neither App holds Workflows access, so neither
+  can push under `.github/workflows/`. GitHub rejects the API call
+  regardless of what happens locally.
 - Branch protection rulesets require review approval from a
-  different account before merging. No client-side manipulation
+  different identity before merging. No client-side manipulation
   changes this.
-- The agent account cannot see or access repos it has not been
-  invited to.
+- An App can only act on accounts it is installed on and repos that
+  installation covers.
 
 This is the real security model. Everything else is convenience.
 

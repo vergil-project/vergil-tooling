@@ -1,243 +1,131 @@
 # Credential Management
 
-VERGIL uses `gh auth` as the sole credential store and selects
-credentials per-subprocess based on the operation being performed.
-No global state changes, no ambient environment variables, no
-custom keychain management.
+VERGIL agents authenticate as **GitHub Apps**. There are no stored
+tokens, no classic PATs, and no `gh auth` account juggling in the
+agent path. The tooling holds an App's private key, mints a
+short-lived installation token on demand, and discards it. Each
+operation runs under the App identity whose permission shape bounds
+what it can do.
 
-For account creation and initial setup, see
+For App registration and initial setup, see
 [Account Setup](account-setup.md). For the identity model that
 credentials serve, see
 [Identity Architecture](identity-architecture.md).
 
-## Token Strategy
+## The credential is the App
 
-### Classic PATs
+An agent's only credential is its GitHub App private key, recorded
+in `identities.toml` as `private_key_path`. From that key the
+tooling derives everything else at runtime:
 
-Both accounts use classic Personal Access Tokens. Fine-grained
-PATs were evaluated and abandoned:
+- **No static tokens.** Installation tokens live ~1 hour and are
+  minted per operation. There is nothing long-lived to leak or
+  rotate beyond the private key itself.
+- **No `gh auth` dependency in the agent path.** The agent does not
+  rely on a logged-in account or a `-vergil` suffix. The App ID and
+  private key are injected into the agent VM by provisioning.
+- **Permission shape is the boundary.** The token a given App mints
+  can only do what that App's declared permissions allow. The user
+  App's token cannot write PRs; the audit App's token cannot write
+  code. See [Identity Architecture](identity-architecture.md) for
+  the inverted shapes.
 
-- Fine-grained PATs are scoped to a single resource owner — a
-  token for `vergil-project` cannot access `diogenes-project`.
-  Multi-org requires N×2 tokens.
-- `gh auth` stores one token per account per host. Multiple
-  fine-grained PATs for the same account cannot coexist.
-- Fine-grained PATs cannot be created by outside collaborators
-  scoped to an org. The agent account is an outside collaborator
-  by design.
+## How a token is minted
 
-Classic PATs work across all repos the account has access to,
-regardless of org. One token per account covers everything.
+The implementation lives in `src/vergil_tooling/lib/github.py`. The
+flow is:
 
-### Token Scopes
+1. **Read the App config.** `VRG_APP_ID` and `VRG_PRIVATE_KEY_PATH`
+   identify the App and locate its private key. In an agent VM these
+   come from the identity's `app_id` and `private_key_path` in
+   `identities.toml`.
+2. **Generate a JWT.** A short-lived JWT is signed with the private
+   key, using the App ID as the `iss` claim (`iat` backdated 60s,
+   `exp` 10 minutes out).
+3. **Resolve the installation.** The JWT authenticates a call to
+   `GET /app/installations`; the tooling matches the installation
+   for the target org.
+4. **Mint an installation token.** The matched installation yields a
+   ~1-hour token, which is injected as `GH_TOKEN` into the `gh`
+   subprocess environment for that operation.
 
-**Human account:**
+The token is never written to disk and never persisted across
+operations. Parallel sessions each mint their own token
+independently — no shared state, no lock contention.
 
-| Scope | Purpose |
-|---|---|
-| `repo` | Full repository access |
-| `admin:org` | Org settings, collaborator management |
-| `workflow` | GitHub Actions |
-| `read:org` | Org membership visibility |
+!!! note "App ID, not Client ID — for now"
+    The tooling authenticates using the numeric **App ID** today (it
+    becomes the JWT `iss` claim via `VRG_APP_ID`). GitHub is
+    gradually migrating GitHub App authentication toward the Client
+    ID, but that migration is only partially rolled out. Record the
+    Client ID during setup so the eventual switch needs no return
+    trip to the GitHub UI, but the App ID is what the tooling uses
+    until the migration lands.
 
-**Agent account:**
+## Credential selection
 
-| Scope | Purpose |
-|---|---|
-| `repo` | Full repository access |
-| `read:org` | Org membership visibility |
+### The tool selects the credential, not the caller
 
-The agent PAT intentionally excludes `admin:org` and `workflow`.
-Token scope is not the primary security boundary — it is the
-fourth layer of defense. See
-[Permission Model](permission-model.md) for the full
-defense-in-depth architecture.
+There is no flag, no env var override, no way for the caller to
+choose a different identity. Which App a VM authenticates as is
+fixed by provisioning (`VRG_APP_ID` / `VRG_PRIVATE_KEY_PATH` for that
+VM). The user VM is the user App; the audit VM is the audit App.
 
-## Credential Store
+### The permission shape decides what succeeds
 
-### `gh auth` as the Single Source
+Because each App's token is bounded by its declared permissions, the
+identity boundary is enforced server-side, not by the wrapper:
 
-Both accounts are logged into `gh auth` on the developer's
-machine. No custom keychain entries, no platform-specific secure
-store abstraction. Setup is a one-time operation per machine.
+- The **user** App can push code and read PRs, but cannot open,
+  comment on, approve, or merge PRs — its token holds
+  `pull_requests: read`.
+- The **audit** App can write PR reviews, but cannot write code or
+  merge — its token holds `contents: read`, and merging through the
+  API requires `contents: write`.
 
-The login command is the same both times — what changes is which
-GitHub account is authenticated in your browser when you authorize
-the OAuth flow.
+The `vrg-gh`/`vrg-git` wrappers add a soft ergonomic layer (clear
+errors, allowlists) on top of this hard gate, but the App permission
+shape is the real boundary.
 
-!!! warning "`gh auth login` has no `-u` flag"
-    You cannot specify which account to log in as on the command
-    line. The browser session determines which account gets
-    logged in.
+### Graceful degradation
 
-**Step 1 — Log in the human account.** Make sure you are signed
-into github.com as your personal account in the browser, then
-run:
+If App config is absent (no `VRG_APP_ID` / `VRG_PRIVATE_KEY_PATH`),
+the token-minting path returns nothing and the `gh` subprocess
+inherits the parent environment. This lets the tooling run in CI
+environments where credentials are provided through other mechanisms
+(for example, an Actions-provided token).
 
-```bash
-gh auth login -h github.com --web -p https
-```
+## Security model
 
-Complete the OAuth authorization in the browser. `gh` adds your
-human account to its credential store.
+Credential security does not rest on token scope. Defense in depth,
+in priority order:
 
-**Step 2 — Log in the agent account.** Switch your browser session
-to the `-vergil` account (sign out and sign back in as
-`<username>-vergil`), then run the same command again:
-
-```bash
-gh auth login -h github.com --web -p https
-```
-
-Complete the OAuth authorization. `gh` detects that this is a
-different account and adds it alongside the first — it does not
-replace it.
-
-**Step 3 — Restore the human account as the active default.**
-After both logins, switch back so your human account is active
-for any raw `gh` commands:
-
-```bash
-gh auth switch -u <your-username>
-```
-
-### Token Retrieval
-
-The tooling retrieves tokens without changing global state:
-
-```bash
-gh auth token -u <username>          # Human PAT
-gh auth token -u <username>-vergil   # Agent PAT
-```
-
-This is a read operation. It does not change the active account
-and is safe to call from parallel processes.
-
-## Credential Selection
-
-### The Core Principle
-
-The tool selects the credential, not the caller. There is no flag,
-no env var, no override. The `vrg-gh` wrapper determines the
-appropriate identity based on the command being executed. This is
-a hard security boundary.
-
-### Default: Agent Account
-
-All operations default to the agent account. Development
-operations — creating PRs, pushing branches, viewing status,
-creating issues — run under the agent identity.
-
-### Escalation to Human Account
-
-Specific operations escalate to the human account when both the
-command and its context pass validation:
-
-- **Merge:** Allowed under the human account only when the target
-  matches release workflow patterns (e.g., `release/*` branches
-  merging to `main`, back-merge from `main` to `develop`).
-- **Approval:** Allowed under the human account only for release
-  PRs authored by `vergil-release[bot]`.
-- **Issue close:** Allowed under the human account. The agent
-  account may lack the `CloseIssue` GraphQL permission as an
-  outside collaborator; escalating avoids this dependency.
-- **Other admin operations:** Denied entirely.
-
-Escalation requires both a permitted command and a validated
-context. A merge request for a feature branch is denied even
-though merges are conditionally allowed.
-
-### No Human Detection
-
-The tooling does not distinguish between a human caller and an
-agent caller. It always operates in agent-restricted mode. If a
-human runs `vrg-gh pr merge` on a feature branch, it is denied
-the same way. The human's escape hatch is raw `gh` or the GitHub
-UI.
-
-## GH_TOKEN Injection
-
-Credential selection is per-subprocess via the `GH_TOKEN`
-environment variable. The tooling never calls `gh auth switch`.
-
-### How It Works
-
-1. `_discover_accounts()` parses `gh auth status` to find the
-   `-vergil` account and derive the human account name.
-2. `_human_token()` calls `gh auth token -u <human>` and caches
-   the result for the process lifetime.
-3. `_gh_env()` builds an environment dict with `GH_TOKEN` set to
-   the appropriate token.
-4. Every `subprocess.run` call that invokes `gh` receives this
-   environment dict via the `env` parameter.
-
-Parallel sessions are fully isolated. Each process resolves its
-own token independently. No shared state, no lock contention.
-
-### Graceful Degradation
-
-If credential discovery fails (account not logged in, `gh` not
-installed), `_gh_env()` returns `None` and the subprocess inherits
-the parent environment. This allows the tooling to function in CI
-environments where credentials are provided through other
-mechanisms.
-
-## Account Discovery
-
-The discovery algorithm is deliberately simple:
-
-1. Run `gh auth status` and parse all logged-in accounts.
-2. Find the one account ending in `-vergil`.
-3. Derive the human account by stripping the suffix.
-4. If zero or more than one `-vergil` account exists, fail with
-   an explicit error.
-
-Any number of other accounts can be present — `-mimir`, legacy
-`-agent`, personal accounts — they are all ignored. Only the
-`-vergil` suffix matters.
-
-### Failure Modes
-
-- **No `-vergil` account:** Explicit error naming the convention
-  and suggesting `gh auth login`.
-- **Multiple `-vergil` accounts:** Explicit error listing the
-  accounts found.
-- **Required account not in `gh auth`:** Explicit error suggesting
-  the missing login.
-- **Never silent fallback:** The tooling never substitutes one
-  account for another. If the required credential is unavailable,
-  the operation fails.
-
-## Security Model
-
-The credential system does not depend on token scope as the
-primary enforcement mechanism. Defense in depth, in priority order:
-
-1. **Account permissions** — the agent account is an outside
-   collaborator with Write access to specific repos. It cannot
-   access repos it hasn't been invited to, regardless of token
-   scope.
+1. **App permission shape** — the installation token can only
+   perform what the App declares. This is the primary, server-side
+   boundary. A user-App token physically cannot merge a PR.
 2. **Branch protection** — rulesets prevent merging without review,
-   prevent direct pushes to protected branches, require CI to
+   prevent direct pushes to protected branches, and require CI to
    pass.
-3. **`vrg-gh` wrapper** — gates which operations the agent can
-   attempt and which credential is used for each.
-4. **Token scope** — the narrowest classic PAT scopes that support
-   the required operations.
+3. **`vrg-gh` / `vrg-git` wrappers** — gate which operations an agent
+   may attempt and surface clear errors. A soft ergonomic layer,
+   bypassable by root, not the security boundary.
+4. **Short-lived tokens** — ~1-hour installation tokens minted on
+   demand, with no long-lived secret beyond the private key.
 
-## Multi-Org Support
+## Multi-org support
 
-A classic PAT works across all repos the account has access to,
-regardless of which org owns them. Adding a new org requires only
-inviting the agent account as an outside collaborator — no token
-changes, no credential reconfiguration.
+A single App installed on multiple accounts works across every org
+the contributor operates in. Installation tokens are minted per-org
+from the same private key, so adding a new org requires only
+installing the existing App on it — no new keys, no credential
+reconfiguration.
 
 ## Related
 
-- [Account Setup](account-setup.md) — creating accounts and
-  logging into `gh auth`
-- [Identity Architecture](identity-architecture.md) — the
-  two-account model and naming conventions
+- [Account Setup](account-setup.md) — registering the Apps,
+  generating private keys, and configuring `identities.toml`
+- [Identity Architecture](identity-architecture.md) — the agent-App
+  model and naming conventions
 - [Permission Model](permission-model.md) — enforcement layers
   beyond credential selection
 - [Credential management design spec][cred-spec] — full decision
