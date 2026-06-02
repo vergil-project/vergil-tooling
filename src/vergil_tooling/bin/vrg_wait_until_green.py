@@ -1,9 +1,14 @@
 """Block until a PR's required checks pass and the branch is up to date.
 
-Wraps ``gh pr checks --watch --fail-fast`` with an outer loop that detects
-when the PR branch is behind its base. When the branch is behind,
-auto-updates it (fast-forward merge from base) and re-polls CI so the caller
-only sees success when the PR is both green and mergeable.
+Wraps ``gh pr checks --watch`` with an outer loop that detects when the PR
+branch is behind its base. When the branch is behind, auto-updates it
+(fast-forward merge from base) and re-polls CI.
+
+``gh pr checks --watch`` blocks until checks reach a terminal state but exits
+0 even when a check fails, so success is determined authoritatively from the
+check conclusions (``failed_check_names``) and only then from
+``mergeStateStatus``. The caller sees a zero exit only when every check
+passed and the PR is mergeable (``CLEAN``).
 """
 
 from __future__ import annotations
@@ -51,6 +56,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         print("Branch is behind base — updating and re-checking...")
         github.update_branch(args.pr)
+    failed = github.failed_check_names(args.pr)
+    if failed:
+        print(
+            "Checks failed: " + ", ".join(sorted(failed)) + ".",
+            file=sys.stderr,
+        )
+        return 1
     for attempt in range(_MAX_UNKNOWN_RETRIES + 1):
         status = github.merge_status(args.pr)
         state = status["mergeStateStatus"]
