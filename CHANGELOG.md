@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.1] - 2026-06-02
+
+### Features
+
+- add template mode and identity gate for human-triggered PR submission
+- consolidate merge + cleanup into vrg-finalize-pr with pre-merge provenance check
+
 ## [2.1.0] - 2026-06-02
 
 ### Bug fixes
