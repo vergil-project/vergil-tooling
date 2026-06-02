@@ -1,4 +1,4 @@
-"""Phase 5: Close tracking issue and run vrg-finalize-repo."""
+"""Phase 5: Close tracking issue and run vrg-finalize-pr."""
 
 from __future__ import annotations
 
@@ -18,9 +18,9 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     close_tracking_issue(ctx, summary)
     print("Tracking issue closed.")
 
-    print("Running vrg-finalize-repo...")
+    print("Running vrg-finalize-pr...")
     result = subprocess.run(  # noqa: S603
-        ("vrg-finalize-repo",),  # noqa: S607
+        ("vrg-finalize-pr",),  # noqa: S607
         check=False,
         capture_output=True,
         text=True,
@@ -30,8 +30,8 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     if result.returncode != 0:
         raise ReleaseError(
             phase="close-finalize",
-            command="vrg-finalize-repo",
-            message="vrg-finalize-repo failed.",
+            command="vrg-finalize-pr",
+            message="vrg-finalize-pr failed.",
             detail=result.stderr or result.stdout,
         )
     print("Finalization complete.")

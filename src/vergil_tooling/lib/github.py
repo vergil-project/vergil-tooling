@@ -488,6 +488,11 @@ def update_branch(pr: str) -> None:
     read_output("api", f"repos/{repo}/pulls/{number}/update-branch", "-X", "PUT")
 
 
+def pr_state(pr: str) -> str:
+    """Return the PR state: ``OPEN``, ``CLOSED``, or ``MERGED``."""
+    return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
+
+
 def merge(pr: str, *, strategy: str) -> None:
     """Merge a PR synchronously (without ``--auto``).
 
@@ -495,7 +500,7 @@ def merge(pr: str, *, strategy: str) -> None:
     through as ``--merge``, ``--squash``, ``--rebase``.
 
     Does not pass ``--delete-branch`` — branch cleanup is handled by
-    ``vrg-finalize-repo`` after the merge completes.
+    ``vrg-finalize-pr`` after the merge completes.
     """
     run("pr", "merge", f"--{strategy}", pr)
 
