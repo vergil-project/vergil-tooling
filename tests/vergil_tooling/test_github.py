@@ -289,6 +289,24 @@ def test_head_sha_returns_commit_sha() -> None:
     )
 
 
+def test_pr_state_returns_state() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_output",
+        return_value="MERGED",
+    ) as mock_read:
+        result = github.pr_state("https://github.com/pr/1")
+    assert result == "MERGED"
+    mock_read.assert_called_once_with(
+        "pr",
+        "view",
+        "https://github.com/pr/1",
+        "--json",
+        "state",
+        "--jq",
+        ".state",
+    )
+
+
 def test_merge_delegates_to_gh() -> None:
     with patch("vergil_tooling.lib.github.run") as mock_run:
         github.merge("https://github.com/pr/1", strategy="merge")

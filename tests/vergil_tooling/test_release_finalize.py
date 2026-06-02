@@ -91,6 +91,6 @@ def test_close_and_finalize_fails_on_finalize_error() -> None:
             _MOD + ".subprocess.run",
             return_value=CompletedProcess(args=(), returncode=1, stderr="validation failed"),
         ),
-        pytest.raises(ReleaseError, match="vrg-finalize-repo"),
+        pytest.raises(ReleaseError, match="vrg-finalize-pr"),
     ):
         close_and_finalize(ctx)
