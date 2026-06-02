@@ -203,8 +203,29 @@ def get_installation_token(org: str | None = None) -> str | None:
 
 
 def is_app_mode() -> bool:
-    """Return True when running with GitHub App credentials."""
-    return _load_app_config() is not None
+    """Return True when running with GitHub App credentials.
+
+    True in either of two cases:
+
+    1. vergil-tooling holds the App private key and mints its own
+       installation token (``_load_app_config`` finds credentials).
+    2. The ambient token ``gh`` will use is already a GitHub App
+       installation token (``ghs_`` prefix) — e.g. one minted upstream
+       by ``actions/create-github-app-token`` and passed in as
+       ``GH_TOKEN``.
+
+    GitHub App installation tokens cannot read ruleset ``bypass_actors``
+    (the API returns an empty list regardless of the real configuration),
+    so the audit must skip that comparison whenever either case holds.
+    Case 2 is the path used by the reusable ops workflows, which mint the
+    token in a separate step rather than handing the private key to
+    vergil-tooling.
+    """
+    if _load_app_config() is not None:
+        return True
+    # ``gh`` resolves GH_TOKEN ahead of GITHUB_TOKEN; mirror that order.
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    return token.startswith("ghs_")
 
 
 def _gh_env() -> dict[str, str] | None:
