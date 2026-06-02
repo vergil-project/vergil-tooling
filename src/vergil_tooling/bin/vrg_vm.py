@@ -48,7 +48,7 @@ from vergil_tooling.lib.lima import (
     vm_age_days,
     vm_status,
 )
-from vergil_tooling.lib.session import list_rows
+from vergil_tooling.lib.session import list_rows, make_name
 
 _default_config_path = default_config_path
 
@@ -313,15 +313,17 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
-def _vm_active_sessions(instance: str) -> dict[str, float]:
-    """Map active session id -> last-active epoch from a running VM's resolver."""
+def _vm_active_sessions(instance: str) -> dict[str, dict[str, object]]:
+    """Map active session id -> its row from a running VM's resolver.
+
+    A running VM owns its roster, so it is the only place a live session's name
+    is known — including a freshly created session that has no host transcript
+    yet. The full row (identity, slot, path, lastActive) is returned so the host
+    can both name and age such sessions.
+    """
     result = shell_run(instance, "vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
-    out: dict[str, float] = {}
-    for row in rows:
-        if row.get("state") == "active":
-            out[row["sessionId"]] = row.get("lastActive") or 0.0
-    return out
+    return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
 
 
 def _format_age(last_active: float | None, now: float) -> str:
@@ -343,26 +345,36 @@ def _selected_states(args: argparse.Namespace) -> set[str]:
 def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     """List named Claude sessions across all identity VMs.
 
-    Transcripts are shared (host-backed), so names, idle ages, and archived rows
-    come from the host store; active liveness + updatedAt are queried per running
-    VM, since each VM owns its own roster.
+    Transcripts are shared (host-backed), so idle ages and archived rows come
+    from the host store; active liveness, names, and updatedAt are queried per
+    running VM, since each VM owns its own roster. A live session is named from
+    that roster, so the VM is the only source for one with no host transcript.
     """
     vm_map = {vm["name"]: vm["status"] for vm in list_vms()}
-    active_updated: dict[str, float] = {}
+    active_rows: dict[str, dict[str, object]] = {}
     for identity in config.identities.values():
         if vm_map.get(identity.vm_instance) == "Running":
-            active_updated.update(_vm_active_sessions(identity.vm_instance))
+            active_rows.update(_vm_active_sessions(identity.vm_instance))
 
     projects = Path.home() / ".claude" / "projects"
     names = name_by_session(projects)
-    last_active = dict(active_updated)
+    # Adopt the VM-reported name for any active session the host has no
+    # transcript for (e.g. a brand-new session with zero turns); the host store
+    # alone would drop it entirely.
+    for sid, row in active_rows.items():
+        names.setdefault(
+            sid, make_name(str(row["identity"]), cast("int", row["slot"]), str(row["path"]))
+        )
+    last_active: dict[str, float] = {
+        sid: cast("float", row.get("lastActive") or 0.0) for sid, row in active_rows.items()
+    }
     for sid in names:
         if sid not in last_active:
             ts = _last_activity(projects_glob(projects, sid))
             if ts is not None:
                 last_active[sid] = ts
 
-    active = set(active_updated)
+    active = set(active_rows)
     rows: list[dict[str, object]] = [
         {
             "identity": row.identity,
