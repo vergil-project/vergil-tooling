@@ -220,7 +220,7 @@ def is_agent() -> bool:
 
 
 def is_human() -> bool:
-    """Return True if running as the human (Race Director)."""
+    """Return True if running as the human (Chief Steward)."""
     return current_mode() == IdentityMode.HUMAN
 ```
 
@@ -302,7 +302,7 @@ class TestAgentDenials:
     ) -> None:
         main(["issue", "close", "42"])
         err = capsys.readouterr().err
-        assert "race director" in err.lower()
+        assert "human maintainer" in err.lower()
 
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
@@ -548,14 +548,14 @@ _DENIED_ALWAYS: dict[str, dict[str, str]] = {
 
 _DENIED_AGENT: dict[str, dict[str, str]] = {
     "pr": {
-        "create": "PR creation is a Race Director operation.",
-        "edit": "PR edit is a Race Director operation.",
-        "merge": "PR merge is a Race Director operation.",
+        "create": "PR creation requires a human maintainer.",
+        "edit": "PR edit requires a human maintainer.",
+        "merge": "PR merge requires a human maintainer.",
     },
     "issue": {
-        "close": "Issue close is a Race Director operation.",
-        "reopen": "Issue reopen is a Race Director operation.",
-        "edit": "Issue edit is a Race Director operation.",
+        "close": "Issue close requires a human maintainer.",
+        "reopen": "Issue reopen requires a human maintainer.",
+        "edit": "Issue edit requires a human maintainer.",
     },
 }
 
@@ -721,7 +721,7 @@ def main(argv: list[str] | None = None) -> int:
         if mode not in (identity.IdentityMode.AUDIT, identity.IdentityMode.HUMAN):
             print(
                 "vrg-gh: pr review --approve is denied. "
-                "Only Officials (audit) or the Race Director can approve PRs.",
+                "PR approval is restricted to the audit identity or a human maintainer.",
                 file=sys.stderr,
             )
             return 1
@@ -1170,7 +1170,7 @@ class TestIdentityGate:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
         assert result != 0
-        assert "race director" in capsys.readouterr().err.lower()
+        assert "human maintainer" in capsys.readouterr().err.lower()
 
     def test_audit_mode_blocked(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
@@ -1364,7 +1364,7 @@ credentials before creating the PR. Because the human is the superset
 of any agent's rights, this carries workflow-touching pushes that the
 agent's own credentials would be rejected for.
 
-Agent identities are blocked — PR submission is a Race Director
+Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
 """
 
@@ -1538,7 +1538,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if identity.is_agent():
         print(
-            "vrg-submit-pr: PR submission is a Race Director operation. "
+            "vrg-submit-pr: PR submission requires a human maintainer. "
             "Agents cannot submit PRs.",
             file=sys.stderr,
         )
@@ -1667,7 +1667,7 @@ class TestPushWorkflowErrorDetection:
         assert rc == 1
         err = capsys.readouterr().err
         assert "workflow" in err.lower()
-        assert "escalate" in err.lower() or "race director" in err.lower()
+        assert "escalate" in err.lower() or "human maintainer" in err.lower()
 
     def test_workflow_error_shows_original_stderr(
         self, capsys: pytest.CaptureFixture[str]
@@ -1738,7 +1738,7 @@ def _print_workflow_push_guidance() -> None:
     print(
         f"\nvrg-git: Push rejected — workflow file changes require elevated permissions.\n"
         f"  Your identity ({mode.value}) is not permitted to push workflow file changes.\n"
-        f"  Stop and escalate to the Race Director. Do not attempt to work around\n"
+        f"  Stop and escalate to a human maintainer. Do not attempt to work around\n"
         f"  this failure (e.g., by removing workflow files from the commit).",
         file=sys.stderr,
     )
