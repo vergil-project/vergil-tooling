@@ -59,7 +59,9 @@ _ALLOWED_SIMPLE = [
 @pytest.mark.parametrize("subcmd", _ALLOWED_SIMPLE)
 def test_allowed_subcommand_passes(subcmd: str) -> None:
     with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", subcmd], returncode=0, stdout="", stderr=""
+        )
         rc = main([subcmd])
     assert rc == 0
     args = mock_run.call_args[0][0]
@@ -340,7 +342,9 @@ def test_push_force_with_lease_allowed_on_feature_branch(
             return_value=False,
         ),
     ):
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="", stderr=""
+        )
         rc = main(["push", "--force-with-lease"])
     assert rc == 0
 
@@ -371,7 +375,9 @@ def test_push_force_with_lease_denied_on_release(
 
 def test_push_normal_allowed() -> None:
     with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
-        mock_run.return_value.returncode = 0
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="", stderr=""
+        )
         rc = main(["push", "origin", "feature/foo"])
     assert rc == 0
 
@@ -437,7 +443,9 @@ class TestRemoteTokenInjection:
             ),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", subcmd], returncode=0, stdout="", stderr=""
+            )
             rc = main([subcmd, "origin", "main"])
         assert rc == 0
         _, kwargs = mock_run.call_args
@@ -468,7 +476,9 @@ class TestRemoteTokenInjection:
             ),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"], returncode=0, stdout="", stderr=""
+            )
             main(["push", "origin", "main"])
         _, kwargs = mock_run.call_args
         assert "env" not in kwargs or kwargs.get("env") is None
@@ -483,12 +493,82 @@ class TestRemoteTokenInjection:
             ),
             patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
         ):
-            mock_run.return_value.returncode = 0
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"], returncode=0, stdout="", stderr=""
+            )
             main(["push", "origin", "main"])
         _, kwargs = mock_run.call_args
         header_value = kwargs["env"]["GIT_CONFIG_VALUE_0"]
         expected = base64.b64encode(b"x-access-token:ghs_test_token").decode()
         assert expected in header_value
+
+
+# -- push workflow error detection --------------------------------------------
+
+
+class TestPushWorkflowErrorDetection:
+    """vrg-git push detects workflow permission errors and provides guidance."""
+
+    _WORKFLOW_ERR = (
+        "refusing to allow a GitHub App to create or update workflow "
+        "`.github/workflows/ci.yml` without `workflows` permission"
+    )
+
+    def test_workflow_error_detected_and_guidance_printed(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"],
+                returncode=1,
+                stdout="",
+                stderr=self._WORKFLOW_ERR,
+            )
+            rc = main(["push", "origin", "feature/x"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "workflow" in err.lower()
+        assert "escalate" in err.lower()
+        assert "human maintainer" in err.lower()
+
+    def test_workflow_error_shows_original_stderr(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"],
+                returncode=1,
+                stdout="",
+                stderr=self._WORKFLOW_ERR,
+            )
+            main(["push", "origin", "feature/x"])
+        err = capsys.readouterr().err
+        assert "refusing to allow" in err
+
+    def test_non_workflow_push_error_passes_through(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"],
+                returncode=1,
+                stdout="",
+                stderr="fatal: remote rejected\n",
+            )
+            rc = main(["push", "origin", "feature/x"])
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert "fatal: remote rejected" in err
+        assert "escalate" not in err.lower()
+
+    def test_successful_push_unchanged(self) -> None:
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "push"],
+                returncode=0,
+                stdout="Everything up-to-date\n",
+                stderr="",
+            )
+            rc = main(["push", "origin", "feature/x"])
+        assert rc == 0
 
 
 # -- worktree convention -------------------------------------------------------
