@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.36/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.34/">
+        <link rel="next" href="../v2.0.79/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.35 - VERGIL Tooling</title>
+        <title>2.0.80 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1435-2026-05-10" class="md-skip">
+        <a href="#release-2080-2026-06-02" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.35
+              2.0.80
             
           </span>
         </div>
@@ -868,10 +868,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.0.80/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.0.80
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -887,6 +914,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3024,37 +3082,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.35
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.35/" class="md-nav__link">
         
   
   
@@ -3070,48 +3101,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7189,21 +7178,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
+        Bug fixes
       
     </span>
   </a>
@@ -7227,15 +7205,14 @@
 
 
 
-<h1 id="release-1435-2026-05-10">Release 1.4.35 (2026-05-10)<a class="headerlink" href="#release-1435-2026-05-10" title="Permanent link">&para;</a></h1>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<h1 id="release-2080-2026-06-02">Release 2.0.80 (2026-06-02)<a class="headerlink" href="#release-2080-2026-06-02" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 1.4.35</strong></li>
+<li><strong>treat ambient App installation tokens as app mode</strong>
+is_app_mode() only returned True when vergil-tooling held the App private key itself (VRG_APP_ID + VRG_PRIVATE_KEY_PATH or ~/.config/vergil/app.*). The reusable ops workflows mint an installation token upstream via actions/create-github-app-token and pass it in as an ambient GH_TOKEN, so _load_app_config() found nothing and is_app_mode() was False.</li>
 </ul>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add spec and plan for post-publish tag verification (#664)</strong></li>
-</ul>
+<p>That left the v2.0.70 bypass_actors skip dormant in CI: the audit kept the desired bypass_actors in the diff while the App token read actual as [] (App tokens cannot see bypass_actors), producing false NON-COMPLIANT drift on every ops run.</p>
+<p>Detect the ambient installation token directly: when no App key is configured, inspect the effective token (GH_TOKEN, then GITHUB_TOKEN, matching gh's precedence) and treat a ghs_ prefix as app mode.</p>
 
 
 
