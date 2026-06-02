@@ -1,103 +1,140 @@
 # Identity Architecture
 
 VERGIL enforces a hard separation between human and AI agent
-identity at the GitHub account level. This page describes the
-identity model, the naming conventions that make it work, and how
-it extends to adversarial testing.
+identity at the GitHub App level. This page describes the identity
+model, the naming conventions that make it work, and how it extends
+to adversarial testing.
 
-For the step-by-step account creation process, see
-[Account Setup](account-setup.md). For how credentials are managed
-at runtime, see [Credential Management](credential-management.md).
+For the step-by-step App creation process, see
+[Account Setup](account-setup.md). For how credentials are minted
+and selected at runtime, see
+[Credential Management](credential-management.md).
 
-## The Three Identities
+## The identities
 
-Every VERGIL-managed org operates with three distinct identities:
+Every contributor operates with a human account and a set of AI
+agent identities. Each agent identity is a **GitHub App**, not a
+user account:
 
-| Identity | Role | Scope |
+| Identity | Role | Backed by |
 |---|---|---|
-| `<username>` | Human — reviews, approvals, merges, admin | Org owner or member across all orgs |
-| `<username>-vergil` | AI agents — all development work | Outside collaborator on specific repos |
-| `vergil-release[bot]` | GitHub App — mechanized release automation | Org-level installation per org |
+| `<username>` | Human — review, approval, merge, admin (Chief Steward) | The human's own GitHub account |
+| `<username>-vergil-user` | Daily development (Driver) | GitHub App, write-shaped permissions |
+| `<username>-vergil-audit` | PR review (Officials) | GitHub App, read-shaped permissions (inverted) |
+| `<username>-vergil-admin` | Reserved — **not provisioned** | — |
+| `vergil-release[bot]` | Mechanized release automation | Org-level GitHub App |
 
 The human account owns the decision-making authority: code review,
-PR approval, merge, and administrative operations. The agent
-account does the development work: commits, pushes, PR creation,
-issue tracking. The GitHub App handles release automation that
-requires neither human judgment nor agent identity.
+PR approval, merge, and administrative operations. The two agent
+Apps do the bounded work — the user App writes code, the audit App
+reviews PRs. The release App handles automation that requires
+neither human judgment nor a per-contributor identity.
 
-## The `-vergil` Convention
+A third agent role — `<username>-vergil-admin` — is a reserved slot
+and is **not** created. Do not provision it.
 
-The `-vergil` suffix is load-bearing — the tooling depends on it.
+## Every agent is a GitHub App
 
-### How Discovery Works
+There are no agent user accounts. There are no classic PATs. There
+are no collaborator grants. An AI agent's entire identity and
+capability is its GitHub App:
 
-`vrg-gh` and `github.py` discover accounts by parsing
-`gh auth status` and finding the one account that ends in
-`-vergil`. The human account name is derived by stripping the
-suffix. No configuration file maps usernames — the convention
-itself is the configuration.
+- **The App installation is the only credential.** The tooling
+  authenticates as the App (App ID as the JWT `iss` claim), finds
+  the App's installation on the target org, and mints a short-lived
+  installation token on demand. There is no static token to leak or
+  rotate.
+- **Capability is bounded by the App's permission shape.** What an
+  agent can do is exactly what its App declares — nothing more. The
+  permission shape *is* the security boundary.
+- **Attribution is clean and automatic.** Commits and PRs made
+  through the App carry the bot identity `<username>-vergil-<role>[bot]`.
+  Anyone reading the history can see at a glance what the human did
+  versus what that human's agents did — and which role did it.
+- **It scales.** The model is `<username>-vergil-<role>`, so any
+  number of engineers can each own their own user and audit Apps
+  without naming collisions or shared credentials.
 
-```text
-gh auth status
-  ✓ Logged in to github.com account jdoe (keyring)
-  ✓ Logged in to github.com account jdoe-vergil (keyring)
-  ✓ Logged in to github.com account jdoe-mimir (keyring)
-```
+### The `<username>-vergil-<role>` convention
 
-The tooling sees `jdoe-vergil`, derives `jdoe` as the human
-account, and ignores `jdoe-mimir` entirely. Any number of other
-accounts can be present — only the `-vergil` suffix matters.
+Every agent App's name encodes two things: the human who owns it
+and the role it plays. `jdoe-vergil-user` is jdoe's development
+agent; `jdoe-vergil-audit` is jdoe's PR-review agent. The bot
+identity that appears on commits (`jdoe-vergil-user[bot]`) comes
+directly from the App — there is nothing else to configure.
 
-### What the Agent Account Can Do
+## Inverted permission shapes
 
-- Commit and push to feature branches
-- Create pull requests (via `vrg-submit-pr`)
-- Create and comment on issues
-- Read repository and CI status
+The user and audit Apps have deliberately **inverted** repository
+permission shapes. This split is the core of the model:
 
-### What the Agent Account Cannot Do
+| Permission | `<username>-vergil-user` | `<username>-vergil-audit` |
+|---|---|---|
+| Contents | Read and write | **Read-only** |
+| Issues | Read and write | Read-only |
+| Pull requests | **Read-only** | Read and write |
+| Metadata | Read-only | Read-only |
+| Workflows | No access | No access |
 
-- Merge pull requests
-- Approve pull requests
-- Access admin settings
-- Manage org membership
-- Create or delete repositories
+The user App can write code but only read PRs. The audit App can
+only read code but can write (review/comment on) PRs. Neither holds
+Workflows access, so neither can push changes under
+`.github/workflows/`.
 
-These restrictions are enforced at multiple layers: GitHub's
-own permissions (outside collaborator with Write access), the
-`vrg-gh` wrapper's subcommand validation, and Claude Code's
-permission deny rules. See
+### What the user agent can do
+
+- Commit and push to feature branches (`contents: write`)
+- Create and comment on issues (`issues: write`)
+- Read PR and CI status (`pull_requests: read`)
+- Write `.vergil/pr-template.yml` to stage a PR for the human
+
+### What the user agent cannot do
+
+- **Open, edit, comment on, approve, or merge PRs** — its App holds
+  `pull_requests: read`. Its workflow ends at "ready for PR"; the
+  human submits the PR from the host.
+- **Push changes under `.github/workflows/`** — no Workflows access,
+  so GitHub rejects such a push server-side.
+- Access admin settings or manage org membership.
+
+### What the audit agent can do
+
+- Read code and issues (`contents: read`, `issues: read`)
+- Write PR reviews and comments (`pull_requests: write`)
+
+### What the audit agent cannot do
+
+- **Write code** — `contents: read`.
+- **Merge a PR** — merging through the API requires `contents: write`,
+  which the audit App does not hold. This is a server-side hard gate,
+  not a tooling convention.
+- Push changes under `.github/workflows/`.
+
+These restrictions are enforced primarily by the App permission
+shapes (a server-side hard gate) and branch protection, with the
+`vrg-gh`/`vrg-git` wrappers as a soft ergonomic layer on top. See
 [Permission Model](permission-model.md) for the full
 defense-in-depth architecture.
 
-### Outside Collaborator by Design
+## One App, all orgs
 
-The agent account is an outside collaborator on each repo, never
-an org member. This is intentional:
+A single App is installed on every account the contributor operates
+in — their personal account and each org they own. Installation
+tokens are minted per-org at runtime from the App's private key, so
+one App covers `vergil-project`, `vergils-nemesis`, and any future
+orgs. Adding a new org requires only installing the existing App on
+it — no new Apps, no new keys, no credential reconfiguration.
 
-- Outside collaborators cannot access org-level settings
-- Access is granted per-repo, not per-org
-- Removing access is a single operation per repo
-- The account cannot see private repos it hasn't been invited to
+## Harness independence
 
-### One Account, All Orgs
-
-A single `-vergil` account works across every org the contributor
-participates in. Classic PATs are not scoped to a single org, so
-one token covers `vergil-project`, `vergils-nemesis`, and any
-future orgs. Adding a new org requires only an outside collaborator
-invitation — no new accounts, no new tokens.
-
-### Harness Independence
-
-The `-vergil` account captures all AI-driven development work
-regardless of which AI tool is being used — Claude Code, Copilot,
+The agent App identity captures AI-driven development work
+regardless of which AI tool produced it — Claude Code, Copilot,
 Cursor, or any future harness. The specific tool is recorded in
 commit metadata (co-author trailers, PR descriptions), not at the
-identity level. The account represents "AI operating under Vergil
-discipline," not "Claude Code specifically."
+identity level. The App represents "AI operating under VERGIL
+discipline in a given role," not "Claude Code specifically."
 
-## The `-mimir` Convention
+## The `-mimir` convention
 
 Mimir is the adversarial testing counterpart to Vergil. Where
 Vergil represents AI operating with discipline, Mimir represents
@@ -105,24 +142,14 @@ AI's failure modes — hallucination, false confidence, sycophancy,
 and the tendency to work around constraints rather than within
 them.
 
-A `<username>-mimir` GitHub account is the credential that attack
-tooling presents when attempting to breach Vergil-managed repos.
-It has no integration with the Vergil tooling — no suffix
-detection, no credential selection, no co-author entry. It
-operates *against* the tooling, not within it.
+A `<username>-mimir` identity is the credential that attack tooling
+presents when attempting to breach Vergil-managed repos. It has no
+integration with the Vergil tooling — no App, no credential
+selection, no co-author entry. It authenticates with raw `gh`, raw
+`git`, and direct API calls, deliberately bypassing `vrg-gh` and
+`vrg-commit`. It operates *against* the tooling, not within it.
 
-### Identity Roles
-
-- `-vergil` accounts are the operational identity in both
-  `vergil-project` and `vergils-nemesis` repos. All development
-  work — including development of the attack tooling itself —
-  flows through the `-vergil` account using Vergil tooling.
-- `-mimir` accounts are the adversarial identity. They
-  authenticate when executing breach attempts, using raw `gh`,
-  raw `git`, and direct API calls — deliberately bypassing
-  `vrg-gh` and `vrg-commit`.
-
-### The Vergils-Nemesis Org
+### The Vergils-Nemesis org
 
 [vergils-nemesis](https://github.com/vergils-nemesis) is the
 GitHub org for adversarial testing. It contains two kinds of
@@ -139,10 +166,10 @@ The main output is attack reports documenting the success and
 failure of each breach attempt — demonstrating whether Vergil's
 guardrails hold under adversarial pressure.
 
-## The GitHub App
+## The release App
 
 `vergil-release[bot]` is an org-level GitHub App that handles
-mechanized release automation. It is not a contributor identity —
+mechanized release automation. It is not a per-contributor identity —
 it is an automation identity with its own auth flow (JWT exchange
 for short-lived installation tokens).
 
@@ -152,10 +179,10 @@ both create and approve a release.
 
 ## Related
 
-- [Account Setup](account-setup.md) — creating and configuring
-  both accounts
-- [Credential Management](credential-management.md) — how tokens
-  are stored and selected at runtime
+- [Account Setup](account-setup.md) — registering and configuring
+  the user and audit Apps
+- [Credential Management](credential-management.md) — how
+  installation tokens are minted and selected at runtime
 - [Permission Model](permission-model.md) — enforcement layers
   that constrain agent operations
 - [Git Workflow](git-workflow.md) — the per-change development

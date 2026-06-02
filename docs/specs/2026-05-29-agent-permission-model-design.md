@@ -190,7 +190,7 @@ We accept this. Soft gates correct behavior; they do not contain
 threats.
 
 **Layer 2 — Server-side controls (hard gates).** GitHub App
-permissions, branch protection rules, collaborator access levels.
+installation permissions and branch protection rules.
 These are the real security boundary. The agent cannot bypass them
 from inside the VM — they are enforced by GitHub's infrastructure,
 outside the agent's control. When a soft gate has a corresponding
@@ -221,8 +221,9 @@ spec documents it explicitly. Known gaps:
   act) from *writing or updating* one. The soft gate (vrg-gh audit
   allowlist) restricts the audit identity to view/comment/review, but
   server-side the permission also permits PR creation, editing, and
-  closing. Mitigation: the audit identity is a Read-level
-  collaborator and cannot merge anything it creates, and
+  closing. Mitigation: the audit App holds `contents: read`, and
+  merging a PR through the API requires `contents: write` — so the
+  audit identity cannot merge anything it creates, and
   `vrg-finalize-pr`'s pre-merge provenance check detects and blocks
   any out-of-role audit action on a PR before the human merges it (see
   that section). This is the sharpest known hard-gate gap — and because audit is the identity we
@@ -254,7 +255,7 @@ fixed law derived from first principles.
 |---|---|---|
 | **Driver** | Competes on track, makes tactical decisions, works within the rules | `<user>-vergil-user` — daily development agent |
 | **Officials** | Walk pit lane, observe, report infractions — cannot penalize | `<user>-vergil-audit` — reviews PRs, comments on violations |
-| **Race Director** | Full authority over the event, makes the calls | `<user>` — human, ultimate authority |
+| **Chief Steward** | Full authority over the event, makes the calls | `<user>` — human, ultimate authority |
 | **Admin** (reserved) | A competitor granted escorted access to a normally off-limits area | reserved slot — not provisioned |
 
 **Driver (the user identity):** The everyday agent — the workhorse,
@@ -270,9 +271,9 @@ comments. It cannot modify code, create PRs, or close issues.
 Deliberately scoped for the smallest blast radius, because it is the
 identity we most want to run close to unattended.
 
-**Race Director (the human):** The ultimate authority. Reviews
+**Chief Steward (the human):** The ultimate authority. Reviews
 reports from Officials, makes merge/release/strategy decisions,
-triggers operational tools. No one overrules the Race Director. The
+triggers operational tools. No one overrules the Chief Steward. The
 Driver and Officials never interact directly — everything goes
 through Race Control.
 
@@ -289,13 +290,25 @@ and interaction.** Access and supervision are the same dial.
 
 ### GitHub Accounts
 
-| Identity | Account pattern | Collaborator access | Purpose |
+| Identity | App / account | Access mechanism | Purpose |
 |---|---|---|---|
-| User (Driver) | `<user>-vergil-user` | Outside collaborator, Write | Daily development |
-| Audit (Officials) | `<user>-vergil-audit` | Outside collaborator, Read | PR review |
-| Human (Race Director) | `<user>` | Owner/Admin | Ultimate authority |
+| User (Driver) | `<user>-vergil-user` | GitHub App, write-shaped permissions | Daily development |
+| Audit (Officials) | `<user>-vergil-audit` | GitHub App, read-shaped permissions (inverted) | PR review |
+| Human (Chief Steward) | `<user>` | Owner/Admin | Ultimate authority |
 | Admin (reserved) | `<user>-vergil-admin` | — | Reserved — not provisioned until a use case requires it |
 | Release bot | `vergil-release[bot]` | GitHub App | Release automation |
+
+Every AI agent is represented by a GitHub App whose name encodes both
+the human who owns it and the agent's role (`<user>-vergil-<role>`).
+The App's installation provides the agent's only credential: access to
+a repository is granted by installing the App there, and the agent's
+effective capability is bounded entirely by the App's declared
+permission shape. There are no agent user accounts and no collaborator
+grants — the bot identity (`<user>-vergil-<role>[bot]`) that appears on
+commits and PRs comes from the App itself. This keeps non-human
+contributions cleanly attributable: as multiple engineers each run
+several role-scoped agents, the App names make it immediately visible
+which human's which agent did what.
 
 ### GitHub App Configuration
 
@@ -304,7 +317,7 @@ is a reserved slot. Each VM gets exactly one App's credentials. The
 credential environment determines the operating mode — no config
 flag, no mode switch command.
 
-**User App (`vergil-app`):**
+**User App (`<user>-vergil-user`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
@@ -320,7 +333,7 @@ re-trigger CI. Editing the workflow files themselves is never part of
 fixing a gate; that would be changing the rules to pass, the exact
 escape hatch we are closing.
 
-**Audit App (`vergil-audit-app`):**
+**Audit App (`<user>-vergil-audit`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
@@ -334,7 +347,7 @@ The audit App has an inverted permission shape compared to the user
 App: more PR permission (write vs. read) but less code permission
 (read vs. write). The permissions are shaped exactly for the role.
 
-**Admin App (`vergil-admin-app`) — reserved, not provisioned.**
+**Admin App (`<user>-vergil-admin`) — reserved, not provisioned.**
 
 This is a defined architectural slot, not a built identity. Its
 permissions are intentionally left undefined: there is no concrete
@@ -359,14 +372,14 @@ triggering mechanism is designed.
 ```text
 Human host
 ├── User VM  (daily use, always available)
-│   ├── VRG_APP_ID → vergil-app
-│   ├── VRG_PRIVATE_KEY_PATH → vergil-app key
-│   └── Agent operates as <user>-vergil-user
+│   ├── VRG_APP_ID → <user>-vergil-user App
+│   ├── VRG_PRIVATE_KEY_PATH → <user>-vergil-user key
+│   └── Agent operates as <user>-vergil-user[bot]
 │
 ├── Audit VM  (persistent or on-demand)
-│   ├── VRG_APP_ID → vergil-audit-app
-│   ├── VRG_PRIVATE_KEY_PATH → vergil-audit-app key
-│   └── Agent operates as <user>-vergil-audit
+│   ├── VRG_APP_ID → <user>-vergil-audit App
+│   ├── VRG_PRIVATE_KEY_PATH → <user>-vergil-audit key
+│   └── Agent operates as <user>-vergil-audit[bot]
 │
 └── Admin VM  (reserved — not provisioned)
     └── Created only when the admin slot is filled
@@ -456,7 +469,7 @@ The template file is ephemeral:
 ### User Identity (Daily Development)
 
 ```text
-Agent                              Human (Race Director)
+Agent                              Human (Chief Steward)
 ──────                             ─────────────────────
 1. Write code
 2. Commit (vrg-commit)
@@ -565,7 +578,7 @@ behavior, not a failure to handle.
 **Identity-aware enforcement.** `vrg-submit-pr` checks the
 credential environment on startup. If it detects any agent identity
 (user or audit), it aborts immediately with a clear message: PR
-submission is a Race Director operation. This is a Layer 1 soft gate.
+submission requires a human maintainer. This is a Layer 1 soft gate.
 The Layer 2 hard gate is `pull_requests: read` on the user App, which
 causes the underlying `gh pr create` to fail server-side even if the
 soft gate is bypassed.
@@ -573,7 +586,7 @@ soft gate is bypassed.
 **Wrapper denial messages.** When `vrg-gh` blocks a subcommand, the
 denial message is identity-aware. For human identities, `pr create`
 says "use vrg-submit-pr." For agent identities, the same denial
-says "PR creation is a Race Director operation" — no mention of
+says "PR creation requires a human maintainer" — no mention of
 `vrg-submit-pr`, since agents should not know about tools they
 cannot use. (The hook guard itself is a dumb gate — it only
 redirects raw `git`/`gh` to the wrapper scripts and knows nothing
@@ -622,7 +635,7 @@ from the audit context under the identity-aware API allowance (see
 "Identity-aware API access") — without ever granting the user agent a
 raw-API escape hatch.
 
-This is a human (Race Director) operation. No agent invokes it. The
+This is a human (Chief Steward) operation. No agent invokes it. The
 pre-merge provenance check is the worked example of the "human
 chokepoints are verification points" principle: at the irreversible
 step it closes the audit identity's `pull_requests: write` hard-gate
@@ -640,20 +653,20 @@ action its role forbids on the PR being merged.
 | `issue comment` | allowed | Agent comments on issues |
 | `issue view` | allowed | Read operation |
 | `issue list` | allowed | Read operation |
-| `issue close` | **blocked** | Race Director operation — premature closure is a known problem |
-| `issue reopen` | **blocked** | Race Director operation |
-| `issue edit` | **blocked** | Race Director operation — labels, milestones, assignments are strategic |
+| `issue close` | **blocked** | Chief Steward operation — premature closure is a known problem |
+| `issue reopen` | **blocked** | Chief Steward operation |
+| `issue edit` | **blocked** | Chief Steward operation — labels, milestones, assignments are strategic |
 | `pr view` | allowed | Read operation |
 | `pr checks` | allowed | Read operation |
 | `pr list` | allowed | Read operation |
 | `pr diff` | allowed | Read operation |
 | `pr comment` | allowed | Agent comments for context |
 | `pr review` | allowed | Non-approval review comments |
-| `pr review --approve` | **blocked** | Race Director or Officials operation |
-| `pr create` | **blocked** | Race Director operation via `vrg-submit-pr` |
-| `pr edit` | **blocked** | Race Director operation |
-| `pr merge` | **blocked** | Race Director operation via `vrg-finalize-pr` — no agent merges, period |
-| `pr close` | **blocked** | Race Director operation |
+| `pr review --approve` | **blocked** | Chief Steward or Officials operation |
+| `pr create` | **blocked** | Chief Steward operation via `vrg-submit-pr` |
+| `pr edit` | **blocked** | Chief Steward operation |
+| `pr merge` | **blocked** | Chief Steward operation via `vrg-finalize-pr` — no agent merges, period |
+| `pr close` | **blocked** | Chief Steward operation |
 | `run view` | allowed | Read operation |
 | `run list` | allowed | Read operation |
 | `run watch` | allowed | Read operation |
@@ -815,9 +828,11 @@ Parallel tracks with safe sequencing:
 
 **Track B — Identity and permissions:**
 
-- Create `vergil-audit-app` GitHub App with the documented permissions.
-- Set up `<user>-vergil-user` and `<user>-vergil-audit` GitHub accounts.
-- Configure user and audit VMs with respective credentials.
+- Register the `<user>-vergil-user` and `<user>-vergil-audit` GitHub
+  Apps with the documented (inverted) permission shapes.
+- Install both Apps on the target orgs/accounts and capture their App
+  IDs and private keys.
+- Configure user and audit VMs with their respective App credentials.
 - Confirm the user App holds no `workflows` permission.
 - Implement visual differentiation for each VM.
 

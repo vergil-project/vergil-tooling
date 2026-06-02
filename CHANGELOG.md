@@ -5,11 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.0] - 2026-06-02
+
+### Bug fixes
+
+- list live sessions named only in the VM roster
+
+### Features
+
+- add identity-aware allowlists, agent denials, and gh api gating
+- detect workflow permission errors on push with identity-aware guidance
+
+### Refactoring
+
+- use plain human-maintainer wording in messages; rename Race Director to Chief Steward in specs
+
+### Styling
+
+- apply ruff format and simplify push error handling
+
 ## [2.0.80] - 2026-06-02
 
 ### Bug fixes
 
 - treat ambient App installation tokens as app mode
+
+### Documentation
+
+- rewrite onboarding docs to pure GitHub App identity model
 
 ## [2.0.79] - 2026-06-02
 
