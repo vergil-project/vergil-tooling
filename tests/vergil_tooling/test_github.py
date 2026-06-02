@@ -149,6 +149,55 @@ def test_wait_for_checks_does_not_use_fail_fast() -> None:
     assert "--fail-fast" not in call_args
 
 
+def test_failed_check_names_returns_failing_checks() -> None:
+    payload = json.dumps(
+        [
+            {"name": "security / codeql", "bucket": "fail"},
+            {"name": "build", "bucket": "pass"},
+            {"name": "security / semgrep", "bucket": "fail"},
+            {"name": "optional-lint", "bucket": "skipping"},
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        result = github.failed_check_names("https://github.com/pr/1")
+    assert result == ["security / codeql", "security / semgrep"]
+    mock_run.assert_called_once_with(
+        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket"),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_failed_check_names_empty_when_all_pass() -> None:
+    payload = json.dumps(
+        [
+            {"name": "build", "bucket": "pass"},
+            {"name": "optional-lint", "bucket": "skipping"},
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0, stdout=payload)
+        assert github.failed_check_names("https://github.com/pr/1") == []
+
+
+def test_failed_check_names_treats_cancelled_as_failure() -> None:
+    payload = json.dumps([{"name": "deploy", "bucket": "cancel"}])
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        assert github.failed_check_names("https://github.com/pr/1") == ["deploy"]
+
+
+def test_failed_check_names_raises_on_empty_output() -> None:
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        pytest.raises(github.GitHubAPIError),
+    ):
+        mock_run.return_value = _completed(returncode=1, stdout="", stderr="boom")
+        github.failed_check_names("https://github.com/pr/1")
+
+
 def test_mergeable_returns_conflicting() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="CONFLICTING"):
         assert github.mergeable("https://github.com/pr/1") == "CONFLICTING"

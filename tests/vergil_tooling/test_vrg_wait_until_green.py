@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 import subprocess
+from typing import TYPE_CHECKING
 from unittest.mock import call, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_wait_until_green import main, parse_args
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
 _MOD = "vergil_tooling.bin.vrg_wait_until_green"
 _PR = "https://github.com/pr/1"
+
+
+@pytest.fixture(autouse=True)
+def _no_failed_checks() -> Iterator[None]:
+    """Default: every check passed. Tests exercising failures override this."""
+    with patch(f"{_MOD}.github.failed_check_names", return_value=[]):
+        yield
 
 
 def test_parse_args() -> None:
@@ -109,6 +120,42 @@ def test_main_succeeds_only_for_clean() -> None:
         result = main([_PR])
     assert result == 0
     mock_update.assert_not_called()
+
+
+def test_main_fails_when_required_check_failed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression for #1345: a BLOCKED PR with failing required checks must
+    # exit non-zero. The authoritative signal is the check conclusions, not
+    # mergeStateStatus (which can lag or be masked).
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="BLOCKED"),
+        patch(
+            f"{_MOD}.github.failed_check_names",
+            return_value=["security / codeql", "security / semgrep"],
+        ),
+    ):
+        result = main([_PR])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "security / codeql" in err
+    assert "security / semgrep" in err
+
+
+def test_main_does_not_reach_merge_gate_when_check_failed() -> None:
+    # When a check fails, the verdict must not depend on merge_status at all.
+    with (
+        patch(f"{_MOD}.github.mergeable", return_value="MERGEABLE"),
+        patch(f"{_MOD}.github.wait_for_checks"),
+        patch(f"{_MOD}.github.merge_state_status", return_value="CLEAN"),
+        patch(f"{_MOD}.github.failed_check_names", return_value=["flaky-check"]),
+        patch(f"{_MOD}.github.merge_status") as mock_merge_status,
+    ):
+        result = main([_PR])
+    assert result == 1
+    mock_merge_status.assert_not_called()
 
 
 def test_main_fails_for_blocked_with_review_required(

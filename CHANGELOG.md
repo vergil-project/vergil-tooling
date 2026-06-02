@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.0.79] - 2026-06-02
+
+### Bug fixes
+
+- fail on red checks, not just mergeStateStatus
+
 ## [2.0.78] - 2026-06-01
 
 ### Bug fixes

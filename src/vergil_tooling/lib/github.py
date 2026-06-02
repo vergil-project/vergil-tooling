@@ -370,6 +370,35 @@ def wait_for_checks(
     run("pr", "checks", pr, "--watch")
 
 
+_FAILED_BUCKETS = frozenset({"fail", "cancel"})
+
+
+def failed_check_names(pr: str) -> list[str]:
+    """Return the names of checks on *pr* whose result is a failure.
+
+    ``gh pr checks --watch`` (without ``--fail-fast``) exits 0 even when a
+    check fails — its non-zero exit code 8 signals *pending*, not *failure* —
+    so a green verdict cannot be inferred from the watch command's exit
+    status.  This reads each check's ``bucket`` (gh's categorization of the
+    check ``state`` into ``pass``/``fail``/``pending``/``skipping``/``cancel``)
+    and returns the names whose bucket is ``fail`` or ``cancel``.  An empty
+    list means every check passed or was skipped.
+
+    ``gh pr checks`` exits non-zero when checks are failing or pending but
+    still emits the requested JSON on stdout, so the call tolerates a
+    non-zero exit and derives the verdict from the data rather than the exit
+    code.  Empty stdout (e.g. a transient API error) is surfaced as an error
+    rather than silently treated as a pass.
+    """
+    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket")
+    result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
+    out = result.stdout.strip()
+    if not out:
+        raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
+    checks = json.loads(out)
+    return [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+
+
 def mergeable(pr: str) -> str:
     """Return the PR's mergeable status (e.g. ``MERGEABLE``, ``CONFLICTING``, ``UNKNOWN``)."""
     return read_output(
