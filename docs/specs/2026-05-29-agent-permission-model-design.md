@@ -190,7 +190,7 @@ We accept this. Soft gates correct behavior; they do not contain
 threats.
 
 **Layer 2 — Server-side controls (hard gates).** GitHub App
-permissions, branch protection rules, collaborator access levels.
+installation permissions and branch protection rules.
 These are the real security boundary. The agent cannot bypass them
 from inside the VM — they are enforced by GitHub's infrastructure,
 outside the agent's control. When a soft gate has a corresponding
@@ -221,8 +221,9 @@ spec documents it explicitly. Known gaps:
   act) from *writing or updating* one. The soft gate (vrg-gh audit
   allowlist) restricts the audit identity to view/comment/review, but
   server-side the permission also permits PR creation, editing, and
-  closing. Mitigation: the audit identity is a Read-level
-  collaborator and cannot merge anything it creates, and
+  closing. Mitigation: the audit App holds `contents: read`, and
+  merging a PR through the API requires `contents: write` — so the
+  audit identity cannot merge anything it creates, and
   `vrg-finalize-pr`'s pre-merge provenance check detects and blocks
   any out-of-role audit action on a PR before the human merges it (see
   that section). This is the sharpest known hard-gate gap — and because audit is the identity we
@@ -289,13 +290,25 @@ and interaction.** Access and supervision are the same dial.
 
 ### GitHub Accounts
 
-| Identity | Account pattern | Collaborator access | Purpose |
+| Identity | App / account | Access mechanism | Purpose |
 |---|---|---|---|
-| User (Driver) | `<user>-vergil-user` | Outside collaborator, Write | Daily development |
-| Audit (Officials) | `<user>-vergil-audit` | Outside collaborator, Read | PR review |
+| User (Driver) | `<user>-vergil-user` | GitHub App, write-shaped permissions | Daily development |
+| Audit (Officials) | `<user>-vergil-audit` | GitHub App, read-shaped permissions (inverted) | PR review |
 | Human (Chief Steward) | `<user>` | Owner/Admin | Ultimate authority |
 | Admin (reserved) | `<user>-vergil-admin` | — | Reserved — not provisioned until a use case requires it |
 | Release bot | `vergil-release[bot]` | GitHub App | Release automation |
+
+Every AI agent is represented by a GitHub App whose name encodes both
+the human who owns it and the agent's role (`<user>-vergil-<role>`).
+The App's installation provides the agent's only credential: access to
+a repository is granted by installing the App there, and the agent's
+effective capability is bounded entirely by the App's declared
+permission shape. There are no agent user accounts and no collaborator
+grants — the bot identity (`<user>-vergil-<role>[bot]`) that appears on
+commits and PRs comes from the App itself. This keeps non-human
+contributions cleanly attributable: as multiple engineers each run
+several role-scoped agents, the App names make it immediately visible
+which human's which agent did what.
 
 ### GitHub App Configuration
 
@@ -304,7 +317,7 @@ is a reserved slot. Each VM gets exactly one App's credentials. The
 credential environment determines the operating mode — no config
 flag, no mode switch command.
 
-**User App (`vergil-app`):**
+**User App (`<user>-vergil-user`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
@@ -320,7 +333,7 @@ re-trigger CI. Editing the workflow files themselves is never part of
 fixing a gate; that would be changing the rules to pass, the exact
 escape hatch we are closing.
 
-**Audit App (`vergil-audit-app`):**
+**Audit App (`<user>-vergil-audit`):**
 
 | Permission | Level | Rationale |
 |---|---|---|
@@ -334,7 +347,7 @@ The audit App has an inverted permission shape compared to the user
 App: more PR permission (write vs. read) but less code permission
 (read vs. write). The permissions are shaped exactly for the role.
 
-**Admin App (`vergil-admin-app`) — reserved, not provisioned.**
+**Admin App (`<user>-vergil-admin`) — reserved, not provisioned.**
 
 This is a defined architectural slot, not a built identity. Its
 permissions are intentionally left undefined: there is no concrete
@@ -359,14 +372,14 @@ triggering mechanism is designed.
 ```text
 Human host
 ├── User VM  (daily use, always available)
-│   ├── VRG_APP_ID → vergil-app
-│   ├── VRG_PRIVATE_KEY_PATH → vergil-app key
-│   └── Agent operates as <user>-vergil-user
+│   ├── VRG_APP_ID → <user>-vergil-user App
+│   ├── VRG_PRIVATE_KEY_PATH → <user>-vergil-user key
+│   └── Agent operates as <user>-vergil-user[bot]
 │
 ├── Audit VM  (persistent or on-demand)
-│   ├── VRG_APP_ID → vergil-audit-app
-│   ├── VRG_PRIVATE_KEY_PATH → vergil-audit-app key
-│   └── Agent operates as <user>-vergil-audit
+│   ├── VRG_APP_ID → <user>-vergil-audit App
+│   ├── VRG_PRIVATE_KEY_PATH → <user>-vergil-audit key
+│   └── Agent operates as <user>-vergil-audit[bot]
 │
 └── Admin VM  (reserved — not provisioned)
     └── Created only when the admin slot is filled
@@ -815,9 +828,11 @@ Parallel tracks with safe sequencing:
 
 **Track B — Identity and permissions:**
 
-- Create `vergil-audit-app` GitHub App with the documented permissions.
-- Set up `<user>-vergil-user` and `<user>-vergil-audit` GitHub accounts.
-- Configure user and audit VMs with respective credentials.
+- Register the `<user>-vergil-user` and `<user>-vergil-audit` GitHub
+  Apps with the documented (inverted) permission shapes.
+- Install both Apps on the target orgs/accounts and capture their App
+  IDs and private keys.
+- Configure user and audit VMs with their respective App credentials.
 - Confirm the user App holds no `workflows` permission.
 - Implement visual differentiation for each VM.
 

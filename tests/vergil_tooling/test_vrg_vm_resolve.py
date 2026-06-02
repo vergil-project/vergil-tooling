@@ -270,7 +270,7 @@ def test_resolve_create(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
     assert _resolve("id", "p", extra=["--model", "opus"]) == 0
     assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
     assert "Creating session id:01:p" in capsys.readouterr().err
@@ -281,7 +281,7 @@ def test_resolve_resume(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, set(), {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
     assert _resolve("id", "p") == 0
     assert capture_exec == [["claude", "--resume", "s1"]]
     assert "Resuming session id:01:p" in capsys.readouterr().err
@@ -292,7 +292,7 @@ def test_resolve_fork(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "id:01:p"}, {"s1"}, {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, {"s1"}, {}))
     assert _resolve("id", "p", requested_slot=1, fork=True) == 0
     assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
     assert "Forking session id:01:p -> id:02:p" in capsys.readouterr().err
@@ -301,7 +301,7 @@ def test_resolve_fork(
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
     assert _resolve("id", "p", fork=True) == 1  # fork without slot
     assert "ERROR" in capsys.readouterr().err
 
@@ -313,7 +313,7 @@ def test_resolve_sweeps_stale_and_creates(
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
-        r, "_read_state", lambda: ({"old": "vergil:01:p"}, set(), {"old": now - 20 * DAY})
+        r, "_read_state", lambda *_a: ({"old": "vergil:01:p"}, set(), {"old": now - 20 * DAY})
     )
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
@@ -334,7 +334,7 @@ def test_resolve_warn_prompt_resume(
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
-        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
     )
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
@@ -350,7 +350,7 @@ def test_resolve_warn_prompt_fresh(
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
-        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
     )
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
@@ -370,7 +370,7 @@ def test_resolve_warn_prompt_cancel(
 ) -> None:
     now = 100 * DAY
     monkeypatch.setattr(
-        r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
+        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
     )
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "c")
@@ -423,7 +423,7 @@ def test_list_json_includes_age_and_state(
 def test_list_json_idle_state(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({"s1": "vergil:01:p"}, set(), {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {}))
     assert r.list_json() == 0
     rows = json.loads(capsys.readouterr().out)
     assert rows[0]["state"] == "idle"
@@ -434,7 +434,7 @@ def test_archived_rows_skips_unparseable_original(
 ) -> None:
     # archived label whose embedded "original" is not a valid slot name
     monkeypatch.setattr(
-        r, "_read_state", lambda: ({"a1": "archived@2026-05-01T00:00:00Z@garbage"}, set(), {})
+        r, "_read_state", lambda *_a: ({"a1": "archived@2026-05-01T00:00:00Z@garbage"}, set(), {})
     )
     assert r.list_json() == 0
     assert json.loads(capsys.readouterr().out) == []
@@ -486,7 +486,7 @@ def test_read_state_returns_last_active(monkeypatch: pytest.MonkeyPatch, tmp_pat
 def test_main_list_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda: ({}, set(), {}))
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
     assert r.main(["--list-json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
 
@@ -536,3 +536,66 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]
+
+
+# --- cwd-scoped resolution (issue #1339) ---
+
+
+def test_project_slug_encodes_path() -> None:
+    # Claude encodes a cwd into a project slug by replacing every
+    # non-alphanumeric character (including the leading slash and dots) with "-".
+    assert r._project_slug("/work/tool") == "-work-tool"
+    assert r._project_slug("/a.b/c") == "-a-b-c"
+
+
+def test_name_by_session_scoped_to_one_slug(tmp_path: Path) -> None:
+    (tmp_path / "-a").mkdir()
+    (tmp_path / "-b").mkdir()
+    (tmp_path / "-a" / "s1.jsonl").write_text(
+        '{"type":"agent-name","agentName":"id:01:a","sessionId":"s1"}\n'
+    )
+    (tmp_path / "-b" / "s2.jsonl").write_text(
+        '{"type":"agent-name","agentName":"id:01:b","sessionId":"s2"}\n'
+    )
+    # Scoped to "-a": only that slug's transcript is read.
+    assert r.name_by_session(tmp_path, "-a") == {"s1": "id:01:a"}
+    # No slug: full scan across every slug (unchanged behavior).
+    assert r.name_by_session(tmp_path) == {"s1": "id:01:a", "s2": "id:01:b"}
+
+
+def test_resolve_ignores_session_under_other_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    # A session whose NAME claims path "tool" but whose transcript physically
+    # lives under a different workspace's slug must be ignored: claude --resume
+    # is scoped to the current cwd's slug, so resuming it would hard-fail.
+    claude = tmp_path / ".claude"
+    projects = claude / "projects"
+    (projects / "-work-tool").mkdir(parents=True)
+    (projects / "-work-vm").mkdir(parents=True)
+    (projects / "-work-vm" / "mis.jsonl").write_text(
+        '{"type":"agent-name","agentName":"id:01:tool","sessionId":"mis"}\n'
+    )
+    (claude / "sessions").mkdir()
+    monkeypatch.setattr(r, "_claude_dir", lambda: claude)
+    monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
+    assert _resolve("id", "tool") == 0
+    assert capture_exec == [["claude", "-n", "id:01:tool"]]
+
+
+def test_resolve_resumes_session_under_current_slug(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    # Regression guard: a session whose transcript lives under the current cwd's
+    # slug is still resumable after scoping.
+    claude = tmp_path / ".claude"
+    projects = claude / "projects"
+    (projects / "-work-tool").mkdir(parents=True)
+    (projects / "-work-tool" / "good.jsonl").write_text(
+        '{"type":"agent-name","agentName":"id:01:tool","sessionId":"good"}\n'
+    )
+    (claude / "sessions").mkdir()
+    monkeypatch.setattr(r, "_claude_dir", lambda: claude)
+    monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
+    assert _resolve("id", "tool") == 0
+    assert capture_exec == [["claude", "--resume", "good"]]

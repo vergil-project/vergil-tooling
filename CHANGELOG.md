@@ -5,7 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [2.0.76] - 2026-05-31
+## [2.0.80] - 2026-06-02
+
+### Bug fixes
+
+- treat ambient App installation tokens as app mode
+
+## [2.0.79] - 2026-06-02
+
+### Bug fixes
+
+- fail on red checks, not just mergeStateStatus
+
+## [2.0.78] - 2026-06-01
+
+### Bug fixes
+
+- scope session resolve to the current cwd's project slug
+
+## [2.0.77] - 2026-05-31
+
+### Features
+
+- print one-line feedback for the session resolver decision
+
+## [2.0.76] - 2026-05-30
 
 ### Chores
 

@@ -149,6 +149,55 @@ def test_wait_for_checks_does_not_use_fail_fast() -> None:
     assert "--fail-fast" not in call_args
 
 
+def test_failed_check_names_returns_failing_checks() -> None:
+    payload = json.dumps(
+        [
+            {"name": "security / codeql", "bucket": "fail"},
+            {"name": "build", "bucket": "pass"},
+            {"name": "security / semgrep", "bucket": "fail"},
+            {"name": "optional-lint", "bucket": "skipping"},
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        result = github.failed_check_names("https://github.com/pr/1")
+    assert result == ["security / codeql", "security / semgrep"]
+    mock_run.assert_called_once_with(
+        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket"),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_failed_check_names_empty_when_all_pass() -> None:
+    payload = json.dumps(
+        [
+            {"name": "build", "bucket": "pass"},
+            {"name": "optional-lint", "bucket": "skipping"},
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0, stdout=payload)
+        assert github.failed_check_names("https://github.com/pr/1") == []
+
+
+def test_failed_check_names_treats_cancelled_as_failure() -> None:
+    payload = json.dumps([{"name": "deploy", "bucket": "cancel"}])
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        assert github.failed_check_names("https://github.com/pr/1") == ["deploy"]
+
+
+def test_failed_check_names_raises_on_empty_output() -> None:
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        pytest.raises(github.GitHubAPIError),
+    ):
+        mock_run.return_value = _completed(returncode=1, stdout="", stderr="boom")
+        github.failed_check_names("https://github.com/pr/1")
+
+
 def test_mergeable_returns_conflicting() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="CONFLICTING"):
         assert github.mergeable("https://github.com/pr/1") == "CONFLICTING"
@@ -661,6 +710,88 @@ class TestLoadAppConfig:
         result = github._load_app_config()
         assert result is not None
         assert result[0] == "12345"
+
+
+class TestIsAppMode:
+    """``is_app_mode`` must detect App credentials minted either by tooling
+    (``_load_app_config``) or upstream and passed in as an ambient
+    installation token (``ghs_`` prefix).
+    """
+
+    def _clear_app_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Point HOME at an empty dir and drop env creds so _load_app_config
+        # returns None, isolating the ambient-token detection path.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+
+    def test_true_for_ambient_installation_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The CI regression: a ghs_ token from actions/create-github-app-token
+        # passed via GH_TOKEN, with no VRG_APP_* config of our own.
+        self._clear_app_config(tmp_path, monkeypatch)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setenv("GH_TOKEN", "ghs_installation_token_abc")
+        assert github.is_app_mode() is True
+
+    def test_true_for_installation_token_in_github_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._clear_app_config(tmp_path, monkeypatch)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.setenv("GITHUB_TOKEN", "ghs_installation_token_abc")
+        assert github.is_app_mode() is True
+
+    def test_false_for_personal_access_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._clear_app_config(tmp_path, monkeypatch)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.setenv("GH_TOKEN", "ghp_classic_personal_token")
+        assert github.is_app_mode() is False
+
+    def test_false_when_no_token_present(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        self._clear_app_config(tmp_path, monkeypatch)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        assert github.is_app_mode() is False
+
+    def test_gh_token_takes_precedence_over_github_token(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # gh prefers GH_TOKEN; a non-App GH_TOKEN must win even if a stray
+        # ghs_ value sits in GITHUB_TOKEN.
+        self._clear_app_config(tmp_path, monkeypatch)
+        monkeypatch.setenv("GH_TOKEN", "ghp_personal_token")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghs_installation_token_abc")
+        assert github.is_app_mode() is False
+
+    def test_true_when_tooling_holds_app_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The self-minting path: env-provided App key, regardless of token.
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("fake-key\n")
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        monkeypatch.setenv("VRG_PRIVATE_KEY_PATH", str(key_file))
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        assert github.is_app_mode() is True
 
 
 class TestGenerateJwt:
