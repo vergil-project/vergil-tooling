@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.2.0/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.1.3/">
+        <link rel="next" href="../v2.1.1/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.1.4 - VERGIL Tooling</title>
+        <title>2.1.2 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-114-2026-02-21" class="md-skip">
+        <a href="#release-212-2026-06-04" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.1.4
+              2.1.2
             
           </span>
         </div>
@@ -874,10 +874,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.2/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.2
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -893,6 +920,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4318,37 +4387,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.1.4
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.1.4/" class="md-nav__link">
         
   
   
@@ -4364,48 +4406,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7279,10 +7279,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Documentation
       
     </span>
   </a>
@@ -7317,29 +7317,76 @@
 
 
 
-<h1 id="release-114-2026-02-21">Release 1.1.4 (2026-02-21)<a class="headerlink" href="#release-114-2026-02-21" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-212-2026-06-04">Release 2.1.2 (2026-06-04)<a class="headerlink" href="#release-212-2026-06-04" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<p><strong>fix CHANGELOG.md formatting for markdownlint compliance</strong>
-Add H1 heading, fix blank lines around sections, remove emoji prefixes from heading names. Enable siblings_only for MD024 to allow repeated subsection names across changelog versions.</p>
+<p><strong>normalize identities.toml keys to vergil-<role> (#1370)</strong>
+Identity keys become vergil-user/vergil-audit so the key equals the vm_instance base. App credential names (<username>-vergil-<role>), vm_instance values, and VRG_IDENTITY_MODE role values are unchanged. Tracks vergil-vm#99.</p>
 </li>
 <li>
-<p><strong>fix CHANGELOG.md formatting for markdownlint compliance</strong></p>
-</li>
-<li><strong>fix CHANGELOG.md formatting for markdownlint compliance</strong></li>
-<li><strong>fix CHANGELOG.md formatting for markdownlint compliance</strong></li>
-<li><strong>validate CHANGELOG.md with markdownlint before committing (#55)</strong></li>
-<li>
-<p>fix: add cliff.toml for markdownlint-compliant changelog generation</p>
-</li>
-<li>
-<p><strong>allow merge commits through commit-msg hook (#57)</strong></p>
+<p><strong>document list observability columns (#1370)</strong>
+list --help defines AGENTS (harness instances) vs HUMANS (open human-held interactive shells; a count of shells, not people) and the SPEC states (ok/NEEDS-REBUILD/not-created/orphaned/under). Tracks vergil-vm#99.</p>
 </li>
 </ul>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>annotate synced scripts with provenance comments (#58)</strong></li>
+<li>
+<p><strong>parse repo [vm] cascade in vergil.toml (#1370)</strong>
+Add VmStanza/RoleOverlay and parse_vm_stanza for the [vm] + [vm.<role>] cascade; allow the [vm] section in the config allow-list with key validation delegated to the stanza parser. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>parse nested host-override tables in identities.toml (#1370)</strong>
+Identity gains an overrides map keyed by (org, repo), populated from nested [identities.<id>.<org>.<repo>] tables; org-level scalars and scalar identity fields are skipped. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add compose_vm_spec five-tier overlay (#1370)</strong>
+ComposedSpec + compose_vm_spec overlay base -&gt; repo [vm] -&gt; [vm.<role>] -&gt; host override; packages union, scalars last-wins. The under flag measures a host override against the REPO-declared floor (tiers 3+4), not the base, so overriding below base on a repo with no [vm] is not flagged. Shared _apply_overlay helper. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add reversible -- instance-name codec (#1370)</strong>
+instance_name/parse_instance_name use -- as the tier delimiter so identity/org/repo round-trip exactly; bare identity denotes the base box. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add composed-spec fingerprint (#1370)</strong>
+spec_fingerprint hashes the declaration (footprint + sorted package set + provision-hook content hash, path fallback + stale_days), excluding derived under/dedicated; order-independent for packages. Drives the rebuild/drift gate. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>thread profile packages/hook/fingerprint into create_vm (#1370)</strong>
+create_vm gains packages/provision_hook/fingerprint kwargs, passed to the template via --set=.param.*; base creates (params None) emit no extra --set, keeping behaviour unchanged. Tests mock Path.home to avoid host-dir side effects. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add fingerprint read + drift status (#1370)</strong>
+read_fingerprint reads /etc/vergil/vm-spec.fingerprint (None when absent or empty); vm_spec_status compares against the expected composed fingerprint -&gt; ok | needs-rebuild. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add _resolve_target base-vs-dedicated resolution (#1370)</strong>
+VergilConfig.vm surfaces the parsed [vm] stanza. _resolve_target: no workspace -&gt; base VM; a spec'd repo -&gt; dedicated instance with composed footprint, packages, provision hook (content-hashed into the fingerprint), and instance name. A repo without vergil.toml resolves to base. Per-command CLI positionals land with their command wiring in later tasks. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>build dedicated VMs from the composed spec (#1370)</strong>
+create/rebuild route through _resolve_target and a shared _create_from_target: dedicated boxes pass composed footprint + packages + provision hook + fingerprint; the base path is unchanged. create/rebuild accept the <org>/<repo> positional. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add session/start abort gate, tunable staleness, under-warning (#1370)</strong>
+session/start preflight a dedicated target: missing -&gt; abort with create; drift -&gt; abort with rebuild; below-declared host override -&gt; loud warning (sovereign, not blocked). Staleness uses the composed stale_days. _workspace_org_repo keeps the 1-level/'.' session convention on base while exact org/repo drives dedicated. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>route stop/restart/destroy/update through the resolved instance (#1370)</strong>
+All lifecycle commands accept the optional <org>/<repo> positional. _resolve_instance names the dedicated instance directly (no vergil.toml read), so an orphaned VM whose repo dropped its [vm] is still reachable by destroy. Subsumes Plan 3 Task 4. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>add process-tree AGENTS/HUMANS occupancy (#1370)</strong>
+vm_occupancy runs an in-VM classifier that walks each logind user tty/pty session's subtree for claude, counting agent vs human sessions directly (no subtraction); returns (0,0) on failure. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>discover dedicated VMs and orphans (#1370)</strong>
+discover_dedicated reconciles <identity>--* instances with spec-bearing repos under projects_dir: present / orphaned (instance without a usable spec) / not-created (spec without instance). Uses read_config's directory signature. Tracks vergil-vm#99.</p>
+</li>
+<li>
+<p><strong>rewrite list with footprint, occupancy, and SPEC columns (#1370)</strong>
+Default list view shows IDENTITY/SCOPE/STATUS/CPUS/MEM/DISK/AGENTS/HUMANS/SPEC: composed footprint, process-tree occupancy for running VMs, and SPEC states ok/NEEDS-REBUILD/not-created/orphaned plus the under flag. Shared _with_provision_hash means the drift check content-hashes the hook the same way the build did, so hooked repos do not falsely read NEEDS-REBUILD. --sessions unchanged. Tracks vergil-vm#99.</p>
+</li>
 </ul>
 
 
