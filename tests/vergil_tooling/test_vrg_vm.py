@@ -1285,7 +1285,7 @@ class TestResolveTarget:
         target = _resolve_target(_args(cfg, "lmf/mq"))
         assert target.org == "lmf"
         assert target.repo == "mq"
-        assert target.instance == "vergil-user--lmf--mq"
+        assert target.instance == "vergil-user.lmf.mq"
         assert target.spec.dedicated is True
         assert target.spec.cpus == 12
         assert target.spec.vagrant_plugins == ("vagrant-libvirt",)
@@ -1343,7 +1343,7 @@ class TestCreateDedicated:
         mock_fetch.return_value = template
 
         assert main(["create", "lmf/mq", "--config", str(cfg)]) == 0
-        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        assert mock_create.call_args.args[0] == "vergil-user.lmf.mq"
         kwargs = mock_create.call_args.kwargs
         assert kwargs["cpus"] == 12
         assert kwargs["memory"] == "64GiB"
@@ -1413,7 +1413,7 @@ class TestCreateDedicated:
         mock_fetch.return_value = template
 
         assert main(["rebuild", "lmf/mq", "--config", str(cfg)]) == 0
-        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        assert mock_create.call_args.args[0] == "vergil-user.lmf.mq"
         assert mock_create.call_args.kwargs["fingerprint"] != ""
 
 
@@ -1433,7 +1433,7 @@ def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = 
     cfg = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
     if dedicated:
         return Target(
-            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user--lmf--mq", fingerprint
+            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user.lmf.mq", fingerprint
         )
     return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "")
 
@@ -1494,13 +1494,13 @@ class TestLifecyclePositional:
         # No repo/spec needed: an orphan (repo dropped [vm]) is still reachable by name.
         cfg = _identities(tmp_path, tmp_path / "projects")
         assert main(["destroy", "lmf/mq", "--config", str(cfg)]) == 0
-        mock_delete.assert_called_once_with("vergil-user--lmf--mq")
+        mock_delete.assert_called_once_with("vergil-user.lmf.mq")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     def test_stop_targets_dedicated_instance(self, mock_stop: MagicMock, tmp_path: Path) -> None:
         cfg = _identities(tmp_path, tmp_path / "projects")
         assert main(["stop", "lmf/mq", "--config", str(cfg)]) == 0
-        mock_stop.assert_called_once_with("vergil-user--lmf--mq")
+        mock_stop.assert_called_once_with("vergil-user.lmf.mq")
 
 
 class TestDiscoverDedicated:
@@ -1514,13 +1514,13 @@ class TestDiscoverDedicated:
         broken.mkdir(parents=True)
         (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
         instances = [
-            "vergil-user--org--present",  # instance + spec -> present
-            "vergil-user--org--gone",  # instance, no repo -> orphaned
-            "vergil-user--org--nospec",  # repo without [vm] -> orphaned
-            "vergil-user--org--broken",  # repo with broken toml -> orphaned
+            "vergil-user.org.present",  # instance + spec -> present
+            "vergil-user.org.gone",  # instance, no repo -> orphaned
+            "vergil-user.org.nospec",  # repo without [vm] -> orphaned
+            "vergil-user.org.broken",  # repo with broken toml -> orphaned
             "vergil-user",  # base instance -> ignored (org is None)
-            "a--b--c--d",  # unparseable -> ignored
-            "vergil-audit--org--present",  # other identity -> ignored
+            "weird.name",  # unparseable (2 tiers) -> ignored
+            "vergil-audit.org.present",  # other identity -> ignored
         ]
         rows = discover_dedicated("vergil-user", instances, str(projects))
         by_repo = {r.repo: r.state for r in rows}
@@ -1561,8 +1561,8 @@ class TestListRows:
         projects = tmp_path / "projects"
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
-        status = {"vergil-user": "Running", "vergil-user--lmf--mq": "Running"}
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        status = {"vergil-user": "Running", "vergil-user.lmf.mq": "Running"}
         rows = _list_rows("vergil-user", ident, dedic, status)
         base = self._row(rows, "base")
         ded = self._row(rows, "lmf/mq")
@@ -1580,8 +1580,8 @@ class TestListRows:
         projects = tmp_path / "projects"
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
         assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
@@ -1590,15 +1590,15 @@ class TestListRows:
         projects = tmp_path / "projects"
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
         assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
 
     def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
         rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
         ded = self._row(rows, "lmf/mq")
         assert ded["spec"] == "ok"
@@ -1607,15 +1607,15 @@ class TestListRows:
     def test_present_repo_without_vergil_toml_uses_base(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         ident = self._identity(projects)  # projects/lmf/mq does not exist
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
         rows = _list_rows("vergil-user", ident, dedic, {})
         assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
 
     def test_orphaned_and_not_created(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
         dedic = [
-            DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned"),
-            DedicatedRow("o", "todo", "vergil-user--o--todo", "not-created"),
+            DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned"),
+            DedicatedRow("o", "todo", "vergil-user.o.todo", "not-created"),
         ]
         rows = _list_rows("vergil-user", ident, dedic, {})
         by_scope = {r["scope"]: r["spec"] for r in rows}
@@ -1625,8 +1625,8 @@ class TestListRows:
     @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
     def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
-        dedic = [DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--o--gone": "Running"})
+        dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.o.gone": "Running"})
         assert self._row(rows, "o/gone")["agents"] == "1"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")

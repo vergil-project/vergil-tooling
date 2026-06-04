@@ -973,7 +973,7 @@ class TestCreateVmProfileParams:
         template = tmp_path / "agent.yaml"
         template.write_text("dummy", encoding="utf-8")
         create_vm(
-            "vergil-user--org--repo",
+            "vergil-user.org.repo",
             template,
             "/projects",
             cpus=12,
@@ -1023,7 +1023,7 @@ class TestFingerprintHelpers:
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_read_fingerprint_returns_stamped_value(self, mock_shell: MagicMock) -> None:
         mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="abc123\n", stderr="")
-        assert read_fingerprint("vergil-user--org--repo") == "abc123"
+        assert read_fingerprint("vergil-user.org.repo") == "abc123"
 
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_read_fingerprint_missing_marker_is_none(self, mock_shell: MagicMock) -> None:
