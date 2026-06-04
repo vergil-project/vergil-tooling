@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+
 from vergil_tooling.lib.config import RoleOverlay, VmStanza
-from vergil_tooling.lib.vm_spec import ComposedSpec, compose_vm_spec
+from vergil_tooling.lib.vm_spec import (
+    ComposedSpec,
+    compose_vm_spec,
+    instance_name,
+    parse_instance_name,
+)
 
 BASE = {"cpus": 4, "memory": "4GiB", "disk": "50GiB"}
 
@@ -108,3 +115,32 @@ class TestComposeVmSpec:
         )
         assert spec.cpus == 16
         assert spec.under == ()
+
+
+class TestInstanceName:
+    def test_base_is_bare_identity(self) -> None:
+        assert instance_name("vergil-user", None, None) == "vergil-user"
+
+    def test_base_when_only_org_given(self) -> None:
+        assert instance_name("vergil-user", "org", None) == "vergil-user"
+
+    def test_dedicated_is_double_dash_joined(self) -> None:
+        assert (
+            instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
+            == "vergil-user--logical-minds-foundry--mq-cluster-tooling"
+        )
+
+    def test_roundtrip_dedicated(self) -> None:
+        name = "vergil-user--logical-minds-foundry--mq-cluster-tooling"
+        assert parse_instance_name(name) == (
+            "vergil-user",
+            "logical-minds-foundry",
+            "mq-cluster-tooling",
+        )
+
+    def test_roundtrip_base(self) -> None:
+        assert parse_instance_name("vergil-user") == ("vergil-user", None, None)
+
+    def test_unparseable_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="unparseable VM instance name"):
+            parse_instance_name("a--b--c--d")

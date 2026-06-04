@@ -134,3 +134,24 @@ def compose_vm_spec(
         dedicated=acc.customized,
         under=tuple(under),
     )
+
+
+_TIER_SEP = "--"
+
+
+def instance_name(identity: str, org: str | None, repo: str | None) -> str:
+    """Derive the Lima instance name. Bare identity = base box; ``--``-joined = dedicated."""
+    if org is None or repo is None:
+        return identity
+    return _TIER_SEP.join((identity, org, repo))
+
+
+def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
+    """Reverse instance_name. Returns (identity, org, repo); org/repo are None for base."""
+    parts = name.split(_TIER_SEP)
+    if len(parts) == 1:
+        return parts[0], None, None
+    if len(parts) == 3:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2]
+    msg = f"unparseable VM instance name: {name!r}"
+    raise ValueError(msg)
