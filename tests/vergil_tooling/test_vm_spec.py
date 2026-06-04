@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from vergil_tooling.lib.config import RoleOverlay, VmStanza
@@ -131,6 +133,12 @@ class TestComposeVmSpec:
         assert spec.under == ()
 
 
+# Lima's instance-name validator. A valid identifier starts with an alphanumeric
+# run and uses single '.', '_', or '-' separators, each followed by an alphanumeric
+# run. Consecutive separators (e.g. '--') are rejected.
+_LIMA_IDENTIFIER = re.compile(r"^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$")
+
+
 class TestInstanceName:
     def test_base_is_bare_identity(self) -> None:
         assert instance_name("vergil-user", None, None) == "vergil-user"
@@ -138,26 +146,44 @@ class TestInstanceName:
     def test_base_when_only_org_given(self) -> None:
         assert instance_name("vergil-user", "org", None) == "vergil-user"
 
-    def test_dedicated_is_double_dash_joined(self) -> None:
+    def test_dedicated_is_dot_joined(self) -> None:
         assert (
             instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
-            == "vergil-user--logical-minds-foundry--mq-cluster-tooling"
+            == "vergil-user.logical-minds-foundry.mq-cluster-tooling"
         )
 
+    def test_dedicated_name_is_valid_lima_identifier(self) -> None:
+        name = instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
+        assert _LIMA_IDENTIFIER.fullmatch(name)
+
     def test_roundtrip_dedicated(self) -> None:
-        name = "vergil-user--logical-minds-foundry--mq-cluster-tooling"
+        name = "vergil-user.logical-minds-foundry.mq-cluster-tooling"
         assert parse_instance_name(name) == (
             "vergil-user",
             "logical-minds-foundry",
             "mq-cluster-tooling",
         )
 
+    def test_roundtrip_dedicated_repo_with_dots(self) -> None:
+        # The repo is the final tier, so dots within it round-trip intact.
+        name = instance_name("vergil-user", "acme", "foo.github.io")
+        assert _LIMA_IDENTIFIER.fullmatch(name)
+        assert parse_instance_name(name) == ("vergil-user", "acme", "foo.github.io")
+
     def test_roundtrip_base(self) -> None:
         assert parse_instance_name("vergil-user") == ("vergil-user", None, None)
 
+    def test_identity_with_dot_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not contain '.'"):
+            instance_name("bad.identity", "org", "repo")
+
+    def test_org_with_dot_rejected(self) -> None:
+        with pytest.raises(ValueError, match="must not contain '.'"):
+            instance_name("vergil-user", "bad.org", "repo")
+
     def test_unparseable_name_raises(self) -> None:
         with pytest.raises(ValueError, match="unparseable VM instance name"):
-            parse_instance_name("a--b--c--d")
+            parse_instance_name("a.b")
 
 
 class TestFingerprint:

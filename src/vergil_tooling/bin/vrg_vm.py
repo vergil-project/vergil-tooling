@@ -474,7 +474,7 @@ def _repo_has_vm_spec(projects_dir: str, org: str, repo: str) -> bool:
 def discover_dedicated(
     identity_name: str, instances: list[str], projects_dir: str
 ) -> list[DedicatedRow]:
-    """Reconcile existing <identity>--* instances with spec-bearing local repos.
+    """Reconcile existing <identity>.* instances with spec-bearing local repos.
 
     - instance + spec   -> present
     - instance, no spec -> orphaned
