@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.21/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.19/">
+        <link rel="next" href="../v2.1.5/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.20 - VERGIL Tooling</title>
+        <title>2.1.6 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2020-2026-05-19" class="md-skip">
+        <a href="#release-216-2026-06-04" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.20
+              2.1.6
             
           </span>
         </div>
@@ -882,10 +882,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.6/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.6
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -901,6 +928,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2702,37 +2760,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.20
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.20/" class="md-nav__link">
         
   
   
@@ -2748,48 +2779,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7399,21 +7388,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -7437,15 +7415,13 @@
 
 
 
-<h1 id="release-2020-2026-05-19">Release 2.0.20 (2026-05-19)<a class="headerlink" href="#release-2020-2026-05-19" title="Permanent link">&para;</a></h1>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<h1 id="release-216-2026-06-04">Release 2.1.6 (2026-06-04)<a class="headerlink" href="#release-216-2026-06-04" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 2.0.20</strong></li>
+<li><strong>truncate tracking-issue comments to GitHub's size limit</strong>
+GitHub's addComment API rejects comment bodies longer than 65,536 characters. When a release phase failed with a large detail payload (e.g. the confirm-main phase captured a multi-minute CD watch log into ReleaseError.detail), comment_phase_failed tried to post the whole thing and crashed the release in its own failure-reporting path.</li>
 </ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add exact-match allowlist to vrg-git for specific denied-subcommand overrides</strong></li>
-</ul>
+<p>Enforce the limit at _comment(), the single choke point every tracking-issue comment flows through. Oversized bodies keep the head (the marker comment and the structured phase/command/error preamble) and the tail (where failure logs put the actual error), dropping the middle with a '[... N characters truncated ...]' marker. This protects the failure, completion, and close-summary callers alike.</p>
 
 
 
