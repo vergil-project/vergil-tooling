@@ -9,6 +9,8 @@ import pytest
 
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
+    _MAX_COMMENT_CHARS,
+    _truncate_for_comment,
     close_tracking_issue,
     comment_phase_complete,
     comment_phase_failed,
@@ -192,6 +194,64 @@ def test_create_tracking_issue_bad_url() -> None:
         pytest.raises(ValueError, match="Could not extract issue number"),
     ):
         create_tracking_issue(ctx)
+
+
+def test_truncate_for_comment_passes_through_short_body() -> None:
+    body = "<!-- vrg-release:prepare:complete -->\n\nall good"
+    assert _truncate_for_comment(body) == body
+
+
+def test_truncate_for_comment_shrinks_oversized_body_below_limit() -> None:
+    head = "<!-- vrg-release:confirm-main:failed -->\nHEADMARKER"
+    tail = "REAL-ERROR-AT-THE-END"
+    body = head + ("x" * 200_000) + tail
+
+    result = _truncate_for_comment(body)
+
+    assert len(result) <= _MAX_COMMENT_CHARS
+    # Head preserved (marker survives for humans and marker-based tooling).
+    assert result.startswith(head)
+    # Tail preserved (the actual error usually lives at the end of a log).
+    assert result.endswith(tail)
+    # Middle replaced with a clear truncation marker.
+    assert "characters truncated" in result
+
+
+def test_comment_phase_failed_truncates_oversized_detail() -> None:
+    ctx = _ctx()
+    ctx.issue_number = 42
+    exc = ReleaseError(
+        phase="confirm-main",
+        command="gh run watch ...",
+        message="CD failed",
+        detail="x" * 200_000,
+    )
+    written_bodies: list[str] = []
+
+    original_open = tempfile.NamedTemporaryFile
+
+    def capture_tmpfile(**kwargs: Any) -> Any:
+        f = original_open(**kwargs)
+        original_write = f.write
+
+        def write_and_capture(data: str) -> int:
+            written_bodies.append(data)
+            return original_write(data)
+
+        f.write = write_and_capture  # type: ignore[method-assign]
+        return f
+
+    with (
+        patch(_MOD + ".tempfile.NamedTemporaryFile", side_effect=capture_tmpfile),
+        patch(_MOD + ".github.run"),
+    ):
+        comment_phase_failed(ctx, "confirm-main", exc)
+
+    assert written_bodies
+    body = written_bodies[0]
+    assert len(body) <= _MAX_COMMENT_CHARS
+    assert "vrg-release:confirm-main:failed" in body
+    assert "characters truncated" in body
 
 
 def test_comment_phase_failed_no_detail() -> None:

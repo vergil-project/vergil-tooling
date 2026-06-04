@@ -12,6 +12,38 @@ from vergil_tooling.lib import github
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
+# GitHub's addComment API rejects any comment body longer than this many
+# characters. Posting a larger body fails with
+# "Body is too long (maximum is 65536 characters) (addComment)".
+_MAX_COMMENT_CHARS = 65_536
+# Stay comfortably under the hard limit so the truncation marker and any
+# character-vs-byte counting differences cannot push us back over.
+_COMMENT_BUDGET = 65_000
+
+
+def _truncate_for_comment(body: str, *, budget: int = _COMMENT_BUDGET) -> str:
+    """Shrink *body* to fit GitHub's comment-size limit.
+
+    Bodies within *budget* are returned unchanged. Larger bodies keep the
+    head (the marker comment and the structured phase/command/error preamble)
+    and the tail (where failure logs put the actual error), dropping the
+    middle and replacing it with a marker noting how many characters were
+    removed.
+    """
+    if len(body) <= budget:
+        return body
+    marker_template = "\n\n[... {dropped} characters truncated ...]\n\n"
+    # The marker's length depends on the dropped count, which we don't know
+    # until we know how much we keep. Reserve an upper bound: the dropped
+    # count can never have more digits than the original length.
+    marker_reserve = len(marker_template.format(dropped=len(body)))
+    available = budget - marker_reserve
+    head_chars = available // 2
+    tail_chars = available - head_chars
+    dropped = len(body) - head_chars - tail_chars
+    marker = marker_template.format(dropped=dropped)
+    return body[:head_chars] + marker + body[-tail_chars:]
+
 
 def find_existing_tracking_issue(repo: str, version: str) -> str | None:
     """Return the URL of an open 'release: <version>' issue, or None.
@@ -103,7 +135,13 @@ def close_tracking_issue(ctx: ReleaseContext, summary: str) -> None:
 
 
 def _comment(ctx: ReleaseContext, body: str) -> None:
-    """Post a comment on the tracking issue."""
+    """Post a comment on the tracking issue.
+
+    Bodies are truncated to GitHub's comment-size limit first, so an
+    oversized payload (e.g. a multi-minute CD watch log captured into a
+    failure detail) reports the failure instead of crashing the release.
+    """
+    body = _truncate_for_comment(body)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(body)
         tmp_path = f.name
