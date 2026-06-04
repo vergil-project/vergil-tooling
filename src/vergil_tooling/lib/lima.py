@@ -153,6 +153,9 @@ def create_vm(
     cpus: int | None = None,
     memory: str | None = None,
     disk: str | None = None,
+    packages: list[str] | None = None,
+    provision_hook: str | None = None,
+    fingerprint: str | None = None,
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
     claude_skills_path = Path.home() / ".claude" / "skills"
@@ -186,6 +189,12 @@ def create_vm(
         args.append(f'--set=.memory = "{memory}"')
     if disk is not None:
         args.append(f'--set=.disk = "{disk}"')
+    if packages:
+        args.append(f'--set=.param.EXTRA_PACKAGES = "{" ".join(packages)}"')
+    if provision_hook:
+        args.append(f'--set=.param.PROVISION_HOOK = "{provision_hook}"')
+    if fingerprint:
+        args.append(f'--set=.param.SPEC_FINGERPRINT = "{fingerprint}"')
     args.append(str(template))
     _limactl(*args)
 

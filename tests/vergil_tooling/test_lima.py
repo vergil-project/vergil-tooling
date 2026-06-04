@@ -958,3 +958,45 @@ class TestTryUpdateTooling:
     def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
         try_update_tooling("vergil-agent", tag="v2.1", fallback_tag="v2.0")
         mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
+
+
+class TestCreateVmProfileParams:
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_profile_params_passed_via_set(
+        self, mock_limactl: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        template = tmp_path / "agent.yaml"
+        template.write_text("dummy", encoding="utf-8")
+        create_vm(
+            "vergil-user--org--repo",
+            template,
+            "/projects",
+            cpus=12,
+            memory="64GiB",
+            disk="300GiB",
+            packages=["qemu-system-x86", "libvirt-clients"],
+            provision_hook="/projects/org/repo/.vergil/provision.sh",
+            fingerprint="abc123",
+        )
+        args = mock_limactl.call_args[0]
+        assert '--set=.param.EXTRA_PACKAGES = "qemu-system-x86 libvirt-clients"' in args
+        assert '--set=.param.PROVISION_HOOK = "/projects/org/repo/.vergil/provision.sh"' in args
+        assert '--set=.param.SPEC_FINGERPRINT = "abc123"' in args
+        assert "--set=.cpus = 12" in args
+        assert "create" in args
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_base_create_adds_no_profile_params(
+        self, mock_limactl: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        template = tmp_path / "agent.yaml"
+        template.write_text("dummy", encoding="utf-8")
+        create_vm("vergil-user", template, "/projects")
+        args = mock_limactl.call_args[0]
+        assert not any("param.EXTRA_PACKAGES" in a for a in args)
+        assert not any("param.PROVISION_HOOK" in a for a in args)
+        assert not any("param.SPEC_FINGERPRINT" in a for a in args)
