@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.3] - 2026-06-04
+
+### Documentation
+
+- port Vergil 2.1 workflow & architecture design (§§1–10)
+
+### Features
+
+- add vrg-await blocking file waiter + atomic channel writer
+- add pr_checks, pr_reviews, post_check_run helpers
+- add vrg-pr-await settle-predicate waiter
+- emit pr-watch one-liner and add vergil-audit/approved poster
+
 ## [2.1.2] - 2026-06-04
 
 ### Documentation

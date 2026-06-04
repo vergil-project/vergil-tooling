@@ -245,6 +245,35 @@ def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
     assert result == 0
 
 
+def test_main_prints_pr_watch_oneliner_on_success(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+        patch(
+            "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+            return_value="https://github.com/pr/1",
+        ),
+    ):
+        result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
+    assert result == 0
+    assert "/vergil:pr-watch https://github.com/pr/1" in capsys.readouterr().out
+
+
+def test_main_dry_run_omits_pr_watch_oneliner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_submit_pr.git.current_branch", return_value="feature/x"),
+    ):
+        result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug", "--dry-run"])
+    assert result == 0
+    assert "pr-watch" not in capsys.readouterr().out
+
+
 class TestIdentityGate:
     """Agent identities are blocked from PR submission."""
 
@@ -327,6 +356,29 @@ class TestTemplateMode:
         assert result == 0
         mock_pr.assert_called_once()
         assert not (vergil / "pr-template.yml").exists()
+
+    def test_template_prints_pr_watch_oneliner(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/7",
+            ),
+            patch("builtins.input", return_value="y"),
+        ):
+            result = main([])
+        assert result == 0
+        assert "/vergil:pr-watch https://github.com/pr/7" in capsys.readouterr().out
 
     def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"

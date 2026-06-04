@@ -16,7 +16,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from vergil_tooling.lib import retry
 
@@ -418,6 +418,61 @@ def failed_check_names(pr: str) -> list[str]:
         raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
     checks = json.loads(out)
     return [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+
+
+def pr_checks(pr: str) -> list[dict[str, str]]:
+    """Return the PR's checks as ``{name, bucket, state}`` dicts.
+
+    ``gh pr checks`` exits non-zero while checks are failing or pending but
+    still emits the requested JSON, so the verdict is derived from the data,
+    not the exit code. When *no* checks are registered for the head commit,
+    ``gh`` prints nothing and reports "no checks reported"; that is a valid
+    empty result (checks may not have started), distinct from a transient API
+    error, which is surfaced.
+    """
+    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,state")
+    result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
+    out = result.stdout.strip()
+    if out:
+        return cast("list[dict[str, str]]", json.loads(out))
+    if "no checks reported" in result.stderr.lower():
+        return []
+    raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
+
+
+def pr_reviews(pr: str) -> list[dict[str, object]]:
+    """Return the PR's reviews (``id``, ``state``, ``author``, ...)."""
+    result = read_json("pr", "view", pr, "--json", "reviews", "--jq", ".reviews")
+    return cast("list[dict[str, object]]", result) if isinstance(result, list) else []
+
+
+def post_check_run(
+    repo: str,
+    *,
+    name: str,
+    head_sha: str,
+    conclusion: str,
+    title: str,
+    summary: str,
+) -> None:
+    """Post a completed check-run to ``repo`` for ``head_sha``.
+
+    Check-runs are GitHub-App-only; ``write_json`` injects the App installation
+    token via :func:`_gh_env`. The check is bound to ``head_sha``, so a later
+    push leaves the new commit unchecked until a fresh run is posted — the
+    per-commit semantics the merge gate relies on (§10).
+    """
+    write_json(
+        "POST",
+        f"repos/{repo}/check-runs",
+        {
+            "name": name,
+            "head_sha": head_sha,
+            "status": "completed",
+            "conclusion": conclusion,
+            "output": {"title": title, "summary": summary},
+        },
+    )
 
 
 def mergeable(pr: str) -> str:
