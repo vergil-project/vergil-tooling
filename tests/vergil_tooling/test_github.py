@@ -198,6 +198,79 @@ def test_failed_check_names_raises_on_empty_output() -> None:
         github.failed_check_names("https://github.com/pr/1")
 
 
+def test_pr_checks_returns_parsed_checks() -> None:
+    payload = json.dumps(
+        [
+            {"name": "build", "bucket": "pass", "state": "SUCCESS"},
+            {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS"},
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        result = github.pr_checks("https://github.com/pr/1")
+    assert result == [
+        {"name": "build", "bucket": "pass", "state": "SUCCESS"},
+        {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS"},
+    ]
+    mock_run.assert_called_once_with(
+        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket,state"),
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+
+
+def test_pr_checks_empty_when_no_checks_reported() -> None:
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(
+            returncode=1, stdout="", stderr="no checks reported on the 'feature/x' branch"
+        )
+        assert github.pr_checks("https://github.com/pr/1") == []
+
+
+def test_pr_checks_raises_on_empty_output_without_no_checks_message() -> None:
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        pytest.raises(github.GitHubAPIError),
+    ):
+        mock_run.return_value = _completed(returncode=1, stdout="", stderr="boom")
+        github.pr_checks("https://github.com/pr/1")
+
+
+def test_pr_reviews_returns_list() -> None:
+    reviews = [{"id": "r1", "state": "APPROVED"}, {"id": "r2", "state": "COMMENTED"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=reviews):
+        assert github.pr_reviews("https://github.com/pr/1") == reviews
+
+
+def test_pr_reviews_empty_list() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
+        assert github.pr_reviews("https://github.com/pr/1") == []
+
+
+def test_post_check_run_posts_completed_check() -> None:
+    with patch("vergil_tooling.lib.github.write_json") as mock_write:
+        github.post_check_run(
+            "owner/repo",
+            name="vergil-audit/approved",
+            head_sha="abc123",
+            conclusion="success",
+            title="Approved",
+            summary="Looks good.",
+        )
+    mock_write.assert_called_once_with(
+        "POST",
+        "repos/owner/repo/check-runs",
+        {
+            "name": "vergil-audit/approved",
+            "head_sha": "abc123",
+            "status": "completed",
+            "conclusion": "success",
+            "output": {"title": "Approved", "summary": "Looks good."},
+        },
+    )
+
+
 def test_mergeable_returns_conflicting() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="CONFLICTING"):
         assert github.mergeable("https://github.com/pr/1") == "CONFLICTING"

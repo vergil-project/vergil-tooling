@@ -12,6 +12,8 @@ license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
+vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
+vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
 vrg-commit = "vergil_tooling.bin.vrg_commit:main"
 vrg-container-cache = "vergil_tooling.bin.vrg_container_cache:main"
@@ -32,6 +34,7 @@ vrg-hook-guard = "vergil_tooling.bin.vrg_hook_guard:main"
 vrg-github-repo-config = "vergil_tooling.bin.vrg_github_repo_config:main"
 vrg-github-repo-init = "vergil_tooling.bin.vrg_github_repo_init:main"
 vrg-pr-issue-linkage = "vergil_tooling.bin.vrg_pr_issue_linkage:main"
+vrg-pr-await = "vergil_tooling.bin.vrg_pr_await:main"
 vrg-promote = "vergil_tooling.bin.vrg_promote:main"
 vrg-release = "vergil_tooling.bin.vrg_release:main"
 vrg-release-validate-inputs = "vergil_tooling.bin.vrg_release_validate_inputs:main"

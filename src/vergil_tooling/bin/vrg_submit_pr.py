@@ -85,6 +85,19 @@ def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
     return pr_url
 
 
+def _print_pr_watch(pr_url: str) -> None:
+    """Emit the paste-ready post-PR one-liner (§9 of the 2.1 workflow design).
+
+    Opening the PR auto-triggers the mechanized CI gates; the post-PR loop is
+    started by pasting this same line into *both* agent sessions. The skill
+    reads its own identity and runs the matching half of the loop.
+    """
+    print()
+    print("Next — paste this into BOTH agent sessions (USER and AUDIT):")
+    print()
+    print(f"    /vergil:pr-watch {pr_url}")
+
+
 def _run_cli_mode(args: argparse.Namespace) -> int:
     # main() only routes here when all three are present; narrow for the
     # type checker without relying on an assert (ruff S101).
@@ -115,6 +128,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
     print(f"PR created: {pr_url}")
     print(f"Done. PR URL: {pr_url}")
+    _print_pr_watch(pr_url)
     return 0
 
 
@@ -178,6 +192,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     pr_template.delete_template(root)
     print(f"PR created: {pr_url}")
     print(f"Done. PR URL: {pr_url}")
+    _print_pr_watch(pr_url)
     return 0
 
 
