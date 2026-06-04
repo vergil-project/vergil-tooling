@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.2] - 2026-06-04
+
+### Documentation
+
+- normalize identities.toml keys to vergil-<role> (#1370)
+- document list observability columns (#1370)
+
+### Features
+
+- parse repo [vm] cascade in vergil.toml (#1370)
+- parse nested host-override tables in identities.toml (#1370)
+- add compose_vm_spec five-tier overlay (#1370)
+- add reversible -- instance-name codec (#1370)
+- add composed-spec fingerprint (#1370)
+- thread profile packages/hook/fingerprint into create_vm (#1370)
+- add fingerprint read + drift status (#1370)
+- add _resolve_target base-vs-dedicated resolution (#1370)
+- build dedicated VMs from the composed spec (#1370)
+- add session/start abort gate, tunable staleness, under-warning (#1370)
+- route stop/restart/destroy/update through the resolved instance (#1370)
+- add process-tree AGENTS/HUMANS occupancy (#1370)
+- discover dedicated VMs and orphans (#1370)
+- rewrite list with footprint, occupancy, and SPEC columns (#1370)
+
 ## [2.1.1] - 2026-06-02
 
 ### Features
