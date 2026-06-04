@@ -496,3 +496,26 @@ def try_update_tooling(
             file=sys.stderr,
         )
         return False
+
+
+_FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
+
+
+def read_fingerprint(instance: str) -> str | None:
+    """Return the spec fingerprint stamped into the VM, or None if absent/unreadable."""
+    try:
+        result = shell_run(instance, "cat", _FINGERPRINT_PATH)
+    except subprocess.CalledProcessError:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def vm_spec_status(instance: str, expected_fingerprint: str) -> str:
+    """Compare the VM's stamped fingerprint to the freshly composed one.
+
+    Returns 'ok' on match, 'needs-rebuild' on drift (including a missing marker on a
+    box that should carry one).
+    """
+    actual = read_fingerprint(instance)
+    return "ok" if actual == expected_fingerprint else "needs-rebuild"

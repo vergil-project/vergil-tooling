@@ -22,6 +22,7 @@ from vergil_tooling.lib.lima import (
     install_tooling,
     link_claude_dirs,
     list_vms,
+    read_fingerprint,
     shell_pipe,
     shell_run,
     start_vm,
@@ -29,6 +30,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_spec_status,
     vm_status,
 )
 
@@ -1000,3 +1002,30 @@ class TestCreateVmProfileParams:
         assert not any("param.EXTRA_PACKAGES" in a for a in args)
         assert not any("param.PROVISION_HOOK" in a for a in args)
         assert not any("param.SPEC_FINGERPRINT" in a for a in args)
+
+
+class TestFingerprintHelpers:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_returns_stamped_value(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="abc123\n", stderr="")
+        assert read_fingerprint("vergil-user--org--repo") == "abc123"
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_missing_marker_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "cat")
+        assert read_fingerprint("vergil-user") is None
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_empty_marker_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="\n", stderr="")
+        assert read_fingerprint("vergil-user") is None
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_ok_on_match(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "abc123"
+        assert vm_spec_status("inst", "abc123") == "ok"
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "old"
+        assert vm_spec_status("inst", "new") == "needs-rebuild"
