@@ -1491,6 +1491,24 @@ class TestDedicatedGateThroughCommands:
         # session uses REMAINDER for `cmd`, so --config must precede the workspace.
         assert main(["session", "--config", str(cfg), "lmf/mq"]) == 1
 
+
+class TestLifecyclePositional:
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_destroy_targets_dedicated_instance(
+        self, _status: MagicMock, mock_delete: MagicMock, tmp_path: Path
+    ) -> None:
+        # No repo/spec needed: an orphan (repo dropped [vm]) is still reachable by name.
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        assert main(["destroy", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_delete.assert_called_once_with("vergil-user--lmf--mq")
+
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    def test_stop_targets_dedicated_instance(self, mock_stop: MagicMock, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        assert main(["stop", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_stop.assert_called_once_with("vergil-user--lmf--mq")
+
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:
         projects = tmp_path / "projects"

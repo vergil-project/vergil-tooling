@@ -150,6 +150,22 @@ def _resolve_target(args: argparse.Namespace) -> Target:
     return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
 
 
+def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
+    """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
+
+    Unlike `_resolve_target`, this reads no repo `vergil.toml` and composes no spec — it only
+    needs the instance to act on. A 2-level `org/repo` names the dedicated instance directly,
+    so an orphaned VM (whose repo dropped its `[vm]`) is still reachable; anything else is base.
+    """
+    name, identity, config = _resolve(args)
+    org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    if org is not None and repo is not None:
+        instance = instance_name(name, org, repo)
+    else:
+        instance = identity.vm_instance
+    return name, identity, config, instance
+
+
 def _target_ref(target: Target) -> str:
     """How a user re-addresses this target on the CLI: '<org>/<repo>' or '--identity <name>'."""
     if target.org is not None:
@@ -327,48 +343,48 @@ def _cmd_start(args: argparse.Namespace) -> int:
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, _identity, _config, instance = _resolve_instance(args)
 
-    print(f"Stopping VM '{identity.vm_instance}' (identity: {name})...")
-    stop_vm(identity.vm_instance)
+    print(f"Stopping VM '{instance}' (identity: {name})...")
+    stop_vm(instance)
 
-    print(f"VM '{identity.vm_instance}' stopped.")
+    print(f"VM '{instance}' stopped.")
     return 0
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, identity, _config, instance = _resolve_instance(args)
 
-    print(f"Restarting VM '{identity.vm_instance}' (identity: {name})...")
-    stop_vm(identity.vm_instance)
-    start_vm(identity.vm_instance)
+    print(f"Restarting VM '{instance}' (identity: {name})...")
+    stop_vm(instance)
+    start_vm(instance)
 
     print("Injecting credentials...")
-    inject_credentials(identity.vm_instance, identity)
+    inject_credentials(instance, identity)
 
-    print(f"VM '{identity.vm_instance}' is running.")
+    print(f"VM '{instance}' is running.")
     return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    name, identity, config, instance = _resolve_instance(args)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(instance)
     if status != "Running":
         effective = status or "Not Created"
         print(
-            f"ERROR: VM '{identity.vm_instance}' is not running (status: {effective})",
+            f"ERROR: VM '{instance}' is not running (status: {effective})",
             file=sys.stderr,
         )
         return 1
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    print(f"Updating vergil-tooling in VM '{identity.vm_instance}' (identity: {name})...")
+    print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
-    before = get_tooling_version(identity.vm_instance)
-    update_tooling(identity.vm_instance, tag, fallback_tag=fallback)
-    after = get_tooling_version(identity.vm_instance)
+    before = get_tooling_version(instance)
+    update_tooling(instance, tag, fallback_tag=fallback)
+    after = get_tooling_version(instance)
 
     if before and after:
         if before == after:
@@ -383,20 +399,20 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
 
 def _cmd_destroy(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, _identity, _config, instance = _resolve_instance(args)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(instance)
     if not status:
         print(
-            f"VM '{identity.vm_instance}' does not exist.",
+            f"VM '{instance}' does not exist.",
             file=sys.stderr,
         )
         return 1
 
-    print(f"Destroying VM '{identity.vm_instance}' (identity: {name})...")
-    delete_vm(identity.vm_instance)
+    print(f"Destroying VM '{instance}' (identity: {name})...")
+    delete_vm(instance)
 
-    print(f"VM '{identity.vm_instance}' destroyed.")
+    print(f"VM '{instance}' destroyed.")
     return 0
 
 
@@ -704,18 +720,22 @@ def main(argv: list[str] | None = None) -> int:
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
+    _add_workspace_arg(p_stop)
 
     p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
     _add_identity_args(p_restart)
+    _add_workspace_arg(p_restart)
 
     p_update = sub.add_parser("update", help="Reinstall vergil-tooling inside a running VM")
     _add_identity_args(p_update)
+    _add_workspace_arg(p_update)
     p_update.add_argument(
         "--tag", default="", help="Override version tag (default: tag from initial install)"
     )
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
+    _add_workspace_arg(p_destroy)
 
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
