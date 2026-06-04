@@ -49,6 +49,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_spec_status,
     vm_status,
 )
 from vergil_tooling.lib.session import list_rows, make_name
@@ -60,8 +61,6 @@ from vergil_tooling.lib.vm_spec import (
 )
 
 _default_config_path = default_config_path
-
-_DEFAULT_STALENESS_DAYS = 3
 
 _TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
 
@@ -98,15 +97,20 @@ def _base_footprint(identity: Identity) -> dict[str, object]:
     }
 
 
-def _split_workspace(workspace: str) -> tuple[str, str]:
+def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
+    """Derive (org, repo) for VM selection.
+
+    Only an exact relative 'org/repo' path maps to a dedicated VM. None, '.', a bare
+    repo name, a deeper path, or an absolute path all mean the base VM — this keeps the
+    pre-existing 1-level / '.' session convention working while the spec's 2-level
+    'org/repo' convention drives dedicated boxes.
+    """
+    if not workspace or workspace.startswith("/"):
+        return None, None
     parts = workspace.strip("/").split("/")
     expected = 2
     if len(parts) != expected:
-        print(
-            f"ERROR: workspace must be '<org>/<repo>', got {workspace!r}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+        return None, None
     return parts[0], parts[1]
 
 
@@ -115,13 +119,13 @@ def _resolve_target(args: argparse.Namespace) -> Target:
     name, identity, config = _resolve(args)
     workspace = getattr(args, "workspace", None)
     base = _base_footprint(identity)
+    org, repo = _workspace_org_repo(workspace)
 
-    if not workspace:
+    if org is None or repo is None:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
 
-    org, repo = _split_workspace(workspace)
-    repo_dir = Path(resolve_workspace(workspace, identity.projects_dir))
+    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
     try:
         stanza = read_config(repo_dir).vm
     except FileNotFoundError:
@@ -144,6 +148,54 @@ def _resolve_target(args: argparse.Namespace) -> Target:
 
     inst = instance_name(name, org, repo)
     return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
+
+
+def _target_ref(target: Target) -> str:
+    """How a user re-addresses this target on the CLI: '<org>/<repo>' or '--identity <name>'."""
+    if target.org is not None:
+        return f"{target.org}/{target.repo}"
+    return f"--identity {target.identity_name}"
+
+
+def _warn_under(target: Target) -> None:
+    """Loudly warn when a host override sized a scalar below the repo's declared value."""
+    if not target.spec.under:
+        return
+    fields = ", ".join(target.spec.under)
+    print(
+        f"WARNING: VM '{target.instance}' is under-provisioned for "
+        f"{target.org}/{target.repo} (below declared: {fields}). "
+        f"This probably will not work — the repo asked for more than this box has.",
+        file=sys.stderr,
+    )
+
+
+def _preflight_target(target: Target) -> int:
+    """Validate a dedicated target before session/start. Base targets pass through.
+
+    Returns 0 to proceed, 1 to abort (after printing the remediation command).
+    """
+    if not target.spec.dedicated:
+        return 0
+
+    workspace = f"{target.org}/{target.repo}"
+    status = vm_status(target.instance)
+    if not status:
+        print(
+            f"ERROR: VM '{target.instance}' does not exist — this repo requires a "
+            f"dedicated VM.\nBuild it: vrg-vm create {workspace} --identity {target.identity_name}",
+            file=sys.stderr,
+        )
+        return 1
+    if vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild":
+        print(
+            f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
+            f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
+            file=sys.stderr,
+        )
+        return 1
+    _warn_under(target)
+    return 0
 
 
 def _provision_hook_path(target: Target) -> str:
@@ -227,45 +279,50 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
 
-    status = vm_status(identity.vm_instance)
+    if _preflight_target(target) != 0:
+        return 1
+
+    status = vm_status(target.instance)
     if not status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            f"ERROR: VM '{target.instance}' does not exist — run 'vrg-vm create' first",
             file=sys.stderr,
         )
         return 1
 
     allow_stale = getattr(args, "allow_stale_vm", False)
     if not allow_stale:
-        age = vm_age_days(identity.vm_instance)
-        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+        age = vm_age_days(target.instance)
+        if age is not None and age > target.spec.stale_days:
+            ref = _target_ref(target)
             print(
-                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
-                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
-                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
-                f"Override with: vrg-vm start --allow-stale-vm --identity {name}",
+                f"ERROR: VM '{target.instance}' is {age:.0f} days old"
+                f" (threshold: {target.spec.stale_days} days).\n"
+                f"Rebuild with: vrg-vm rebuild {ref}\n"
+                f"Override with: vrg-vm start --allow-stale-vm {ref}",
                 file=sys.stderr,
             )
             return 1
 
-    print(f"Starting VM '{identity.vm_instance}' (identity: {name})...")
-    start_vm(identity.vm_instance, timeout=args.timeout)
+    print(f"Starting VM '{target.instance}' (identity: {name})...")
+    start_vm(target.instance, timeout=args.timeout)
 
     print("Injecting credentials...")
-    inject_credentials(identity.vm_instance, identity)
+    inject_credentials(target.instance, identity)
 
     claude_dir = Path.home() / ".claude"
     print("Copying Claude Code config...")
-    copy_claude_config(identity.vm_instance, claude_dir)
-    link_claude_dirs(identity.vm_instance, claude_dir)
+    copy_claude_config(target.instance, claude_dir)
+    link_claude_dirs(target.instance, claude_dir)
 
     fallback = resolve_vergil_version(config, identity)
     print("Updating vergil-tooling...")
-    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(target.instance, fallback_tag=fallback)
 
-    print(f"VM '{identity.vm_instance}' is running.")
+    print(f"VM '{target.instance}' is running.")
     return 0
 
 
@@ -549,26 +606,31 @@ def _session_inner(
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
+
+    if _preflight_target(target) != 0:
+        return 1
 
     if not args.allow_stale_vm:
-        age = vm_age_days(identity.vm_instance)
-        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+        age = vm_age_days(target.instance)
+        if age is not None and age > target.spec.stale_days:
+            ref = _target_ref(target)
             print(
-                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
-                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
-                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
-                f"Override with: vrg-vm session --allow-stale-vm --identity {name}",
+                f"ERROR: VM '{target.instance}' is {age:.0f} days old"
+                f" (threshold: {target.spec.stale_days} days).\n"
+                f"Rebuild with: vrg-vm rebuild {ref}\n"
+                f"Override with: vrg-vm session --allow-stale-vm {ref}",
                 file=sys.stderr,
             )
             return 1
 
     fallback = resolve_vergil_version(config, identity)
-    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(target.instance, fallback_tag=fallback)
 
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(identity.vm_instance, claude_dir)
-    link_claude_dirs(identity.vm_instance, claude_dir)
+    copy_claude_config(target.instance, claude_dir)
+    link_claude_dirs(target.instance, claude_dir)
 
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -589,7 +651,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         "--start",
         "--preserve-env",
         f"--workdir={workspace_abs}",
-        identity.vm_instance,
+        target.instance,
         "bash",
         "-c",
         inner,
@@ -628,6 +690,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
+    _add_workspace_arg(p_start)
     p_start.add_argument(
         "--allow-stale-vm",
         action="store_true",

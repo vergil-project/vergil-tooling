@@ -9,7 +9,16 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_vm import Target, _resolve_target, main
+from vergil_tooling.bin.vrg_vm import (
+    Target,
+    _preflight_target,
+    _resolve_target,
+    _target_ref,
+    _warn_under,
+    main,
+)
+from vergil_tooling.lib.identity import Identity, IdentityConfig
+from vergil_tooling.lib.vm_spec import ComposedSpec
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1297,10 +1306,18 @@ class TestResolveTarget:
         assert target.spec.dedicated is True
         assert target.fingerprint != ""
 
-    def test_bad_workspace_aborts(self, tmp_path: Path) -> None:
+    def test_one_level_workspace_is_base(self, tmp_path: Path) -> None:
+        # The pre-existing 1-level session convention (a bare repo name) stays on base.
         cfg = _identities(tmp_path, tmp_path / "projects")
-        with pytest.raises(SystemExit):
-            _resolve_target(_args(cfg, "not-a-valid-path"))
+        target = _resolve_target(_args(cfg, "just-a-repo"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_absolute_workspace_is_base(self, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        target = _resolve_target(_args(cfg, "/abs/path"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
 
 
 class TestCreateDedicated:
@@ -1406,3 +1423,77 @@ class TestCreateDedicated:
         assert main(["rebuild", "lmf/mq", "--config", str(cfg)]) == 0
         assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
         assert mock_create.call_args.kwargs["fingerprint"] != ""
+
+
+def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = "fp") -> Target:
+    ident = Identity(vm_instance="vergil-user", projects_dir="/projects")
+    spec = ComposedSpec(
+        cpus=12,
+        memory="64GiB",
+        disk="300GiB",
+        stale_days=7,
+        packages=(),
+        provision=None,
+        dedicated=dedicated,
+        under=under,
+    )
+    cfg = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+    if dedicated:
+        return Target(
+            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user--lmf--mq", fingerprint
+        )
+    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "")
+
+
+class TestPreflight:
+    def test_base_passes(self) -> None:
+        assert _preflight_target(_target(dedicated=False)) == 0
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_missing_aborts(self, _status: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_drift_aborts(self, _status: MagicMock, _spec: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_ok_passes(self, _status: MagicMock, _spec: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 0
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_under_warns(
+        self, _status: MagicMock, _spec: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert _preflight_target(_target(dedicated=True, under=("mem",))) == 0
+        assert "under-provisioned" in capsys.readouterr().err
+
+    def test_warn_under_noop_when_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _warn_under(_target(dedicated=True, under=()))
+        assert capsys.readouterr().err == ""
+
+    def test_target_ref_dedicated_and_base(self) -> None:
+        assert _target_ref(_target(dedicated=True)) == "lmf/mq"
+        assert _target_ref(_target(dedicated=False)) == "--identity vergil-user"
+
+
+class TestDedicatedGateThroughCommands:
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_session_aborts_when_dedicated_missing(
+        self, _status: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        cfg = _identities(tmp_path, projects)
+        # session uses REMAINDER for `cmd`, so --config must precede the workspace.
+        assert main(["session", "--config", str(cfg), "lmf/mq"]) == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        cfg = _identities(tmp_path, projects)
+        assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1
