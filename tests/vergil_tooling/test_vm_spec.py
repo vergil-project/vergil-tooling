@@ -10,6 +10,7 @@ from vergil_tooling.lib.vm_spec import (
     compose_vm_spec,
     instance_name,
     parse_instance_name,
+    spec_fingerprint,
 )
 
 BASE = {"cpus": 4, "memory": "4GiB", "disk": "50GiB"}
@@ -144,3 +145,50 @@ class TestInstanceName:
     def test_unparseable_name_raises(self) -> None:
         with pytest.raises(ValueError, match="unparseable VM instance name"):
             parse_instance_name("a--b--c--d")
+
+
+class TestFingerprint:
+    def _spec(self, **over: object) -> ComposedSpec:
+        base: dict[str, object] = {
+            "cpus": 12,
+            "memory": "64GiB",
+            "disk": "300GiB",
+            "stale_days": 7,
+            "packages": ("a", "b"),
+            "provision": ".vergil/provision.sh",
+            "dedicated": True,
+            "under": (),
+            "provision_hash": "hookv1",
+        }
+        base.update(over)
+        return ComposedSpec(**base)  # type: ignore[arg-type]
+
+    def test_stable_for_same_declaration(self) -> None:
+        assert spec_fingerprint(self._spec()) == spec_fingerprint(self._spec())
+
+    def test_package_order_does_not_matter(self) -> None:
+        assert spec_fingerprint(self._spec(packages=("a", "b"))) == spec_fingerprint(
+            self._spec(packages=("b", "a"))
+        )
+
+    def test_footprint_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(memory="64GiB")) != spec_fingerprint(
+            self._spec(memory="32GiB")
+        )
+
+    def test_package_addition_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(packages=("a",))) != spec_fingerprint(
+            self._spec(packages=("a", "b"))
+        )
+
+    def test_provision_hook_content_change_changes_fingerprint(self) -> None:
+        # Editing the script (same path) must flip the fingerprint — the security checkpoint.
+        assert spec_fingerprint(self._spec(provision_hash="hookv1")) != spec_fingerprint(
+            self._spec(provision_hash="hookv2")
+        )
+
+    def test_falls_back_to_path_when_no_content_hash(self) -> None:
+        # No content hash: the path keeps the fingerprint stable and distinct from empty.
+        with_path = spec_fingerprint(self._spec(provision_hash=None))
+        no_hook = spec_fingerprint(self._spec(provision_hash=None, provision=None))
+        assert with_path != no_hook

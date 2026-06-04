@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -155,3 +156,24 @@ def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
         return parts[0], parts[1], parts[2]
     msg = f"unparseable VM instance name: {name!r}"
     raise ValueError(msg)
+
+
+def spec_fingerprint(spec: ComposedSpec) -> str:
+    """Stable SHA-256 over the declaration (NOT the resulting image bytes).
+
+    ``under`` and ``dedicated`` are excluded: they are derived view-state, not part of
+    what the VM is built from. Packages are sorted so order cannot change the hash. The
+    provision hook's CONTENT hash (when present) is what makes editing the script flip the
+    fingerprint; the path is only a fallback.
+    """
+    payload = "\n".join(
+        (
+            f"cpus={spec.cpus}",
+            f"memory={spec.memory}",
+            f"disk={spec.disk}",
+            f"stale_days={spec.stale_days}",
+            f"provision={spec.provision_hash or spec.provision or ''}",
+            "packages=" + ",".join(sorted(spec.packages)),
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
