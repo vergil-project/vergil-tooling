@@ -10,11 +10,13 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_vm import (
+    DedicatedRow,
     Target,
     _preflight_target,
     _resolve_target,
     _target_ref,
     _warn_under,
+    discover_dedicated,
     main,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
@@ -1508,6 +1510,41 @@ class TestLifecyclePositional:
         cfg = _identities(tmp_path, tmp_path / "projects")
         assert main(["stop", "lmf/mq", "--config", str(cfg)]) == 0
         mock_stop.assert_called_once_with("vergil-user--lmf--mq")
+
+
+class TestDiscoverDedicated:
+    def test_present_orphan_and_not_created(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
+        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
+        _make_repo(projects, "org", "nospec", "")  # valid vergil.toml, no [vm]
+        _make_repo(projects, "org", "plain", "")  # no [vm], no instance -> not listed
+        broken = projects / "org" / "broken"
+        broken.mkdir(parents=True)
+        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
+        instances = [
+            "vergil-user--org--present",  # instance + spec -> present
+            "vergil-user--org--gone",  # instance, no repo -> orphaned
+            "vergil-user--org--nospec",  # repo without [vm] -> orphaned
+            "vergil-user--org--broken",  # repo with broken toml -> orphaned
+            "vergil-user",  # base instance -> ignored (org is None)
+            "a--b--c--d",  # unparseable -> ignored
+            "vergil-audit--org--present",  # other identity -> ignored
+        ]
+        rows = discover_dedicated("vergil-user", instances, str(projects))
+        by_repo = {r.repo: r.state for r in rows}
+        assert by_repo == {
+            "present": "present",
+            "gone": "orphaned",
+            "nospec": "orphaned",
+            "broken": "orphaned",
+            "todo": "not-created",
+        }
+        assert all(isinstance(r, DedicatedRow) for r in rows)
+
+    def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
+        rows = discover_dedicated("vergil-user", [], str(tmp_path / "nope"))
+        assert rows == []
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:

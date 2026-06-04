@@ -19,7 +19,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -57,6 +57,7 @@ from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     compose_vm_spec,
     instance_name,
+    parse_instance_name,
     spec_fingerprint,
 )
 
@@ -467,6 +468,64 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 
     print(f"\nVM '{target.instance}' rebuilt and ready.")
     return 0
+
+
+@dataclass
+class DedicatedRow:
+    org: str | None
+    repo: str | None
+    instance: str
+    state: str  # "present" | "orphaned" | "not-created"
+
+
+def _repo_has_vm_spec(projects_dir: str, org: str, repo: str) -> bool:
+    repo_dir = Path(projects_dir) / org / repo
+    if not (repo_dir / "vergil.toml").exists():
+        return False
+    try:
+        return read_config(repo_dir).vm is not None
+    except ConfigError:
+        return False
+
+
+def discover_dedicated(
+    identity_name: str, instances: list[str], projects_dir: str
+) -> list[DedicatedRow]:
+    """Reconcile existing <identity>--* instances with spec-bearing local repos.
+
+    - instance + spec   -> present
+    - instance, no spec -> orphaned
+    - spec, no instance -> not-created
+    """
+    rows: list[DedicatedRow] = []
+    seen: set[tuple[str, str]] = set()
+
+    for name in instances:
+        try:
+            ident, org, repo = parse_instance_name(name)
+        except ValueError:
+            continue
+        if ident != identity_name or org is None or repo is None:
+            continue
+        seen.add((org, repo))
+        state = "present" if _repo_has_vm_spec(projects_dir, org, repo) else "orphaned"
+        rows.append(DedicatedRow(org, repo, name, state))
+
+    # Spec-bearing repos with no instance yet -> not-created.
+    root = Path(projects_dir)
+    if root.is_dir():
+        for org_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            for repo_dir in sorted(p for p in org_dir.iterdir() if p.is_dir()):
+                org, repo = org_dir.name, repo_dir.name
+                if (org, repo) in seen:
+                    continue
+                if _repo_has_vm_spec(projects_dir, org, repo):
+                    rows.append(
+                        DedicatedRow(
+                            org, repo, instance_name(identity_name, org, repo), "not-created"
+                        )
+                    )
+    return rows
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
