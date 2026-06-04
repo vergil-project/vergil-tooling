@@ -49,6 +49,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_occupancy,
     vm_spec_status,
     vm_status,
 )
@@ -115,6 +116,19 @@ def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     return parts[0], parts[1]
 
 
+def _with_provision_hash(spec: ComposedSpec, repo_dir: Path) -> ComposedSpec:
+    """Fold the provision hook's CONTENT hash into the spec so editing the script flips
+    the fingerprint (the security review checkpoint). The hook is source-controlled and
+    normally present; if absent we leave it None and fingerprinting falls back to the path.
+    Computed identically at build (_resolve_target) and at drift-check (list)."""
+    if spec.provision:
+        hook_path = repo_dir / spec.provision
+        if hook_path.exists():
+            digest = hashlib.sha256(hook_path.read_bytes()).hexdigest()
+            return replace(spec, provision_hash=digest)
+    return spec
+
+
 def _resolve_target(args: argparse.Namespace) -> Target:
     """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
     name, identity, config = _resolve(args)
@@ -137,16 +151,7 @@ def _resolve_target(args: argparse.Namespace) -> Target:
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
 
-    # Fold the provision hook's CONTENT hash into the fingerprint, so editing the
-    # script (same path) flips NEEDS-REBUILD — the security review checkpoint. The hook
-    # is source-controlled and normally present; if absent at resolve time we fall back
-    # to the path (the template enforces presence at build).
-    if spec.provision:
-        hook_path = repo_dir / spec.provision
-        if hook_path.exists():
-            digest = hashlib.sha256(hook_path.read_bytes()).hexdigest()
-            spec = replace(spec, provision_hash=digest)
-
+    spec = _with_provision_hash(spec, repo_dir)
     inst = instance_name(name, org, repo)
     return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
 
@@ -528,6 +533,105 @@ def discover_dedicated(
     return rows
 
 
+def _occupancy(instance: str, status: dict[str, str]) -> tuple[str, str]:
+    if status.get(instance) == "Running":
+        agents, humans = vm_occupancy(instance)
+        return str(agents), str(humans)
+    return "—", "—"
+
+
+def _present_spec_state(
+    instance: str, spec: ComposedSpec, repo_dir: Path, status: dict[str, str]
+) -> str:
+    """SPEC column for a present dedicated VM: drift + under flag, only while running."""
+    if status.get(instance) != "Running":
+        return "ok"
+    composed = _with_provision_hash(spec, repo_dir)
+    drift = vm_spec_status(instance, spec_fingerprint(composed))
+    state = "NEEDS-REBUILD" if drift == "needs-rebuild" else "ok"
+    if spec.under:
+        state = f"{state} ⚠ under ({','.join(spec.under)})"
+    return state
+
+
+def _list_rows(
+    identity_name: str,
+    identity: Identity,
+    dedicated: list[DedicatedRow],
+    status: dict[str, str],
+) -> list[dict[str, object]]:
+    """Build display rows for one identity: the base VM plus each dedicated row."""
+    base = _base_footprint(identity)
+    rows: list[dict[str, object]] = []
+
+    b_agents, b_humans = _occupancy(identity.vm_instance, status)
+    rows.append(
+        {
+            "scope": "base",
+            "status": status.get(identity.vm_instance, "Not Created"),
+            "cpus": cast("int", base["cpus"]),
+            "memory": str(base["memory"]),
+            "disk": str(base["disk"]),
+            "agents": b_agents,
+            "humans": b_humans,
+            "spec": "ok",
+        }
+    )
+
+    for d in dedicated:
+        scope = f"{d.org}/{d.repo}"
+        if d.state == "not-created":
+            rows.append(
+                {
+                    "scope": scope,
+                    "status": "Not Created",
+                    "cpus": "—",
+                    "memory": "—",
+                    "disk": "—",
+                    "agents": "—",
+                    "humans": "—",
+                    "spec": "not-created",
+                }
+            )
+            continue
+        agents, humans = _occupancy(d.instance, status)
+        st = status.get(d.instance, "Not Created")
+        if d.state == "orphaned":
+            rows.append(
+                {
+                    "scope": scope,
+                    "status": st,
+                    "cpus": "—",
+                    "memory": "—",
+                    "disk": "—",
+                    "agents": agents,
+                    "humans": humans,
+                    "spec": "orphaned",
+                }
+            )
+            continue
+        repo_dir = Path(resolve_workspace(scope, identity.projects_dir))
+        try:
+            stanza = read_config(repo_dir).vm
+        except (FileNotFoundError, ConfigError):
+            stanza = None
+        override = identity.overrides.get(cast("tuple[str, str]", (d.org, d.repo)))
+        spec = compose_vm_spec(identity=identity_name, base=base, stanza=stanza, override=override)
+        rows.append(
+            {
+                "scope": scope,
+                "status": st,
+                "cpus": spec.cpus,
+                "memory": spec.memory,
+                "disk": spec.disk,
+                "agents": agents,
+                "humans": humans,
+                "spec": _present_spec_state(d.instance, spec, repo_dir, status),
+            }
+        )
+    return rows
+
+
 def _cmd_list(args: argparse.Namespace) -> int:
     config_path = args.config if args.config else _default_config_path()
     config = load_config(config_path)
@@ -535,15 +639,24 @@ def _cmd_list(args: argparse.Namespace) -> int:
     if args.sessions:
         return _list_sessions(config, args)
 
-    vms = list_vms()
-    vm_map = {vm["name"]: vm["status"] for vm in vms}
+    status = {vm["name"]: vm["status"] for vm in list_vms()}
+    instances = list(status)
 
-    print(f"{'IDENTITY':<16} {'VM INSTANCE':<24} {'STATUS':<12}")
-    print(f"{'─' * 16} {'─' * 24} {'─' * 12}")
+    header = (
+        f"{'IDENTITY':<14} {'SCOPE':<40} {'STATUS':<11} {'CPUS':<5} {'MEM':<7} "
+        f"{'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+    )
+    print(header)
+    print("─" * len(header))
 
     for id_name, identity in config.identities.items():
-        status = vm_map.get(identity.vm_instance, "Not Created")
-        print(f"{id_name:<16} {identity.vm_instance:<24} {status:<12}")
+        dedicated = discover_dedicated(id_name, instances, identity.projects_dir)
+        for r in _list_rows(id_name, identity, dedicated, status):
+            print(
+                f"{id_name:<14} {r['scope']!s:<40} {r['status']!s:<11} "
+                f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+                f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
+            )
 
     return 0
 

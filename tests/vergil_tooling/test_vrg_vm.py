@@ -12,6 +12,7 @@ import pytest
 from vergil_tooling.bin.vrg_vm import (
     DedicatedRow,
     Target,
+    _list_rows,
     _preflight_target,
     _resolve_target,
     _target_ref,
@@ -24,6 +25,7 @@ from vergil_tooling.lib.vm_spec import ComposedSpec
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
 
 
 @pytest.fixture()
@@ -611,9 +613,14 @@ class TestRebuild:
 
 
 class TestList:
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(
-        self, mock_list: MagicMock, config_file: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_list: MagicMock,
+        _occ: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_list.return_value = [
             {"name": "vergil-agent", "status": "Running"},
@@ -621,9 +628,10 @@ class TestList:
         result = main(["list", "--config", str(config_file)])
         assert result == 0
         output = capsys.readouterr().out
-        assert "vergil" in output
-        assert "vergil-agent" in output
-        assert "Running" in output
+        assert "vergil" in output  # IDENTITY column
+        assert "base" in output  # SCOPE column
+        assert "Running" in output  # STATUS column
+        assert "AGENTS" in output  # new observability header
 
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_not_created(
@@ -1545,6 +1553,98 @@ class TestDiscoverDedicated:
     def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
         rows = discover_dedicated("vergil-user", [], str(tmp_path / "nope"))
         assert rows == []
+
+
+class TestListRows:
+    def _identity(self, projects: Path, **over: Any) -> Identity:
+        base: dict[str, Any] = {
+            "vm_instance": "vergil-user",
+            "projects_dir": str(projects),
+            "cpus": 4,
+            "memory": "4GiB",
+            "disk": "50GiB",
+        }
+        base.update(over)
+        return Identity(**base)
+
+    def _row(self, rows: list[dict[str, object]], scope: str) -> dict[str, object]:
+        return next(r for r in rows if r["scope"] == scope)
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(2, 1))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    def test_base_and_present_running_ok(
+        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        status = {"vergil-user": "Running", "vergil-user--lmf--mq": "Running"}
+        rows = _list_rows("vergil-user", ident, dedic, status)
+        base = self._row(rows, "base")
+        ded = self._row(rows, "lmf/mq")
+        assert base["cpus"] == 4
+        assert base["agents"] == "2"
+        assert base["humans"] == "1"
+        assert ded["cpus"] == 12
+        assert ded["spec"] == "ok"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    def test_present_running_needs_rebuild(
+        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    def test_present_running_under(self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
+
+    def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
+        ded = self._row(rows, "lmf/mq")
+        assert ded["spec"] == "ok"
+        assert ded["agents"] == "—"
+
+    def test_present_repo_without_vergil_toml_uses_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)  # projects/lmf/mq does not exist
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {})
+        assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
+
+    def test_orphaned_and_not_created(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        dedic = [
+            DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned"),
+            DedicatedRow("o", "todo", "vergil-user--o--todo", "not-created"),
+        ]
+        rows = _list_rows("vergil-user", ident, dedic, {})
+        by_scope = {r["scope"]: r["spec"] for r in rows}
+        assert by_scope["o/gone"] == "orphaned"
+        assert by_scope["o/todo"] == "not-created"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
+    def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--o--gone": "Running"})
+        assert self._row(rows, "o/gone")["agents"] == "1"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:
