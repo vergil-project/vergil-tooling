@@ -171,21 +171,21 @@ where neither is viable.
 
 ### Cleanup
 
-Post-merge cleanup in this fleet runs through `vrg-finalize-repo`.
-Worktree removal should live there too — the canonical flow becomes:
+Post-merge cleanup in this fleet runs through `vrg-finalize-pr`, which
+is worktree-aware — the canonical flow is:
 
 ```bash
 cd ~/dev/github/<project>
-vrg-finalize-repo                              # handles branch delete,
+vrg-finalize-pr                                # handles branch delete,
                                                # remote prune, and
                                                # worktree removal for
                                                # the finalized branch
 ```
 
-Extending `vrg-finalize-repo` to be worktree-aware is tracked as
-follow-up work (see
-[Enforcement and follow-up work](#enforcement-and-follow-up-work)).
-Until that lands, the interim procedure is raw git:
+`vrg-finalize-pr` removes the worktree for each merged branch when that
+worktree lives under the canonical `.worktrees/` directory (skipping any
+with uncommitted changes). If you need to remove one by hand, the raw
+git procedure is:
 
 ```bash
 cd ~/dev/github/<project>
@@ -208,7 +208,7 @@ to need tooling in practice.
 | Edit at the main tree root | Rule 3 ignored, or a human edit slipped in | Standing "no direct commits to develop" policy forbids this at the commit level; same git hook catches it |
 | Memory silo from starting session in the wrong directory | Session started inside `.worktrees/<name>/` instead of the root | Documentation + muscle memory; a `claude` wrapper script could refuse to launch unless CWD is a project root |
 | Agent writes to a sibling worktree or the main tree (intentional or mis-prompted) | Prompt contract ignored or misread | Git hook (same backstop) catches any such write that actually gets committed; see [Trust model](#trust-model) for the limits of isolation |
-| Stale worktrees accumulate after branch land | Author forgets the cleanup step | `vrg-finalize-repo` will remove the worktree as part of its post-merge flow once extended |
+| Stale worktrees accumulate after branch land | Author forgets the cleanup step | `vrg-finalize-pr` removes the worktree as part of its post-merge flow |
 | Worktree branch gets into weird state on rebase of main | Shared history diverges during long-lived worktree | Normal git hygiene: rebase the worktree's branch onto updated `develop` periodically; no special convention needed |
 
 ### Trust model
@@ -323,9 +323,9 @@ tracked separately):
     `.worktrees/*` is non-empty (or, more simply, refuses all commits
     from the project root, since rule 3 says the main tree is
     read-only).
-- **`vrg-finalize-repo` extension.** Worktree removal when finalizing
-  the branch for that worktree. Covers the cleanup failure mode
-  structurally.
+- **`vrg-finalize-pr` worktree removal** (implemented). Removes the
+  worktree when finalizing the branch for that worktree, covering the
+  cleanup failure mode structurally.
 - **`vrg-worktree-prompt` helper.** Emits the canonical prompt
   template given an issue number and slug, so operators don't
   hand-author the prompt each time.

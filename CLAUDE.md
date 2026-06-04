@@ -202,7 +202,7 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge)
 - **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
-- **`vrg-finalize-repo`** — Post-merge cleanup (branch deletion, remote pruning)
+- **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
@@ -257,7 +257,7 @@ wrappers through. Only active in repos with a `vergil.toml`.
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-repo` |
+| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-pr` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
 
 **Host install** (canonical):

@@ -217,7 +217,7 @@ What the plugin provides:
 - **PreToolUse hooks** on `Bash` that block heredoc syntax and
   (on repos that have adopted the worktree convention) commits
   originating outside `.worktrees/<name>/`.
-- **PostToolUse hooks** that remind you to run `vrg-finalize-repo`
+- **PostToolUse hooks** that remind you to run `vrg-finalize-pr`
   after `vrg-submit-pr`, and that surface deprecation warnings in
   test output.
 - **Stop hooks** that prevent session exit if a PR was submitted

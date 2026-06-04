@@ -4,7 +4,7 @@ Two modes, keyed on whether a PR argument is given:
 
 - ``vrg-finalize-pr <PR>`` — run the pre-merge provenance check, merge
   the PR (or confirm it is already merged), then run the cleanup below.
-  This replaces the manual web merge + ``vrg-finalize-repo``.
+  This replaces the manual web merge + post-merge repo cleanup.
 - ``vrg-finalize-pr`` (no PR) — cleanup only, the backward-compatible
   release path: switch to the target branch, fast-forward pull, delete
   merged local branches, and prune stale remote-tracking references.
