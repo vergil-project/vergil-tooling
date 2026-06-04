@@ -12,8 +12,10 @@ from vergil_tooling.lib.config import (
     ConfigError,
     ContainerConfig,
     MarkdownlintConfig,
+    VmStanza,
     _warn_unrecognized_keys,
     container_env_prefixes,
+    parse_vm_stanza,
     read_config,
     vrg_install_tag,
 )
@@ -522,3 +524,56 @@ def test_container_env_prefixes_no_file(tmp_path: Path) -> None:
 def test_container_env_prefixes_no_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     assert container_env_prefixes(tmp_path) == []
+
+
+# -- [vm] cascade (issue #99) -------------------------------------------------
+
+
+class TestParseVmStanza:
+    def test_absent_vm_section_returns_none(self) -> None:
+        assert parse_vm_stanza({}) is None
+
+    def test_flat_vm_packages_and_footprint(self) -> None:
+        raw = {
+            "vm": {
+                "packages": ["qemu-system-x86", "libvirt-clients"],
+                "provision": ".vergil/provision.sh",
+            }
+        }
+        stanza = parse_vm_stanza(raw)
+        assert isinstance(stanza, VmStanza)
+        assert stanza.packages == ["qemu-system-x86", "libvirt-clients"]
+        assert stanza.provision == ".vergil/provision.sh"
+        assert stanza.cpus is None
+        assert stanza.roles == {}
+
+    def test_role_overlay_parsed(self) -> None:
+        raw = {
+            "vm": {
+                "packages": ["qemu-system-x86"],
+                "vergil-user": {"cpus": 12, "memory": "64GiB", "stale_days": 7},
+            }
+        }
+        stanza = parse_vm_stanza(raw)
+        assert stanza is not None
+        assert stanza.packages == ["qemu-system-x86"]
+        assert "vergil-user" in stanza.roles
+        overlay = stanza.roles["vergil-user"]
+        assert overlay.cpus == 12
+        assert overlay.memory == "64GiB"
+        assert overlay.stale_days == 7
+        assert overlay.packages == []
+
+    def test_vm_section_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _warn_unrecognized_keys({"vm": {"packages": [], "vergil-user": {"cpus": 4}}})
+        err = capsys.readouterr().err
+        assert "unrecognized section [vm]" not in err
+        assert "unrecognized key" not in err
+
+    def test_unrecognized_scalar_key_in_vm_warns(self, capsys: pytest.CaptureFixture[str]) -> None:
+        parse_vm_stanza({"vm": {"bogus": 1, "packages": []}})
+        assert "unrecognized key 'bogus' in [vm]" in capsys.readouterr().err
+
+    def test_unrecognized_key_in_role_warns(self, capsys: pytest.CaptureFixture[str]) -> None:
+        parse_vm_stanza({"vm": {"vergil-user": {"bogus": 1, "cpus": 4}}})
+        assert "unrecognized key 'bogus' in [vm.vergil-user]" in capsys.readouterr().err
