@@ -921,7 +921,19 @@ def main(argv: list[str] | None = None) -> int:
         help="How long to wait for VM to reach running status (default: 30m)",
     )
 
-    p_list = sub.add_parser("list", help="List all identity VMs and their status")
+    p_list = sub.add_parser(
+        "list",
+        help="List all identity VMs and their status",
+        description=(
+            "List each identity's base and dedicated VMs with configured footprint "
+            "(CPUS/MEM/DISK), live occupancy, and SPEC health. AGENTS counts harness "
+            "instances (Claude Code sessions); HUMANS counts open human-held interactive "
+            "shells (a tally of shells, not distinct people). SPEC is one of: ok, "
+            "NEEDS-REBUILD (drift — rebuild it), not-created (a spec'd repo with no VM "
+            "yet), orphaned (a VM whose repo dropped its [vm]), or an 'under' flag when a "
+            "host override sized the box below the repo's declared footprint."
+        ),
+    )
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
     p_list.add_argument(
         "--sessions",
