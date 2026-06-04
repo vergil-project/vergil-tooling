@@ -980,12 +980,25 @@ class TestCreateVmProfileParams:
             memory="64GiB",
             disk="300GiB",
             packages=["qemu-system-x86", "libvirt-clients"],
-            provision_hook="/projects/org/repo/.vergil/provision.sh",
+            apt_repos=[
+                {
+                    "name": "hashicorp",
+                    "key_url": "https://apt.releases.hashicorp.com/gpg",
+                    "uri": "https://apt.releases.hashicorp.com",
+                    "suite": "noble",
+                    "components": "main",
+                }
+            ],
+            vagrant_plugins=["vagrant-libvirt"],
             fingerprint="abc123",
         )
         args = mock_limactl.call_args[0]
         assert '--set=.param.EXTRA_PACKAGES = "qemu-system-x86 libvirt-clients"' in args
-        assert '--set=.param.PROVISION_HOOK = "/projects/org/repo/.vergil/provision.sh"' in args
+        assert (
+            '--set=.param.APT_REPOS = "hashicorp|https://apt.releases.hashicorp.com/gpg|'
+            'https://apt.releases.hashicorp.com|noble|main"' in args
+        )
+        assert '--set=.param.VAGRANT_PLUGINS = "vagrant-libvirt"' in args
         assert '--set=.param.SPEC_FINGERPRINT = "abc123"' in args
         assert "--set=.cpus = 12" in args
         assert "create" in args
@@ -1001,7 +1014,8 @@ class TestCreateVmProfileParams:
         create_vm("vergil-user", template, "/projects")
         args = mock_limactl.call_args[0]
         assert not any("param.EXTRA_PACKAGES" in a for a in args)
-        assert not any("param.PROVISION_HOOK" in a for a in args)
+        assert not any("param.APT_REPOS" in a for a in args)
+        assert not any("param.VAGRANT_PLUGINS" in a for a in args)
         assert not any("param.SPEC_FINGERPRINT" in a for a in args)
 
 

@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import hashlib
 import json
 import os
 import shlex
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
@@ -116,19 +115,6 @@ def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     return parts[0], parts[1]
 
 
-def _with_provision_hash(spec: ComposedSpec, repo_dir: Path) -> ComposedSpec:
-    """Fold the provision hook's CONTENT hash into the spec so editing the script flips
-    the fingerprint (the security review checkpoint). The hook is source-controlled and
-    normally present; if absent we leave it None and fingerprinting falls back to the path.
-    Computed identically at build (_resolve_target) and at drift-check (list)."""
-    if spec.provision:
-        hook_path = repo_dir / spec.provision
-        if hook_path.exists():
-            digest = hashlib.sha256(hook_path.read_bytes()).hexdigest()
-            return replace(spec, provision_hash=digest)
-    return spec
-
-
 def _resolve_target(args: argparse.Namespace) -> Target:
     """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
     name, identity, config = _resolve(args)
@@ -151,7 +137,6 @@ def _resolve_target(args: argparse.Namespace) -> Target:
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
 
-    spec = _with_provision_hash(spec, repo_dir)
     inst = instance_name(name, org, repo)
     return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
 
@@ -220,17 +205,9 @@ def _preflight_target(target: Target) -> int:
     return 0
 
 
-def _provision_hook_path(target: Target) -> str:
-    """Absolute path INSIDE the VM to the repo's provision hook."""
-    workspace = f"{target.org}/{target.repo}"
-    repo_abs = os.path.normpath(resolve_workspace(workspace, target.identity.projects_dir))
-    return str(Path(repo_abs) / (target.spec.provision or ""))
-
-
 def _create_from_target(target: Target, template: Path) -> None:
     """Build the VM for a target: dedicated boxes carry the composed spec, base is unchanged."""
     if target.spec.dedicated:
-        hook = _provision_hook_path(target) if target.spec.provision else None
         create_vm(
             target.instance,
             template,
@@ -239,7 +216,8 @@ def _create_from_target(target: Target, template: Path) -> None:
             memory=target.spec.memory,
             disk=target.spec.disk,
             packages=list(target.spec.packages),
-            provision_hook=hook,
+            apt_repos=list(target.spec.apt_repos),
+            vagrant_plugins=list(target.spec.vagrant_plugins),
             fingerprint=target.fingerprint,
         )
     else:
@@ -540,14 +518,11 @@ def _occupancy(instance: str, status: dict[str, str]) -> tuple[str, str]:
     return "—", "—"
 
 
-def _present_spec_state(
-    instance: str, spec: ComposedSpec, repo_dir: Path, status: dict[str, str]
-) -> str:
+def _present_spec_state(instance: str, spec: ComposedSpec, status: dict[str, str]) -> str:
     """SPEC column for a present dedicated VM: drift + under flag, only while running."""
     if status.get(instance) != "Running":
         return "ok"
-    composed = _with_provision_hash(spec, repo_dir)
-    drift = vm_spec_status(instance, spec_fingerprint(composed))
+    drift = vm_spec_status(instance, spec_fingerprint(spec))
     state = "NEEDS-REBUILD" if drift == "needs-rebuild" else "ok"
     if spec.under:
         state = f"{state} ⚠ under ({','.join(spec.under)})"
@@ -626,7 +601,7 @@ def _list_rows(
                 "disk": spec.disk,
                 "agents": agents,
                 "humans": humans,
-                "spec": _present_spec_state(d.instance, spec, repo_dir, status),
+                "spec": _present_spec_state(d.instance, spec, status),
             }
         )
     return rows

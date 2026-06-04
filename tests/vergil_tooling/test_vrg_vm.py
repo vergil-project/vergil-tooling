@@ -1235,12 +1235,19 @@ def _args(config: Path, workspace: str | None) -> argparse.Namespace:
 _MQ_VM_SECTION = """
 [vm]
 packages = ["qemu-system-x86"]
-provision = ".vergil/provision.sh"
+
+[[vm.apt_repos]]
+name = "hashicorp"
+key_url = "https://apt.releases.hashicorp.com/gpg"
+uri = "https://apt.releases.hashicorp.com"
+suite = "noble"
+components = "main"
 
 [vm.vergil-user]
 cpus = 12
 memory = "64GiB"
 disk = "300GiB"
+vagrant_plugins = ["vagrant-libvirt"]
 """
 
 
@@ -1271,12 +1278,9 @@ class TestResolveTarget:
         assert target.spec.dedicated is False
         assert target.instance == "vergil-user"
 
-    def test_spec_repo_is_dedicated_and_hashes_hook(self, tmp_path: Path) -> None:
+    def test_spec_repo_is_dedicated(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
-        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
-        hook = repo_dir / ".vergil" / "provision.sh"
-        hook.parent.mkdir()
-        hook.write_text("echo v1\n")
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         target = _resolve_target(_args(cfg, "lmf/mq"))
         assert target.org == "lmf"
@@ -1284,36 +1288,18 @@ class TestResolveTarget:
         assert target.instance == "vergil-user--lmf--mq"
         assert target.spec.dedicated is True
         assert target.spec.cpus == 12
+        assert target.spec.vagrant_plugins == ("vagrant-libvirt",)
+        assert len(target.spec.apt_repos) == 1
         assert target.fingerprint != ""
 
-    def test_editing_hook_changes_fingerprint(self, tmp_path: Path) -> None:
-        projects = tmp_path / "projects"
-        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
-        hook = repo_dir / ".vergil" / "provision.sh"
-        hook.parent.mkdir()
-        cfg = _identities(tmp_path, projects)
-        hook.write_text("echo v1\n")
-        fp1 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
-        hook.write_text("echo v2  # edited\n")
-        fp2 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
-        assert fp1 != fp2
-
-    def test_dedicated_without_provision_skips_hook(self, tmp_path: Path) -> None:
+    def test_packages_only_repo_is_dedicated(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         _make_repo(projects, "org", "pkgonly", '\n[vm]\npackages = ["qemu-system-x86"]\n')
         cfg = _identities(tmp_path, projects)
         target = _resolve_target(_args(cfg, "org/pkgonly"))
         assert target.spec.dedicated is True
-        assert target.spec.provision is None
-        assert target.fingerprint != ""
-
-    def test_dedicated_with_missing_hook_falls_back_to_path(self, tmp_path: Path) -> None:
-        projects = tmp_path / "projects"
-        # provision declared but the script file is absent at resolve time.
-        _make_repo(projects, "org", "nohook", '\n[vm]\nprovision = ".vergil/provision.sh"\n')
-        cfg = _identities(tmp_path, projects)
-        target = _resolve_target(_args(cfg, "org/nohook"))
-        assert target.spec.dedicated is True
+        assert target.spec.apt_repos == ()
+        assert target.spec.vagrant_plugins == ()
         assert target.fingerprint != ""
 
     def test_one_level_workspace_is_base(self, tmp_path: Path) -> None:
@@ -1338,7 +1324,7 @@ class TestCreateDedicated:
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
-    def test_dedicated_create_passes_packages_hook_and_fingerprint(
+    def test_dedicated_create_passes_spec(
         self,
         _status: MagicMock,
         mock_fetch: MagicMock,
@@ -1350,10 +1336,7 @@ class TestCreateDedicated:
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
-        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
-        hook = repo_dir / ".vergil" / "provision.sh"
-        hook.parent.mkdir()
-        hook.write_text("echo v1\n")
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         template = tmp_path / "tpl.yaml"
         template.write_text("x")
@@ -1366,7 +1349,8 @@ class TestCreateDedicated:
         assert kwargs["memory"] == "64GiB"
         assert kwargs["packages"] == ["qemu-system-x86"]
         assert kwargs["fingerprint"] != ""
-        assert kwargs["provision_hook"].endswith("/lmf/mq/.vergil/provision.sh")
+        assert len(kwargs["apt_repos"]) == 1
+        assert kwargs["vagrant_plugins"] == ["vagrant-libvirt"]
 
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -1375,7 +1359,7 @@ class TestCreateDedicated:
     @patch("vergil_tooling.bin.vrg_vm.create_vm")
     @patch("vergil_tooling.bin.vrg_vm.fetch_template")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
-    def test_dedicated_create_without_provision_hook(
+    def test_dedicated_create_packages_only(
         self,
         _status: MagicMock,
         mock_fetch: MagicMock,
@@ -1396,7 +1380,8 @@ class TestCreateDedicated:
         assert main(["create", "org/pkgonly", "--config", str(cfg)]) == 0
         kwargs = mock_create.call_args.kwargs
         assert kwargs["packages"] == ["qemu-system-x86"]
-        assert kwargs["provision_hook"] is None
+        assert kwargs["apt_repos"] == []
+        assert kwargs["vagrant_plugins"] == []
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1421,10 +1406,7 @@ class TestCreateDedicated:
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
-        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
-        hook = repo_dir / ".vergil" / "provision.sh"
-        hook.parent.mkdir()
-        hook.write_text("echo v1\n")
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         template = tmp_path / "tpl.yaml"
         template.write_text("x")
@@ -1443,7 +1425,8 @@ def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = 
         disk="300GiB",
         stale_days=7,
         packages=(),
-        provision=None,
+        apt_repos=(),
+        vagrant_plugins=(),
         dedicated=dedicated,
         under=under,
     )

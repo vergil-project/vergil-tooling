@@ -537,15 +537,43 @@ class TestParseVmStanza:
         raw = {
             "vm": {
                 "packages": ["qemu-system-x86", "libvirt-clients"],
-                "provision": ".vergil/provision.sh",
             }
         }
         stanza = parse_vm_stanza(raw)
         assert isinstance(stanza, VmStanza)
         assert stanza.packages == ["qemu-system-x86", "libvirt-clients"]
-        assert stanza.provision == ".vergil/provision.sh"
+        assert stanza.apt_repos == []
+        assert stanza.vagrant_plugins == []
         assert stanza.cpus is None
         assert stanza.roles == {}
+
+    def test_apt_repos_and_vagrant_plugins_parsed(self) -> None:
+        repo = {
+            "name": "hashicorp",
+            "key_url": "https://apt.releases.hashicorp.com/gpg",
+            "uri": "https://apt.releases.hashicorp.com",
+            "suite": "noble",
+            "components": "main",
+        }
+        raw = {
+            "vm": {
+                "apt_repos": [repo],
+                "vagrant_plugins": ["vagrant-libvirt"],
+                "vergil-user": {
+                    "apt_repos": [repo],
+                    "vagrant_plugins": ["vagrant-libvirt"],
+                    "packages": ["vagrant"],
+                },
+            }
+        }
+        stanza = parse_vm_stanza(raw)
+        assert stanza is not None
+        assert stanza.apt_repos == [repo]
+        assert stanza.vagrant_plugins == ["vagrant-libvirt"]
+        overlay = stanza.roles["vergil-user"]
+        assert overlay.apt_repos == [repo]
+        assert overlay.vagrant_plugins == ["vagrant-libvirt"]
+        assert overlay.packages == ["vagrant"]
 
     def test_role_overlay_parsed(self) -> None:
         raw = {
