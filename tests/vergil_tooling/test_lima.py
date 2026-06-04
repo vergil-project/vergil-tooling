@@ -30,6 +30,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_occupancy,
     vm_spec_status,
     vm_status,
 )
@@ -1029,3 +1030,29 @@ class TestFingerprintHelpers:
     def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
         mock_read.return_value = "old"
         assert vm_spec_status("inst", "new") == "needs-rebuild"
+
+
+class TestOccupancy:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_parses_agents_and_humans(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\n", stderr=""
+        )
+        assert vm_occupancy("inst") == (2, 1)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_zero_when_idle(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=0 humans=0\n", stderr=""
+        )
+        assert vm_occupancy("inst") == (0, 0)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_unparseable_output_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="garbage\n", stderr="")
+        assert vm_occupancy("inst") == (0, 0)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exec_failure_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_occupancy("inst") == (0, 0)

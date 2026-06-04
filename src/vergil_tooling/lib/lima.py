@@ -519,3 +519,53 @@ def vm_spec_status(instance: str, expected_fingerprint: str) -> str:
     """
     actual = read_fingerprint(instance)
     return "ok" if actual == expected_fingerprint else "needs-rebuild"
+
+
+# In-VM classifier: count agent vs human login sessions by walking each logind user
+# tty/pty session's process subtree for `claude`. Direct counts, no subtraction.
+_OCCUPANCY_SCRIPT = r"""
+set -u
+has_claude() {
+  local pids="$1" p comm next
+  while [ -n "$pids" ]; do
+    next=""
+    for p in $pids; do
+      comm=$(cat "/proc/$p/comm" 2>/dev/null || echo "")
+      [ "$comm" = "claude" ] && return 0
+      next="$next $(pgrep -P "$p" 2>/dev/null || true)"
+    done
+    pids="$next"
+  done
+  return 1
+}
+agents=0; humans=0
+for s in $(loginctl list-sessions --no-legend 2>/dev/null | awk '{print $1}'); do
+  cls=$(loginctl show-session "$s" -p Class --value 2>/dev/null || echo "")
+  typ=$(loginctl show-session "$s" -p Type --value 2>/dev/null || echo "")
+  [ "$cls" = "user" ] || continue
+  case "$typ" in tty|pty) ;; *) continue ;; esac
+  leader=$(loginctl show-session "$s" -p Leader --value 2>/dev/null || echo "")
+  [ -n "$leader" ] || continue
+  if has_claude "$leader"; then agents=$((agents+1)); else humans=$((humans+1)); fi
+done
+echo "agents=$agents humans=$humans"
+"""
+
+_OCCUPANCY_RE = re.compile(r"agents=(\d+)\s+humans=(\d+)")
+
+
+def vm_occupancy(instance: str) -> tuple[int, int]:
+    """Return (agents, humans) for a running VM by process-tree classification.
+
+    Agents are login sessions whose subtree roots `claude`; humans are interactive
+    user tty/pty sessions that are not agent-hosting. Returns (0, 0) on any parse/exec
+    failure rather than guessing.
+    """
+    try:
+        result = shell_run(instance, "bash", "-c", _OCCUPANCY_SCRIPT)
+    except subprocess.CalledProcessError:
+        return (0, 0)
+    match = _OCCUPANCY_RE.search(result.stdout)
+    if match is None:
+        return (0, 0)
+    return (int(match.group(1)), int(match.group(2)))
