@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import shlex
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +19,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -46,13 +49,20 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_occupancy,
+    vm_spec_status,
     vm_status,
 )
 from vergil_tooling.lib.session import list_rows, make_name
+from vergil_tooling.lib.vm_spec import (
+    ComposedSpec,
+    compose_vm_spec,
+    instance_name,
+    parse_instance_name,
+    spec_fingerprint,
+)
 
 _default_config_path = default_config_path
-
-_DEFAULT_STALENESS_DAYS = 3
 
 _TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
 
@@ -64,15 +74,195 @@ def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
     return name, identity, config
 
 
-def _cmd_create(args: argparse.Namespace) -> int:
+_BASE_CPUS = 4
+_BASE_MEMORY = "4GiB"
+_BASE_DISK = "50GiB"
+
+
+@dataclass
+class Target:
+    identity_name: str
+    identity: Identity
+    config: IdentityConfig
+    org: str | None
+    repo: str | None
+    spec: ComposedSpec
+    instance: str
+    fingerprint: str
+
+
+def _base_footprint(identity: Identity) -> dict[str, object]:
+    return {
+        "cpus": identity.cpus if identity.cpus is not None else _BASE_CPUS,
+        "memory": identity.memory if identity.memory is not None else _BASE_MEMORY,
+        "disk": identity.disk if identity.disk is not None else _BASE_DISK,
+    }
+
+
+def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
+    """Derive (org, repo) for VM selection.
+
+    Only an exact relative 'org/repo' path maps to a dedicated VM. None, '.', a bare
+    repo name, a deeper path, or an absolute path all mean the base VM — this keeps the
+    pre-existing 1-level / '.' session convention working while the spec's 2-level
+    'org/repo' convention drives dedicated boxes.
+    """
+    if not workspace or workspace.startswith("/"):
+        return None, None
+    parts = workspace.strip("/").split("/")
+    expected = 2
+    if len(parts) != expected:
+        return None, None
+    return parts[0], parts[1]
+
+
+def _with_provision_hash(spec: ComposedSpec, repo_dir: Path) -> ComposedSpec:
+    """Fold the provision hook's CONTENT hash into the spec so editing the script flips
+    the fingerprint (the security review checkpoint). The hook is source-controlled and
+    normally present; if absent we leave it None and fingerprinting falls back to the path.
+    Computed identically at build (_resolve_target) and at drift-check (list)."""
+    if spec.provision:
+        hook_path = repo_dir / spec.provision
+        if hook_path.exists():
+            digest = hashlib.sha256(hook_path.read_bytes()).hexdigest()
+            return replace(spec, provision_hash=digest)
+    return spec
+
+
+def _resolve_target(args: argparse.Namespace) -> Target:
+    """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
     name, identity, config = _resolve(args)
+    workspace = getattr(args, "workspace", None)
+    base = _base_footprint(identity)
+    org, repo = _workspace_org_repo(workspace)
+
+    if org is None or repo is None:
+        spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
+        return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
+
+    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
+    try:
+        stanza = read_config(repo_dir).vm
+    except FileNotFoundError:
+        stanza = None  # a repo with no vergil.toml needs no dedicated VM
+    override = identity.overrides.get((org, repo))
+    spec = compose_vm_spec(identity=name, base=base, stanza=stanza, override=override)
+
+    if not spec.dedicated:
+        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
+
+    spec = _with_provision_hash(spec, repo_dir)
+    inst = instance_name(name, org, repo)
+    return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
+
+
+def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
+    """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
+
+    Unlike `_resolve_target`, this reads no repo `vergil.toml` and composes no spec — it only
+    needs the instance to act on. A 2-level `org/repo` names the dedicated instance directly,
+    so an orphaned VM (whose repo dropped its `[vm]`) is still reachable; anything else is base.
+    """
+    name, identity, config = _resolve(args)
+    org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    if org is not None and repo is not None:
+        instance = instance_name(name, org, repo)
+    else:
+        instance = identity.vm_instance
+    return name, identity, config, instance
+
+
+def _target_ref(target: Target) -> str:
+    """How a user re-addresses this target on the CLI: '<org>/<repo>' or '--identity <name>'."""
+    if target.org is not None:
+        return f"{target.org}/{target.repo}"
+    return f"--identity {target.identity_name}"
+
+
+def _warn_under(target: Target) -> None:
+    """Loudly warn when a host override sized a scalar below the repo's declared value."""
+    if not target.spec.under:
+        return
+    fields = ", ".join(target.spec.under)
+    print(
+        f"WARNING: VM '{target.instance}' is under-provisioned for "
+        f"{target.org}/{target.repo} (below declared: {fields}). "
+        f"This probably will not work — the repo asked for more than this box has.",
+        file=sys.stderr,
+    )
+
+
+def _preflight_target(target: Target) -> int:
+    """Validate a dedicated target before session/start. Base targets pass through.
+
+    Returns 0 to proceed, 1 to abort (after printing the remediation command).
+    """
+    if not target.spec.dedicated:
+        return 0
+
+    workspace = f"{target.org}/{target.repo}"
+    status = vm_status(target.instance)
+    if not status:
+        print(
+            f"ERROR: VM '{target.instance}' does not exist — this repo requires a "
+            f"dedicated VM.\nBuild it: vrg-vm create {workspace} --identity {target.identity_name}",
+            file=sys.stderr,
+        )
+        return 1
+    if vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild":
+        print(
+            f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
+            f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
+            file=sys.stderr,
+        )
+        return 1
+    _warn_under(target)
+    return 0
+
+
+def _provision_hook_path(target: Target) -> str:
+    """Absolute path INSIDE the VM to the repo's provision hook."""
+    workspace = f"{target.org}/{target.repo}"
+    repo_abs = os.path.normpath(resolve_workspace(workspace, target.identity.projects_dir))
+    return str(Path(repo_abs) / (target.spec.provision or ""))
+
+
+def _create_from_target(target: Target, template: Path) -> None:
+    """Build the VM for a target: dedicated boxes carry the composed spec, base is unchanged."""
+    if target.spec.dedicated:
+        hook = _provision_hook_path(target) if target.spec.provision else None
+        create_vm(
+            target.instance,
+            template,
+            target.identity.projects_dir,
+            cpus=target.spec.cpus,
+            memory=target.spec.memory,
+            disk=target.spec.disk,
+            packages=list(target.spec.packages),
+            provision_hook=hook,
+            fingerprint=target.fingerprint,
+        )
+    else:
+        create_vm(
+            target.instance,
+            template,
+            target.identity.projects_dir,
+            cpus=target.identity.cpus,
+            memory=target.identity.memory,
+            disk=target.identity.disk,
+        )
+
+
+def _cmd_create(args: argparse.Namespace) -> int:
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
     vergil_version = resolve_vergil_version(config, identity)
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(target.instance)
     if status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' already exists (status: {status})",
+            f"ERROR: VM '{target.instance}' already exists (status: {status})",
             file=sys.stderr,
         )
         return 1
@@ -84,125 +274,123 @@ def _cmd_create(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"Creating VM '{identity.vm_instance}' for identity '{name}'...")
+    print(f"Creating VM '{target.instance}' for identity '{name}'...")
 
     print(f"  Fetching template ({tag})...")
     template = fetch_template(tag)
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(
-            identity.vm_instance,
-            template,
-            identity.projects_dir,
-            cpus=identity.cpus,
-            memory=identity.memory,
-            disk=identity.disk,
-        )
+        _create_from_target(target, template)
 
         print("  Starting VM...")
-        start_vm(identity.vm_instance)
+        start_vm(target.instance)
 
         print("  Linking Claude config directories...")
-        link_claude_dirs(identity.vm_instance, Path.home() / ".claude")
+        link_claude_dirs(target.instance, Path.home() / ".claude")
 
         print("Injecting credentials...")
-        inject_credentials(identity.vm_instance, identity)
+        inject_credentials(target.instance, identity)
 
-        install_tooling(identity.vm_instance, vergil_version)
+        install_tooling(target.instance, vergil_version)
     finally:
         template.unlink(missing_ok=True)
 
-    print(f"\nVM '{identity.vm_instance}' is ready.")
+    print(f"\nVM '{target.instance}' is ready.")
     return 0
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
 
-    status = vm_status(identity.vm_instance)
+    if _preflight_target(target) != 0:
+        return 1
+
+    status = vm_status(target.instance)
     if not status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            f"ERROR: VM '{target.instance}' does not exist — run 'vrg-vm create' first",
             file=sys.stderr,
         )
         return 1
 
     allow_stale = getattr(args, "allow_stale_vm", False)
     if not allow_stale:
-        age = vm_age_days(identity.vm_instance)
-        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+        age = vm_age_days(target.instance)
+        if age is not None and age > target.spec.stale_days:
+            ref = _target_ref(target)
             print(
-                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
-                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
-                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
-                f"Override with: vrg-vm start --allow-stale-vm --identity {name}",
+                f"ERROR: VM '{target.instance}' is {age:.0f} days old"
+                f" (threshold: {target.spec.stale_days} days).\n"
+                f"Rebuild with: vrg-vm rebuild {ref}\n"
+                f"Override with: vrg-vm start --allow-stale-vm {ref}",
                 file=sys.stderr,
             )
             return 1
 
-    print(f"Starting VM '{identity.vm_instance}' (identity: {name})...")
-    start_vm(identity.vm_instance, timeout=args.timeout)
+    print(f"Starting VM '{target.instance}' (identity: {name})...")
+    start_vm(target.instance, timeout=args.timeout)
 
     print("Injecting credentials...")
-    inject_credentials(identity.vm_instance, identity)
+    inject_credentials(target.instance, identity)
 
     claude_dir = Path.home() / ".claude"
     print("Copying Claude Code config...")
-    copy_claude_config(identity.vm_instance, claude_dir)
-    link_claude_dirs(identity.vm_instance, claude_dir)
+    copy_claude_config(target.instance, claude_dir)
+    link_claude_dirs(target.instance, claude_dir)
 
     fallback = resolve_vergil_version(config, identity)
     print("Updating vergil-tooling...")
-    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(target.instance, fallback_tag=fallback)
 
-    print(f"VM '{identity.vm_instance}' is running.")
+    print(f"VM '{target.instance}' is running.")
     return 0
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, _identity, _config, instance = _resolve_instance(args)
 
-    print(f"Stopping VM '{identity.vm_instance}' (identity: {name})...")
-    stop_vm(identity.vm_instance)
+    print(f"Stopping VM '{instance}' (identity: {name})...")
+    stop_vm(instance)
 
-    print(f"VM '{identity.vm_instance}' stopped.")
+    print(f"VM '{instance}' stopped.")
     return 0
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, identity, _config, instance = _resolve_instance(args)
 
-    print(f"Restarting VM '{identity.vm_instance}' (identity: {name})...")
-    stop_vm(identity.vm_instance)
-    start_vm(identity.vm_instance)
+    print(f"Restarting VM '{instance}' (identity: {name})...")
+    stop_vm(instance)
+    start_vm(instance)
 
     print("Injecting credentials...")
-    inject_credentials(identity.vm_instance, identity)
+    inject_credentials(instance, identity)
 
-    print(f"VM '{identity.vm_instance}' is running.")
+    print(f"VM '{instance}' is running.")
     return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    name, identity, config, instance = _resolve_instance(args)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(instance)
     if status != "Running":
         effective = status or "Not Created"
         print(
-            f"ERROR: VM '{identity.vm_instance}' is not running (status: {effective})",
+            f"ERROR: VM '{instance}' is not running (status: {effective})",
             file=sys.stderr,
         )
         return 1
 
     tag = args.tag if args.tag else None
     fallback = resolve_vergil_version(config, identity)
-    print(f"Updating vergil-tooling in VM '{identity.vm_instance}' (identity: {name})...")
+    print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
-    before = get_tooling_version(identity.vm_instance)
-    update_tooling(identity.vm_instance, tag, fallback_tag=fallback)
-    after = get_tooling_version(identity.vm_instance)
+    before = get_tooling_version(instance)
+    update_tooling(instance, tag, fallback_tag=fallback)
+    after = get_tooling_version(instance)
 
     if before and after:
         if before == after:
@@ -217,30 +405,31 @@ def _cmd_update(args: argparse.Namespace) -> int:
 
 
 def _cmd_destroy(args: argparse.Namespace) -> int:
-    name, identity, _config = _resolve(args)
+    name, _identity, _config, instance = _resolve_instance(args)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(instance)
     if not status:
         print(
-            f"VM '{identity.vm_instance}' does not exist.",
+            f"VM '{instance}' does not exist.",
             file=sys.stderr,
         )
         return 1
 
-    print(f"Destroying VM '{identity.vm_instance}' (identity: {name})...")
-    delete_vm(identity.vm_instance)
+    print(f"Destroying VM '{instance}' (identity: {name})...")
+    delete_vm(instance)
 
-    print(f"VM '{identity.vm_instance}' destroyed.")
+    print(f"VM '{instance}' destroyed.")
     return 0
 
 
 def _cmd_rebuild(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(target.instance)
     if not status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            f"ERROR: VM '{target.instance}' does not exist — run 'vrg-vm create' first",
             file=sys.stderr,
         )
         return 1
@@ -255,42 +444,192 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
     vergil_version = resolve_vergil_version(config, identity)
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
-    print(f"Rebuilding VM '{identity.vm_instance}' (identity: {name})...")
+    print(f"Rebuilding VM '{target.instance}' (identity: {name})...")
 
     print("  Destroying old VM...")
-    delete_vm(identity.vm_instance)
+    delete_vm(target.instance)
 
     print(f"  Fetching template ({tag})...")
     template = fetch_template(tag)
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(
-            identity.vm_instance,
-            template,
-            identity.projects_dir,
-            cpus=identity.cpus,
-            memory=identity.memory,
-            disk=identity.disk,
-        )
+        _create_from_target(target, template)
 
         print("  Starting VM...")
-        start_vm(identity.vm_instance, timeout=args.timeout)
+        start_vm(target.instance, timeout=args.timeout)
 
         print("  Injecting credentials...")
-        inject_credentials(identity.vm_instance, identity)
+        inject_credentials(target.instance, identity)
 
-        install_tooling(identity.vm_instance, vergil_version)
+        install_tooling(target.instance, vergil_version)
 
         claude_dir = Path.home() / ".claude"
         print("  Copying Claude Code config...")
-        copy_claude_config(identity.vm_instance, claude_dir)
-        link_claude_dirs(identity.vm_instance, claude_dir)
+        copy_claude_config(target.instance, claude_dir)
+        link_claude_dirs(target.instance, claude_dir)
     finally:
         template.unlink(missing_ok=True)
 
-    print(f"\nVM '{identity.vm_instance}' rebuilt and ready.")
+    print(f"\nVM '{target.instance}' rebuilt and ready.")
     return 0
+
+
+@dataclass
+class DedicatedRow:
+    org: str | None
+    repo: str | None
+    instance: str
+    state: str  # "present" | "orphaned" | "not-created"
+
+
+def _repo_has_vm_spec(projects_dir: str, org: str, repo: str) -> bool:
+    repo_dir = Path(projects_dir) / org / repo
+    if not (repo_dir / "vergil.toml").exists():
+        return False
+    try:
+        return read_config(repo_dir).vm is not None
+    except ConfigError:
+        return False
+
+
+def discover_dedicated(
+    identity_name: str, instances: list[str], projects_dir: str
+) -> list[DedicatedRow]:
+    """Reconcile existing <identity>--* instances with spec-bearing local repos.
+
+    - instance + spec   -> present
+    - instance, no spec -> orphaned
+    - spec, no instance -> not-created
+    """
+    rows: list[DedicatedRow] = []
+    seen: set[tuple[str, str]] = set()
+
+    for name in instances:
+        try:
+            ident, org, repo = parse_instance_name(name)
+        except ValueError:
+            continue
+        if ident != identity_name or org is None or repo is None:
+            continue
+        seen.add((org, repo))
+        state = "present" if _repo_has_vm_spec(projects_dir, org, repo) else "orphaned"
+        rows.append(DedicatedRow(org, repo, name, state))
+
+    # Spec-bearing repos with no instance yet -> not-created.
+    root = Path(projects_dir)
+    if root.is_dir():
+        for org_dir in sorted(p for p in root.iterdir() if p.is_dir()):
+            for repo_dir in sorted(p for p in org_dir.iterdir() if p.is_dir()):
+                org, repo = org_dir.name, repo_dir.name
+                if (org, repo) in seen:
+                    continue
+                if _repo_has_vm_spec(projects_dir, org, repo):
+                    rows.append(
+                        DedicatedRow(
+                            org, repo, instance_name(identity_name, org, repo), "not-created"
+                        )
+                    )
+    return rows
+
+
+def _occupancy(instance: str, status: dict[str, str]) -> tuple[str, str]:
+    if status.get(instance) == "Running":
+        agents, humans = vm_occupancy(instance)
+        return str(agents), str(humans)
+    return "—", "—"
+
+
+def _present_spec_state(
+    instance: str, spec: ComposedSpec, repo_dir: Path, status: dict[str, str]
+) -> str:
+    """SPEC column for a present dedicated VM: drift + under flag, only while running."""
+    if status.get(instance) != "Running":
+        return "ok"
+    composed = _with_provision_hash(spec, repo_dir)
+    drift = vm_spec_status(instance, spec_fingerprint(composed))
+    state = "NEEDS-REBUILD" if drift == "needs-rebuild" else "ok"
+    if spec.under:
+        state = f"{state} ⚠ under ({','.join(spec.under)})"
+    return state
+
+
+def _list_rows(
+    identity_name: str,
+    identity: Identity,
+    dedicated: list[DedicatedRow],
+    status: dict[str, str],
+) -> list[dict[str, object]]:
+    """Build display rows for one identity: the base VM plus each dedicated row."""
+    base = _base_footprint(identity)
+    rows: list[dict[str, object]] = []
+
+    b_agents, b_humans = _occupancy(identity.vm_instance, status)
+    rows.append(
+        {
+            "scope": "base",
+            "status": status.get(identity.vm_instance, "Not Created"),
+            "cpus": cast("int", base["cpus"]),
+            "memory": str(base["memory"]),
+            "disk": str(base["disk"]),
+            "agents": b_agents,
+            "humans": b_humans,
+            "spec": "ok",
+        }
+    )
+
+    for d in dedicated:
+        scope = f"{d.org}/{d.repo}"
+        if d.state == "not-created":
+            rows.append(
+                {
+                    "scope": scope,
+                    "status": "Not Created",
+                    "cpus": "—",
+                    "memory": "—",
+                    "disk": "—",
+                    "agents": "—",
+                    "humans": "—",
+                    "spec": "not-created",
+                }
+            )
+            continue
+        agents, humans = _occupancy(d.instance, status)
+        st = status.get(d.instance, "Not Created")
+        if d.state == "orphaned":
+            rows.append(
+                {
+                    "scope": scope,
+                    "status": st,
+                    "cpus": "—",
+                    "memory": "—",
+                    "disk": "—",
+                    "agents": agents,
+                    "humans": humans,
+                    "spec": "orphaned",
+                }
+            )
+            continue
+        repo_dir = Path(resolve_workspace(scope, identity.projects_dir))
+        try:
+            stanza = read_config(repo_dir).vm
+        except (FileNotFoundError, ConfigError):
+            stanza = None
+        override = identity.overrides.get(cast("tuple[str, str]", (d.org, d.repo)))
+        spec = compose_vm_spec(identity=identity_name, base=base, stanza=stanza, override=override)
+        rows.append(
+            {
+                "scope": scope,
+                "status": st,
+                "cpus": spec.cpus,
+                "memory": spec.memory,
+                "disk": spec.disk,
+                "agents": agents,
+                "humans": humans,
+                "spec": _present_spec_state(d.instance, spec, repo_dir, status),
+            }
+        )
+    return rows
 
 
 def _cmd_list(args: argparse.Namespace) -> int:
@@ -300,15 +639,24 @@ def _cmd_list(args: argparse.Namespace) -> int:
     if args.sessions:
         return _list_sessions(config, args)
 
-    vms = list_vms()
-    vm_map = {vm["name"]: vm["status"] for vm in vms}
+    status = {vm["name"]: vm["status"] for vm in list_vms()}
+    instances = list(status)
 
-    print(f"{'IDENTITY':<16} {'VM INSTANCE':<24} {'STATUS':<12}")
-    print(f"{'─' * 16} {'─' * 24} {'─' * 12}")
+    header = (
+        f"{'IDENTITY':<14} {'SCOPE':<40} {'STATUS':<11} {'CPUS':<5} {'MEM':<7} "
+        f"{'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+    )
+    print(header)
+    print("─" * len(header))
 
     for id_name, identity in config.identities.items():
-        status = vm_map.get(identity.vm_instance, "Not Created")
-        print(f"{id_name:<16} {identity.vm_instance:<24} {status:<12}")
+        dedicated = discover_dedicated(id_name, instances, identity.projects_dir)
+        for r in _list_rows(id_name, identity, dedicated, status):
+            print(
+                f"{id_name:<14} {r['scope']!s:<40} {r['status']!s:<11} "
+                f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+                f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
+            )
 
     return 0
 
@@ -446,26 +794,31 @@ def _session_inner(
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
+
+    if _preflight_target(target) != 0:
+        return 1
 
     if not args.allow_stale_vm:
-        age = vm_age_days(identity.vm_instance)
-        if age is not None and age > _DEFAULT_STALENESS_DAYS:
+        age = vm_age_days(target.instance)
+        if age is not None and age > target.spec.stale_days:
+            ref = _target_ref(target)
             print(
-                f"ERROR: VM '{identity.vm_instance}' is {age:.0f} days old"
-                f" (threshold: {_DEFAULT_STALENESS_DAYS} days).\n"
-                f"Rebuild with: vrg-vm rebuild --identity {name}\n"
-                f"Override with: vrg-vm session --allow-stale-vm --identity {name}",
+                f"ERROR: VM '{target.instance}' is {age:.0f} days old"
+                f" (threshold: {target.spec.stale_days} days).\n"
+                f"Rebuild with: vrg-vm rebuild {ref}\n"
+                f"Override with: vrg-vm session --allow-stale-vm {ref}",
                 file=sys.stderr,
             )
             return 1
 
     fallback = resolve_vergil_version(config, identity)
-    try_update_tooling(identity.vm_instance, fallback_tag=fallback)
+    try_update_tooling(target.instance, fallback_tag=fallback)
 
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(identity.vm_instance, claude_dir)
-    link_claude_dirs(identity.vm_instance, claude_dir)
+    copy_claude_config(target.instance, claude_dir)
+    link_claude_dirs(target.instance, claude_dir)
 
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -486,7 +839,7 @@ def _cmd_session(args: argparse.Namespace) -> int:
         "--start",
         "--preserve-env",
         f"--workdir={workspace_abs}",
-        identity.vm_instance,
+        target.instance,
         "bash",
         "-c",
         inner,
@@ -500,6 +853,15 @@ def _add_identity_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, help="Path to identities.toml")
 
 
+def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Optional <org>/<repo> to target a dedicated VM (default: the base VM)",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",
@@ -509,12 +871,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_create = sub.add_parser("create", help="Create and provision a new VM")
     _add_identity_args(p_create)
+    _add_workspace_arg(p_create)
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
+    _add_workspace_arg(p_start)
     p_start.add_argument(
         "--allow-stale-vm",
         action="store_true",
@@ -528,21 +892,26 @@ def main(argv: list[str] | None = None) -> int:
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
+    _add_workspace_arg(p_stop)
 
     p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
     _add_identity_args(p_restart)
+    _add_workspace_arg(p_restart)
 
     p_update = sub.add_parser("update", help="Reinstall vergil-tooling inside a running VM")
     _add_identity_args(p_update)
+    _add_workspace_arg(p_update)
     p_update.add_argument(
         "--tag", default="", help="Override version tag (default: tag from initial install)"
     )
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
+    _add_workspace_arg(p_destroy)
 
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
+    _add_workspace_arg(p_rebuild)
     p_rebuild.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -552,7 +921,19 @@ def main(argv: list[str] | None = None) -> int:
         help="How long to wait for VM to reach running status (default: 30m)",
     )
 
-    p_list = sub.add_parser("list", help="List all identity VMs and their status")
+    p_list = sub.add_parser(
+        "list",
+        help="List all identity VMs and their status",
+        description=(
+            "List each identity's base and dedicated VMs with configured footprint "
+            "(CPUS/MEM/DISK), live occupancy, and SPEC health. AGENTS counts harness "
+            "instances (Claude Code sessions); HUMANS counts open human-held interactive "
+            "shells (a tally of shells, not distinct people). SPEC is one of: ok, "
+            "NEEDS-REBUILD (drift — rebuild it), not-created (a spec'd repo with no VM "
+            "yet), orphaned (a VM whose repo dropped its [vm]), or an 'under' flag when a "
+            "host override sized the box below the repo's declared footprint."
+        ),
+    )
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
     p_list.add_argument(
         "--sessions",

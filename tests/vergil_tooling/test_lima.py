@@ -22,6 +22,7 @@ from vergil_tooling.lib.lima import (
     install_tooling,
     link_claude_dirs,
     list_vms,
+    read_fingerprint,
     shell_pipe,
     shell_run,
     start_vm,
@@ -29,6 +30,8 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
+    vm_occupancy,
+    vm_spec_status,
     vm_status,
 )
 
@@ -958,3 +961,98 @@ class TestTryUpdateTooling:
     def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
         try_update_tooling("vergil-agent", tag="v2.1", fallback_tag="v2.0")
         mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
+
+
+class TestCreateVmProfileParams:
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_profile_params_passed_via_set(
+        self, mock_limactl: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        template = tmp_path / "agent.yaml"
+        template.write_text("dummy", encoding="utf-8")
+        create_vm(
+            "vergil-user--org--repo",
+            template,
+            "/projects",
+            cpus=12,
+            memory="64GiB",
+            disk="300GiB",
+            packages=["qemu-system-x86", "libvirt-clients"],
+            provision_hook="/projects/org/repo/.vergil/provision.sh",
+            fingerprint="abc123",
+        )
+        args = mock_limactl.call_args[0]
+        assert '--set=.param.EXTRA_PACKAGES = "qemu-system-x86 libvirt-clients"' in args
+        assert '--set=.param.PROVISION_HOOK = "/projects/org/repo/.vergil/provision.sh"' in args
+        assert '--set=.param.SPEC_FINGERPRINT = "abc123"' in args
+        assert "--set=.cpus = 12" in args
+        assert "create" in args
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_base_create_adds_no_profile_params(
+        self, mock_limactl: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        template = tmp_path / "agent.yaml"
+        template.write_text("dummy", encoding="utf-8")
+        create_vm("vergil-user", template, "/projects")
+        args = mock_limactl.call_args[0]
+        assert not any("param.EXTRA_PACKAGES" in a for a in args)
+        assert not any("param.PROVISION_HOOK" in a for a in args)
+        assert not any("param.SPEC_FINGERPRINT" in a for a in args)
+
+
+class TestFingerprintHelpers:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_returns_stamped_value(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="abc123\n", stderr="")
+        assert read_fingerprint("vergil-user--org--repo") == "abc123"
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_missing_marker_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "cat")
+        assert read_fingerprint("vergil-user") is None
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_empty_marker_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="\n", stderr="")
+        assert read_fingerprint("vergil-user") is None
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_ok_on_match(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "abc123"
+        assert vm_spec_status("inst", "abc123") == "ok"
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "old"
+        assert vm_spec_status("inst", "new") == "needs-rebuild"
+
+
+class TestOccupancy:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_parses_agents_and_humans(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\n", stderr=""
+        )
+        assert vm_occupancy("inst") == (2, 1)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_zero_when_idle(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=0 humans=0\n", stderr=""
+        )
+        assert vm_occupancy("inst") == (0, 0)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_unparseable_output_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="garbage\n", stderr="")
+        assert vm_occupancy("inst") == (0, 0)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exec_failure_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_occupancy("inst") == (0, 0)

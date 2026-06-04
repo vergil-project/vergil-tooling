@@ -6,6 +6,7 @@ import re
 import sys
 import tomllib
 from dataclasses import dataclass
+from dataclasses import field as dc_field
 from pathlib import Path
 
 _SIZE_PATTERN = re.compile(r"^\d+GiB$")
@@ -30,6 +31,7 @@ class Identity:
     cpus: int | None = None
     memory: str | None = None
     disk: str | None = None
+    overrides: dict[tuple[str, str], dict[str, object]] = dc_field(default_factory=dict)
 
 
 @dataclass
@@ -94,6 +96,16 @@ def load_config(path: Path) -> IdentityConfig:
 
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
+        # Nested [identities.<id>.<org>.<repo>] tables appear as dict-of-dict values in
+        # `data`; scalar identity fields (cpus, etc.) are non-dict and are skipped.
+        overrides: dict[tuple[str, str], dict[str, object]] = {}
+        for org_key, org_val in data.items():
+            if not isinstance(org_val, dict):
+                continue
+            for repo_key, repo_val in org_val.items():
+                if isinstance(repo_val, dict):
+                    overrides[(org_key, repo_key)] = repo_val
+
         identities[name] = Identity(
             vm_instance=data["vm_instance"],
             auth_type=data.get("auth_type", "app"),
@@ -109,6 +121,7 @@ def load_config(path: Path) -> IdentityConfig:
             cpus=data.get("cpus"),
             memory=data.get("memory"),
             disk=data.get("disk"),
+            overrides=overrides,
         )
         _validate_identity_resources(name, identities[name])
         _validate_session_thresholds(

@@ -231,11 +231,11 @@ tells VM provisioning which App credentials to inject into each agent
 VM. The dual-identity model uses one stanza per role.
 
 ```toml
-default_identity = "user"
+default_identity = "vergil-user"
 vergil = "v2.0"        # vergil-tooling version for the human host
 vergil-vm = "v2.1"     # VM template tag (from the vergil-vm repo)
 
-[identities.user]
+[identities.vergil-user]
 vm_instance = "vergil-user"
 auth_type = "app"
 app_id = <user-app-id>
@@ -243,7 +243,7 @@ private_key_path = "~/.config/vergil/keys/<username>-vergil-user.<date>.private-
 vergil = "v2.1"        # pin this VM's vergil-tooling to 2.1 (set once 2.1 is released)
 # client_id = "Iv..."  # recorded for the App ID → Client ID migration; not yet read by the tooling
 
-[identities.audit]
+[identities.vergil-audit]
 vm_instance = "vergil-audit"
 auth_type = "app"
 app_id = <audit-app-id>
@@ -274,7 +274,7 @@ After both Apps are registered, installed, and configured:
 
 - [ ] Two private key files exist in `~/.config/vergil/keys/` (one per
       App), with their generation dates in the filenames
-- [ ] `identities.toml` has a `user` and an `audit` stanza, each with
+- [ ] `identities.toml` has a `vergil-user` and a `vergil-audit` stanza, each with
       the correct App ID and key path
 - [ ] Each App shows the correct **inverted** repository permissions
       (user: contents/issues write, PRs read; audit: contents/issues
