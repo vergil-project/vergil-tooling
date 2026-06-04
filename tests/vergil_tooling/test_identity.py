@@ -607,3 +607,51 @@ def test_session_archive_days_must_exceed_stale(tmp_path: Path) -> None:
     )
     with pytest.raises(SystemExit):
         load_config(p)
+
+
+# -- host-override cascade (issue #99) ----------------------------------------
+
+
+def test_identity_parses_host_overrides(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil-user"
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+
+        [identities.vergil-user."logical-minds-foundry"."mq-cluster-tooling"]
+        memory = "32GiB"
+    """)
+    )
+    config = load_config(p)
+    ident = config.identities["vergil-user"]
+    assert ident.overrides[("logical-minds-foundry", "mq-cluster-tooling")] == {"memory": "32GiB"}
+
+
+def test_identity_without_overrides_defaults_empty(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+    """)
+    )
+    assert load_config(p).identities["vergil-user"].overrides == {}
+
+
+def test_org_level_scalar_is_not_a_repo_override(tmp_path: Path) -> None:
+    # An org table holding a scalar (the reserved org-level tier, not a repo subtable)
+    # must NOT be collected as a (org, repo) override.
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+
+        [identities.vergil-user."logical-minds-foundry"]
+        memory = "16GiB"
+    """)
+    )
+    assert load_config(p).identities["vergil-user"].overrides == {}
