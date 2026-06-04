@@ -1301,3 +1301,108 @@ class TestResolveTarget:
         cfg = _identities(tmp_path, tmp_path / "projects")
         with pytest.raises(SystemExit):
             _resolve_target(_args(cfg, "not-a-valid-path"))
+
+
+class TestCreateDedicated:
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_create_passes_packages_hook_and_fingerprint(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "lmf/mq", "--config", str(cfg)]) == 0
+        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["cpus"] == 12
+        assert kwargs["memory"] == "64GiB"
+        assert kwargs["packages"] == ["qemu-system-x86"]
+        assert kwargs["fingerprint"] != ""
+        assert kwargs["provision_hook"].endswith("/lmf/mq/.vergil/provision.sh")
+
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_create_without_provision_hook(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "pkgonly", '\n[vm]\npackages = ["qemu-system-x86"]\n')
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "org/pkgonly", "--config", str(cfg)]) == 0
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["packages"] == ["qemu-system-x86"]
+        assert kwargs["provision_hook"] is None
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_dedicated_rebuild_passes_spec(
+        self,
+        _status: MagicMock,
+        _delete: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        _link: MagicMock,
+        _copy: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["rebuild", "lmf/mq", "--config", str(cfg)]) == 0
+        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        assert mock_create.call_args.kwargs["fingerprint"] != ""

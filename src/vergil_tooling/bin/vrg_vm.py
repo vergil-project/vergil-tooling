@@ -146,15 +146,49 @@ def _resolve_target(args: argparse.Namespace) -> Target:
     return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
 
 
+def _provision_hook_path(target: Target) -> str:
+    """Absolute path INSIDE the VM to the repo's provision hook."""
+    workspace = f"{target.org}/{target.repo}"
+    repo_abs = os.path.normpath(resolve_workspace(workspace, target.identity.projects_dir))
+    return str(Path(repo_abs) / (target.spec.provision or ""))
+
+
+def _create_from_target(target: Target, template: Path) -> None:
+    """Build the VM for a target: dedicated boxes carry the composed spec, base is unchanged."""
+    if target.spec.dedicated:
+        hook = _provision_hook_path(target) if target.spec.provision else None
+        create_vm(
+            target.instance,
+            template,
+            target.identity.projects_dir,
+            cpus=target.spec.cpus,
+            memory=target.spec.memory,
+            disk=target.spec.disk,
+            packages=list(target.spec.packages),
+            provision_hook=hook,
+            fingerprint=target.fingerprint,
+        )
+    else:
+        create_vm(
+            target.instance,
+            template,
+            target.identity.projects_dir,
+            cpus=target.identity.cpus,
+            memory=target.identity.memory,
+            disk=target.identity.disk,
+        )
+
+
 def _cmd_create(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
     vergil_version = resolve_vergil_version(config, identity)
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(target.instance)
     if status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' already exists (status: {status})",
+            f"ERROR: VM '{target.instance}' already exists (status: {status})",
             file=sys.stderr,
         )
         return 1
@@ -166,36 +200,29 @@ def _cmd_create(args: argparse.Namespace) -> int:
         )
         return 1
 
-    print(f"Creating VM '{identity.vm_instance}' for identity '{name}'...")
+    print(f"Creating VM '{target.instance}' for identity '{name}'...")
 
     print(f"  Fetching template ({tag})...")
     template = fetch_template(tag)
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(
-            identity.vm_instance,
-            template,
-            identity.projects_dir,
-            cpus=identity.cpus,
-            memory=identity.memory,
-            disk=identity.disk,
-        )
+        _create_from_target(target, template)
 
         print("  Starting VM...")
-        start_vm(identity.vm_instance)
+        start_vm(target.instance)
 
         print("  Linking Claude config directories...")
-        link_claude_dirs(identity.vm_instance, Path.home() / ".claude")
+        link_claude_dirs(target.instance, Path.home() / ".claude")
 
         print("Injecting credentials...")
-        inject_credentials(identity.vm_instance, identity)
+        inject_credentials(target.instance, identity)
 
-        install_tooling(identity.vm_instance, vergil_version)
+        install_tooling(target.instance, vergil_version)
     finally:
         template.unlink(missing_ok=True)
 
-    print(f"\nVM '{identity.vm_instance}' is ready.")
+    print(f"\nVM '{target.instance}' is ready.")
     return 0
 
 
@@ -317,12 +344,13 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
 
 
 def _cmd_rebuild(args: argparse.Namespace) -> int:
-    name, identity, config = _resolve(args)
+    target = _resolve_target(args)
+    name, identity, config = target.identity_name, target.identity, target.config
 
-    status = vm_status(identity.vm_instance)
+    status = vm_status(target.instance)
     if not status:
         print(
-            f"ERROR: VM '{identity.vm_instance}' does not exist — run 'vrg-vm create' first",
+            f"ERROR: VM '{target.instance}' does not exist — run 'vrg-vm create' first",
             file=sys.stderr,
         )
         return 1
@@ -337,41 +365,34 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
     vergil_version = resolve_vergil_version(config, identity)
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
-    print(f"Rebuilding VM '{identity.vm_instance}' (identity: {name})...")
+    print(f"Rebuilding VM '{target.instance}' (identity: {name})...")
 
     print("  Destroying old VM...")
-    delete_vm(identity.vm_instance)
+    delete_vm(target.instance)
 
     print(f"  Fetching template ({tag})...")
     template = fetch_template(tag)
 
     try:
         print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        create_vm(
-            identity.vm_instance,
-            template,
-            identity.projects_dir,
-            cpus=identity.cpus,
-            memory=identity.memory,
-            disk=identity.disk,
-        )
+        _create_from_target(target, template)
 
         print("  Starting VM...")
-        start_vm(identity.vm_instance, timeout=args.timeout)
+        start_vm(target.instance, timeout=args.timeout)
 
         print("  Injecting credentials...")
-        inject_credentials(identity.vm_instance, identity)
+        inject_credentials(target.instance, identity)
 
-        install_tooling(identity.vm_instance, vergil_version)
+        install_tooling(target.instance, vergil_version)
 
         claude_dir = Path.home() / ".claude"
         print("  Copying Claude Code config...")
-        copy_claude_config(identity.vm_instance, claude_dir)
-        link_claude_dirs(identity.vm_instance, claude_dir)
+        copy_claude_config(target.instance, claude_dir)
+        link_claude_dirs(target.instance, claude_dir)
     finally:
         template.unlink(missing_ok=True)
 
-    print(f"\nVM '{identity.vm_instance}' rebuilt and ready.")
+    print(f"\nVM '{target.instance}' rebuilt and ready.")
     return 0
 
 
@@ -582,6 +603,15 @@ def _add_identity_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--config", type=Path, help="Path to identities.toml")
 
 
+def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "workspace",
+        nargs="?",
+        default=None,
+        help="Optional <org>/<repo> to target a dedicated VM (default: the base VM)",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",
@@ -591,6 +621,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_create = sub.add_parser("create", help="Create and provision a new VM")
     _add_identity_args(p_create)
+    _add_workspace_arg(p_create)
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -625,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
+    _add_workspace_arg(p_rebuild)
     p_rebuild.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
