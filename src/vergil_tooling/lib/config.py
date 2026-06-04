@@ -98,7 +98,8 @@ class RoleOverlay:
     memory: str | None
     disk: str | None
     stale_days: int | None
-    provision: str | None
+    apt_repos: list[dict[str, str]]
+    vagrant_plugins: list[str]
 
 
 @dataclass
@@ -108,16 +109,22 @@ class VmStanza:
     memory: str | None
     disk: str | None
     stale_days: int | None
-    provision: str | None
+    apt_repos: list[dict[str, str]]
+    vagrant_plugins: list[str]
     roles: dict[str, RoleOverlay]
 
 
-_VM_SCALAR_KEYS = frozenset({"cpus", "memory", "disk", "stale_days", "provision", "packages"})
+# Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
+# (key + apt source line); vagrant_plugins is a list of plugin names. The
+# vergil-vm template owns *how* these install — repos never supply a script.
+_VM_KEYS = frozenset(
+    {"cpus", "memory", "disk", "stale_days", "packages", "apt_repos", "vagrant_plugins"}
+)
 
 
 def _parse_role_overlay(name: str, raw: dict[str, Any]) -> RoleOverlay:
     for key in raw:
-        if key not in _VM_SCALAR_KEYS:
+        if key not in _VM_KEYS:
             print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
     return RoleOverlay(
         packages=list(raw.get("packages", [])),
@@ -125,7 +132,8 @@ def _parse_role_overlay(name: str, raw: dict[str, Any]) -> RoleOverlay:
         memory=raw.get("memory"),
         disk=raw.get("disk"),
         stale_days=raw.get("stale_days"),
-        provision=raw.get("provision"),
+        apt_repos=list(raw.get("apt_repos", [])),
+        vagrant_plugins=list(raw.get("vagrant_plugins", [])),
     )
 
 
@@ -135,21 +143,22 @@ def parse_vm_stanza(raw: dict[str, Any]) -> VmStanza | None:
     if vm_raw is None:
         return None
     roles: dict[str, RoleOverlay] = {}
-    scalars: dict[str, Any] = {}
+    fields: dict[str, Any] = {}
     for key, value in vm_raw.items():
         if isinstance(value, dict):
             roles[key] = _parse_role_overlay(key, value)
-        elif key in _VM_SCALAR_KEYS:
-            scalars[key] = value
+        elif key in _VM_KEYS:
+            fields[key] = value
         else:
             print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm]", file=sys.stderr)
     return VmStanza(
-        packages=list(scalars.get("packages", [])),
-        cpus=scalars.get("cpus"),
-        memory=scalars.get("memory"),
-        disk=scalars.get("disk"),
-        stale_days=scalars.get("stale_days"),
-        provision=scalars.get("provision"),
+        packages=list(fields.get("packages", [])),
+        cpus=fields.get("cpus"),
+        memory=fields.get("memory"),
+        disk=fields.get("disk"),
+        stale_days=fields.get("stale_days"),
+        apt_repos=list(fields.get("apt_repos", [])),
+        vagrant_plugins=list(fields.get("vagrant_plugins", [])),
         roles=roles,
     )
 

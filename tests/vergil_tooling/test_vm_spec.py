@@ -15,6 +15,14 @@ from vergil_tooling.lib.vm_spec import (
 
 BASE = {"cpus": 4, "memory": "4GiB", "disk": "50GiB"}
 
+_REPO = {
+    "name": "hashicorp",
+    "key_url": "https://apt.releases.hashicorp.com/gpg",
+    "uri": "https://apt.releases.hashicorp.com",
+    "suite": "noble",
+    "components": "main",
+}
+
 
 def _mq_stanza() -> VmStanza:
     return VmStanza(
@@ -23,7 +31,8 @@ def _mq_stanza() -> VmStanza:
         memory=None,
         disk=None,
         stale_days=None,
-        provision=".vergil/provision.sh",
+        apt_repos=[_REPO],
+        vagrant_plugins=[],
         roles={
             "vergil-user": RoleOverlay(
                 packages=[],
@@ -31,7 +40,8 @@ def _mq_stanza() -> VmStanza:
                 memory="64GiB",
                 disk="300GiB",
                 stale_days=7,
-                provision=None,
+                apt_repos=[],
+                vagrant_plugins=["vagrant-libvirt"],
             ),
         },
     )
@@ -57,17 +67,20 @@ class TestComposeVmSpec:
         assert spec.disk == "300GiB"
         assert spec.stale_days == 7
         assert spec.packages == ("libvirt-clients", "qemu-system-x86")
-        assert spec.provision == ".vergil/provision.sh"
+        assert spec.apt_repos == (_REPO,)  # from [vm] tier
+        assert spec.vagrant_plugins == ("vagrant-libvirt",)  # from the role tier
         assert spec.under == ()
 
     def test_audit_gets_packages_only_at_base_footprint(self) -> None:
         spec = compose_vm_spec(
             identity="vergil-audit", base=BASE, stanza=_mq_stanza(), override=None
         )
-        assert spec.dedicated is True  # packages customize it
+        assert spec.dedicated is True  # packages + apt_repos customize it
         assert spec.cpus == 4
         assert spec.memory == "4GiB"  # base footprint, role overlay did not apply
         assert spec.packages == ("libvirt-clients", "qemu-system-x86")
+        assert spec.apt_repos == (_REPO,)  # all-identity [vm] tier
+        assert spec.vagrant_plugins == ()  # role-only, did not apply to audit
         assert spec.stale_days == 3
 
     def test_host_override_below_declared_flags_under(self) -> None:
@@ -155,10 +168,10 @@ class TestFingerprint:
             "disk": "300GiB",
             "stale_days": 7,
             "packages": ("a", "b"),
-            "provision": ".vergil/provision.sh",
+            "apt_repos": (_REPO,),
+            "vagrant_plugins": ("vagrant-libvirt",),
             "dedicated": True,
             "under": (),
-            "provision_hash": "hookv1",
         }
         base.update(over)
         return ComposedSpec(**base)  # type: ignore[arg-type]
@@ -181,14 +194,13 @@ class TestFingerprint:
             self._spec(packages=("a", "b"))
         )
 
-    def test_provision_hook_content_change_changes_fingerprint(self) -> None:
-        # Editing the script (same path) must flip the fingerprint — the security checkpoint.
-        assert spec_fingerprint(self._spec(provision_hash="hookv1")) != spec_fingerprint(
-            self._spec(provision_hash="hookv2")
+    def test_apt_repos_change_changes_fingerprint(self) -> None:
+        other = {**_REPO, "uri": "https://example.com"}
+        assert spec_fingerprint(self._spec(apt_repos=(_REPO,))) != spec_fingerprint(
+            self._spec(apt_repos=(other,))
         )
 
-    def test_falls_back_to_path_when_no_content_hash(self) -> None:
-        # No content hash: the path keeps the fingerprint stable and distinct from empty.
-        with_path = spec_fingerprint(self._spec(provision_hash=None))
-        no_hook = spec_fingerprint(self._spec(provision_hash=None, provision=None))
-        assert with_path != no_hook
+    def test_vagrant_plugins_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(vagrant_plugins=("a",))) != spec_fingerprint(
+            self._spec(vagrant_plugins=("a", "b"))
+        )

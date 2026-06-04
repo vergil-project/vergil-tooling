@@ -26,13 +26,12 @@ class ComposedSpec:
     disk: str
     stale_days: int
     packages: tuple[str, ...]
-    provision: str | None
+    # Declarative non-apt install: extra apt repositories (key + source line) and Vagrant
+    # plugins. The vergil-vm template owns *how* these install — no repo-supplied code.
+    apt_repos: tuple[dict[str, str], ...]
+    vagrant_plugins: tuple[str, ...]
     dedicated: bool
     under: tuple[str, ...]
-    # SHA-256 of the provision hook's CONTENTS (not the path). compose_vm_spec has no
-    # file access, so it leaves this None; the resolver fills it in before fingerprinting
-    # so that editing the script flips NEEDS-REBUILD.
-    provision_hash: str | None = None
 
 
 @dataclass
@@ -43,8 +42,9 @@ class _Acc:
     memory: str
     disk: str
     stale_days: int
-    provision: str | None
     packages: list[str]
+    apt_repos: list[dict[str, str]]
+    vagrant_plugins: list[str]
     customized: bool
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
@@ -57,6 +57,12 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     """Overlay a repo `[vm]` or `[vm.<role>]` table onto the accumulator."""
     if overlay.packages:
         acc.packages.extend(overlay.packages)
+        acc.customized = True
+    if overlay.apt_repos:
+        acc.apt_repos.extend(overlay.apt_repos)
+        acc.customized = True
+    if overlay.vagrant_plugins:
+        acc.vagrant_plugins.extend(overlay.vagrant_plugins)
         acc.customized = True
     if overlay.cpus is not None:
         acc.cpus = acc.declared_cpus = overlay.cpus
@@ -71,9 +77,6 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
         acc.customized = True
     if overlay.stale_days is not None:
         acc.stale_days = overlay.stale_days
-        acc.customized = True
-    if overlay.provision is not None:
-        acc.provision = overlay.provision
         acc.customized = True
 
 
@@ -91,8 +94,9 @@ def compose_vm_spec(
         memory=str(base["memory"]),
         disk=str(base["disk"]),
         stale_days=_DEFAULT_STALE_DAYS,
-        provision=None,
         packages=[],
+        apt_repos=[],
+        vagrant_plugins=[],
         customized=False,
         declared_cpus=None,
         declared_mem=None,
@@ -131,7 +135,8 @@ def compose_vm_spec(
         disk=acc.disk,
         stale_days=acc.stale_days,
         packages=tuple(sorted(set(acc.packages))),
-        provision=acc.provision,
+        apt_repos=tuple(acc.apt_repos),
+        vagrant_plugins=tuple(sorted(set(acc.vagrant_plugins))),
         dedicated=acc.customized,
         under=tuple(under),
     )
@@ -158,13 +163,16 @@ def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
     raise ValueError(msg)
 
 
+def _repo_key(repo: dict[str, str]) -> str:
+    return "|".join(f"{k}={repo[k]}" for k in sorted(repo))
+
+
 def spec_fingerprint(spec: ComposedSpec) -> str:
     """Stable SHA-256 over the declaration (NOT the resulting image bytes).
 
     ``under`` and ``dedicated`` are excluded: they are derived view-state, not part of
-    what the VM is built from. Packages are sorted so order cannot change the hash. The
-    provision hook's CONTENT hash (when present) is what makes editing the script flip the
-    fingerprint; the path is only a fallback.
+    what the VM is built from. Packages, apt repos, and vagrant plugins are sorted so
+    order cannot change the hash. Editing any declarative field flips the fingerprint.
     """
     payload = "\n".join(
         (
@@ -172,8 +180,9 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
             f"memory={spec.memory}",
             f"disk={spec.disk}",
             f"stale_days={spec.stale_days}",
-            f"provision={spec.provision_hash or spec.provision or ''}",
             "packages=" + ",".join(sorted(spec.packages)),
+            "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
+            "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
         )
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

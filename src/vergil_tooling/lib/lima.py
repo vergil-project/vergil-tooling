@@ -154,7 +154,8 @@ def create_vm(
     memory: str | None = None,
     disk: str | None = None,
     packages: list[str] | None = None,
-    provision_hook: str | None = None,
+    apt_repos: list[dict[str, str]] | None = None,
+    vagrant_plugins: list[str] | None = None,
     fingerprint: str | None = None,
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
@@ -191,8 +192,15 @@ def create_vm(
         args.append(f'--set=.disk = "{disk}"')
     if packages:
         args.append(f'--set=.param.EXTRA_PACKAGES = "{" ".join(packages)}"')
-    if provision_hook:
-        args.append(f'--set=.param.PROVISION_HOOK = "{provision_hook}"')
+    if apt_repos:
+        # Each repo encoded "name|key_url|uri|suite|components"; repos joined by ";".
+        encoded = ";".join(
+            "|".join((r["name"], r["key_url"], r["uri"], r["suite"], r["components"]))
+            for r in apt_repos
+        )
+        args.append(f'--set=.param.APT_REPOS = "{encoded}"')
+    if vagrant_plugins:
+        args.append(f'--set=.param.VAGRANT_PLUGINS = "{" ".join(vagrant_plugins)}"')
     if fingerprint:
         args.append(f'--set=.param.SPEC_FINGERPRINT = "{fingerprint}"')
     args.append(str(template))
