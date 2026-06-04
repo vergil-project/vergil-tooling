@@ -142,19 +142,30 @@ def compose_vm_spec(
     )
 
 
-_TIER_SEP = "--"
+# Lima instance names must match ^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$ — single
+# separators only, so the previous ``--`` join produced names limactl rejects.
+# The three tiers are joined with a single ``.``. The repo tier is encoded last
+# and may itself contain ``.``/``_`` (GitHub allows them), so parsing splits on
+# the first two dots and treats the remainder as the repo. That round-trip is
+# only unambiguous if the identity and org tiers contain no dots; instance_name
+# enforces that loudly rather than silently producing a name that won't decode.
+_TIER_SEP = "."
 
 
 def instance_name(identity: str, org: str | None, repo: str | None) -> str:
-    """Derive the Lima instance name. Bare identity = base box; ``--``-joined = dedicated."""
+    """Derive the Lima instance name. Bare identity = base box; ``.``-joined = dedicated."""
     if org is None or repo is None:
         return identity
+    for tier, value in (("identity", identity), ("org", org)):
+        if _TIER_SEP in value:
+            msg = f"{tier} name {value!r} must not contain '{_TIER_SEP}'"
+            raise ValueError(msg)
     return _TIER_SEP.join((identity, org, repo))
 
 
 def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
     """Reverse instance_name. Returns (identity, org, repo); org/repo are None for base."""
-    parts = name.split(_TIER_SEP)
+    parts = name.split(_TIER_SEP, 2)
     if len(parts) == 1:
         return parts[0], None, None
     if len(parts) == 3:  # noqa: PLR2004
