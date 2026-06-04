@@ -577,3 +577,13 @@ class TestParseVmStanza:
     def test_unrecognized_key_in_role_warns(self, capsys: pytest.CaptureFixture[str]) -> None:
         parse_vm_stanza({"vm": {"vergil-user": {"bogus": 1, "cpus": 4}}})
         assert "unrecognized key 'bogus' in [vm.vergil-user]" in capsys.readouterr().err
+
+    def test_read_config_surfaces_vm_stanza(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_VALID_TOML + '\n[vm]\npackages = ["x"]\n')
+        cfg = read_config(tmp_path)
+        assert cfg.vm is not None
+        assert cfg.vm.packages == ["x"]
+
+    def test_read_config_no_vm_stanza_is_none(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+        assert read_config(tmp_path).vm is None

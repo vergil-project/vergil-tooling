@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import hashlib
 import json
 import os
 import shlex
 import sys
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +19,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib.config import read_config
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -49,6 +52,12 @@ from vergil_tooling.lib.lima import (
     vm_status,
 )
 from vergil_tooling.lib.session import list_rows, make_name
+from vergil_tooling.lib.vm_spec import (
+    ComposedSpec,
+    compose_vm_spec,
+    instance_name,
+    spec_fingerprint,
+)
 
 _default_config_path = default_config_path
 
@@ -62,6 +71,79 @@ def _resolve(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig]:
     config = load_config(config_path)
     name, identity = resolve_identity_by_name(config, args.identity)
     return name, identity, config
+
+
+_BASE_CPUS = 4
+_BASE_MEMORY = "4GiB"
+_BASE_DISK = "50GiB"
+
+
+@dataclass
+class Target:
+    identity_name: str
+    identity: Identity
+    config: IdentityConfig
+    org: str | None
+    repo: str | None
+    spec: ComposedSpec
+    instance: str
+    fingerprint: str
+
+
+def _base_footprint(identity: Identity) -> dict[str, object]:
+    return {
+        "cpus": identity.cpus if identity.cpus is not None else _BASE_CPUS,
+        "memory": identity.memory if identity.memory is not None else _BASE_MEMORY,
+        "disk": identity.disk if identity.disk is not None else _BASE_DISK,
+    }
+
+
+def _split_workspace(workspace: str) -> tuple[str, str]:
+    parts = workspace.strip("/").split("/")
+    expected = 2
+    if len(parts) != expected:
+        print(
+            f"ERROR: workspace must be '<org>/<repo>', got {workspace!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return parts[0], parts[1]
+
+
+def _resolve_target(args: argparse.Namespace) -> Target:
+    """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
+    name, identity, config = _resolve(args)
+    workspace = getattr(args, "workspace", None)
+    base = _base_footprint(identity)
+
+    if not workspace:
+        spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
+        return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
+
+    org, repo = _split_workspace(workspace)
+    repo_dir = Path(resolve_workspace(workspace, identity.projects_dir))
+    try:
+        stanza = read_config(repo_dir).vm
+    except FileNotFoundError:
+        stanza = None  # a repo with no vergil.toml needs no dedicated VM
+    override = identity.overrides.get((org, repo))
+    spec = compose_vm_spec(identity=name, base=base, stanza=stanza, override=override)
+
+    if not spec.dedicated:
+        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
+
+    # Fold the provision hook's CONTENT hash into the fingerprint, so editing the
+    # script (same path) flips NEEDS-REBUILD — the security review checkpoint. The hook
+    # is source-controlled and normally present; if absent at resolve time we fall back
+    # to the path (the template enforces presence at build).
+    if spec.provision:
+        hook_path = repo_dir / spec.provision
+        if hook_path.exists():
+            digest = hashlib.sha256(hook_path.read_bytes()).hexdigest()
+            spec = replace(spec, provision_hash=digest)
+
+    inst = instance_name(name, org, repo)
+    return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
 
 
 def _cmd_create(args: argparse.Namespace) -> int:

@@ -88,6 +88,7 @@ class VergilConfig:
     ci: CiConfig
     publish: PublishConfig
     container: ContainerConfig
+    vm: VmStanza | None = None
 
 
 @dataclass
@@ -263,6 +264,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
         ci=ci,
         publish=publish,
         container=container,
+        vm=parse_vm_stanza(raw),
     )
 
 

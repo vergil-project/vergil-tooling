@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import textwrap
@@ -8,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_vm import main
+from vergil_tooling.bin.vrg_vm import Target, _resolve_target, main
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1167,3 +1168,136 @@ def test_selected_states() -> None:
     assert _selected_states(ns(all=True)) == {"active", "idle", "archived"}
     assert _selected_states(ns(active=True)) == {"active"}
     assert _selected_states(ns(idle=True, archived=True)) == {"idle", "archived"}
+
+
+# -- _resolve_target (issue #99) ----------------------------------------------
+
+_REPO_TOML_HEAD = """\
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+
+def _identities(tmp_path: Path, projects: Path) -> Path:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent(f"""\
+        default_identity = "vergil-user"
+        vergil = "v2.0"
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+        projects_dir = "{projects}"
+    """)
+    )
+    return p
+
+
+def _make_repo(projects: Path, org: str, repo: str, vm_section: str = "") -> Path:
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "vergil.toml").write_text(_REPO_TOML_HEAD + vm_section)
+    return repo_dir
+
+
+def _args(config: Path, workspace: str | None) -> argparse.Namespace:
+    return argparse.Namespace(config=config, identity=None, workspace=workspace)
+
+
+_MQ_VM_SECTION = """
+[vm]
+packages = ["qemu-system-x86"]
+provision = ".vergil/provision.sh"
+
+[vm.vergil-user]
+cpus = 12
+memory = "64GiB"
+disk = "300GiB"
+"""
+
+
+class TestResolveTarget:
+    def test_no_workspace_is_base(self, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        target = _resolve_target(_args(cfg, None))
+        assert isinstance(target, Target)
+        assert target.org is None
+        assert target.repo is None
+        assert target.instance == "vergil-user"
+        assert target.spec.dedicated is False
+        assert target.fingerprint == ""
+
+    def test_repo_without_vergil_toml_is_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        (projects / "org" / "plain").mkdir(parents=True)  # no vergil.toml
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/plain"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_plain_repo_with_no_vm_section_is_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "plain")
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/plain"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_spec_repo_is_dedicated_and_hashes_hook(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/mq"))
+        assert target.org == "lmf"
+        assert target.repo == "mq"
+        assert target.instance == "vergil-user--lmf--mq"
+        assert target.spec.dedicated is True
+        assert target.spec.cpus == 12
+        assert target.fingerprint != ""
+
+    def test_editing_hook_changes_fingerprint(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        cfg = _identities(tmp_path, projects)
+        hook.write_text("echo v1\n")
+        fp1 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
+        hook.write_text("echo v2  # edited\n")
+        fp2 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
+        assert fp1 != fp2
+
+    def test_dedicated_without_provision_skips_hook(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "pkgonly", '\n[vm]\npackages = ["qemu-system-x86"]\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/pkgonly"))
+        assert target.spec.dedicated is True
+        assert target.spec.provision is None
+        assert target.fingerprint != ""
+
+    def test_dedicated_with_missing_hook_falls_back_to_path(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        # provision declared but the script file is absent at resolve time.
+        _make_repo(projects, "org", "nohook", '\n[vm]\nprovision = ".vergil/provision.sh"\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/nohook"))
+        assert target.spec.dedicated is True
+        assert target.fingerprint != ""
+
+    def test_bad_workspace_aborts(self, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        with pytest.raises(SystemExit):
+            _resolve_target(_args(cfg, "not-a-valid-path"))
