@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import textwrap
@@ -8,10 +9,23 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.bin.vrg_vm import main
+from vergil_tooling.bin.vrg_vm import (
+    DedicatedRow,
+    Target,
+    _list_rows,
+    _preflight_target,
+    _resolve_target,
+    _target_ref,
+    _warn_under,
+    discover_dedicated,
+    main,
+)
+from vergil_tooling.lib.identity import Identity, IdentityConfig
+from vergil_tooling.lib.vm_spec import ComposedSpec
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from typing import Any
 
 
 @pytest.fixture()
@@ -599,9 +613,14 @@ class TestRebuild:
 
 
 class TestList:
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(
-        self, mock_list: MagicMock, config_file: Path, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_list: MagicMock,
+        _occ: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_list.return_value = [
             {"name": "vergil-agent", "status": "Running"},
@@ -609,9 +628,10 @@ class TestList:
         result = main(["list", "--config", str(config_file)])
         assert result == 0
         output = capsys.readouterr().out
-        assert "vergil" in output
-        assert "vergil-agent" in output
-        assert "Running" in output
+        assert "vergil" in output  # IDENTITY column
+        assert "base" in output  # SCOPE column
+        assert "Running" in output  # STATUS column
+        assert "AGENTS" in output  # new observability header
 
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_not_created(
@@ -1167,3 +1187,468 @@ def test_selected_states() -> None:
     assert _selected_states(ns(all=True)) == {"active", "idle", "archived"}
     assert _selected_states(ns(active=True)) == {"active"}
     assert _selected_states(ns(idle=True, archived=True)) == {"idle", "archived"}
+
+
+# -- _resolve_target (issue #99) ----------------------------------------------
+
+_REPO_TOML_HEAD = """\
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+
+def _identities(tmp_path: Path, projects: Path) -> Path:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent(f"""\
+        default_identity = "vergil-user"
+        vergil = "v2.0"
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+        projects_dir = "{projects}"
+    """)
+    )
+    return p
+
+
+def _make_repo(projects: Path, org: str, repo: str, vm_section: str = "") -> Path:
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "vergil.toml").write_text(_REPO_TOML_HEAD + vm_section)
+    return repo_dir
+
+
+def _args(config: Path, workspace: str | None) -> argparse.Namespace:
+    return argparse.Namespace(config=config, identity=None, workspace=workspace)
+
+
+_MQ_VM_SECTION = """
+[vm]
+packages = ["qemu-system-x86"]
+provision = ".vergil/provision.sh"
+
+[vm.vergil-user]
+cpus = 12
+memory = "64GiB"
+disk = "300GiB"
+"""
+
+
+class TestResolveTarget:
+    def test_no_workspace_is_base(self, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        target = _resolve_target(_args(cfg, None))
+        assert isinstance(target, Target)
+        assert target.org is None
+        assert target.repo is None
+        assert target.instance == "vergil-user"
+        assert target.spec.dedicated is False
+        assert target.fingerprint == ""
+
+    def test_repo_without_vergil_toml_is_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        (projects / "org" / "plain").mkdir(parents=True)  # no vergil.toml
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/plain"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_plain_repo_with_no_vm_section_is_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "plain")
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/plain"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_spec_repo_is_dedicated_and_hashes_hook(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/mq"))
+        assert target.org == "lmf"
+        assert target.repo == "mq"
+        assert target.instance == "vergil-user--lmf--mq"
+        assert target.spec.dedicated is True
+        assert target.spec.cpus == 12
+        assert target.fingerprint != ""
+
+    def test_editing_hook_changes_fingerprint(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        cfg = _identities(tmp_path, projects)
+        hook.write_text("echo v1\n")
+        fp1 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
+        hook.write_text("echo v2  # edited\n")
+        fp2 = _resolve_target(_args(cfg, "lmf/mq")).fingerprint
+        assert fp1 != fp2
+
+    def test_dedicated_without_provision_skips_hook(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "pkgonly", '\n[vm]\npackages = ["qemu-system-x86"]\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/pkgonly"))
+        assert target.spec.dedicated is True
+        assert target.spec.provision is None
+        assert target.fingerprint != ""
+
+    def test_dedicated_with_missing_hook_falls_back_to_path(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        # provision declared but the script file is absent at resolve time.
+        _make_repo(projects, "org", "nohook", '\n[vm]\nprovision = ".vergil/provision.sh"\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "org/nohook"))
+        assert target.spec.dedicated is True
+        assert target.fingerprint != ""
+
+    def test_one_level_workspace_is_base(self, tmp_path: Path) -> None:
+        # The pre-existing 1-level session convention (a bare repo name) stays on base.
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        target = _resolve_target(_args(cfg, "just-a-repo"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+    def test_absolute_workspace_is_base(self, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        target = _resolve_target(_args(cfg, "/abs/path"))
+        assert target.spec.dedicated is False
+        assert target.instance == "vergil-user"
+
+
+class TestCreateDedicated:
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_create_passes_packages_hook_and_fingerprint(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "lmf/mq", "--config", str(cfg)]) == 0
+        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["cpus"] == 12
+        assert kwargs["memory"] == "64GiB"
+        assert kwargs["packages"] == ["qemu-system-x86"]
+        assert kwargs["fingerprint"] != ""
+        assert kwargs["provision_hook"].endswith("/lmf/mq/.vergil/provision.sh")
+
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_create_without_provision_hook(
+        self,
+        _status: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "pkgonly", '\n[vm]\npackages = ["qemu-system-x86"]\n')
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "org/pkgonly", "--config", str(cfg)]) == 0
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["packages"] == ["qemu-system-x86"]
+        assert kwargs["provision_hook"] is None
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_dedicated_rebuild_passes_spec(
+        self,
+        _status: MagicMock,
+        _delete: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        _link: MagicMock,
+        _copy: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        repo_dir = _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        hook = repo_dir / ".vergil" / "provision.sh"
+        hook.parent.mkdir()
+        hook.write_text("echo v1\n")
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["rebuild", "lmf/mq", "--config", str(cfg)]) == 0
+        assert mock_create.call_args.args[0] == "vergil-user--lmf--mq"
+        assert mock_create.call_args.kwargs["fingerprint"] != ""
+
+
+def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = "fp") -> Target:
+    ident = Identity(vm_instance="vergil-user", projects_dir="/projects")
+    spec = ComposedSpec(
+        cpus=12,
+        memory="64GiB",
+        disk="300GiB",
+        stale_days=7,
+        packages=(),
+        provision=None,
+        dedicated=dedicated,
+        under=under,
+    )
+    cfg = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+    if dedicated:
+        return Target(
+            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user--lmf--mq", fingerprint
+        )
+    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "")
+
+
+class TestPreflight:
+    def test_base_passes(self) -> None:
+        assert _preflight_target(_target(dedicated=False)) == 0
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_missing_aborts(self, _status: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_drift_aborts(self, _status: MagicMock, _spec: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 1
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_ok_passes(self, _status: MagicMock, _spec: MagicMock) -> None:
+        assert _preflight_target(_target(dedicated=True)) == 0
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_under_warns(
+        self, _status: MagicMock, _spec: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert _preflight_target(_target(dedicated=True, under=("mem",))) == 0
+        assert "under-provisioned" in capsys.readouterr().err
+
+    def test_warn_under_noop_when_empty(self, capsys: pytest.CaptureFixture[str]) -> None:
+        _warn_under(_target(dedicated=True, under=()))
+        assert capsys.readouterr().err == ""
+
+    def test_target_ref_dedicated_and_base(self) -> None:
+        assert _target_ref(_target(dedicated=True)) == "lmf/mq"
+        assert _target_ref(_target(dedicated=False)) == "--identity vergil-user"
+
+
+class TestDedicatedGateThroughCommands:
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_session_aborts_when_dedicated_missing(
+        self, _status: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        cfg = _identities(tmp_path, projects)
+        # session uses REMAINDER for `cmd`, so --config must precede the workspace.
+        assert main(["session", "--config", str(cfg), "lmf/mq"]) == 1
+
+
+class TestLifecyclePositional:
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_destroy_targets_dedicated_instance(
+        self, _status: MagicMock, mock_delete: MagicMock, tmp_path: Path
+    ) -> None:
+        # No repo/spec needed: an orphan (repo dropped [vm]) is still reachable by name.
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        assert main(["destroy", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_delete.assert_called_once_with("vergil-user--lmf--mq")
+
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    def test_stop_targets_dedicated_instance(self, mock_stop: MagicMock, tmp_path: Path) -> None:
+        cfg = _identities(tmp_path, tmp_path / "projects")
+        assert main(["stop", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_stop.assert_called_once_with("vergil-user--lmf--mq")
+
+
+class TestDiscoverDedicated:
+    def test_present_orphan_and_not_created(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
+        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
+        _make_repo(projects, "org", "nospec", "")  # valid vergil.toml, no [vm]
+        _make_repo(projects, "org", "plain", "")  # no [vm], no instance -> not listed
+        broken = projects / "org" / "broken"
+        broken.mkdir(parents=True)
+        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
+        instances = [
+            "vergil-user--org--present",  # instance + spec -> present
+            "vergil-user--org--gone",  # instance, no repo -> orphaned
+            "vergil-user--org--nospec",  # repo without [vm] -> orphaned
+            "vergil-user--org--broken",  # repo with broken toml -> orphaned
+            "vergil-user",  # base instance -> ignored (org is None)
+            "a--b--c--d",  # unparseable -> ignored
+            "vergil-audit--org--present",  # other identity -> ignored
+        ]
+        rows = discover_dedicated("vergil-user", instances, str(projects))
+        by_repo = {r.repo: r.state for r in rows}
+        assert by_repo == {
+            "present": "present",
+            "gone": "orphaned",
+            "nospec": "orphaned",
+            "broken": "orphaned",
+            "todo": "not-created",
+        }
+        assert all(isinstance(r, DedicatedRow) for r in rows)
+
+    def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
+        rows = discover_dedicated("vergil-user", [], str(tmp_path / "nope"))
+        assert rows == []
+
+
+class TestListRows:
+    def _identity(self, projects: Path, **over: Any) -> Identity:
+        base: dict[str, Any] = {
+            "vm_instance": "vergil-user",
+            "projects_dir": str(projects),
+            "cpus": 4,
+            "memory": "4GiB",
+            "disk": "50GiB",
+        }
+        base.update(over)
+        return Identity(**base)
+
+    def _row(self, rows: list[dict[str, object]], scope: str) -> dict[str, object]:
+        return next(r for r in rows if r["scope"] == scope)
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(2, 1))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    def test_base_and_present_running_ok(
+        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        status = {"vergil-user": "Running", "vergil-user--lmf--mq": "Running"}
+        rows = _list_rows("vergil-user", ident, dedic, status)
+        base = self._row(rows, "base")
+        ded = self._row(rows, "lmf/mq")
+        assert base["cpus"] == 4
+        assert base["agents"] == "2"
+        assert base["humans"] == "1"
+        assert ded["cpus"] == 12
+        assert ded["spec"] == "ok"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    def test_present_running_needs_rebuild(
+        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    def test_present_running_under(self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--lmf--mq": "Running"})
+        assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
+
+    def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
+        ded = self._row(rows, "lmf/mq")
+        assert ded["spec"] == "ok"
+        assert ded["agents"] == "—"
+
+    def test_present_repo_without_vergil_toml_uses_base(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)  # projects/lmf/mq does not exist
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user--lmf--mq", "present")]
+        rows = _list_rows("vergil-user", ident, dedic, {})
+        assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
+
+    def test_orphaned_and_not_created(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        dedic = [
+            DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned"),
+            DedicatedRow("o", "todo", "vergil-user--o--todo", "not-created"),
+        ]
+        rows = _list_rows("vergil-user", ident, dedic, {})
+        by_scope = {r["scope"]: r["spec"] for r in rows}
+        assert by_scope["o/gone"] == "orphaned"
+        assert by_scope["o/todo"] == "not-created"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
+    def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("o", "gone", "vergil-user--o--gone", "orphaned")]
+        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user--o--gone": "Running"})
+        assert self._row(rows, "o/gone")["agents"] == "1"
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_start_aborts_when_dedicated_missing(self, _status: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        cfg = _identities(tmp_path, projects)
+        assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1

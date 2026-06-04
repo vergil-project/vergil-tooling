@@ -31,7 +31,7 @@ _REQUIRED_PROJECT_FIELDS = (
 _PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language")
 
 _KNOWN_SECTIONS = frozenset(
-    {"project", "dependencies", "markdownlint", "ci", "publish", "container"},
+    {"project", "dependencies", "markdownlint", "ci", "publish", "container", "vm"},
 )
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
@@ -88,6 +88,70 @@ class VergilConfig:
     ci: CiConfig
     publish: PublishConfig
     container: ContainerConfig
+    vm: VmStanza | None = None
+
+
+@dataclass
+class RoleOverlay:
+    packages: list[str]
+    cpus: int | None
+    memory: str | None
+    disk: str | None
+    stale_days: int | None
+    provision: str | None
+
+
+@dataclass
+class VmStanza:
+    packages: list[str]
+    cpus: int | None
+    memory: str | None
+    disk: str | None
+    stale_days: int | None
+    provision: str | None
+    roles: dict[str, RoleOverlay]
+
+
+_VM_SCALAR_KEYS = frozenset({"cpus", "memory", "disk", "stale_days", "provision", "packages"})
+
+
+def _parse_role_overlay(name: str, raw: dict[str, Any]) -> RoleOverlay:
+    for key in raw:
+        if key not in _VM_SCALAR_KEYS:
+            print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
+    return RoleOverlay(
+        packages=list(raw.get("packages", [])),
+        cpus=raw.get("cpus"),
+        memory=raw.get("memory"),
+        disk=raw.get("disk"),
+        stale_days=raw.get("stale_days"),
+        provision=raw.get("provision"),
+    )
+
+
+def parse_vm_stanza(raw: dict[str, Any]) -> VmStanza | None:
+    """Parse the repo ``[vm]`` cascade. Returns None when no ``[vm]`` section exists."""
+    vm_raw = raw.get("vm")
+    if vm_raw is None:
+        return None
+    roles: dict[str, RoleOverlay] = {}
+    scalars: dict[str, Any] = {}
+    for key, value in vm_raw.items():
+        if isinstance(value, dict):
+            roles[key] = _parse_role_overlay(key, value)
+        elif key in _VM_SCALAR_KEYS:
+            scalars[key] = value
+        else:
+            print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm]", file=sys.stderr)
+    return VmStanza(
+        packages=list(scalars.get("packages", [])),
+        cpus=scalars.get("cpus"),
+        memory=scalars.get("memory"),
+        disk=scalars.get("disk"),
+        stale_days=scalars.get("stale_days"),
+        provision=scalars.get("provision"),
+        roles=roles,
+    )
 
 
 def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
@@ -97,6 +161,8 @@ def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
             continue
         if not isinstance(raw[section], dict):
             continue
+        if section == "vm":
+            continue  # [vm] keys (incl. [vm.<role>] subtables) are validated in parse_vm_stanza
         known = _KNOWN_KEYS.get(section, frozenset())
         for key in raw[section]:
             if key not in known:
@@ -198,6 +264,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
         ci=ci,
         publish=publish,
         container=container,
+        vm=parse_vm_stanza(raw),
     )
 
 
