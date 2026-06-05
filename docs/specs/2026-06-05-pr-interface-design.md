@@ -2,7 +2,7 @@
 
 - **Issue:** vergil-project/vergil-tooling#1423
 - **Date:** 2026-06-05
-- **Status:** Approved design, pending implementation plan
+- **Status:** Approved — implemented (see docs/plans/2026-06-05-pr-interface.md)
 
 ## Context and goal
 
