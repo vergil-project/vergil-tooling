@@ -1328,3 +1328,52 @@ class TestGetInstallationToken:
             mock_req.return_value = {"token": "new_token"}
             token = github.get_installation_token(org="test-org")
         assert token == "new_token"  # noqa: S105
+
+
+# -- pr_for_branch / is_draft / head_ref (issue #1423) ------------------------
+
+
+def test_pr_for_branch_returns_first_open_pr() -> None:
+    payload = [{"number": 1423, "url": "https://github.com/o/r/pull/1423", "title": "T"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
+        result = github.pr_for_branch("feature/1423-pr-interface")
+    assert result == {
+        "number": "1423",
+        "url": "https://github.com/o/r/pull/1423",
+        "title": "T",
+    }
+    rj.assert_called_once_with(
+        "pr",
+        "list",
+        "--head",
+        "feature/1423-pr-interface",
+        "--state",
+        "open",
+        "--json",
+        "number,url,title",
+    )
+
+
+def test_pr_for_branch_none_when_no_open_pr() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
+        assert github.pr_for_branch("feature/1423-pr-interface") is None
+
+
+def test_is_draft_true() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="true"):
+        assert github.is_draft("1423") is True
+
+
+def test_is_draft_false() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="false"):
+        assert github.is_draft("1423") is False
+
+
+def test_head_ref() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="feature/1423-x"):
+        assert github.head_ref("1423") == "feature/1423-x"
+
+
+def test_pr_for_branch_none_when_payload_not_dict() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
+        assert github.pr_for_branch("feature/1423-pr-interface") is None
