@@ -441,6 +441,72 @@ def test_no_warnings_for_valid_config(tmp_path: Path, capsys: pytest.CaptureFixt
     assert err == ""
 
 
+# -- messages include the config path (issue #1411) ---------------------------
+
+
+def test_primary_language_warning_includes_config_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "none"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert f"warning: {tmp_path / 'vergil.toml'}: unrecognized primary-language 'none'" in err
+    assert cfg.project.primary_language is None
+
+
+def test_unrecognized_key_warning_includes_config_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_EXTRA_PROJECT_KEY_TOML)
+    read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'vergil.toml'}: unrecognized key 'version-file' in [project]" in err
+
+
+def test_unrecognized_section_warning_includes_config_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALID_TOML + '\n[custom]\nfoo = "bar"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'vergil.toml'}: unrecognized section [custom]" in err
+
+
+def test_config_error_includes_config_path(tmp_path: Path) -> None:
+    toml = _VALID_TOML.replace('release-model = "tagged-release"\n', "")
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError) as excinfo:
+        read_config(tmp_path)
+    assert str(tmp_path / "vergil.toml") in str(excinfo.value)
+
+
+def test_invalid_toml_error_includes_config_path(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
+    with pytest.raises(ConfigError) as excinfo:
+        read_config(tmp_path)
+    assert str(tmp_path / "vergil.toml") in str(excinfo.value)
+
+
+def test_vm_key_warning_includes_config_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + "\n[vm]\nbogus = 1\n")
+    read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'vergil.toml'}: unrecognized key 'bogus' in [vm]" in err
+
+
+def test_vm_role_warning_includes_config_path(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML + "\n[vm.vergil-user]\nbogus = 1\n")
+    read_config(tmp_path)
+    err = capsys.readouterr().err
+    assert f"{tmp_path / 'vergil.toml'}: unrecognized key 'bogus' in [vm.vergil-user]" in err
+
+
 # -- [container] section ------------------------------------------------------
 
 _CONTAINER_TOML = (

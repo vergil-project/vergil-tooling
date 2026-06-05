@@ -58,7 +58,7 @@ def _load_local_config(path: str) -> VergilConfig:
     """Load and parse vergil.toml from a local file path."""
     with Path(path).open("rb") as f:
         raw = tomllib.load(f)
-    return _parse_raw_config(raw)
+    return _parse_raw_config(raw, source=path)
 
 
 def _fetch_remote_config(repo: str) -> VergilConfig:
@@ -76,7 +76,7 @@ def _fetch_remote_config(repo: str) -> VergilConfig:
         raise RuntimeError(msg)
     raw_bytes = base64.b64decode(content)
     raw = tomllib.loads(raw_bytes.decode())
-    return _parse_raw_config(raw)
+    return _parse_raw_config(raw, source=f"{repo}:vergil.toml")
 
 
 def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
