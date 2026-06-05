@@ -1,0 +1,86 @@
+<h2>End-to-end run with mixed failure modes</h2>
+<p class="subtitle">Confirming what a <code>vrg release</code> run looks like with one deferred failure and one skipped fail-fast</p>
+
+<style>
+  .term {
+    background: #0d1117;
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.75;
+    color: #c9d1d9;
+    margin: 8px 0 4px 0;
+  }
+  .t-done { color: #3fb950; }
+  .t-fail { color: #f85149; }
+  .t-warn { color: #d29922; }
+  .t-run  { color: #58a6ff; }
+  .t-dim  { color: #6e7681; }
+  .t-bold { font-weight: 700; color: #e6edf3; }
+  .t-skip { color: #8b949e; text-decoration: line-through; }
+  .indent { padding-left: 20px; display: block; }
+  .indent2 { padding-left: 36px; display: block; }
+  .sep { border: none; border-top: 1px solid #21262d; margin: 8px 0; }
+  .label {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #6e7681;
+    padding: 2px 6px;
+    border: 1px solid #30363d;
+    border-radius: 3px;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+</style>
+
+<div class="mockup">
+  <div class="mockup-header">$ vrg release 2.1.2 --skip-audit</div>
+  <div class="mockup-body">
+    <div class="term">
+
+      <div><span class="t-warn">⚠</span> <span class="t-bold">audit</span> <span class="t-dim">skipped by --skip-audit</span> <span class="label" style="color:#d29922;border-color:#d29922">warn</span></div>
+
+      <div><span class="t-done">✓</span> <span class="t-bold">changelog</span>        <span class="t-dim">3.2s</span></div>
+      <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span>    <span class="t-dim">1.1s</span></div>
+      <div><span class="t-done">✓</span> <span class="t-bold">tag-and-release</span> <span class="t-dim">8.4s</span></div>
+
+      <div><span class="t-fail">✗</span> <span class="t-bold">build-images</span>    <span class="t-dim">31.2s</span> <span class="label" style="color:#f85149;border-color:#f85149">fail-defer</span></div>
+
+      <div><span class="t-done">✓</span> <span class="t-bold">publish-pypi</span>    <span class="t-dim">4.7s</span></div>
+      <div><span class="t-done">✓</span> <span class="t-bold">docs-deploy</span>     <span class="t-dim">12.1s</span></div>
+
+      <hr class="sep">
+
+      <div><span class="t-warn">⚠  warnings (non-fatal):</span></div>
+      <span class="indent t-warn">audit — skipped via --skip-audit flag</span>
+
+      <div style="margin-top:6px"><span class="t-fail">✗  deferred failures:</span></div>
+      <span class="indent t-fail">build-images — docker build exited 1</span>
+      <span class="indent2 t-dim">ghcr.io/vergil-project/dev-base:2.1.2 failed at step 9/12</span>
+      <span class="indent2 t-dim">full output → .vergil/release-20260605-143022.log</span>
+
+      <div style="margin-top:8px">
+        <span class="t-fail">release 2.1.2 completed with errors</span>
+        <span class="t-dim" style="margin-left:8px">total: 01:01</span>
+      </div>
+      <div style="margin-top:2px;font-size:10px;color:#6e7681">ReleaseError: 1 stage failed (build-images) · exit 1</div>
+
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:20px">
+  <h3>Contrast: fail-fast (no escape hatch used)</h3>
+  <div class="term">
+    <div><span class="t-fail">✗</span> <span class="t-bold">audit</span> <span class="t-dim">2.1s</span> <span class="label" style="color:#f85149;border-color:#f85149">fail-fast</span></div>
+    <span class="indent t-fail">3 high-severity vulnerabilities found in dependencies</span>
+    <span class="indent t-dim">full output → .vergil/release-20260605-143022.log</span>
+    <div style="margin-top:6px"><span class="t-fail">AuditError: release aborted · exit 1</span></div>
+    <div class="t-dim" style="font-size:10px;margin-top:2px">tip: use --skip-audit to acknowledge and continue anyway</div>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top:16px">Does this match your mental model? Particularly: the summary format, the label style, and the "tip" hint on fail-fast aborts.</p>

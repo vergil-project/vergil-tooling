@@ -1,0 +1,85 @@
+<h2>Design decisions — complete</h2>
+<p class="subtitle">Everything locked before we write the spec. One last pass — anything missing or wrong?</p>
+
+<style>
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: #6e7681; font-weight: 600; font-size: 10px;
+       letter-spacing: 0.06em; text-transform: uppercase;
+       padding: 6px 12px; border-bottom: 1px solid #21262d; }
+  td { padding: 8px 12px; border-bottom: 1px solid #161b22; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .label { font-family: 'SF Mono', monospace; font-size: 11px;
+           background: #161b22; padding: 2px 6px; border-radius: 4px;
+           color: #c9d1d9; }
+  .done { color: #3fb950; font-weight: 700; margin-right: 6px; }
+  .section-head td { background: #161b22; color: #6e7681;
+                     font-size: 10px; font-weight: 700;
+                     letter-spacing: 0.06em; text-transform: uppercase; }
+</style>
+
+<div class="mockup">
+  <div class="mockup-header">vrg-progress — design decisions</div>
+  <div class="mockup-body" style="padding: 0">
+    <table>
+      <tr><th>Topic</th><th>Decision</th></tr>
+
+      <tr class="section-head"><td colspan="2">Output rendering</td></tr>
+      <tr>
+        <td>Interactive (TTY)</td>
+        <td><span class="done">✓</span>Rolling last-N window via <span class="label">rich</span> live display. <span class="label">--output-window N</span> (default 5). <span class="label">0</span> = full stream then collapse.</td>
+      </tr>
+      <tr>
+        <td>CI — GitHub Actions</td>
+        <td><span class="done">✓</span><span class="label">::group::</span> / <span class="label">::endgroup::</span> annotations. Each stage is a collapsible section.</td>
+      </tr>
+      <tr>
+        <td>CI — other / piped</td>
+        <td><span class="done">✓</span>Flat verbose: start marker → all output → completion marker.</td>
+      </tr>
+      <tr>
+        <td>Override</td>
+        <td><span class="done">✓</span><span class="label">--output-format [rich|gha|plain]</span> overrides auto-detect.</td>
+      </tr>
+      <tr>
+        <td>Library</td>
+        <td><span class="done">✓</span><span class="label">rich</span> added as first external dependency in vergil-tooling.</td>
+      </tr>
+
+      <tr class="section-head"><td colspan="2">Failure model</td></tr>
+      <tr>
+        <td>Failure modes</td>
+        <td><span class="done">✓</span><span class="label">warn</span> — yellow ⚠, non-fatal, exit 0 &nbsp;·&nbsp; <span class="label">fail_defer</span> — red ✗, run continues, exit 1 at end &nbsp;·&nbsp; <span class="label">fail_fast</span> — red ✗, immediate abort, exit 1</td>
+      </tr>
+      <tr>
+        <td>Escape hatches</td>
+        <td><span class="done">✓</span>Specific <span class="label">fail_fast</span> stages may declare a <span class="label">skip_flag</span>. Passing <span class="label">--skip-&lt;stage&gt;</span> demotes that stage to <span class="label">warn</span> for that run. Shown in summary.</td>
+      </tr>
+      <tr>
+        <td>Final summary</td>
+        <td><span class="done">✓</span>Always printed. Lists all warnings and deferred failures with one-line descriptions. Verbose output pointer: <span class="label">.vergil/&lt;cmd&gt;-YYYYMMDD-HHMMSS.log</span></td>
+      </tr>
+
+      <tr class="section-head"><td colspan="2">Stage API</td></tr>
+      <tr>
+        <td>Declaration style</td>
+        <td><span class="done">✓</span>Declarative <span class="label">STAGES = [Stage(...), ...]</span> list at top of command. Pipeline runner iterates it. No inline one-offs — if it's a stage, it's in the list.</td>
+      </tr>
+      <tr>
+        <td>Stage fields</td>
+        <td><span class="done">✓</span><span class="label">name</span>, <span class="label">fn</span>, <span class="label">mode</span> (warn/fail_defer/fail_fast), optional <span class="label">skip_flag</span></td>
+      </tr>
+
+      <tr class="section-head"><td colspan="2">Scope</td></tr>
+      <tr>
+        <td>Which commands</td>
+        <td><span class="done">✓</span>Any procedural command that runs multiple steps over more than a few seconds. <span class="label">vrg-release</span> is first. Atomic quick commands (<span class="label">vrg-commit</span> etc.) excluded.</td>
+      </tr>
+      <tr>
+        <td>Module location</td>
+        <td><span class="done">?</span>Shared module in <span class="label">vergil_tooling/lib/progress.py</span> — imported by any command that needs it. TBD: confirm name.</td>
+      </tr>
+    </table>
+  </div>
+</div>
+
+<p class="subtitle" style="margin-top: 16px">One open item: module name — <code>progress.py</code>? <code>pipeline.py</code>? Something else? Everything else is locked.</p>

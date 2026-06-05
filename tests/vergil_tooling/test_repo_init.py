@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import subprocess
 import tomllib
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -38,9 +39,6 @@ from vergil_tooling.lib.repo_init import (
     step_github_pages,
     step_scaffold_config_files,
 )
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestPromptChoice:
@@ -247,6 +245,33 @@ class TestRenderGitignore:
         assert ".DS_Store" in content
         assert ".worktrees/" in content
         assert ".venv-host/" in content
+
+    def test_contains_vergil_workflow_patterns(self) -> None:
+        content = render_gitignore()
+        assert ".vergil/" in content
+        assert "build/" in content
+        assert ".superpowers/" in content
+
+    def test_baseline_is_subset_of_flagship_gitignore(self) -> None:
+        """Drift guard: every baseline entry must exist in this repo's .gitignore.
+
+        The flagship repo carries repo-specific entries beyond the
+        baseline, but the baseline itself must never contain an entry
+        the flagship lacks (vergil-tooling#1425).
+        """
+        flagship = Path(__file__).resolve().parents[2] / ".gitignore"
+        flagship_entries = {
+            line.strip()
+            for line in flagship.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        }
+        baseline_entries = [
+            line.strip()
+            for line in render_gitignore().splitlines()
+            if line.strip() and not line.strip().startswith("#")
+        ]
+        missing = [entry for entry in baseline_entries if entry not in flagship_entries]
+        assert not missing, f"baseline entries missing from flagship .gitignore: {missing}"
 
 
 class TestRenderCiWorkflow:

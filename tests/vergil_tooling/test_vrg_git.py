@@ -275,6 +275,55 @@ def test_is_upstream_gone_branch_not_found() -> None:
         assert _is_upstream_gone("feature/nonexistent") is False
 
 
+# -- helper: _upstream_is_integration_branch ----------------------------------
+
+
+def _mock_upstream(upstream: str | None) -> subprocess.CompletedProcess[str]:
+    if upstream is None:
+        return subprocess.CompletedProcess(args=[], returncode=128, stdout="", stderr="fatal")
+    return subprocess.CompletedProcess(args=[], returncode=0, stdout=f"{upstream}\n")
+
+
+def test_upstream_is_integration_branch_develop() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_upstream("origin/develop")
+        from vergil_tooling.bin.vrg_git import _upstream_is_integration_branch
+
+        assert _upstream_is_integration_branch("chore/417-bump-2.0.17") is True
+
+
+def test_upstream_is_integration_branch_main() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_upstream("origin/main")
+        from vergil_tooling.bin.vrg_git import _upstream_is_integration_branch
+
+        assert _upstream_is_integration_branch("feature/123-foo") is True
+
+
+def test_upstream_is_integration_branch_release() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_upstream("origin/release/2.1")
+        from vergil_tooling.bin.vrg_git import _upstream_is_integration_branch
+
+        assert _upstream_is_integration_branch("feature/123-foo") is True
+
+
+def test_upstream_is_integration_branch_feature_upstream() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_upstream("origin/feature/123-foo")
+        from vergil_tooling.bin.vrg_git import _upstream_is_integration_branch
+
+        assert _upstream_is_integration_branch("feature/123-foo") is False
+
+
+def test_upstream_is_integration_branch_no_upstream() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = _mock_upstream(None)
+        from vergil_tooling.bin.vrg_git import _upstream_is_integration_branch
+
+        assert _upstream_is_integration_branch("feature/123-foo") is False
+
+
 # -- flag deny lists ----------------------------------------------------------
 
 
@@ -296,13 +345,74 @@ def test_branch_force_delete_allowed_when_upstream_gone(
 def test_branch_force_delete_denied_when_upstream_active(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    with patch(
-        "vergil_tooling.bin.vrg_git._is_upstream_gone",
-        return_value=False,
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=False,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_git._upstream_is_integration_branch",
+            return_value=False,
+        ),
     ):
         rc = main(["branch", "-D", "feature/123-foo"])
     assert rc != 0
     assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_branch_force_delete_allowed_when_tracking_integration_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=False,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_git._upstream_is_integration_branch",
+            return_value=True,
+        ),
+    ):
+        mock_run.return_value.returncode = 0
+        rc = main(["branch", "-D", "chore/417-bump-2.0.17"])
+    assert rc == 0
+
+
+def test_branch_force_delete_denied_for_protected_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=True,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_git._upstream_is_integration_branch",
+            return_value=True,
+        ),
+    ):
+        rc = main(["branch", "-D", "develop"])
+    assert rc != 0
+    assert "protected" in capsys.readouterr().err.lower()
+
+
+def test_branch_force_delete_denied_for_release_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_git._is_upstream_gone",
+            return_value=True,
+        ),
+        patch(
+            "vergil_tooling.bin.vrg_git._upstream_is_integration_branch",
+            return_value=True,
+        ),
+    ):
+        rc = main(["branch", "-D", "release/2.1"])
+    assert rc != 0
+    assert "protected" in capsys.readouterr().err.lower()
 
 
 def test_branch_force_delete_denied_no_branch_name(

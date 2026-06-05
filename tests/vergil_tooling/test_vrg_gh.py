@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_gh import main
+from vergil_tooling.lib import github
 
 
 def _completed(
@@ -190,6 +191,106 @@ def test_no_env_injection_when_no_app_token() -> None:
         main(["issue", "list"])
     _, kwargs = mock_run.call_args
     assert "env" not in kwargs or kwargs.get("env") is None
+
+
+# -- installation selection via -R/--repo (#1413) -----------------------------
+
+
+class TestRepoFlagInstallationSelection:
+    """The -R/--repo owner, not the cwd, selects the App installation."""
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["-R", "other-owner/repo"],
+            ["--repo", "other-owner/repo"],
+            ["--repo=other-owner/repo"],
+            ["-Rother-owner/repo"],
+            ["-R", "github.com/other-owner/repo"],
+            ["-R", "https://github.com/other-owner/repo"],
+        ],
+    )
+    def test_repo_flag_selects_target_owner_installation(self, extra: list[str]) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value="ghs_other_token",
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "list", *extra])
+        assert rc == 0
+        kwargs = mock_token.call_args.kwargs
+        assert kwargs.get("org") == "other-owner"
+        assert kwargs.get("require_installation") is True
+
+    def test_no_repo_flag_keeps_cwd_detection(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "list"])
+        assert rc == 0
+        kwargs = mock_token.call_args.kwargs
+        assert kwargs.get("org") is None
+        assert not kwargs.get("require_installation")
+
+    def test_last_repo_flag_wins(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value="ghs_token",
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "list", "-R", "first-owner/repo", "-R", "second-owner/repo"])
+        assert rc == 0
+        assert mock_token.call_args.kwargs.get("org") == "second-owner"
+
+    @pytest.mark.parametrize(
+        "extra",
+        [
+            ["-R"],  # dangling flag: gh itself rejects it downstream
+            ["-R", "not-a-repo"],  # unparseable value: gh rejects it downstream
+        ],
+    )
+    def test_unusable_repo_flag_falls_back_to_cwd_detection(self, extra: list[str]) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ) as mock_token,
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "list", *extra])
+        assert rc == 0
+        kwargs = mock_token.call_args.kwargs
+        assert kwargs.get("org") is None
+        assert not kwargs.get("require_installation")
+
+    def test_unknown_owner_fails_loudly(self, capsys: pytest.CaptureFixture[str]) -> None:
+        err = github.NoInstallationError("unknown-owner", ["vergil-project", "wphillipmoore"])
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                side_effect=err,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            rc = main(["issue", "list", "-R", "unknown-owner/repo"])
+        assert rc != 0
+        mock_run.assert_not_called()
+        captured = capsys.readouterr().err
+        assert "unknown-owner" in captured
+        assert "vergil-project" in captured
+        assert "wphillipmoore" in captured
 
 
 # -- subprocess passthrough ---------------------------------------------------

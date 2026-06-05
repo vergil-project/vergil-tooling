@@ -14,6 +14,7 @@ from vergil_tooling.bin.vrg_vm import (
     Target,
     _list_rows,
     _preflight_target,
+    _probe_running,
     _resolve_target,
     _target_ref,
     _warn_under,
@@ -613,12 +614,12 @@ class TestRebuild:
 
 
 class TestList:
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe", return_value=(0, 0, None))
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(
         self,
         mock_list: MagicMock,
-        _occ: MagicMock,
+        _probe: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -1504,20 +1505,16 @@ class TestLifecyclePositional:
 
 
 class TestDiscoverDedicated:
-    def test_present_orphan_and_not_created(self, tmp_path: Path) -> None:
+    def test_classifies_instances_via_targeted_reads(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         projects = tmp_path / "projects"
         _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
-        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
         _make_repo(projects, "org", "nospec", "")  # valid vergil.toml, no [vm]
-        _make_repo(projects, "org", "plain", "")  # no [vm], no instance -> not listed
-        broken = projects / "org" / "broken"
-        broken.mkdir(parents=True)
-        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
         instances = [
             "vergil-user.org.present",  # instance + spec -> present
             "vergil-user.org.gone",  # instance, no repo -> orphaned
             "vergil-user.org.nospec",  # repo without [vm] -> orphaned
-            "vergil-user.org.broken",  # repo with broken toml -> orphaned
             "vergil-user",  # base instance -> ignored (org is None)
             "weird.name",  # unparseable (2 tiers) -> ignored
             "vergil-audit.org.present",  # other identity -> ignored
@@ -1528,14 +1525,41 @@ class TestDiscoverDedicated:
             "present": "present",
             "gone": "orphaned",
             "nospec": "orphaned",
-            "broken": "orphaned",
-            "todo": "not-created",
         }
         assert all(isinstance(r, DedicatedRow) for r in rows)
+        assert capsys.readouterr().err == ""  # clean configs -> no warnings
+
+    def test_present_row_carries_parsed_stanza(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.present"], str(projects))
+        assert rows[0].stanza is not None
+        assert rows[0].stanza.packages == ["x"]
+
+    def test_broken_config_is_loud_and_conservative(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        projects = tmp_path / "projects"
+        broken = projects / "org" / "broken"
+        broken.mkdir(parents=True)
+        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.broken"], str(projects))
+        assert [(r.repo, r.state, r.stanza) for r in rows] == [("broken", "present", None)]
+        err = capsys.readouterr().err
+        assert "WARNING" in err
+        assert str(broken / "vergil.toml") in err
+        assert "vergil-user.org.broken" in err
+
+    def test_no_instances_means_no_tree_scan(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        # Spec-bearing repos with no instance are NOT enumerated (no tree walk);
+        # the session/start preflight gate owns that signal.
+        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
+        assert discover_dedicated("vergil-user", [], str(projects)) == []
 
     def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
-        rows = discover_dedicated("vergil-user", [], str(tmp_path / "nope"))
-        assert rows == []
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.gone"], str(tmp_path / "nope"))
+        assert [(r.repo, r.state) for r in rows] == [("gone", "orphaned")]
 
 
 class TestListRows:
@@ -1553,17 +1577,19 @@ class TestListRows:
     def _row(self, rows: list[dict[str, object]], scope: str) -> dict[str, object]:
         return next(r for r in rows if r["scope"] == scope)
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(2, 1))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
-    def test_base_and_present_running_ok(
-        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
-    ) -> None:
-        projects = tmp_path / "projects"
+    def _present(self, projects: Path) -> list[DedicatedRow]:
+        """One present lmf/mq row with its stanza threaded through discovery."""
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        return discover_dedicated("vergil-user", ["vergil-user.lmf.mq"], str(projects))
+
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_base_and_present_running_ok(self, _fp: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        dedic = self._present(projects)
         status = {"vergil-user": "Running", "vergil-user.lmf.mq": "Running"}
-        rows = _list_rows("vergil-user", ident, dedic, status)
+        probes = {"vergil-user": (2, 1, None), "vergil-user.lmf.mq": (2, 1, "fp")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         base = self._row(rows, "base")
         ded = self._row(rows, "lmf/mq")
         assert base["cpus"] == 4
@@ -1572,61 +1598,67 @@ class TestListRows:
         assert ded["cpus"] == 12
         assert ded["spec"] == "ok"
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
-    def test_present_running_needs_rebuild(
-        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
-    ) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_needs_rebuild(self, _fp: MagicMock, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
+        dedic = self._present(projects)
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, "stale")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
-    def test_present_running_under(self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_missing_fingerprint_needs_rebuild(
+        self, _fp: MagicMock, tmp_path: Path
+    ) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        ident = self._identity(projects)
+        dedic = self._present(projects)
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, None)}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
+        assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
+
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_under(self, _fp: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
         ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
+        dedic = self._present(projects)
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, "fp")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
 
     def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
+        dedic = self._present(projects)
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})  # nothing running
         ded = self._row(rows, "lmf/mq")
         assert ded["spec"] == "ok"
         assert ded["agents"] == "—"
 
-    def test_present_repo_without_vergil_toml_uses_base(self, tmp_path: Path) -> None:
-        projects = tmp_path / "projects"
-        ident = self._identity(projects)  # projects/lmf/mq does not exist
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
-        rows = _list_rows("vergil-user", ident, dedic, {})
+    def test_present_without_stanza_uses_base(self, tmp_path: Path) -> None:
+        # An unverified present row (broken config -> stanza None) falls back
+        # to the base footprint.
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present", None)]
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
         assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
 
-    def test_orphaned_and_not_created(self, tmp_path: Path) -> None:
-        ident = self._identity(tmp_path / "projects")
-        dedic = [
-            DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned"),
-            DedicatedRow("o", "todo", "vergil-user.o.todo", "not-created"),
-        ]
-        rows = _list_rows("vergil-user", ident, dedic, {})
-        by_scope = {r["scope"]: r["spec"] for r in rows}
-        assert by_scope["o/gone"] == "orphaned"
-        assert by_scope["o/todo"] == "not-created"
-
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
-    def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
+    def test_orphaned(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
         dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.o.gone": "Running"})
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
+        assert self._row(rows, "o/gone")["spec"] == "orphaned"
+
+    def test_orphaned_running_shows_occupancy(self, tmp_path: Path) -> None:
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
+        status = {"vergil-user.o.gone": "Running"}
+        probes = {"vergil-user.o.gone": (1, 0, None)}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "o/gone")["agents"] == "1"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -1635,3 +1667,58 @@ class TestListRows:
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1
+
+
+class TestProbeRunning:
+    def _identity(self, tmp_path: Path) -> Identity:
+        return Identity(vm_instance="vergil-user", projects_dir=str(tmp_path / "projects"))
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe")
+    def test_probes_running_only_with_fingerprint_for_present(
+        self, mock_probe: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_probe.side_effect = lambda _inst, *, fingerprint=False: (
+            (1, 0, "fp") if fingerprint else (1, 0, None)
+        )
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered = {
+            "vergil-user": [
+                DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present", None),
+                DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned"),
+                DedicatedRow("o", "off", "vergil-user.o.off", "present", None),
+            ]
+        }
+        status = {
+            "vergil-user": "Running",
+            "vergil-user.lmf.mq": "Running",
+            "vergil-user.o.gone": "Running",
+            "vergil-user.o.off": "Stopped",
+        }
+        probes = _probe_running(identities, discovered, status)
+        assert probes == {
+            "vergil-user": (1, 0, None),
+            "vergil-user.lmf.mq": (1, 0, "fp"),
+            "vergil-user.o.gone": (1, 0, None),
+        }
+        wants = {c.args[0]: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
+        assert wants == {
+            "vergil-user": False,  # base: occupancy only
+            "vergil-user.lmf.mq": True,  # present dedicated: combined probe
+            "vergil-user.o.gone": False,  # orphaned: no spec to compare
+        }
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe")
+    def test_nothing_running_probes_nothing(self, mock_probe: MagicMock, tmp_path: Path) -> None:
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
+        assert _probe_running(identities, discovered, {"vergil-user": "Stopped"}) == {}
+        mock_probe.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe", side_effect=RuntimeError("boom"))
+    def test_probe_errors_propagate(self, _probe: MagicMock, tmp_path: Path) -> None:
+        # Parallelization must not swallow new error modes: anything beyond
+        # vm_probe's documented (0, 0, None) contract surfaces to the caller.
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
+        with pytest.raises(RuntimeError, match="boom"):
+            _probe_running(identities, discovered, {"vergil-user": "Running"})

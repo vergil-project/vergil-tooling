@@ -109,6 +109,22 @@ invoked by `vrg-validate`, it is not part of the validation pipeline.
 > `vrg-container-run -- uv run vrg-validate` because it runs its own
 > unreleased code rather than the pre-installed version.
 
+## Identity modes and PR submission
+
+Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
+`VRG_IDENTITY_MODE` (`human`, `user`, or `audit`; see
+`src/vergil_tooling/lib/identity_mode.py`). Agent sessions run as
+`user` or `audit`.
+
+**Agents must not run `vrg-submit-pr`.** PR submission, merge, and
+finalization are human actions. The PR handoff is:
+
+1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
+   and `summary` fields (optional: `linkage`, `notes`).
+2. The human runs `vrg-submit-pr` with no arguments, which reads the
+   template, previews the PR, and submits after confirmation.
+3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
+
 ## Project Overview
 
 This is a Python package providing shared development tooling for all managed
@@ -118,7 +134,7 @@ CI checkout (GitHub Actions).
 
 **Project name**: vergil-tooling
 
-**Status**: Stable (v1.x)
+**Status**: Stable (v2.x)
 
 **Standards reference**: <https://github.com/wphillipmoore/standards-and-conventions>
 — historical reference; active standards documentation lives in this
@@ -199,7 +215,8 @@ CLI tools installed as `vrg-*` console scripts:
 
 - **`vrg-commit`** — Construct standards-compliant conventional
   commits with co-author resolution
-- **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge)
+- **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge;
+  human-run — agents hand off via `.vergil/pr-template.yml`)
 - **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)
@@ -253,11 +270,12 @@ wrappers through. Only active in repos with a `vergil.toml`.
 ### Consumption Model
 
 `vergil-tooling` has two coordinated deployment targets (see
-`docs/specs/host-level-tool.md` for the full spec):
+`docs/specs/host-level-tool.md` — historical spec, written under the
+old `standard-tooling`/`st-*` naming):
 
 | Target | Install mechanism | Who uses it |
 |---|---|---|
-| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-prepare-release`, `vrg-finalize-pr` |
+| **Developer host** | `uv tool install` from git URL | Host-side commands: `vrg-container-run`, `vrg-commit`, `vrg-submit-pr`, `vrg-release`, `vrg-finalize-pr` |
 | **Container runtime** (all languages) | `vrg-container-run` cache-first install per `vergil.toml` | `vrg-*` inside the container for all consumers |
 
 **Host install** (canonical):
