@@ -1058,6 +1058,13 @@ def test_add_progress_args_generates_flags() -> None:
     args = parser.parse_args([])
     assert args.skip_audit is False
     assert args.output_window == 5
+
+
+def test_add_progress_args_rejects_skip_on_non_fail_fast() -> None:
+    parser = argparse.ArgumentParser()
+    stages = [Stage("docs", lambda ctx: None, mode="fail_defer", skip_flag="skip_docs")]
+    with pytest.raises(ValueError, match="skip_flag is only supported on fail_fast stages"):
+        progress.add_progress_args(parser, stages)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1086,6 +1093,9 @@ def add_progress_args(parser: argparse.ArgumentParser, stages: Sequence[Stage]) 
     )
     for stage in stages:
         if stage.skip_flag is not None:
+            if stage.mode != "fail_fast":
+                msg = f"skip_flag is only supported on fail_fast stages: {stage.name}"
+                raise ValueError(msg)
             parser.add_argument(
                 "--" + stage.skip_flag.replace("_", "-"),
                 action="store_true",
@@ -1350,10 +1360,11 @@ vrg-commit --type refactor --scope git --message "stream git subprocess output v
   (whichever assert on `verbose`)
 
 Per the spec, `--verbose` is subsumed by the rolling window + always-on log. The noisy
-pollers (`gh pr checks --watch`, `gh run watch`) become streaming calls. Deliberate
-trade-off (documented here, accept it): these two call sites lose `_run_with_retry`'s
-transient-error retry; a transient failure now surfaces as a stage failure handled by the
-stage's mode.
+pollers (`gh pr checks --watch`, `gh run watch`) become streaming calls that **retain
+transient retry** — GitHub API flakiness makes retry essential. `progress.run` raises
+`CalledProcessError` carrying captured output, which is exactly what `retry.is_retryable`
+inspects, so streaming and retry compose via a small wrapper. The wrapper also preserves
+`_gh_env()` credential injection (which `_run_with_retry` previously provided).
 
 - [ ] **Step 1: Rewrite `lib/release/subprocess.py`.** Replace `_run_verbose` and the
 `verbose` parameters:
@@ -1363,18 +1374,45 @@ stage's mode.
 
 from __future__ import annotations
 
+import subprocess
 import time
 
-from vergil_tooling.lib import progress
+from vergil_tooling.lib import progress, retry
 from vergil_tooling.lib.github import (
     GitHubAPIError,
     _checks_registered,
+    _gh_env,
     current_repo,
     head_sha,
 )
 
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 180
+
+
+def _stream_with_retry(cmd: tuple[str, ...]) -> None:
+    """Stream *cmd* via progress.run, retrying transient GitHub failures.
+
+    Streaming-compatible analogue of github._run_with_retry: progress.run
+    raises CalledProcessError carrying captured output, which is what
+    retry.is_retryable inspects. Preserves _gh_env credential injection.
+    """
+    env = _gh_env()
+    for attempt in range(retry.MAX_RETRIES + 1):
+        try:
+            progress.run(cmd, env=env)
+        except subprocess.CalledProcessError as exc:
+            if attempt == retry.MAX_RETRIES or not retry.is_retryable(exc):
+                raise
+            delay = retry.compute_delay(attempt)
+            progress.emit(
+                f"transient GitHub failure, retrying in {delay:.1f}s"
+                f" (attempt {attempt + 1}/{retry.MAX_RETRIES + 1})"
+            )
+            time.sleep(delay)
+        else:
+            return
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def wait_for_checks(pr: str) -> None:
@@ -1398,7 +1436,7 @@ def wait_for_checks(pr: str) -> None:
             ),
         )
 
-    progress.run(("gh", "pr", "checks", pr, "--watch"))  # noqa: S607
+    _stream_with_retry(("gh", "pr", "checks", pr, "--watch"))  # noqa: S607
 
 
 def watch_workflow(repo: str, run_id: str, *, check_status: bool = True) -> None:
@@ -1407,7 +1445,57 @@ def watch_workflow(repo: str, run_id: str, *, check_status: bool = True) -> None
     if check_status:
         cmd = (*cmd, "--exit-status")
     cmd = (*cmd, run_id)
-    progress.run(cmd)  # noqa: S607
+    _stream_with_retry(cmd)  # noqa: S607
+```
+
+Add tests to `test_release_subprocess.py` for the retry wrapper (adapt `_MOD` to the
+file's convention; patch `time.sleep` to keep the test instant):
+
+```python
+def test_stream_with_retry_passes_gh_env() -> None:
+    with (
+        patch(_MOD + ".progress") as m_progress,
+        patch(_MOD + "._gh_env", return_value={"GH_TOKEN": "x"}),
+    ):
+        release_subprocess._stream_with_retry(("gh", "run", "watch"))
+    m_progress.run.assert_called_once_with(("gh", "run", "watch"), env={"GH_TOKEN": "x"})
+
+
+def test_stream_with_retry_retries_transient_then_succeeds() -> None:
+    transient = subprocess.CalledProcessError(1, ("gh",), output="", stderr="HTTP 502")
+    with (
+        patch(_MOD + ".progress") as m_progress,
+        patch(_MOD + "._gh_env", return_value=None),
+        patch(_MOD + ".time"),
+    ):
+        m_progress.run.side_effect = [transient, None]
+        release_subprocess._stream_with_retry(("gh", "run", "watch"))
+    assert m_progress.run.call_count == 2
+
+
+def test_stream_with_retry_propagates_non_transient() -> None:
+    fatal = subprocess.CalledProcessError(1, ("gh",), output="", stderr="not found")
+    with (
+        patch(_MOD + ".progress") as m_progress,
+        patch(_MOD + "._gh_env", return_value=None),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        m_progress.run.side_effect = fatal
+        release_subprocess._stream_with_retry(("gh", "run", "watch"))
+    assert m_progress.run.call_count == 1
+
+
+def test_stream_with_retry_gives_up_after_max() -> None:
+    transient = subprocess.CalledProcessError(1, ("gh",), output="", stderr="HTTP 502")
+    with (
+        patch(_MOD + ".progress") as m_progress,
+        patch(_MOD + "._gh_env", return_value=None),
+        patch(_MOD + ".time"),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        m_progress.run.side_effect = transient
+        release_subprocess._stream_with_retry(("gh", "run", "watch"))
+    assert m_progress.run.call_count == retry.MAX_RETRIES + 1
 ```
 
 - [ ] **Step 2: Update the callers.**
@@ -1426,15 +1514,16 @@ argument to `ReleaseContext` (lines 23, 57).
 Run: `vrg-container-run -- pytest tests/ -q`
 Expected failures in `test_release_subprocess.py` (patched `_run_verbose` /
 `_run_with_retry`) and any test constructing `ReleaseContext(verbose=...)` or calling the
-changed signatures. Fix pattern: patch `vergil_tooling.lib.release.subprocess.progress`
-and assert `m_progress.run.assert_called_once_with(("gh", "pr", "checks", pr, "--watch"))`;
-delete `verbose=` kwargs from `ReleaseContext` constructions. Re-run until green.
+changed signatures. Fix pattern: patch
+`vergil_tooling.lib.release.subprocess._stream_with_retry` and assert it was called with
+the expected command tuple; delete `verbose=` kwargs from `ReleaseContext` constructions.
+Re-run until green.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 vrg-git add src/vergil_tooling/lib/release/ tests/vergil_tooling/
-vrg-commit --type refactor --scope release --message "stream CI pollers via progress.run and drop --verbose plumbing" --body "wait_for_checks/watch_workflow stream through the progress framework; the verbose flag chain (context field, preflight/merge/confirm params) is removed — subsumed by the rolling window and always-on run log. Refs #1419"
+vrg-commit --type refactor --scope release --message "stream CI pollers with retry and drop --verbose plumbing" --body "wait_for_checks/watch_workflow stream through the progress framework via _stream_with_retry, retaining transient-failure retry and _gh_env credential injection; the verbose flag chain (context field, preflight/merge/confirm params) is removed — subsumed by the rolling window and always-on run log. Refs #1419"
 ```
 
 ---
@@ -2013,8 +2102,6 @@ vrg-commit --type chore --scope progress --message "validation fixes for progres
 - The summary label is the command name (`vrg-release complete`) rather than
   `release 2.1.2 complete` — the version is not known until the preflight stage has run.
   Enhancement if wanted later: let `run_pipeline` accept a label callback.
-- `wait_for_checks` / `watch_workflow` lose `_run_with_retry`'s transient retry in
-  exchange for live streaming (Task 10 rationale).
 
 ## Out of scope (tracked by the spec, not this plan)
 

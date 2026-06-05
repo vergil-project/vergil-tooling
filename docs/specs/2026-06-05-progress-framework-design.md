@@ -88,7 +88,10 @@ This framework **replaces** the structured phase logging that issue #949 added t
 - **Subprocess capture.** #949 gave `git.run()` / `github.run()` a capture-then-print-on-success
   model. For subprocesses executed inside a pipeline stage, that model is superseded by the
   streaming contract below (a captured-then-printed `docker build` would leave the rolling
-  window empty for minutes). Outside pipelines, the #949 behavior is unchanged.
+  window empty for minutes). Outside pipelines, the #949 behavior is unchanged. The CI
+  pollers (`gh pr checks --watch`, `gh run watch`) move to the streaming runner while
+  **retaining** transient-failure retry via a streaming retry wrapper built on
+  `lib/retry.py` — GitHub API flakiness makes retry essential, not optional.
 
 ---
 
@@ -106,6 +109,13 @@ execution for pipeline stages:
   pipeline stage, and keep their current behavior otherwise.
 - On failure the runner raises `CalledProcessError` carrying the captured output (preserving
   the #949 guarantee that error objects carry their context).
+
+**Print capture.** `run_pipeline` redirects `sys.stdout` and `sys.stderr` into the framework
+while a stage executes, so bare `print()` calls anywhere in stage code — including deep
+library calls — route through the active renderer and the log automatically. This is why
+capture-then-print wrappers like `github.run()` need no modification to participate: their
+printed output is captured at the redirection layer. Future adopters should not wrap plain
+prints in framework calls; redirection already covers them.
 
 **Accepted caveats** (stated here so the implementation does not re-litigate them):
 
@@ -176,7 +186,9 @@ failures are not truly ignorable.
 ### `fail_defer`
 The stage failed and this is a real error, but subsequent stages can still run. Record the
 failure, show a red `✗` in the progress display, set the global error condition, and continue.
-After all stages complete, raise `PipelineError` listing every deferred failure. Exit code: 1.
+After all stages complete, the final summary reports a `PipelineError` naming every deferred
+failure; `run_pipeline` returns exit code 1 (it reports rather than raises, so commands can
+simply `sys.exit(run_pipeline(...))` without error-handling boilerplate).
 
 This is the correct mode for stages whose failure does not invalidate later stages. Example:
 `build-images` failing does not prevent `publish-pypi` from running — the release can still
@@ -205,7 +217,9 @@ fired (or is expected to), the human has seen it, and re-running it adds nothing
 
 `skip_flag` is only meaningful on `fail_fast` stages. `fail_defer` stages never block the
 pipeline, so there is nothing to escape from — skipping them would be stage *selection*,
-which is a different feature this framework does not provide.
+which is a different feature this framework does not provide. The rule is enforced in code:
+declaring a `skip_flag` on a non-`fail_fast` stage raises an error at CLI parser
+construction, so the mistake fails on the developer's first run.
 
 ```
 $ vrg release 2.1.2 --skip-audit
@@ -390,3 +404,8 @@ None. All design decisions are resolved.
   interrupt handling (summary + exit 130), skip semantics clarified to don't-run
   (`fail_fast` only; run-but-tolerate declared a non-goal), detection ownership consolidated
   with `lib/output.py`, log retention (prune on start, keep last 20 per command).
+- **2026-06-05** — Alignment review against the implementation plan
+  (`docs/plans/2026-06-05-progress-framework.md`). Added: print-capture paragraph
+  (stdout/stderr redirection during stages), `fail_defer` reports-not-raises wording fix,
+  skip-flag rule enforced at parser construction, CI pollers retain transient retry while
+  streaming.
