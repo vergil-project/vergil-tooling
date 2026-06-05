@@ -1,0 +1,88 @@
+<h2>How should a running stage's output be presented?</h2>
+<p class="subtitle">Three approaches — completed stages always collapse to a single summary line in all three</p>
+
+<style>
+  .term {
+    background: #0d1117;
+    border-radius: 8px;
+    padding: 14px 18px;
+    font-family: 'SF Mono', 'Fira Code', 'Fira Mono', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.7;
+    color: #c9d1d9;
+    margin: 10px 0 4px 0;
+  }
+  .t-done   { color: #3fb950; }
+  .t-fail   { color: #f85149; }
+  .t-warn   { color: #d29922; }
+  .t-run    { color: #58a6ff; }
+  .t-dim    { color: #6e7681; }
+  .t-bold   { font-weight: 700; color: #e6edf3; }
+  .t-indent { display: block; padding-left: 22px; }
+  .t-indent2{ display: block; padding-left: 38px; color: #6e7681; font-size: 11px; }
+  .t-sep    { border: none; border-top: 1px solid #21262d; margin: 6px 0; }
+</style>
+
+<div class="cards">
+
+  <!-- Option A -->
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⠸</span> <span class="t-bold">build</span> <span class="t-dim">running…</span></div>
+        <span class="t-indent t-dim">building ghcr.io/vergil-project/dev-base:2.1.2</span>
+        <span class="t-indent t-dim">▸ Step 4/12: RUN apt-get install -y curl git…</span>
+        <span class="t-indent t-dim">▸ Step 5/12: COPY requirements.txt /app/</span>
+        <span class="t-indent t-dim">▸ Step 6/12: RUN pip install -r requirements.txt</span>
+        <span class="t-indent t-dim" style="color:#444d56">▸ [full output in ~/.vrg-release-20260605.log]</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Full stream, then collapse</h3>
+      <p>All output from the running stage streams live. When the stage completes, everything collapses to a single summary line. Like watching a GitHub Actions job expand/contract.</p>
+    </div>
+  </div>
+
+  <!-- Option B -->
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⠸</span> <span class="t-bold">build</span></div>
+        <span class="t-indent t-dim" style="border-left:2px solid #30363d;padding-left:10px;margin-left:12px">
+          <span style="display:block">▸ Step 5/12: COPY requirements.txt…</span>
+          <span style="display:block">▸ Step 6/12: RUN pip install -r requirements.txt</span>
+          <span style="display:block; color:#58a6ff">▸ Step 7/12: RUN pytest tests/…</span>
+        </span>
+        <span class="t-indent2">rolling last 3 lines · full log: ~/.vrg/release.log</span>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Rolling last-N window</h3>
+      <p>Only the last 3–5 lines of output are shown, updating in place. Prevents terminal flood from verbose tools (Docker, pip) while still showing live progress. Requires cursor movement.</p>
+    </div>
+  </div>
+
+  <!-- Option C -->
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⠸</span> <span class="t-bold">build</span> <span class="t-dim">00:47 elapsed</span></div>
+        <div style="height:6px"></div>
+        <div class="t-dim" style="font-size:11px">  all output → ~/.vrg/release-20260605-143022.log</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Spinner + elapsed only</h3>
+      <p>No streaming output at all. Just a spinner, the stage name, and elapsed time. All verbose output goes directly to a log file. Cleanest display — zero noise during runs.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">In all three: completed stages show ✓ or ✗ with elapsed time. Non-fatal errors are flagged inline but don't stop the run. Full summary printed at the end.</p>

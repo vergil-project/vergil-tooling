@@ -1,0 +1,117 @@
+<h2>Build it or bring a library?</h2>
+<p class="subtitle">Vergil-tooling currently has zero external dependencies. The rolling-window + spinner + collapse behavior requires terminal cursor control.</p>
+
+<style>
+  .term {
+    background: #0d1117;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #c9d1d9;
+    margin: 8px 0 4px 0;
+  }
+  .t-done { color: #3fb950; }
+  .t-fail { color: #f85149; }
+  .t-warn { color: #d29922; }
+  .t-run  { color: #58a6ff; }
+  .t-dim  { color: #6e7681; }
+  .t-bold { font-weight: 700; color: #e6edf3; }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    margin-right: 6px;
+    letter-spacing: 0.03em;
+  }
+  .badge-green  { background: #1a3a24; color: #3fb950; }
+  .badge-yellow { background: #3a2f0a; color: #d29922; }
+  .badge-blue   { background: #0d2a47; color: #58a6ff; }
+  .badge-red    { background: #3a0f0f; color: #f85149; }
+  .lib-row { display: flex; gap: 6px; margin-bottom: 4px; flex-wrap: wrap; }
+</style>
+
+<div class="cards">
+
+  <!-- Option A: rich -->
+  <div class="card" data-choice="rich" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⠸</span> <span class="t-bold">build</span></div>
+        <div style="padding-left:20px;border-left:2px solid #30363d;margin-left:10px">
+          <div class="t-dim" style="font-size:11px">▸ Step 6/12: RUN pip install…</div>
+          <div class="t-dim" style="font-size:11px">▸ Step 7/12: RUN pytest tests/…</div>
+          <div style="font-size:11px;color:#58a6ff">▸ Step 8/12: COPY . /app  <span class="t-dim">[+2 more hidden]</span></div>
+        </div>
+        <div style="margin-top:6px">
+          <span class="t-dim" style="font-size:10px">Progress ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━  67% • 00:42 remaining</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>rich</h3>
+      <div class="lib-row">
+        <span class="badge badge-green">mature</span>
+        <span class="badge badge-yellow">~2MB dep</span>
+        <span class="badge badge-blue">Python stdlib-adjacent</span>
+      </div>
+      <p>Industry standard for Python terminal UI. Live progress bars, spinners, collapsible groups, colored output, tables, panels. Used by pip, Textual, many major CLIs. Extremely capable — may be more than needed.</p>
+    </div>
+  </div>
+
+  <!-- Option B: alive-progress -->
+  <div class="card" data-choice="alive-progress" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⣾</span> <span class="t-bold">build</span> <span style="color:#d29922">━━━━━━━━━━━━━━╸</span><span class="t-dim">━━━━━━━━━━ 58%</span> <span class="t-dim">00:31</span></div>
+        <div style="padding-left:20px" class="t-dim" style="font-size:11px">
+          <div style="font-size:11px;color:#6e7681">▸ Step 7/12: RUN pytest tests/</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>alive-progress</h3>
+      <div class="lib-row">
+        <span class="badge badge-green">lightweight</span>
+        <span class="badge badge-blue">~150KB dep</span>
+        <span class="badge badge-yellow">smaller community</span>
+      </div>
+      <p>Focused purely on animated progress bars and spinners. Much smaller footprint than rich. Great for "show a stage is running" but less capable for the full collapsing-output pattern you described.</p>
+    </div>
+  </div>
+
+  <!-- Option C: stdlib only -->
+  <div class="card" data-choice="stdlib" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span> <span class="t-dim">1.1s</span></div>
+        <div><span class="t-run">⠸</span> <span class="t-bold">build</span></div>
+        <div style="padding-left:20px;border-left:2px solid #30363d;margin-left:10px" class="t-dim">
+          <div style="font-size:11px">▸ Step 6/12: RUN pip install…</div>
+          <div style="font-size:11px">▸ Step 7/12: RUN pytest tests/…</div>
+          <div style="font-size:11px;color:#58a6ff">▸ Step 8/12: COPY . /app</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Pure stdlib</h3>
+      <div class="lib-row">
+        <span class="badge badge-green">zero new deps</span>
+        <span class="badge badge-yellow">~200 lines to write</span>
+        <span class="badge badge-red">cursor control complexity</span>
+      </div>
+      <p>ANSI escape codes + <code>sys.stdout.write()</code> + <code>\r</code> for in-place updates. Achieves everything described. No new dependencies — preserves the zero-dep philosophy. More code to own and maintain.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">All three can deliver the B-style rolling window. The choice is: own the cursor-control code, or accept one dependency to get it (and much more) for free.</p>
