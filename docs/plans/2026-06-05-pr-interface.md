@@ -574,7 +574,39 @@ def test_injected_wait_callable_is_used() -> None:
         wait_and_merge("99", strategy="merge", wait_checks=waiter)
     waiter.assert_called_once_with("99")
     gh.wait_for_checks.assert_not_called()
+
+
+def test_conflict_arising_mid_loop_aborts() -> None:
+    """A conflict appearing after a BEHIND update still aborts — the
+    per-iteration re-check is the multi-worktree guarantee."""
+    gh = _gh(merge_states=["BEHIND", "CLEAN"])
+    gh.mergeable.side_effect = ["MERGEABLE", "CONFLICTING"]
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbort, match="merge conflicts"),
+    ):
+        wait_and_merge("99", strategy="squash")
+    gh.update_branch.assert_called_once_with("99")
+    gh.merge.assert_not_called()
+
+
+def test_update_branch_failure_aborts_cleanly() -> None:
+    gh = _gh(merge_states=["BEHIND"])
+    gh.update_branch.side_effect = GitHubAPIError(1, "update-branch", stderr="boom")
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbort, match="update-branch failed"),
+    ):
+        wait_and_merge("99", strategy="squash")
+    gh.merge.assert_not_called()
 ```
+
+Add to the test file's imports: `from vergil_tooling.lib.github import GitHubAPIError`
+(verify its constructor in `lib/github.py` — it is raised as
+`GitHubAPIError(returncode, cmd, stdout, stderr)` / with `stderr=` keyword; adjust the
+test's instantiation if the signature differs).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -609,6 +641,10 @@ import time
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import github
+
+# Imported directly (not via the module) so the `except` clause holds the
+# real class even when tests replace the whole `github` module with a mock.
+from vergil_tooling.lib.github import GitHubAPIError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -662,7 +698,11 @@ def wait_and_merge(
                 )
                 raise MergeAbort(msg)
             print("Branch is behind base — updating and re-checking...")
-            github.update_branch(pr)
+            try:
+                github.update_branch(pr)
+            except GitHubAPIError as exc:
+                msg = f"update-branch failed for PR {pr}: {exc}"
+                raise MergeAbort(msg) from exc
             time.sleep(_UPDATE_SETTLE_SECS)
             continue
 
@@ -686,7 +726,7 @@ def wait_and_merge(
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_pr_merge.py -v`
-Expected: PASS (9 tests)
+Expected: PASS (11 tests)
 
 - [ ] **Step 5: Commit**
 
@@ -854,6 +894,7 @@ def test_root_single_ready_worktree_chdirs_and_submits(tmp_path: Path) -> None:
         patch(_MOD + ".identity_mode.is_agent", return_value=False),
         patch(_MOD + ".git.is_main_worktree", return_value=True),
         patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".pr_template.read_template", return_value=fields),
         patch(_MOD + ".os.chdir") as chdir,
@@ -870,11 +911,28 @@ def test_root_no_ready_worktrees_errors_with_reasons() -> None:
         patch(_MOD + ".identity_mode.is_agent", return_value=False),
         patch(_MOD + ".git.is_main_worktree", return_value=True),
         patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".pr_template.read_template", side_effect=FileNotFoundError("x")),
         pytest.raises(SystemExit, match="no submittable worktrees"),
     ):
         main(["--dry-run"])
+
+
+def test_root_non_tty_fails_fast() -> None:
+    with (
+        patch(_MOD + ".identity_mode.is_agent", return_value=False),
+        patch(_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_MOD + ".git.repo_root", return_value="/repo"),
+        patch(
+            _MOD + ".worktrees.require_tty",
+            side_effect=SystemExit("requires an interactive terminal"),
+        ),
+        patch(_MOD + ".worktrees.list_worktrees") as listing,
+        pytest.raises(SystemExit, match="interactive terminal"),
+    ):
+        main([])
+    listing.assert_not_called()
 
 
 def test_root_multiple_ready_worktrees_prompts(tmp_path: Path) -> None:
@@ -929,7 +987,13 @@ def _choose_submit_worktree(root: Path) -> Path:
     One candidate is auto-picked (the existing y/N preview still
     confirms); several prompt a menu; none is an error that names each
     skipped worktree and why.
+
+    Root launches are interactive by requirement regardless of how many
+    candidates exist — even the auto-picked path ends in a y/N confirm —
+    so the TTY guard fires up front, not per-prompt.
     """
+    worktrees.require_tty("vrg-submit-pr from the repo root")
+
     ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     skipped: list[str] = []
     for wt in worktrees.list_worktrees(root):
@@ -1124,6 +1188,23 @@ def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
     assert "cleanup only" in confirm.call_args[0][0].lower()
 
 
+def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
+    """The TTY guard fires before any prompt — interactivity is a
+    requirement of inference mode, not an accident of menu count."""
+    with (
+        patch(
+            _MOD + ".worktrees.require_tty",
+            side_effect=SystemExit("requires an interactive terminal"),
+        ),
+        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + "._finalize_specific_pr") as fin,
+        pytest.raises(SystemExit, match="interactive terminal"),
+    ):
+        main([])
+    confirm.assert_not_called()
+    fin.assert_not_called()
+
+
 def test_explicit_pr_skips_inference_and_prompts() -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees") as listing,
@@ -1174,8 +1255,11 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
     pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     for wt in worktrees.list_worktrees(root):
         pr = github.pr_for_branch(wt.branch)
-        if pr is not None:
-            pairs.append((wt, pr))
+        if pr is None:
+            # No silent exclusions: every skipped worktree says why.
+            print(f"  {wt.path.name}: no open PR for {wt.branch} — not a candidate")
+            continue
+        pairs.append((wt, pr))
 
     if not pairs:
         confirmed = prompt_yes_no(
