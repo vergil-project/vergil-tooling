@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.8] - 2026-06-05
+
+### Chores
+
+- migrate to vergil v2.1
+
+### Refactoring
+
+- remove deprecated vrg-finalize-repo alias
+
 ## [2.1.7] - 2026-06-04
 
 ### Bug fixes

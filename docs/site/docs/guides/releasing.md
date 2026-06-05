@@ -65,7 +65,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      (e.g., `1.3.1` → `1.3.2`). Merge it.
    - The Documentation workflow publishes the new release notes to
      the docs site under `releases/v1.3.1`.
-5. Run `vrg-finalize-repo` to clean up local state.
+5. Run `vrg-finalize-pr` to clean up local state.
 
 ### Consumer steps
 
@@ -172,10 +172,10 @@ the MkDocs site to GitHub Pages on every push to `develop` and
 
 **Sanity-check the docs publication.** Docs publication is async
 relative to the merge — a failure on this workflow doesn't block
-the PR. To catch silent failures, `vrg-finalize-repo` checks the
-status of the most recent Documentation workflow run on `develop`
-after pulling the merge. If it failed, finalize prints a warning
-with a direct link to the failure log, so you can investigate
+the PR. To catch silent failures, `vrg-finalize-pr` checks the
+status of the most recent CD workflow run on `develop`
+after pulling the merge. If it failed, finalize prints the failure
+with a direct link to the log and exits non-zero, so you investigate
 before moving on to the next PR.
 
 For deeper investigation, view recent runs directly:

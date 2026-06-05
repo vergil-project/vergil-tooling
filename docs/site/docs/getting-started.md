@@ -24,7 +24,7 @@ are installed via `uv tool install`.
 ## 1. Install vergil-tooling on the host
 
 ```bash
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`,
