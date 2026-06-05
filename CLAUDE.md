@@ -3,6 +3,7 @@
 This file provides guidance to Claude Code (claude.ai/code) when working in
 this repository.
 
+<!-- vergil:template:claude-md:begin -->
 ## Memory management
 
 Memory is allowed with human approval. The authoritative policy is in
@@ -104,6 +105,7 @@ vrg-container-run -- vrg-validate
 This is the **only** validation command. Do not run individual linters,
 formatters, or other tools outside of `vrg-validate`. If a tool is not
 invoked by `vrg-validate`, it is not part of the validation pipeline.
+<!-- vergil:template:claude-md:end -->
 
 > **Note:** This repository uses
 > `vrg-container-run -- uv run vrg-validate` because it runs its own
