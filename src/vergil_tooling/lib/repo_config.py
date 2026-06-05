@@ -25,6 +25,19 @@ def _load_template() -> str:
     )
 
 
+def _load_settings_template() -> dict[str, Any]:
+    raw = (
+        importlib.resources.files("vergil_tooling.data")
+        .joinpath("claude_settings.json")
+        .read_text(encoding="utf-8")
+    )
+    template = json.loads(raw)
+    if not isinstance(template, dict):  # pragma: no cover - packaging error
+        msg = "claude_settings.json template is not a JSON object"
+        raise TypeError(msg)
+    return template
+
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
@@ -128,72 +141,61 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
         )
         return
 
-    _check_marketplace(raw, items)
-    _check_plugin_enabled(raw, items)
+    template = _load_settings_template()
+    _check_settings_section(
+        raw,
+        template,
+        key="extraKnownMarketplaces",
+        field="local.claude_settings.marketplace",
+        items=items,
+    )
+    _check_settings_section(
+        raw,
+        template,
+        key="enabledPlugins",
+        field="local.claude_settings.plugin",
+        items=items,
+    )
 
 
-def _check_marketplace(raw: dict[str, Any], items: list[DiffItem]) -> None:
-    marketplaces = raw.get("extraKnownMarketplaces", {})
-    if not isinstance(marketplaces, dict):
+def _check_settings_section(
+    raw: dict[str, Any],
+    template: dict[str, Any],
+    *,
+    key: str,
+    field: str,
+    items: list[DiffItem],
+) -> None:
+    """Require every template entry under ``key`` to match exactly.
+
+    Same pattern as the CLAUDE.md template-presence check: the
+    canonical entries must be present and equal; repos may add extra
+    entries of their own. Catches plugin-manager clobbering of
+    ``enabledPlugins`` / ``extraKnownMarketplaces`` (issue #1427).
+    """
+    expected_entries = template.get(key, {})
+    actual_section = raw.get(key, {})
+    if not isinstance(actual_section, dict):
         items.append(
             DiffItem(
-                field="local.claude_settings.marketplace",
-                expected="vergil-marketplace configured",
-                actual="extraKnownMarketplaces is not an object",
+                field=field,
+                expected=f"{key} object",
+                actual=f"{key} is not an object",
             )
         )
         return
 
-    vergil_mp = marketplaces.get("vergil-marketplace")
-    if not isinstance(vergil_mp, dict):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.marketplace",
-                expected="vergil-marketplace configured",
-                actual="missing",
+    for name, expected_value in expected_entries.items():
+        actual_value = actual_section.get(name)
+        if actual_value != expected_value:
+            items.append(
+                DiffItem(
+                    field=field,
+                    expected=f"{name} = {json.dumps(expected_value, sort_keys=True)}",
+                    actual=(
+                        "missing"
+                        if name not in actual_section
+                        else f"{name} = {json.dumps(actual_value, sort_keys=True)}"
+                    ),
+                )
             )
-        )
-        return
-
-    source = vergil_mp.get("source", {})
-    if not isinstance(source, dict):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.marketplace",
-                expected="vergil-marketplace with source object",
-                actual="source is not an object",
-            )
-        )
-        return
-
-    repo = source.get("repo", "")
-    if repo != "vergil-project/vergil-claude-plugin":
-        items.append(
-            DiffItem(
-                field="local.claude_settings.marketplace_repo",
-                expected="vergil-project/vergil-claude-plugin",
-                actual=repo or "missing",
-            )
-        )
-
-
-def _check_plugin_enabled(raw: dict[str, Any], items: list[DiffItem]) -> None:
-    plugins = raw.get("enabledPlugins", {})
-    if not isinstance(plugins, dict):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.plugin",
-                expected="vergil@vergil-marketplace enabled",
-                actual="enabledPlugins is not an object",
-            )
-        )
-        return
-
-    if not plugins.get("vergil@vergil-marketplace"):
-        items.append(
-            DiffItem(
-                field="local.claude_settings.plugin",
-                expected="vergil@vergil-marketplace enabled",
-                actual="not enabled",
-            )
-        )

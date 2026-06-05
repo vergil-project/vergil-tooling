@@ -5,6 +5,12 @@ API. It blocks until the PR *settles*: all checks reach a terminal conclusion,
 **or** a new commit appears (the head SHA moves), **or** a new review appears.
 On settle it returns the observed state so the wrapping skill can reconcile.
 
+A merged PR can never settle into anything actionable — continued polling
+would just spin as an orphaned watcher — so every poll (including the first)
+checks the PR's state and raises :class:`PrMergedError` when it is merged.
+A merge observed mid-watch means the audit cycle was bypassed; failing loudly
+surfaces the short-circuit instead of silently spinning.
+
 The "is it settled?" decision lives here in deterministic code, not in agent
 tokens — the agent only acts on the returned verdict.
 """
@@ -20,6 +26,15 @@ _POLL_INTERVAL = 15.0
 
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
 _PENDING_BUCKET = "pending"
+_MERGED_STATE = "MERGED"
+
+
+class PrMergedError(Exception):
+    """The watched PR is already merged, so the watch can never settle."""
+
+    def __init__(self, pr: str) -> None:
+        self.pr = pr
+        super().__init__(f"PR {pr} is already merged; aborting watch")
 
 
 @dataclass(frozen=True)
@@ -29,6 +44,12 @@ class PrState:
     head_sha: str
     checks: list[dict[str, str]] = field(default_factory=list)
     reviews: list[dict[str, object]] = field(default_factory=list)
+    pr_state: str = "OPEN"
+
+    @property
+    def merged(self) -> bool:
+        """True when the PR has been merged."""
+        return self.pr_state == _MERGED_STATE
 
     @property
     def has_checks(self) -> bool:
@@ -52,11 +73,12 @@ class PrState:
 
 
 def gather_state(pr: str) -> PrState:
-    """Poll the GitHub API once for the PR's head SHA, checks, and reviews."""
+    """Poll the GitHub API once for the PR's head SHA, checks, reviews, and state."""
     return PrState(
         head_sha=github.head_sha(pr),
         checks=github.pr_checks(pr),
         reviews=github.pr_reviews(pr),
+        pr_state=github.pr_state(pr),
     )
 
 
@@ -87,9 +109,16 @@ def wait_for_settle(
     since_reviews: int | None,
     poll_interval: float = _POLL_INTERVAL,
 ) -> tuple[PrState, str]:
-    """Block until the PR settles; return the settled state and the reason."""
+    """Block until the PR settles; return the settled state and the reason.
+
+    Raises :class:`PrMergedError` as soon as any poll (including the first)
+    observes the PR merged — a merged PR aborts the watch even when a settle
+    reason exists, since no settle verdict on a merged PR is actionable.
+    """
     while True:
         state = gather_state(pr)
+        if state.merged:
+            raise PrMergedError(pr)
         reason = settle_reason(state, since_sha=since_sha, since_reviews=since_reviews)
         if reason is not None:
             return state, reason
