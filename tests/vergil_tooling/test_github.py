@@ -1123,6 +1123,42 @@ class TestGetInstallationToken:
         ):
             assert github.get_installation_token(org="missing-org") is None
 
+    def test_raises_when_required_and_org_has_no_installation(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        config_dir = tmp_path / ".config" / "vergil"
+        config_dir.mkdir(parents=True)
+        (config_dir / "app.env").write_text("APP_ID=12345\n")
+        (config_dir / "app.pem").write_text("fake-key\n")
+        with (
+            patch("vergil_tooling.lib.github._generate_jwt", return_value="jwt"),
+            patch(
+                "vergil_tooling.lib.github._resolve_installations",
+                return_value={"org-b": "222", "org-a": "111"},
+            ),
+            pytest.raises(github.NoInstallationError) as excinfo,
+        ):
+            github.get_installation_token(org="missing-org", require_installation=True)
+        assert excinfo.value.org == "missing-org"
+        assert excinfo.value.known == ["org-a", "org-b"]
+
+    def test_require_installation_returns_none_without_app_config(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # No App credentials -> ambient gh auth applies, which is not
+        # installation-scoped; requiring an installation must not raise.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+        monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
+        assert github.get_installation_token(org="some-org", require_installation=True) is None
+
     def test_caches_token_per_org(
         self,
         tmp_path: Path,

@@ -108,9 +108,69 @@ def _api_is_get(argv: list[str]) -> bool:
     return not has_fields
 
 
+def _parse_repo_owner(value: str) -> str | None:
+    """Extract the owner from a ``-R``/``--repo`` value.
+
+    gh accepts ``OWNER/REPO``, ``HOST/OWNER/REPO``, and full URL forms.
+    """
+    for prefix in ("https://", "http://"):
+        if value.startswith(prefix):
+            value = value[len(prefix) :]
+            break
+    parts = [part for part in value.split("/") if part]
+    if len(parts) >= 3:  # noqa: PLR2004 -- HOST/OWNER/REPO
+        return parts[1]
+    if len(parts) == 2:  # noqa: PLR2004 -- OWNER/REPO
+        return parts[0]
+    return None
+
+
+def _extract_repo_owner(argv: list[str]) -> str | None:
+    """Return the owner named by ``-R``/``--repo`` in the wrapped argv.
+
+    Handles separate-value (``-R x``, ``--repo x``), equals
+    (``--repo=x``, ``-R=x``), and glued-shorthand (``-Rx``) forms;
+    the last occurrence wins, matching gh's flag parsing.
+    """
+    value: str | None = None
+    i = 0
+    while i < len(argv):
+        arg = argv[i]
+        if arg in ("-R", "--repo"):
+            if i + 1 < len(argv):
+                value = argv[i + 1]
+            i += 2
+            continue
+        if arg.startswith("--repo="):
+            value = arg.split("=", 1)[1]
+        elif arg.startswith("-R") and arg != "-R":
+            value = arg[2:].removeprefix("=")
+        i += 1
+    if value is None:
+        return None
+    return _parse_repo_owner(value)
+
+
 def _exec_gh(argv: list[str]) -> int:
-    """Inject the installation token and execute ``gh`` with retry."""
-    token = github.get_installation_token()
+    """Inject the installation token and execute ``gh`` with retry.
+
+    The App installation is selected by the ``-R``/``--repo`` owner
+    when present, falling back to cwd remote detection otherwise.
+    A targeted owner with no installation fails loudly: a token
+    minted for a different installation cannot reach that owner's
+    private repos (#1413).
+    """
+    owner = _extract_repo_owner(argv)
+    try:
+        token = github.get_installation_token(org=owner, require_installation=owner is not None)
+    except github.NoInstallationError as exc:
+        known = ", ".join(exc.known) if exc.known else "none"
+        print(
+            f"vrg-gh: the GitHub App has no installation for owner "
+            f"'{exc.org}' (from -R/--repo). Known installations: {known}.",
+            file=sys.stderr,
+        )
+        return 1
     env: dict[str, str] | None = None
     if token is not None:
         env = {**os.environ, "GH_TOKEN": token}
