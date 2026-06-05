@@ -16,4 +16,4 @@ versions = ["3.12", "3.13", "3.14"]
 integration-tests = false
 
 [dependencies]
-vergil = "v2.0"
+vergil = "v2.1"

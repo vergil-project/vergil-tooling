@@ -60,7 +60,7 @@ live inside the container.
 ## Step 2: Install vergil-tooling
 
 ```bash
-uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
+uv tool install 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 This installs all `vrg-*` console scripts into `~/.local/bin/`,
