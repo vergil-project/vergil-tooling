@@ -75,7 +75,7 @@ nav:
           - vrg-commit: reference/dev/commit.md
           - vrg-submit-pr: reference/dev/submit-pr.md
           - vrg-prepare-release: reference/dev/prepare-release.md
-          - vrg-finalize-repo: reference/dev/finalize-repo.md
+          - vrg-finalize-pr: reference/dev/finalize-pr.md
   - Standards:
       - Authoring:
           - Markdown Authoring: standards/markdown-authoring.md

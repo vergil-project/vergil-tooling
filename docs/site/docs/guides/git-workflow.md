@@ -15,7 +15,7 @@ see [the worktree convention spec][worktree-spec].
 new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  →  finalize
                   │         │        │                                      │
                   ▼         ▼        ▼                                      ▼
-            feature/<N>  vrg-commit  vrg-submit-pr                    vrg-finalize-repo
+            feature/<N>  vrg-commit  vrg-submit-pr                    vrg-finalize-pr
 ```
 
 - One issue per branch. Branch name encodes the issue number.
@@ -25,8 +25,8 @@ new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  �
   `gh pr create` is blocked.**
 - Merging is **manual**. Auto-merge is disabled org-wide as of
   2026-04-22.
-- After merge, `vrg-finalize-repo` pulls develop, deletes the merged
-  branch, and prunes remote refs.
+- After merge, `vrg-finalize-pr` pulls develop, deletes the merged
+  branch and its worktree, and prunes remote refs.
 
 For parallel work on multiple issues, use the worktree convention
 (below) — every session starts at the project root, each concurrent
@@ -159,17 +159,18 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
 Once CI is green and a reviewer approves, merge through the GitHub
 UI (squash merge for feature PRs). No automated merge will happen.
 
-### 5. Finalize with `vrg-finalize-repo`
+### 5. Finalize with `vrg-finalize-pr`
 
 ```bash
-vrg-finalize-repo
+vrg-finalize-pr            # cleanup only, after merging in the UI
+vrg-finalize-pr <PR>       # provenance check, merge, then cleanup
 ```
 
 This:
 
 - Switches back to the integration branch (`develop`).
 - Pulls the latest.
-- Deletes the merged local feature branch.
+- Deletes the merged local feature branch and removes its worktree.
 - Prunes stale remote-tracking refs.
 - Runs post-merge validation via `vrg-container-run` to catch any
   regression introduced by the merge.
@@ -178,7 +179,7 @@ Run this immediately after the PR merges. A Stop hook in the plugin
 will remind you if you try to end the session with an unsubmitted
 or unfinalized PR still dangling.
 
-See the [vrg-finalize-repo reference](../reference/dev/finalize-repo.md).
+See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 
 ## Parallel work with worktrees
 
@@ -261,9 +262,9 @@ Rules for this session:
 
 ### Cleanup after merge
 
-`vrg-finalize-repo` will handle worktree removal once
-[vergil-tooling#260](https://github.com/vergil-project/vergil-tooling/issues/260)
-lands. Until then, do it by hand alongside the usual finalization:
+`vrg-finalize-pr` handles worktree removal for the finalized branch
+when the worktree lives under the canonical `.worktrees/` directory, so
+the cleanup above is automatic. To remove one by hand:
 
 ```bash
 cd ~/dev/github/<repo>
@@ -285,7 +286,7 @@ High-level summary:
 3. Merge the release PR manually. CI auto-tags, creates the GitHub
    Release, publishes the package artifact, and opens a
    version-bump PR back to `develop`.
-4. `vrg-finalize-repo` as usual.
+4. `vrg-finalize-pr` as usual.
 
 ## Adoption for a new repo
 

@@ -70,20 +70,21 @@ Claude plugin, VERSION file) to find the version.
 | Exit codes | 0 success, 1 error |
 | Status | Active |
 
-### vrg-finalize-repo
+### vrg-finalize-pr
 
-Post-merge repository cleanup. Switches to the target branch,
-fast-forward pulls, deletes merged local branches (auto-removing
-worktrees inside `.worktrees/` when necessary), prunes remotes,
-runs validation, and checks the Documentation workflow status.
+Finalize a pull request. Given a PR, runs the provenance check, merges
+it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
+the target branch, fast-forward pulls, deletes merged local branches
+(auto-removing worktrees inside `.worktrees/` when necessary), prunes
+remotes, runs validation, and checks the CD workflow status.
 
 | Attribute | Value |
 |---|---|
-| Source | `vergil_tooling.bin.vrg_finalize_repo` |
-| Args | `--target-branch` (default: develop), `--dry-run` |
-| Preconditions | Git repo, worktree-aware (auto-switches to main worktree), `vrg-container-run` on PATH |
-| Failure mode | Validation failures return exit 1; docs workflow failure is a soft warning (exit 0) |
-| Exit codes | 0 success, 1 validation failure or unrecognized branching model |
+| Source | `vergil_tooling.bin.vrg_finalize_pr` |
+| Args | `PR` (optional), `--target-branch` (default: develop), `--strategy` (default: squash), `--allow-provenance-violation`, `--dry-run` |
+| Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
+| Failure mode | Provenance violations, a dirty working tree, validation failures, or a failed CD run all return exit 1 |
+| Exit codes | 0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model |
 | Status | Active |
 
 ### vrg-ensure-label
