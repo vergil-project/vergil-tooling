@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import Any
 
 import pytest
 
@@ -265,8 +266,8 @@ class TestInstanceName:
 
 
 class TestFingerprint:
-    def _spec(self, **over: object) -> ComposedSpec:
-        base: dict[str, object] = {
+    def _spec(self, **over: Any) -> ComposedSpec:
+        base: dict[str, Any] = {
             "cpus": 12,
             "memory": "64GiB",
             "disk": "300GiB",
@@ -278,7 +279,7 @@ class TestFingerprint:
             "under": (),
         }
         base.update(over)
-        return ComposedSpec(**base)  # type: ignore[arg-type]
+        return ComposedSpec(**base)
 
     def test_stable_for_same_declaration(self) -> None:
         assert spec_fingerprint(self._spec()) == spec_fingerprint(self._spec())
