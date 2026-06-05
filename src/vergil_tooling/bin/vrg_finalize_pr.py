@@ -24,6 +24,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import config, git, github, pr_provenance, worktrees
 from vergil_tooling.lib.container_cache import clean_branch_images
+from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
 
 _CD_WORKFLOW_NAME = "CD"
 
@@ -79,6 +80,50 @@ def _worktree_is_dirty(wt_path: Path) -> bool:
     if result.returncode != 0:
         return True
     return bool(result.stdout.strip())
+
+
+def _infer_pr(root: Path, target_branch: str) -> str | None:
+    """Resolve which PR to finalize when none was given; always confirm.
+
+    Returns the PR URL to finalize, or None when the user confirmed
+    cleanup-only. Raises SystemExit(0) on decline, and SystemExit with
+    a message via require_tty when stdin is not interactive — these
+    prompts are the human touch point of the workflow, and the
+    explicit-PR argument is the scriptable path.
+    """
+    worktrees.require_tty("vrg-finalize-pr without a PR argument")
+
+    pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
+    for wt in worktrees.list_worktrees(root):
+        pr = github.pr_for_branch(wt.branch)
+        if pr is None:
+            # No silent exclusions: every skipped worktree says why.
+            print(f"  {wt.path.name}: no open PR for {wt.branch} — not a candidate")
+            continue
+        pairs.append((wt, pr))
+
+    if not pairs:
+        confirmed = prompt_yes_no(
+            f"No open PRs found in worktrees. Run cleanup only (switch to "
+            f"{target_branch}, pull, prune branches/worktrees)?",
+            default=False,
+        )
+        if not confirmed:
+            print("Aborted.")
+            raise SystemExit(0)
+        return None
+
+    if len(pairs) == 1:
+        wt, pr = pairs[0]
+    else:
+        labels = [f"PR #{p['number']} ({w.branch}): {p['title']}" for w, p in pairs]
+        chosen = prompt_choice("Multiple PRs ready to finalize", labels)
+        wt, pr = pairs[labels.index(chosen)]
+
+    if not prompt_yes_no(f"Finalize PR #{pr['number']} ({pr['title']})?", default=False):
+        print("Aborted.")
+        raise SystemExit(0)
+    return pr["url"]
 
 
 def _check_cd_workflow_status(target_branch: str) -> str | None:
@@ -195,6 +240,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     root = git.repo_root()
+
+    if args.pr is None:
+        try:
+            args.pr = _infer_pr(root, args.target_branch)
+        except SystemExit as exc:
+            if exc.code == 0:
+                return 0
+            raise
 
     if args.pr is not None:
         rc = _finalize_specific_pr(args)

@@ -3,22 +3,24 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
+from pathlib import Path
 from subprocess import CompletedProcess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
     _check_cd_workflow_status,
+    _finalize_specific_pr,
     _worktree_is_dirty,
     main,
     parse_args,
 )
+from vergil_tooling.lib.pr_merge import MergeAbort
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
+from vergil_tooling.lib.worktrees import Worktree
 
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 
@@ -34,6 +36,21 @@ def _main_worktree() -> Iterator[None]:
     the innermost patch wins.
     """
     with patch(_MOD + ".git.is_main_worktree", return_value=True):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _interactive_defaults() -> Iterator[None]:
+    """Default: TTY present, no worktree candidates, cleanup confirmed.
+
+    Inference tests override by patching these targets directly — the
+    innermost patch wins.
+    """
+    with (
+        patch(_MOD + ".worktrees.require_tty"),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".prompt_yes_no", return_value=True),
+    ):
         yield
 
 
@@ -440,10 +457,6 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
     _make_profile(tmp_path, "library-release")
     wt_dir = tmp_path / ".worktrees" / "issue-99-x"
     wt_dir.mkdir(parents=True)
-    porcelain = _porcelain(
-        (str(tmp_path), "develop"),
-        (str(wt_dir), "feature/99-x"),
-    )
 
     git_run_calls: list[tuple[str, ...]] = []
 
@@ -455,7 +468,9 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/99-x"]),
-        patch(_MOD + ".git.read_output", return_value=porcelain),
+        # Discovery itself is covered in test_worktrees.py; here the lookup
+        # is patched directly (the autouse fixture stubs list_worktrees).
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=False),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
@@ -509,10 +524,6 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
     _make_profile(tmp_path, "library-release")
     wt_dir = tmp_path / ".worktrees" / "issue-42-wip"
     wt_dir.mkdir(parents=True)
-    porcelain = _porcelain(
-        (str(tmp_path), "develop"),
-        (str(wt_dir), "feature/42-wip"),
-    )
 
     git_run_calls: list[tuple[str, ...]] = []
 
@@ -524,7 +535,9 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/42-wip"]),
-        patch(_MOD + ".git.read_output", return_value=porcelain),
+        # Discovery itself is covered in test_worktrees.py; here the lookup
+        # is patched directly (the autouse fixture stubs list_worktrees).
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
         patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
@@ -748,3 +761,143 @@ def test_no_pr_arg_is_cleanup_only(tmp_path: Path) -> None:
     assert result == 0
     mock_check.assert_not_called()
     mock_merge.assert_not_called()
+
+
+# -- PR inference and always-confirm (issue #1423) ----------------------------
+
+_PR7 = {"number": "7", "url": "https://github.com/o/r/pull/7", "title": "Foo"}
+_PR8 = {"number": "8", "url": "https://github.com/o/r/pull/8", "title": "Bar"}
+_WT7 = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
+_WT8 = Worktree(path=Path("/repo/.worktrees/issue-8-bar"), branch="feature/8-bar")
+
+
+@contextmanager
+def _cleanup_path_mocks() -> Iterator[None]:
+    """Neutralize the post-merge cleanup path for inference-focused tests.
+
+    Keeps main() off real git/config/gh calls after the part under test.
+    """
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value=""),
+    ):
+        yield
+
+
+def test_no_arg_single_candidate_confirms_and_finalizes() -> None:
+    with (
+        _cleanup_path_mocks(),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + ".prompt_yes_no", return_value=True) as confirm,
+        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+    ):
+        rc = main(["--dry-run"])
+    assert rc == 0
+    assert "PR #7" in confirm.call_args[0][0]
+    assert fin.call_args[0][0].pr == "https://github.com/o/r/pull/7"
+
+
+def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + ".prompt_yes_no", return_value=False),
+        patch(_MOD + "._finalize_specific_pr") as fin,
+        patch(_MOD + ".git.current_branch") as branch,
+    ):
+        rc = main([])
+    assert rc == 0
+    fin.assert_not_called()
+    branch.assert_not_called()  # cleanup never started
+
+
+def test_no_arg_multiple_candidates_menu_then_confirm() -> None:
+    def _pr_for(branch: str) -> dict[str, str]:
+        return _PR7 if branch == "feature/7-foo" else _PR8
+
+    with (
+        _cleanup_path_mocks(),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
+        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
+        patch(_MOD + ".prompt_yes_no", return_value=True),
+        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+    ):
+        rc = main(["--dry-run"])
+    assert rc == 0
+    menu.assert_called_once()
+    assert fin.call_args[0][0].pr == "https://github.com/o/r/pull/8"
+
+
+def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".prompt_yes_no", return_value=False) as confirm,
+    ):
+        rc = main([])
+    assert rc == 0
+    assert "cleanup only" in confirm.call_args[0][0].lower()
+
+
+def test_no_arg_excluded_worktree_prints_reason(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No silent exclusions: a worktree without an open PR says why it
+    was skipped while another worktree proceeds."""
+
+    def _pr_for(branch: str) -> dict[str, str] | None:
+        return _PR7 if branch == "feature/7-foo" else None
+
+    with (
+        _cleanup_path_mocks(),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
+        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".prompt_yes_no", return_value=True),
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+    ):
+        rc = main(["--dry-run"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "issue-8-bar: no open PR for feature/8-bar" in out
+
+
+def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
+    """The TTY guard fires before any prompt — interactivity is a
+    requirement of inference mode, not an accident of menu count."""
+    with (
+        patch(
+            _MOD + ".worktrees.require_tty",
+            side_effect=SystemExit("requires an interactive terminal"),
+        ),
+        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + "._finalize_specific_pr") as fin,
+        pytest.raises(SystemExit, match="interactive terminal"),
+    ):
+        main([])
+    confirm.assert_not_called()
+    fin.assert_not_called()
+
+
+def test_explicit_pr_skips_inference_and_prompts() -> None:
+    with (
+        patch(_MOD + ".worktrees.list_worktrees") as listing,
+        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value=""),
+    ):
+        rc = main(["123", "--dry-run"])
+    assert rc == 0
+    listing.assert_not_called()
+    confirm.assert_not_called()
+    fin.assert_called_once()
