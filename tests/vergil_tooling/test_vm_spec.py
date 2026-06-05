@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+from typing import Any
 
 import pytest
 
@@ -121,6 +123,83 @@ class TestComposeVmSpec:
         assert spec.memory == "2GiB"
         assert spec.under == ()
 
+    def test_nested_defaults_false(self) -> None:
+        base_spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=None, override=None)
+        assert base_spec.nested is False
+        mq_spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_mq_stanza(), override=None
+        )
+        assert mq_spec.nested is False
+
+    def test_nested_true_at_vm_tier_applies_and_dedicates(self) -> None:
+        stanza = VmStanza(
+            packages=[],
+            cpus=None,
+            memory=None,
+            disk=None,
+            stale_days=None,
+            apt_repos=[],
+            vagrant_plugins=[],
+            roles={},
+            nested=True,
+        )
+        spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+        assert spec.nested is True
+        assert spec.dedicated is True
+
+    def test_role_nested_overrides_vm_tier_last_wins(self) -> None:
+        stanza = VmStanza(
+            packages=[],
+            cpus=None,
+            memory=None,
+            disk=None,
+            stale_days=None,
+            apt_repos=[],
+            vagrant_plugins=[],
+            nested=True,
+            roles={
+                "vergil-user": RoleOverlay(
+                    packages=[],
+                    cpus=None,
+                    memory=None,
+                    disk=None,
+                    stale_days=None,
+                    apt_repos=[],
+                    vagrant_plugins=[],
+                    nested=False,
+                ),
+            },
+        )
+        spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+        assert spec.nested is False
+
+    def test_role_nested_alone_applies_only_to_that_role(self) -> None:
+        stanza = VmStanza(
+            packages=[],
+            cpus=None,
+            memory=None,
+            disk=None,
+            stale_days=None,
+            apt_repos=[],
+            vagrant_plugins=[],
+            roles={
+                "vergil-user": RoleOverlay(
+                    packages=[],
+                    cpus=None,
+                    memory=None,
+                    disk=None,
+                    stale_days=None,
+                    apt_repos=[],
+                    vagrant_plugins=[],
+                    nested=True,
+                ),
+            },
+        )
+        user = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+        audit = compose_vm_spec(identity="vergil-audit", base=BASE, stanza=stanza, override=None)
+        assert user.nested is True
+        assert audit.nested is False
+
     def test_override_above_declared_not_flagged(self) -> None:
         # An override that raises a scalar above the repo-declared value is not "under".
         spec = compose_vm_spec(
@@ -187,8 +266,8 @@ class TestInstanceName:
 
 
 class TestFingerprint:
-    def _spec(self, **over: object) -> ComposedSpec:
-        base: dict[str, object] = {
+    def _spec(self, **over: Any) -> ComposedSpec:
+        base: dict[str, Any] = {
             "cpus": 12,
             "memory": "64GiB",
             "disk": "300GiB",
@@ -200,7 +279,7 @@ class TestFingerprint:
             "under": (),
         }
         base.update(over)
-        return ComposedSpec(**base)  # type: ignore[arg-type]
+        return ComposedSpec(**base)
 
     def test_stable_for_same_declaration(self) -> None:
         assert spec_fingerprint(self._spec()) == spec_fingerprint(self._spec())
@@ -230,3 +309,28 @@ class TestFingerprint:
         assert spec_fingerprint(self._spec(vagrant_plugins=("a",))) != spec_fingerprint(
             self._spec(vagrant_plugins=("a", "b"))
         )
+
+    def test_nested_toggle_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(nested=True)) != spec_fingerprint(
+            self._spec(nested=False)
+        )
+
+    def test_nested_false_keeps_legacy_fingerprint(self) -> None:
+        """Profiles that never set nested must not flip to NEEDS-REBUILD on upgrade.
+
+        Pins the encoding: ``nested`` enters the payload only when true, so
+        every fingerprint stored before the knob existed stays valid.
+        """
+        legacy_payload = "\n".join(
+            (
+                "cpus=12",
+                "memory=64GiB",
+                "disk=300GiB",
+                "stale_days=7",
+                "packages=a,b",
+                "apt_repos=" + "|".join(f"{k}={_REPO[k]}" for k in sorted(_REPO)),
+                "vagrant_plugins=vagrant-libvirt",
+            )
+        )
+        expected = hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()
+        assert spec_fingerprint(self._spec(nested=False)) == expected

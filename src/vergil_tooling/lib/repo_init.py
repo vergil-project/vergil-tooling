@@ -11,7 +11,7 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, repo_config
 from vergil_tooling.lib.config import _ENUMS
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
@@ -157,7 +157,7 @@ def render_vergil_toml(ctx: RepoInitContext) -> str:
 
 
 def render_claude_md(ctx: RepoInitContext) -> str:
-    """Render CLAUDE.md with project header + consumer template."""
+    """Render CLAUDE.md with project header + marker-delimited consumer template."""
     consumer = _load_data_file("claude_md_consumer.md")
     header = (
         "# CLAUDE.md\n"
@@ -173,7 +173,14 @@ def render_claude_md(ctx: RepoInitContext) -> str:
         "```\n"
         "\n"
     )
-    return header + consumer
+    return (
+        header
+        + repo_config.CLAUDE_MD_MARKER_BEGIN
+        + "\n"
+        + consumer
+        + repo_config.CLAUDE_MD_MARKER_END
+        + "\n"
+    )
 
 
 def render_readme(ctx: RepoInitContext) -> str:
