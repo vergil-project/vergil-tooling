@@ -18,7 +18,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -455,34 +455,57 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 
 @dataclass
 class DedicatedRow:
-    org: str | None
-    repo: str | None
+    org: str
+    repo: str
     instance: str
-    state: str  # "present" | "orphaned" | "not-created"
+    state: str  # "present" | "orphaned"
+    stanza: VmStanza | None = None
 
 
-def _repo_has_vm_spec(projects_dir: str, org: str, repo: str) -> bool:
+def _classify_instance(
+    projects_dir: str, org: str, repo: str, instance: str
+) -> tuple[str, VmStanza | None]:
+    """Classify one existing instance against its repo's [vm] stanza.
+
+    Returns ``(state, stanza)``: ``("present", stanza)`` when the repo declares
+    a spec, ``("orphaned", None)`` when it provably lacks one. A repo whose
+    ``vergil.toml`` fails to parse is classified ``present`` conservatively —
+    flagging it orphaned would invite destroying a VM whose spec may still be
+    declared — and the failure is warned loudly with the config path.
+    """
     repo_dir = Path(projects_dir) / org / repo
-    if not (repo_dir / "vergil.toml").exists():
-        return False
+    config_path = repo_dir / "vergil.toml"
+    if not config_path.exists():
+        return "orphaned", None
     try:
-        return read_config(repo_dir).vm is not None
-    except ConfigError:
-        return False
+        stanza = read_config(repo_dir).vm
+    except ConfigError as exc:
+        print(
+            f"WARNING: cannot parse {config_path}: {exc} — "
+            f"listing '{instance}' as present (unverified)",
+            file=sys.stderr,
+        )
+        return "present", None
+    if stanza is None:
+        return "orphaned", None
+    return "present", stanza
 
 
 def discover_dedicated(
     identity_name: str, instances: list[str], projects_dir: str
 ) -> list[DedicatedRow]:
-    """Reconcile existing <identity>.* instances with spec-bearing local repos.
+    """Classify existing <identity>.<org>.<repo> instances against local repos.
 
-    - instance + spec   -> present
+    Enumeration is from instances only — O(instances), one targeted
+    ``read_config()`` each:
+
+    - instance + spec   -> present (carrying the parsed stanza)
     - instance, no spec -> orphaned
-    - spec, no instance -> not-created
+
+    A spec-bearing repo with no instance is not listed here; the session/start
+    preflight gate surfaces it loudly when the repo is actually used.
     """
     rows: list[DedicatedRow] = []
-    seen: set[tuple[str, str]] = set()
-
     for name in instances:
         try:
             ident, org, repo = parse_instance_name(name)
@@ -490,24 +513,8 @@ def discover_dedicated(
             continue
         if ident != identity_name or org is None or repo is None:
             continue
-        seen.add((org, repo))
-        state = "present" if _repo_has_vm_spec(projects_dir, org, repo) else "orphaned"
-        rows.append(DedicatedRow(org, repo, name, state))
-
-    # Spec-bearing repos with no instance yet -> not-created.
-    root = Path(projects_dir)
-    if root.is_dir():
-        for org_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            for repo_dir in sorted(p for p in org_dir.iterdir() if p.is_dir()):
-                org, repo = org_dir.name, repo_dir.name
-                if (org, repo) in seen:
-                    continue
-                if _repo_has_vm_spec(projects_dir, org, repo):
-                    rows.append(
-                        DedicatedRow(
-                            org, repo, instance_name(identity_name, org, repo), "not-created"
-                        )
-                    )
+        state, stanza = _classify_instance(projects_dir, org, repo, name)
+        rows.append(DedicatedRow(org, repo, name, state, stanza))
     return rows
 
 
@@ -555,20 +562,6 @@ def _list_rows(
 
     for d in dedicated:
         scope = f"{d.org}/{d.repo}"
-        if d.state == "not-created":
-            rows.append(
-                {
-                    "scope": scope,
-                    "status": "Not Created",
-                    "cpus": "—",
-                    "memory": "—",
-                    "disk": "—",
-                    "agents": "—",
-                    "humans": "—",
-                    "spec": "not-created",
-                }
-            )
-            continue
         agents, humans = _occupancy(d.instance, status)
         st = status.get(d.instance, "Not Created")
         if d.state == "orphaned":
@@ -585,13 +578,10 @@ def _list_rows(
                 }
             )
             continue
-        repo_dir = Path(resolve_workspace(scope, identity.projects_dir))
-        try:
-            stanza = read_config(repo_dir).vm
-        except (FileNotFoundError, ConfigError):
-            stanza = None
-        override = identity.overrides.get(cast("tuple[str, str]", (d.org, d.repo)))
-        spec = compose_vm_spec(identity=identity_name, base=base, stanza=stanza, override=override)
+        override = identity.overrides.get((d.org, d.repo))
+        spec = compose_vm_spec(
+            identity=identity_name, base=base, stanza=d.stanza, override=override
+        )
         rows.append(
             {
                 "scope": scope,
@@ -901,12 +891,14 @@ def main(argv: list[str] | None = None) -> int:
         help="List all identity VMs and their status",
         description=(
             "List each identity's base and dedicated VMs with configured footprint "
-            "(CPUS/MEM/DISK), live occupancy, and SPEC health. AGENTS counts harness "
-            "instances (Claude Code sessions); HUMANS counts open human-held interactive "
-            "shells (a tally of shells, not distinct people). SPEC is one of: ok, "
-            "NEEDS-REBUILD (drift — rebuild it), not-created (a spec'd repo with no VM "
-            "yet), orphaned (a VM whose repo dropped its [vm]), or an 'under' flag when a "
-            "host override sized the box below the repo's declared footprint."
+            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
+            "existing VM instances only; a spec'd repo whose VM was never built is "
+            "surfaced by the session/start preflight gate, not here. AGENTS counts "
+            "harness instances (Claude Code sessions); HUMANS counts open human-held "
+            "interactive shells (a tally of shells, not distinct people). SPEC is one "
+            "of: ok, NEEDS-REBUILD (drift — rebuild it), orphaned (a VM whose repo "
+            "dropped its [vm]), or an 'under' flag when a host override sized the box "
+            "below the repo's declared footprint."
         ),
     )
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")
