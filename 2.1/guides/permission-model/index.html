@@ -816,6 +816,8 @@
       
         
       
+        
+      
     
     
     
@@ -868,6 +870,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.8/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.8
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5080,14 +5110,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/finalize-repo/" class="md-nav__link">
+      <a href="../../reference/dev/finalize-pr/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -8372,7 +8402,7 @@ entries above are conditionally allowed for release workflow
 operations under the human account.</p>
 <h3 id="vrg-tools-that-bypass-the-wrapper">VRG Tools That Bypass the Wrapper<a class="headerlink" href="#vrg-tools-that-bypass-the-wrapper" title="Permanent link">&para;</a></h3>
 <p>Mechanized VRG tools (<code>vrg-submit-pr</code>, <code>vrg-merge-when-green</code>,
-<code>vrg-ensure-label</code>, <code>vrg-github-repo-config</code>, <code>vrg-finalize-repo</code>)
+<code>vrg-ensure-label</code>, <code>vrg-github-repo-config</code>, <code>vrg-finalize-pr</code>)
 call <code>gh</code> directly in their Python code. They bypass the wrapper
 because they are already validated — the wrapper only constrains
 agent-initiated <code>gh</code> calls via the Bash tool.</p>

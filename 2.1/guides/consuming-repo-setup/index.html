@@ -816,6 +816,8 @@
       
         
       
+        
+      
     
     
     
@@ -868,6 +870,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.8/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.8
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5080,14 +5110,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/finalize-repo/" class="md-nav__link">
+      <a href="../../reference/dev/finalize-pr/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -7750,7 +7780,7 @@ Linux.</p>
 frameworks, markdownlint, or shellcheck on the host. All of those
 live inside the container.</p>
 <h2 id="step-2-install-vergil-tooling">Step 2: Install vergil-tooling<a class="headerlink" href="#step-2-install-vergil-tooling" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4&#39;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>uv<span class="w"> </span>tool<span class="w"> </span>install<span class="w"> </span><span class="s1">&#39;vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1&#39;</span>
 </code></pre></div>
 <p>This installs all <code>vrg-*</code> console scripts into <code>~/.local/bin/</code>,
 which <code>uv</code>'s official installer already configures on <code>PATH</code>. No
@@ -7912,7 +7942,7 @@ load the hook guard and the plugin automatically.</p>
 <li><strong>PreToolUse hooks</strong> on <code>Bash</code> that block heredoc syntax and
   (on repos that have adopted the worktree convention) commits
   originating outside <code>.worktrees/&lt;name&gt;/</code>.</li>
-<li><strong>PostToolUse hooks</strong> that remind you to run <code>vrg-finalize-repo</code>
+<li><strong>PostToolUse hooks</strong> that remind you to run <code>vrg-finalize-pr</code>
   after <code>vrg-submit-pr</code>, and that surface deprecation warnings in
   test output.</li>
 <li><strong>Stop hooks</strong> that prevent session exit if a PR was submitted

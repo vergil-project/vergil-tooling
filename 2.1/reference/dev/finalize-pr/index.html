@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../../lint/pr-issue-linkage/">
+        <link rel="prev" href="../prepare-release/">
       
       
-        <link rel="next" href="../submit-pr/">
+        <link rel="next" href="../../../standards/markdown-authoring/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>vrg-commit - VERGIL Tooling</title>
+        <title>vrg-finalize-pr - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#vrg-commit" class="md-skip">
+        <a href="#vrg-finalize-pr" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              vrg-commit
+              vrg-finalize-pr
             
           </span>
         </div>
@@ -5039,37 +5039,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    vrg-commit
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../commit/" class="md-nav__link">
         
   
   
@@ -5085,98 +5058,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Usage
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#arguments" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Arguments
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Arguments">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#allowed-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Allowed Types
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Examples
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Behavior
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#exit-codes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Exit Codes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -5242,10 +5123,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../finalize-pr/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-finalize-pr
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -5261,6 +5169,164 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#usage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Usage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#arguments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Arguments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Behavior
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Provenance Check and Merge (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-switch-to-target-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Switch to Target Branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-fast-forward-pull" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fast-Forward Pull
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-delete-merged-branches-and-worktrees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Delete Merged Branches and Worktrees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-prune-remote-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Prune Remote References
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-working-tree-cleanliness-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Working-Tree Cleanliness Gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-post-finalization-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Post-Finalization Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-cd-workflow-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. CD Workflow Check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit Codes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -7534,34 +7600,6 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Arguments">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#allowed-types" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Allowed Types
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Examples
-      
-    </span>
-  </a>
-  
 </li>
       
         <li class="md-nav__item">
@@ -7572,6 +7610,100 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Behavior">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Provenance Check and Merge (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-switch-to-target-branch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Switch to Target Branch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-fast-forward-pull" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Fast-Forward Pull
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-delete-merged-branches-and-worktrees" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Delete Merged Branches and Worktrees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-prune-remote-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Prune Remote References
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-working-tree-cleanliness-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Working-Tree Cleanliness Gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-post-finalization-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Post-Finalization Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-cd-workflow-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. CD Workflow Check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -7603,85 +7735,107 @@
 
 
 
-<h1 id="vrg-commit">vrg-commit<a class="headerlink" href="#vrg-commit" title="Permanent link">&para;</a></h1>
-<p><strong>Installed as:</strong> <code>vrg-commit</code> (Python console script)</p>
-<p><strong>Source:</strong> <code>src/vergil_tooling/commit.py</code></p>
-<p>Wrapper that constructs standards-compliant commit messages
-with correct Conventional Commits format and Co-Authored-By trailers.</p>
-<div class="admonition warning">
-<p class="admonition-title">Required for AI agents</p>
-<p>AI agents <strong>must</strong> use this tool instead of raw <code>git commit</code>.
-The tool resolves the correct co-author identity automatically.</p>
-</div>
+<h1 id="vrg-finalize-pr">vrg-finalize-pr<a class="headerlink" href="#vrg-finalize-pr" title="Permanent link">&para;</a></h1>
+<p><strong>Installed as:</strong> <code>vrg-finalize-pr</code> (Python console script)</p>
+<p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_finalize_pr.py</code></p>
+<p>Finalizes a pull request and reconciles local state afterwards. Has
+two modes, keyed on whether a PR argument is given:</p>
+<ul>
+<li><strong><code>vrg-finalize-pr &lt;PR&gt;</code></strong> — runs the pre-merge provenance check,
+  merges the PR (or confirms it is already merged), then runs the
+  cleanup below. This replaces a manual web merge followed by a
+  separate cleanup step.</li>
+<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — cleanup only: switch to the target
+  branch, fast-forward pull, delete merged local branches, and prune
+  stale remote-tracking references. This is the release path.</li>
+</ul>
+<p>Must be run from the <strong>main worktree</strong> — the cleanup removes
+worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--type<span class="w"> </span>TYPE<span class="w"> </span>--message<span class="w"> </span>MESSAGE<span class="w"> </span>--agent<span class="w"> </span>AGENT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Argument</th>
-<th>Required</th>
 <th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-<td><code>--type</code></td>
-<td>Yes</td>
-<td>Conventional commit type</td>
+<td><code>PR</code></td>
+<td>PR number or URL to merge and finalize. Omit for cleanup-only (release path).</td>
 </tr>
 <tr>
-<td><code>--message</code></td>
-<td>Yes</td>
-<td>Commit description</td>
+<td><code>--target-branch</code></td>
+<td>Branch to switch to (default: <code>develop</code>)</td>
 </tr>
 <tr>
-<td><code>--agent</code></td>
-<td>Yes</td>
-<td>AI tool identity: <code>claude</code> or <code>codex</code></td>
+<td><code>--strategy</code></td>
+<td>Merge strategy when a PR is given (default: <code>squash</code>)</td>
 </tr>
 <tr>
-<td><code>--scope</code></td>
-<td>No</td>
-<td>Conventional commit scope</td>
+<td><code>--allow-provenance-violation</code></td>
+<td>Proceed despite provenance violations (conscious human override)</td>
 </tr>
 <tr>
-<td><code>--body</code></td>
-<td>No</td>
-<td>Detailed commit body</td>
+<td><code>--dry-run</code></td>
+<td>Show what would be done without making changes</td>
 </tr>
 </tbody>
 </table>
-<h3 id="allowed-types">Allowed Types<a class="headerlink" href="#allowed-types" title="Permanent link">&para;</a></h3>
-<p><code>feat</code>, <code>fix</code>, <code>docs</code>, <code>style</code>, <code>refactor</code>, <code>test</code>, <code>chore</code>, <code>ci</code>,
-<code>build</code></p>
-<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Feature with scope</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span>--scope<span class="w"> </span>lint<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">&quot;add new check&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="c1"># Bug fix</span>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a><span class="w">  </span>--type<span class="w"> </span>fix<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">&quot;correct regex pattern&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="c1"># Documentation with body</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">  </span>--type<span class="w"> </span>docs<span class="w"> </span>--message<span class="w"> </span><span class="s2">&quot;update README&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">&quot;Expanded usage section&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
-</code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Validates all required arguments.</li>
-<li>Reads <code>docs/repository-standards.md</code> to find the approved
-   co-author identity matching the <code>--agent</code> value.</li>
-<li>Verifies staged changes exist.</li>
-<li>Constructs the commit message in a temporary file.</li>
-<li>Runs <code>git commit --file</code>.</li>
-</ol>
+<h3 id="1-provenance-check-and-merge-pr-mode-only">1. Provenance Check and Merge (PR mode only)<a class="headerlink" href="#1-provenance-check-and-merge-pr-mode-only" title="Permanent link">&para;</a></h3>
+<p>Runs the pre-merge provenance check. Advisories are printed but do not
+block. Violations abort the merge unless <code>--allow-provenance-violation</code>
+is given. If the PR is already merged, the merge step is skipped.</p>
+<h3 id="2-switch-to-target-branch">2. Switch to Target Branch<a class="headerlink" href="#2-switch-to-target-branch" title="Permanent link">&para;</a></h3>
+<p>Checks out the target branch (default: <code>develop</code>).</p>
+<h3 id="3-fast-forward-pull">3. Fast-Forward Pull<a class="headerlink" href="#3-fast-forward-pull" title="Permanent link">&para;</a></h3>
+<p>Fetches (<code>--tags --force</code>) and fast-forward merges <code>origin/{target}</code>.</p>
+<h3 id="4-delete-merged-branches-and-worktrees">4. Delete Merged Branches and Worktrees<a class="headerlink" href="#4-delete-merged-branches-and-worktrees" title="Permanent link">&para;</a></h3>
+<p>Deletes local branches merged into the target branch. If a merged
+branch is still checked out in a canonical <code>.worktrees/</code> worktree, that
+worktree is removed first (skipped if it has uncommitted changes).
+Cached container images for the branch are cleaned. Eternal branches
+are protected based on the <code>branching_model</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Branching Model</th>
+<th>Protected Branches</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>docs-single-branch</code></td>
+<td><code>develop</code>, <code>gh-pages</code></td>
+</tr>
+<tr>
+<td><code>library-release</code></td>
+<td><code>develop</code>, <code>main</code>, <code>gh-pages</code></td>
+</tr>
+<tr>
+<td><code>application-promotion</code></td>
+<td><code>develop</code>, <code>release</code>, <code>main</code>, <code>gh-pages</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="5-prune-remote-references">5. Prune Remote References<a class="headerlink" href="#5-prune-remote-references" title="Permanent link">&para;</a></h3>
+<p>Runs <code>git remote prune origin</code> to clean up stale remote-tracking
+branches.</p>
+<h3 id="6-working-tree-cleanliness-gate">6. Working-Tree Cleanliness Gate<a class="headerlink" href="#6-working-tree-cleanliness-gate" title="Permanent link">&para;</a></h3>
+<p>Fails if the target branch's working tree is not clean, so leftover
+files are cleaned up before the next issue.</p>
+<h3 id="7-post-finalization-validation">7. Post-Finalization Validation<a class="headerlink" href="#7-post-finalization-validation" title="Permanent link">&para;</a></h3>
+<p>Runs canonical validation via <code>vrg-container-run</code> to catch problems on
+the target branch before the next PR is created.</p>
+<h3 id="8-cd-workflow-check">8. CD Workflow Check<a class="headerlink" href="#8-cd-workflow-check" title="Permanent link">&para;</a></h3>
+<p>Inspects the most recent CD workflow run on the target branch and fails
+if it did not succeed. Docs publishing is async and used to fail
+silently (issue #303).</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -7693,11 +7847,11 @@ The tool resolves the correct co-author identity automatically.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Commit created successfully</td>
+<td>Finalization complete</td>
 </tr>
 <tr>
 <td>1</td>
-<td>Validation failure or missing identity</td>
+<td>Provenance violation, not run from main worktree, dirty working tree, failed validation, or failed CD run</td>
 </tr>
 </tbody>
 </table>
