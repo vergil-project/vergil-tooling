@@ -1504,20 +1504,16 @@ class TestLifecyclePositional:
 
 
 class TestDiscoverDedicated:
-    def test_present_orphan_and_not_created(self, tmp_path: Path) -> None:
+    def test_classifies_instances_via_targeted_reads(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         projects = tmp_path / "projects"
         _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
-        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
         _make_repo(projects, "org", "nospec", "")  # valid vergil.toml, no [vm]
-        _make_repo(projects, "org", "plain", "")  # no [vm], no instance -> not listed
-        broken = projects / "org" / "broken"
-        broken.mkdir(parents=True)
-        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
         instances = [
             "vergil-user.org.present",  # instance + spec -> present
             "vergil-user.org.gone",  # instance, no repo -> orphaned
             "vergil-user.org.nospec",  # repo without [vm] -> orphaned
-            "vergil-user.org.broken",  # repo with broken toml -> orphaned
             "vergil-user",  # base instance -> ignored (org is None)
             "weird.name",  # unparseable (2 tiers) -> ignored
             "vergil-audit.org.present",  # other identity -> ignored
@@ -1528,14 +1524,41 @@ class TestDiscoverDedicated:
             "present": "present",
             "gone": "orphaned",
             "nospec": "orphaned",
-            "broken": "orphaned",
-            "todo": "not-created",
         }
         assert all(isinstance(r, DedicatedRow) for r in rows)
+        assert capsys.readouterr().err == ""  # clean configs -> no warnings
+
+    def test_present_row_carries_parsed_stanza(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "org", "present", '\n[vm]\npackages = ["x"]\n')
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.present"], str(projects))
+        assert rows[0].stanza is not None
+        assert rows[0].stanza.packages == ["x"]
+
+    def test_broken_config_is_loud_and_conservative(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        projects = tmp_path / "projects"
+        broken = projects / "org" / "broken"
+        broken.mkdir(parents=True)
+        (broken / "vergil.toml").write_text("[invalid toml")  # ConfigError on read
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.broken"], str(projects))
+        assert [(r.repo, r.state, r.stanza) for r in rows] == [("broken", "present", None)]
+        err = capsys.readouterr().err
+        assert "WARNING" in err
+        assert str(broken / "vergil.toml") in err
+        assert "vergil-user.org.broken" in err
+
+    def test_no_instances_means_no_tree_scan(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        # Spec-bearing repos with no instance are NOT enumerated (no tree walk);
+        # the session/start preflight gate owns that signal.
+        _make_repo(projects, "org", "todo", '\n[vm]\npackages = ["x"]\n')
+        assert discover_dedicated("vergil-user", [], str(projects)) == []
 
     def test_nonexistent_projects_dir(self, tmp_path: Path) -> None:
-        rows = discover_dedicated("vergil-user", [], str(tmp_path / "nope"))
-        assert rows == []
+        rows = discover_dedicated("vergil-user", ["vergil-user.org.gone"], str(tmp_path / "nope"))
+        assert [(r.repo, r.state) for r in rows] == [("gone", "orphaned")]
 
 
 class TestListRows:
@@ -1553,15 +1576,19 @@ class TestListRows:
     def _row(self, rows: list[dict[str, object]], scope: str) -> dict[str, object]:
         return next(r for r in rows if r["scope"] == scope)
 
+    def _present(self, projects: Path) -> list[DedicatedRow]:
+        """One present lmf/mq row with its stanza threaded through discovery."""
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        return discover_dedicated("vergil-user", ["vergil-user.lmf.mq"], str(projects))
+
     @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(2, 1))
     @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
     def test_base_and_present_running_ok(
         self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
     ) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        dedic = self._present(projects)
         status = {"vergil-user": "Running", "vergil-user.lmf.mq": "Running"}
         rows = _list_rows("vergil-user", ident, dedic, status)
         base = self._row(rows, "base")
@@ -1578,9 +1605,8 @@ class TestListRows:
         self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
     ) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        dedic = self._present(projects)
         rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
         assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
 
@@ -1588,39 +1614,33 @@ class TestListRows:
     @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
     def test_present_running_under(self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        dedic = self._present(projects)
         rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
         assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
 
     def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         ident = self._identity(projects)
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+        dedic = self._present(projects)
         rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
         ded = self._row(rows, "lmf/mq")
         assert ded["spec"] == "ok"
         assert ded["agents"] == "—"
 
-    def test_present_repo_without_vergil_toml_uses_base(self, tmp_path: Path) -> None:
-        projects = tmp_path / "projects"
-        ident = self._identity(projects)  # projects/lmf/mq does not exist
-        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present")]
+    def test_present_without_stanza_uses_base(self, tmp_path: Path) -> None:
+        # An unverified present row (broken config -> stanza None) falls back
+        # to the base footprint.
+        ident = self._identity(tmp_path / "projects")
+        dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present", None)]
         rows = _list_rows("vergil-user", ident, dedic, {})
         assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
 
-    def test_orphaned_and_not_created(self, tmp_path: Path) -> None:
+    def test_orphaned(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
-        dedic = [
-            DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned"),
-            DedicatedRow("o", "todo", "vergil-user.o.todo", "not-created"),
-        ]
+        dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
         rows = _list_rows("vergil-user", ident, dedic, {})
-        by_scope = {r["scope"]: r["spec"] for r in rows}
-        assert by_scope["o/gone"] == "orphaned"
-        assert by_scope["o/todo"] == "not-created"
+        assert self._row(rows, "o/gone")["spec"] == "orphaned"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
     def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
