@@ -259,6 +259,14 @@ def inject_credentials(instance: str, identity: Identity) -> None:
         print(f"ERROR: private key not found: {key_path}", file=sys.stderr)
         raise SystemExit(1)
 
+    if not identity.mode:
+        print(
+            f"ERROR: cannot derive identity mode for VM '{instance}' — rename the"
+            " identity in identities.toml so the name contains 'user' or 'audit'",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     key_content = key_path.read_text()
 
     print("  Injecting App private key...")
@@ -276,6 +284,8 @@ def inject_credentials(instance: str, identity: Identity) -> None:
         f"APP_ID={identity.app_id}\n",
     )
 
+    _inject_identity_mode(instance, identity.mode)
+
     _inject_host_git_identity(instance)
 
     print("  Configuring git for HTTPS GitHub access...")
@@ -290,6 +300,33 @@ def inject_credentials(instance: str, identity: Identity) -> None:
 
     if identity.claude_token_path:
         _inject_claude_token(instance, identity.claude_token_path)
+
+
+_BASHRC_MODE_LINE = (
+    "[ -f ~/.config/vergil/identity-mode ]"
+    ' && export VRG_IDENTITY_MODE="$(cat ~/.config/vergil/identity-mode)"'
+)
+
+
+def _inject_identity_mode(instance: str, mode: str) -> None:
+    """Write the identity-mode file and export it from the shell profile.
+
+    The plain-text mode file is the single source of truth: the bashrc
+    line exports it as ``VRG_IDENTITY_MODE`` for interactive shells (and
+    skill preflights), and ``identity_mode.current_mode()`` reads the
+    file directly as a fallback for processes that never sourced bashrc.
+    """
+    print(f"  Injecting identity mode ({mode})...")
+    shell_pipe(
+        instance,
+        "cat > ~/.config/vergil/identity-mode && chmod 600 ~/.config/vergil/identity-mode",
+        f"{mode}\n",
+    )
+    export_cmd = (
+        f'grep -qF "identity-mode" ~/.bashrc 2>/dev/null'
+        f" || echo '{_BASHRC_MODE_LINE}' >> ~/.bashrc"
+    )
+    shell_run(instance, "bash", "-c", export_cmd)
 
 
 _BASHRC_SOURCE_LINE = "[ -f ~/.config/vergil/claude.env ] && . ~/.config/vergil/claude.env"
@@ -561,6 +598,36 @@ echo "agents=$agents humans=$humans"
 
 _OCCUPANCY_RE = re.compile(r"agents=(\d+)\s+humans=(\d+)")
 
+# Appended to the occupancy script so one shell round-trip yields both values.
+# Failure to read the marker is masked in-script: an absent fingerprint is the
+# empty string, matching read_fingerprint's absent/unreadable -> None contract.
+_FINGERPRINT_PROBE = f'\necho "fingerprint=$(cat {_FINGERPRINT_PATH} 2>/dev/null || true)"\n'
+
+_FINGERPRINT_RE = re.compile(r"^fingerprint=(.*)$", re.MULTILINE)
+
+
+def vm_probe(instance: str, *, fingerprint: bool = False) -> tuple[int, int, str | None]:
+    """Probe a running VM in a single shell round-trip.
+
+    Returns (agents, humans, fingerprint). Occupancy keeps vm_occupancy's
+    contract — (0, 0) only on parse/exec failure. The fingerprint is read in
+    the same invocation when requested and is None when not requested, absent,
+    or unreadable, matching read_fingerprint.
+    """
+    script = _OCCUPANCY_SCRIPT + _FINGERPRINT_PROBE if fingerprint else _OCCUPANCY_SCRIPT
+    try:
+        result = shell_run(instance, "bash", "-c", script)
+    except subprocess.CalledProcessError:
+        return (0, 0, None)
+    match = _OCCUPANCY_RE.search(result.stdout)
+    agents, humans = (int(match.group(1)), int(match.group(2))) if match else (0, 0)
+    stamped: str | None = None
+    if fingerprint:
+        fp_match = _FINGERPRINT_RE.search(result.stdout)
+        if fp_match:
+            stamped = fp_match.group(1).strip() or None
+    return (agents, humans, stamped)
+
 
 def vm_occupancy(instance: str) -> tuple[int, int]:
     """Return (agents, humans) for a running VM by process-tree classification.
@@ -569,11 +636,5 @@ def vm_occupancy(instance: str) -> tuple[int, int]:
     user tty/pty sessions that are not agent-hosting. Returns (0, 0) on any parse/exec
     failure rather than guessing.
     """
-    try:
-        result = shell_run(instance, "bash", "-c", _OCCUPANCY_SCRIPT)
-    except subprocess.CalledProcessError:
-        return (0, 0)
-    match = _OCCUPANCY_RE.search(result.stdout)
-    if match is None:
-        return (0, 0)
-    return (int(match.group(1)), int(match.group(2)))
+    agents, humans, _ = vm_probe(instance)
+    return (agents, humans)

@@ -8,9 +8,13 @@ import json
 import os
 import shlex
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from vergil_tooling.bin.vrg_vm_resolve import (
     _archived_rows,
@@ -18,7 +22,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib.config import ConfigError, read_config
+from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
@@ -48,7 +52,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
-    vm_occupancy,
+    vm_probe,
     vm_spec_status,
     vm_status,
 )
@@ -455,34 +459,57 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 
 @dataclass
 class DedicatedRow:
-    org: str | None
-    repo: str | None
+    org: str
+    repo: str
     instance: str
-    state: str  # "present" | "orphaned" | "not-created"
+    state: str  # "present" | "orphaned"
+    stanza: VmStanza | None = None
 
 
-def _repo_has_vm_spec(projects_dir: str, org: str, repo: str) -> bool:
+def _classify_instance(
+    projects_dir: str, org: str, repo: str, instance: str
+) -> tuple[str, VmStanza | None]:
+    """Classify one existing instance against its repo's [vm] stanza.
+
+    Returns ``(state, stanza)``: ``("present", stanza)`` when the repo declares
+    a spec, ``("orphaned", None)`` when it provably lacks one. A repo whose
+    ``vergil.toml`` fails to parse is classified ``present`` conservatively —
+    flagging it orphaned would invite destroying a VM whose spec may still be
+    declared — and the failure is warned loudly with the config path.
+    """
     repo_dir = Path(projects_dir) / org / repo
-    if not (repo_dir / "vergil.toml").exists():
-        return False
+    config_path = repo_dir / "vergil.toml"
+    if not config_path.exists():
+        return "orphaned", None
     try:
-        return read_config(repo_dir).vm is not None
-    except ConfigError:
-        return False
+        stanza = read_config(repo_dir).vm
+    except ConfigError as exc:
+        print(
+            f"WARNING: cannot parse {config_path}: {exc} — "
+            f"listing '{instance}' as present (unverified)",
+            file=sys.stderr,
+        )
+        return "present", None
+    if stanza is None:
+        return "orphaned", None
+    return "present", stanza
 
 
 def discover_dedicated(
     identity_name: str, instances: list[str], projects_dir: str
 ) -> list[DedicatedRow]:
-    """Reconcile existing <identity>.* instances with spec-bearing local repos.
+    """Classify existing <identity>.<org>.<repo> instances against local repos.
 
-    - instance + spec   -> present
+    Enumeration is from instances only — O(instances), one targeted
+    ``read_config()`` each:
+
+    - instance + spec   -> present (carrying the parsed stanza)
     - instance, no spec -> orphaned
-    - spec, no instance -> not-created
+
+    A spec-bearing repo with no instance is not listed here; the session/start
+    preflight gate surfaces it loudly when the repo is actually used.
     """
     rows: list[DedicatedRow] = []
-    seen: set[tuple[str, str]] = set()
-
     for name in instances:
         try:
             ident, org, repo = parse_instance_name(name)
@@ -490,40 +517,61 @@ def discover_dedicated(
             continue
         if ident != identity_name or org is None or repo is None:
             continue
-        seen.add((org, repo))
-        state = "present" if _repo_has_vm_spec(projects_dir, org, repo) else "orphaned"
-        rows.append(DedicatedRow(org, repo, name, state))
-
-    # Spec-bearing repos with no instance yet -> not-created.
-    root = Path(projects_dir)
-    if root.is_dir():
-        for org_dir in sorted(p for p in root.iterdir() if p.is_dir()):
-            for repo_dir in sorted(p for p in org_dir.iterdir() if p.is_dir()):
-                org, repo = org_dir.name, repo_dir.name
-                if (org, repo) in seen:
-                    continue
-                if _repo_has_vm_spec(projects_dir, org, repo):
-                    rows.append(
-                        DedicatedRow(
-                            org, repo, instance_name(identity_name, org, repo), "not-created"
-                        )
-                    )
+        state, stanza = _classify_instance(projects_dir, org, repo, name)
+        rows.append(DedicatedRow(org, repo, name, state, stanza))
     return rows
 
 
-def _occupancy(instance: str, status: dict[str, str]) -> tuple[str, str]:
-    if status.get(instance) == "Running":
-        agents, humans = vm_occupancy(instance)
-        return str(agents), str(humans)
-    return "—", "—"
+# (agents, humans, fingerprint) from one combined vm_probe round-trip.
+ProbeResult = tuple[int, int, str | None]
 
 
-def _present_spec_state(instance: str, spec: ComposedSpec, status: dict[str, str]) -> str:
+def _probe_running(
+    identities: dict[str, Identity],
+    discovered: dict[str, list[DedicatedRow]],
+    status: dict[str, str],
+) -> dict[str, ProbeResult]:
+    """Probe every running VM in parallel, one shell round-trip each.
+
+    The fingerprint is requested only where a present dedicated row will
+    compare it; base and orphaned VMs get the occupancy-only probe. The
+    probes are subprocess-bound (one SSH session each), so a thread pool
+    makes wall-clock ≈ one round-trip regardless of running-VM count.
+    Failures beyond vm_probe's documented (0, 0, None) contract propagate
+    out of Future.result() rather than being swallowed.
+    """
+    wants: dict[str, bool] = {}
+    for id_name, identity in identities.items():
+        if status.get(identity.vm_instance) == "Running":
+            wants[identity.vm_instance] = False
+        for d in discovered[id_name]:
+            if status.get(d.instance) == "Running":
+                wants[d.instance] = d.state == "present"
+    if not wants:
+        return {}
+    with ThreadPoolExecutor(max_workers=len(wants)) as pool:
+        futures = {
+            instance: pool.submit(vm_probe, instance, fingerprint=want_fp)
+            for instance, want_fp in wants.items()
+        }
+        return {instance: future.result() for instance, future in futures.items()}
+
+
+def _occupancy(instance: str, probes: Mapping[str, ProbeResult]) -> tuple[str, str]:
+    probe = probes.get(instance)
+    if probe is None:  # not running -> not probed
+        return "—", "—"
+    return str(probe[0]), str(probe[1])
+
+
+def _present_spec_state(
+    instance: str, spec: ComposedSpec, probes: Mapping[str, ProbeResult]
+) -> str:
     """SPEC column for a present dedicated VM: drift + under flag, only while running."""
-    if status.get(instance) != "Running":
+    probe = probes.get(instance)
+    if probe is None:  # not running -> not probed
         return "ok"
-    drift = vm_spec_status(instance, spec_fingerprint(spec))
-    state = "NEEDS-REBUILD" if drift == "needs-rebuild" else "ok"
+    state = "ok" if probe[2] == spec_fingerprint(spec) else "NEEDS-REBUILD"
     if spec.under:
         state = f"{state} ⚠ under ({','.join(spec.under)})"
     return state
@@ -534,12 +582,13 @@ def _list_rows(
     identity: Identity,
     dedicated: list[DedicatedRow],
     status: dict[str, str],
+    probes: Mapping[str, ProbeResult],
 ) -> list[dict[str, object]]:
     """Build display rows for one identity: the base VM plus each dedicated row."""
     base = _base_footprint(identity)
     rows: list[dict[str, object]] = []
 
-    b_agents, b_humans = _occupancy(identity.vm_instance, status)
+    b_agents, b_humans = _occupancy(identity.vm_instance, probes)
     rows.append(
         {
             "scope": "base",
@@ -555,21 +604,7 @@ def _list_rows(
 
     for d in dedicated:
         scope = f"{d.org}/{d.repo}"
-        if d.state == "not-created":
-            rows.append(
-                {
-                    "scope": scope,
-                    "status": "Not Created",
-                    "cpus": "—",
-                    "memory": "—",
-                    "disk": "—",
-                    "agents": "—",
-                    "humans": "—",
-                    "spec": "not-created",
-                }
-            )
-            continue
-        agents, humans = _occupancy(d.instance, status)
+        agents, humans = _occupancy(d.instance, probes)
         st = status.get(d.instance, "Not Created")
         if d.state == "orphaned":
             rows.append(
@@ -585,13 +620,10 @@ def _list_rows(
                 }
             )
             continue
-        repo_dir = Path(resolve_workspace(scope, identity.projects_dir))
-        try:
-            stanza = read_config(repo_dir).vm
-        except (FileNotFoundError, ConfigError):
-            stanza = None
-        override = identity.overrides.get(cast("tuple[str, str]", (d.org, d.repo)))
-        spec = compose_vm_spec(identity=identity_name, base=base, stanza=stanza, override=override)
+        override = identity.overrides.get((d.org, d.repo))
+        spec = compose_vm_spec(
+            identity=identity_name, base=base, stanza=d.stanza, override=override
+        )
         rows.append(
             {
                 "scope": scope,
@@ -601,7 +633,7 @@ def _list_rows(
                 "disk": spec.disk,
                 "agents": agents,
                 "humans": humans,
-                "spec": _present_spec_state(d.instance, spec, status),
+                "spec": _present_spec_state(d.instance, spec, probes),
             }
         )
     return rows
@@ -617,6 +649,12 @@ def _cmd_list(args: argparse.Namespace) -> int:
     status = {vm["name"]: vm["status"] for vm in list_vms()}
     instances = list(status)
 
+    discovered = {
+        id_name: discover_dedicated(id_name, instances, identity.projects_dir)
+        for id_name, identity in config.identities.items()
+    }
+    probes = _probe_running(config.identities, discovered, status)
+
     header = (
         f"{'IDENTITY':<14} {'SCOPE':<40} {'STATUS':<11} {'CPUS':<5} {'MEM':<7} "
         f"{'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
@@ -625,8 +663,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     print("─" * len(header))
 
     for id_name, identity in config.identities.items():
-        dedicated = discover_dedicated(id_name, instances, identity.projects_dir)
-        for r in _list_rows(id_name, identity, dedicated, status):
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
                 f"{id_name:<14} {r['scope']!s:<40} {r['status']!s:<11} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
@@ -901,12 +938,14 @@ def main(argv: list[str] | None = None) -> int:
         help="List all identity VMs and their status",
         description=(
             "List each identity's base and dedicated VMs with configured footprint "
-            "(CPUS/MEM/DISK), live occupancy, and SPEC health. AGENTS counts harness "
-            "instances (Claude Code sessions); HUMANS counts open human-held interactive "
-            "shells (a tally of shells, not distinct people). SPEC is one of: ok, "
-            "NEEDS-REBUILD (drift — rebuild it), not-created (a spec'd repo with no VM "
-            "yet), orphaned (a VM whose repo dropped its [vm]), or an 'under' flag when a "
-            "host override sized the box below the repo's declared footprint."
+            "(CPUS/MEM/DISK), live occupancy, and SPEC health. Dedicated rows enumerate "
+            "existing VM instances only; a spec'd repo whose VM was never built is "
+            "surfaced by the session/start preflight gate, not here. AGENTS counts "
+            "harness instances (Claude Code sessions); HUMANS counts open human-held "
+            "interactive shells (a tally of shells, not distinct people). SPEC is one "
+            "of: ok, NEEDS-REBUILD (drift — rebuild it), orphaned (a VM whose repo "
+            "dropped its [vm]), or an 'under' flag when a host override sized the box "
+            "below the repo's declared footprint."
         ),
     )
     p_list.add_argument("--config", type=Path, help="Path to identities.toml")

@@ -31,6 +31,7 @@ from vergil_tooling.lib.lima import (
     update_tooling,
     vm_age_days,
     vm_occupancy,
+    vm_probe,
     vm_spec_status,
     vm_status,
 )
@@ -433,21 +434,25 @@ class TestInjectCredentials:
 
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path=str(key_file),
         )
 
         inject_credentials("vergil-agent", identity)
 
-        assert mock_run.call_count == 2
+        assert mock_run.call_count == 3
         mkdir_call = mock_run.call_args_list[0]
         assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
 
-        git_call = mock_run.call_args_list[1]
+        mode_bashrc_call = mock_run.call_args_list[1]
+        assert "identity-mode" in " ".join(str(a) for a in mode_bashrc_call[0])
+
+        git_call = mock_run.call_args_list[2]
         assert "git" in git_call[0]
         assert "insteadOf" in " ".join(str(a) for a in git_call[0])
 
-        assert mock_pipe.call_count == 2
+        assert mock_pipe.call_count == 3
         pem_call = mock_pipe.call_args_list[0]
         assert "app.pem" in pem_call[0][1]
         assert "fakekey" in pem_call[0][2]
@@ -455,6 +460,10 @@ class TestInjectCredentials:
         env_call = mock_pipe.call_args_list[1]
         assert "app.env" in env_call[0][1]
         assert "APP_ID=12345" in env_call[0][2]
+
+        mode_call = mock_pipe.call_args_list[2]
+        assert "identity-mode" in mode_call[0][1]
+        assert mode_call[0][2] == "user\n"
 
     @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
@@ -469,6 +478,7 @@ class TestInjectCredentials:
 
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path=str(key_file),
             claude_token_path=str(token_file),
@@ -476,22 +486,22 @@ class TestInjectCredentials:
 
         inject_credentials("vergil-agent", identity)
 
-        assert mock_run.call_count == 4
-        bashrc_call = mock_run.call_args_list[2]
+        assert mock_run.call_count == 5
+        bashrc_call = mock_run.call_args_list[3]
         assert "claude.env" in " ".join(str(a) for a in bashrc_call[0])
-        mkdir_call = mock_run.call_args_list[3]
+        mkdir_call = mock_run.call_args_list[4]
         assert "mkdir" in " ".join(str(a) for a in mkdir_call[0])
         assert ".claude" in " ".join(str(a) for a in mkdir_call[0])
 
-        assert mock_pipe.call_count == 5
-        claude_call = mock_pipe.call_args_list[2]
+        assert mock_pipe.call_count == 6
+        claude_call = mock_pipe.call_args_list[3]
         assert "claude.env" in claude_call[0][1]
         assert "CLAUDE_CODE_OAUTH_TOKEN=test-oauth-token-abc123" in claude_call[0][2]
-        creds_call = mock_pipe.call_args_list[3]
+        creds_call = mock_pipe.call_args_list[4]
         assert ".credentials.json" in creds_call[0][1]
         assert "claudeAiOauth" in creds_call[0][2]
         assert "test-oauth-token-abc123" in creds_call[0][2]
-        onboarding_call = mock_pipe.call_args_list[4]
+        onboarding_call = mock_pipe.call_args_list[5]
         assert ".claude.json" in onboarding_call[0][1]
         assert "hasCompletedOnboarding" in onboarding_call[0][2]
 
@@ -506,14 +516,15 @@ class TestInjectCredentials:
 
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path=str(key_file),
         )
 
         inject_credentials("vergil-agent", identity)
 
-        assert mock_run.call_count == 2
-        assert mock_pipe.call_count == 2
+        assert mock_run.call_count == 3
+        assert mock_pipe.call_count == 3
 
     @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
@@ -527,6 +538,7 @@ class TestInjectCredentials:
 
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path=str(key_file),
             claude_token_path=bad_path,
@@ -537,11 +549,49 @@ class TestInjectCredentials:
     def test_exits_if_key_missing(self) -> None:
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path="/nonexistent/key.pem",
         )
         with pytest.raises(SystemExit):
             inject_credentials("vergil-agent", identity)
+
+    def test_exits_if_mode_missing(self, tmp_path: Path) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        identity = Identity(
+            vm_instance="vergil-agent",
+            app_id="12345",
+            private_key_path=str(key_file),
+        )
+        with pytest.raises(SystemExit):
+            inject_credentials("vergil-agent", identity)
+
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_injects_audit_mode(
+        self, mock_pipe: MagicMock, mock_run: MagicMock, _mock_id: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        identity = Identity(
+            vm_instance="vergil-audit",
+            mode="audit",
+            app_id="12345",
+            private_key_path=str(key_file),
+        )
+
+        inject_credentials("vergil-audit", identity)
+
+        mode_call = mock_pipe.call_args_list[2]
+        assert "identity-mode" in mode_call[0][1]
+        assert mode_call[0][2] == "audit\n"
+
+        mode_bashrc_call = mock_run.call_args_list[1]
+        bashrc_cmd = " ".join(str(a) for a in mode_bashrc_call[0])
+        assert "VRG_IDENTITY_MODE" in bashrc_cmd
+        assert ".bashrc" in bashrc_cmd
 
     @patch("vergil_tooling.lib.lima._inject_host_git_identity")
     @patch("vergil_tooling.lib.lima.shell_run")
@@ -553,6 +603,7 @@ class TestInjectCredentials:
         key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
         identity = Identity(
             vm_instance="vergil-agent",
+            mode="user",
             app_id="12345",
             private_key_path=str(key_file),
         )
@@ -1070,3 +1121,51 @@ class TestOccupancy:
     def test_exec_failure_is_zeros(self, mock_shell: MagicMock) -> None:
         mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
         assert vm_occupancy("inst") == (0, 0)
+
+
+class TestVmProbe:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_occupancy_only_skips_fingerprint(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\n", stderr=""
+        )
+        assert vm_probe("inst") == (2, 1, None)
+        assert mock_shell.call_count == 1
+        script = mock_shell.call_args[0][3]
+        assert "vm-spec.fingerprint" not in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_fingerprint_combined_in_single_invocation(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\nfingerprint=abc123\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (2, 1, "abc123")
+        assert mock_shell.call_count == 1
+        script = mock_shell.call_args[0][3]
+        assert "vm-spec.fingerprint" in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_missing_fingerprint_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=0 humans=0\nfingerprint=\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (0, 0, None)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_absent_fingerprint_line_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=1 humans=0\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (1, 0, None)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_unparseable_occupancy_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="garbage\nfingerprint=abc123\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (0, 0, "abc123")
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exec_failure_is_zeros_and_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_probe("inst", fingerprint=True) == (0, 0, None)

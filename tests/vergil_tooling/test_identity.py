@@ -12,6 +12,7 @@ from vergil_tooling.lib.identity import (
     Identity,
     IdentityConfig,
     default_config_path,
+    derive_identity_mode,
     load_config,
     resolve_identity,
     resolve_identity_by_name,
@@ -66,6 +67,43 @@ def test_identity_model_parsed(tmp_path: Path) -> None:
     )
     ident = load_config(p).identities["vergil"]
     assert ident.model == "opus"
+
+
+def test_derive_mode_user() -> None:
+    assert derive_identity_mode("vergil-user") == "user"
+
+
+def test_derive_mode_audit() -> None:
+    assert derive_identity_mode("vergil-audit") == "audit"
+
+
+def test_derive_mode_underivable() -> None:
+    assert derive_identity_mode("mimir") == ""
+
+
+def test_derive_mode_ambiguous() -> None:
+    assert derive_identity_mode("user-audit") == ""
+
+
+def test_load_config_derives_mode_from_name(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+
+        [identities.vergil-audit]
+        vm_instance = "vergil-audit"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["vergil-user"].mode == "user"
+    assert cfg.identities["vergil-audit"].mode == "audit"
+
+
+def test_load_config_mode_empty_when_underivable(config_file: Path) -> None:
+    cfg = load_config(config_file)
+    assert cfg.identities["vergil"].mode == ""
 
 
 def test_missing_config_file(tmp_path: Path) -> None:
