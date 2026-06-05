@@ -110,6 +110,106 @@ class TestClaudeMd:
         assert "local.claude_md" not in fields
 
 
+_BEGIN = "<!-- vergil:template:claude-md:begin -->"
+_END = "<!-- vergil:template:claude-md:end -->"
+
+
+def _claude_md_items(tmp_path: Path) -> list:
+    diff = audit_local_config(tmp_path)
+    return [i for i in diff.items if i.field == "local.claude_md"]
+
+
+class TestClaudeMdMarkers:
+    def test_marked_region_matching_template_is_compliant(self, tmp_path: Path) -> None:
+        content = f"# CLAUDE.md\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        assert _claude_md_items(tmp_path) == []
+
+    def test_repo_local_content_outside_markers_is_ignored(self, tmp_path: Path) -> None:
+        content = (
+            f"# CLAUDE.md\n\nIntro prose.\n\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n"
+            "\n## Identity modes\n\nRepo-local guidance, including the words\n"
+            "template not found, which must not confuse the check.\n"
+        )
+        (tmp_path / "CLAUDE.md").write_text(content)
+        assert _claude_md_items(tmp_path) == []
+
+    def test_blank_lines_around_region_are_tolerated(self, tmp_path: Path) -> None:
+        content = f"# CLAUDE.md\n\n{_BEGIN}\n\n\n{_TEMPLATE_TEXT}\n\n{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        assert _claude_md_items(tmp_path) == []
+
+    def test_divergent_line_reports_both_line_numbers(self, tmp_path: Path) -> None:
+        mutated = _TEMPLATE_TEXT.replace(
+            "## Memory management", "## Memory mismanagement", 1
+        )
+        # _BEGIN is line 1, so template line 1 lands on CLAUDE.md line 2.
+        content = f"{_BEGIN}\n{mutated}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "template line 1" in str(items[0].expected)
+        assert "## Memory management" in str(items[0].expected)
+        assert "line 2" in str(items[0].actual)
+        assert "## Memory mismanagement" in str(items[0].actual)
+
+    def test_truncated_region_reports_missing_template_line(self, tmp_path: Path) -> None:
+        template_lines = _TEMPLATE_TEXT.splitlines()
+        truncated = "\n".join(template_lines[:-1]) + "\n"
+        content = f"{_BEGIN}\n{truncated}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert f"template line {len(template_lines)}" in str(items[0].expected)
+        assert "end of marked region" in str(items[0].actual)
+
+    def test_extra_region_content_after_template_fails(self, tmp_path: Path) -> None:
+        content = f"{_BEGIN}\n{_TEMPLATE_TEXT}## Extra section\n{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "end of template" in str(items[0].expected)
+        assert "## Extra section" in str(items[0].actual)
+
+    def test_begin_without_end_fails(self, tmp_path: Path) -> None:
+        content = f"{_BEGIN}\n{_TEMPLATE_TEXT}"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "end marker" in str(items[0].actual)
+
+    def test_end_without_begin_fails(self, tmp_path: Path) -> None:
+        content = f"{_TEMPLATE_TEXT}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "begin marker" in str(items[0].actual)
+
+    def test_multiple_begin_markers_fail(self, tmp_path: Path) -> None:
+        content = f"{_BEGIN}\n{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "multiple begin markers" in str(items[0].actual)
+
+    def test_end_before_begin_fails(self, tmp_path: Path) -> None:
+        content = f"{_END}\n{_TEMPLATE_TEXT}{_BEGIN}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "before begin marker" in str(items[0].actual)
+
+    def test_markers_take_precedence_over_legacy_substring(self, tmp_path: Path) -> None:
+        mutated = _TEMPLATE_TEXT.replace("vrg-git", "vrg-Git", 1)
+        # The verbatim template appears outside the marked region, but the
+        # marked region itself diverges — markers must win over the legacy
+        # contiguous-substring fallback.
+        content = f"{_TEMPLATE_TEXT}\n{_BEGIN}\n{mutated}{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+
+
 _MINIMAL_SETTINGS = {
     "extraKnownMarketplaces": {
         "vergil-marketplace": {

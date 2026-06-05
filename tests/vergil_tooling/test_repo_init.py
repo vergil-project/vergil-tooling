@@ -200,6 +200,16 @@ class TestRenderClaudeMd:
         assert "## Shell command policy" in content
         assert "## Validation" in content
 
+    def test_wraps_consumer_template_in_markers(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        content = render_claude_md(ctx)
+        begin = "<!-- vergil:template:claude-md:begin -->"
+        end = "<!-- vergil:template:claude-md:end -->"
+        assert content.count(begin) == 1
+        assert content.count(end) == 1
+        assert content.index(begin) < content.index("## Memory management")
+        assert content.rstrip().endswith(end)
+
 
 class TestRenderReadme:
     def test_contains_project_name(self) -> None:
