@@ -122,10 +122,10 @@ _VM_KEYS = frozenset(
 )
 
 
-def _parse_role_overlay(name: str, raw: dict[str, Any]) -> RoleOverlay:
+def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FILE) -> RoleOverlay:
     for key in raw:
         if key not in _VM_KEYS:
-            print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
+            print(f"{source}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
     return RoleOverlay(
         packages=list(raw.get("packages", [])),
         cpus=raw.get("cpus"),
@@ -137,7 +137,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any]) -> RoleOverlay:
     )
 
 
-def parse_vm_stanza(raw: dict[str, Any]) -> VmStanza | None:
+def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza | None:
     """Parse the repo ``[vm]`` cascade. Returns None when no ``[vm]`` section exists."""
     vm_raw = raw.get("vm")
     if vm_raw is None:
@@ -146,11 +146,11 @@ def parse_vm_stanza(raw: dict[str, Any]) -> VmStanza | None:
     fields: dict[str, Any] = {}
     for key, value in vm_raw.items():
         if isinstance(value, dict):
-            roles[key] = _parse_role_overlay(key, value)
+            roles[key] = _parse_role_overlay(key, value, source)
         elif key in _VM_KEYS:
             fields[key] = value
         else:
-            print(f"{CONFIG_FILE}: unrecognized key '{key}' in [vm]", file=sys.stderr)
+            print(f"{source}: unrecognized key '{key}' in [vm]", file=sys.stderr)
     return VmStanza(
         packages=list(fields.get("packages", [])),
         cpus=fields.get("cpus"),
@@ -163,10 +163,10 @@ def parse_vm_stanza(raw: dict[str, Any]) -> VmStanza | None:
     )
 
 
-def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
+def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
-            print(f"vergil.toml: unrecognized section [{section}]", file=sys.stderr)
+            print(f"{source}: unrecognized section [{section}]", file=sys.stderr)
             continue
         if not isinstance(raw[section], dict):
             continue
@@ -176,33 +176,37 @@ def _warn_unrecognized_keys(raw: dict[str, Any]) -> None:
         for key in raw[section]:
             if key not in known:
                 print(
-                    f"vergil.toml: unrecognized key '{key}' in [{section}]",
+                    f"{source}: unrecognized key '{key}' in [{section}]",
                     file=sys.stderr,
                 )
 
 
-def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
-    """Parse and validate a raw TOML dict into VergilConfig."""
-    _warn_unrecognized_keys(raw)
+def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilConfig:
+    """Parse and validate a raw TOML dict into VergilConfig.
+
+    ``source`` labels warnings and errors with the config's origin
+    (e.g. a resolved file path) so multi-repo scans stay diagnosable.
+    """
+    _warn_unrecognized_keys(raw, source)
     project_raw = raw.get("project", {})
 
     for field in _REQUIRED_PROJECT_FIELDS:
         if field not in project_raw or not project_raw[field]:
-            msg = f"{CONFIG_FILE}: missing or empty required field '{field}'"
+            msg = f"{source}: missing or empty required field '{field}'"
             raise ConfigError(msg)
 
     for field in _REQUIRED_PROJECT_FIELDS:
         value = project_raw[field]
         if value not in _ENUMS[field]:
             allowed = ", ".join(sorted(_ENUMS[field]))
-            msg = f"{CONFIG_FILE}: invalid {field} '{value}' (allowed: {allowed})"
+            msg = f"{source}: invalid {field} '{value}' (allowed: {allowed})"
             raise ConfigError(msg)
 
     raw_lang = project_raw.get("primary-language", "")
     if raw_lang and raw_lang not in _ENUMS["primary-language"]:
         allowed = ", ".join(sorted(_ENUMS["primary-language"]))
         print(
-            f"warning: {CONFIG_FILE}: unrecognized primary-language '{raw_lang}'"
+            f"warning: {source}: unrecognized primary-language '{raw_lang}'"
             f" (known: {allowed}); treating as unset",
             file=sys.stderr,
         )
@@ -210,29 +214,29 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
 
     deps = raw.get("dependencies", {})
     if "vergil" not in deps:
-        msg = f"{CONFIG_FILE}: [dependencies] must contain 'vergil'"
+        msg = f"{source}: [dependencies] must contain 'vergil'"
         raise ConfigError(msg)
 
     ml_raw = raw.get("markdownlint", {})
     ml_ignore = ml_raw.get("ignore", [])
     if not isinstance(ml_ignore, list) or not all(isinstance(p, str) for p in ml_ignore):
-        msg = f"{CONFIG_FILE}: [markdownlint].ignore must be a list of strings"
+        msg = f"{source}: [markdownlint].ignore must be a list of strings"
         raise ConfigError(msg)
     markdownlint = MarkdownlintConfig(ignore=ml_ignore)
 
     ci_raw = raw.get("ci")
     if ci_raw is None:
-        msg = f"{CONFIG_FILE}: missing required section [ci]"
+        msg = f"{source}: missing required section [ci]"
         raise ConfigError(msg)
     versions = ci_raw.get("versions")
     if versions is None:
-        msg = f"{CONFIG_FILE}: [ci] missing required field 'versions'"
+        msg = f"{source}: [ci] missing required field 'versions'"
         raise ConfigError(msg)
     if not isinstance(versions, list) or not versions:
-        msg = f"{CONFIG_FILE}: [ci].versions must be a list with at least one entry"
+        msg = f"{source}: [ci].versions must be a list with at least one entry"
         raise ConfigError(msg)
     if not all(isinstance(v, str) for v in versions):
-        msg = f"{CONFIG_FILE}: [ci].versions entries must be strings"
+        msg = f"{source}: [ci].versions entries must be strings"
         raise ConfigError(msg)
     ci = CiConfig(
         versions=versions,
@@ -250,10 +254,10 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
     if container_raw is not None:
         env_prefixes = container_raw.get("env-prefixes")
         if env_prefixes is None:
-            msg = f"{CONFIG_FILE}: [container] missing required field 'env-prefixes'"
+            msg = f"{source}: [container] missing required field 'env-prefixes'"
             raise ConfigError(msg)
         if not isinstance(env_prefixes, list) or not all(isinstance(p, str) for p in env_prefixes):
-            msg = f"{CONFIG_FILE}: [container].env-prefixes must be a list of strings"
+            msg = f"{source}: [container].env-prefixes must be a list of strings"
             raise ConfigError(msg)
         container = ContainerConfig(env_prefixes=env_prefixes)
     else:
@@ -273,7 +277,7 @@ def _parse_raw_config(raw: dict[str, Any]) -> VergilConfig:
         ci=ci,
         publish=publish,
         container=container,
-        vm=parse_vm_stanza(raw),
+        vm=parse_vm_stanza(raw, source),
     )
 
 
@@ -288,10 +292,10 @@ def read_config(repo_root: Path) -> VergilConfig:
         with config_path.open("rb") as f:
             raw = tomllib.load(f)
     except tomllib.TOMLDecodeError as exc:
-        msg = f"{CONFIG_FILE} is not valid TOML: {exc}"
+        msg = f"{config_path} is not valid TOML: {exc}"
         raise ConfigError(msg) from exc
 
-    return _parse_raw_config(raw)
+    return _parse_raw_config(raw, source=str(config_path))
 
 
 def vrg_install_tag(repo_root: Path) -> str:
