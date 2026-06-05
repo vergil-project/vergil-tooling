@@ -8,9 +8,13 @@ import json
 import os
 import shlex
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import TYPE_CHECKING, cast
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 from vergil_tooling.bin.vrg_vm_resolve import (
     _archived_rows,
@@ -48,7 +52,7 @@ from vergil_tooling.lib.lima import (
     try_update_tooling,
     update_tooling,
     vm_age_days,
-    vm_occupancy,
+    vm_probe,
     vm_spec_status,
     vm_status,
 )
@@ -518,19 +522,56 @@ def discover_dedicated(
     return rows
 
 
-def _occupancy(instance: str, status: dict[str, str]) -> tuple[str, str]:
-    if status.get(instance) == "Running":
-        agents, humans = vm_occupancy(instance)
-        return str(agents), str(humans)
-    return "—", "—"
+# (agents, humans, fingerprint) from one combined vm_probe round-trip.
+ProbeResult = tuple[int, int, str | None]
 
 
-def _present_spec_state(instance: str, spec: ComposedSpec, status: dict[str, str]) -> str:
+def _probe_running(
+    identities: dict[str, Identity],
+    discovered: dict[str, list[DedicatedRow]],
+    status: dict[str, str],
+) -> dict[str, ProbeResult]:
+    """Probe every running VM in parallel, one shell round-trip each.
+
+    The fingerprint is requested only where a present dedicated row will
+    compare it; base and orphaned VMs get the occupancy-only probe. The
+    probes are subprocess-bound (one SSH session each), so a thread pool
+    makes wall-clock ≈ one round-trip regardless of running-VM count.
+    Failures beyond vm_probe's documented (0, 0, None) contract propagate
+    out of Future.result() rather than being swallowed.
+    """
+    wants: dict[str, bool] = {}
+    for id_name, identity in identities.items():
+        if status.get(identity.vm_instance) == "Running":
+            wants[identity.vm_instance] = False
+        for d in discovered[id_name]:
+            if status.get(d.instance) == "Running":
+                wants[d.instance] = d.state == "present"
+    if not wants:
+        return {}
+    with ThreadPoolExecutor(max_workers=len(wants)) as pool:
+        futures = {
+            instance: pool.submit(vm_probe, instance, fingerprint=want_fp)
+            for instance, want_fp in wants.items()
+        }
+        return {instance: future.result() for instance, future in futures.items()}
+
+
+def _occupancy(instance: str, probes: Mapping[str, ProbeResult]) -> tuple[str, str]:
+    probe = probes.get(instance)
+    if probe is None:  # not running -> not probed
+        return "—", "—"
+    return str(probe[0]), str(probe[1])
+
+
+def _present_spec_state(
+    instance: str, spec: ComposedSpec, probes: Mapping[str, ProbeResult]
+) -> str:
     """SPEC column for a present dedicated VM: drift + under flag, only while running."""
-    if status.get(instance) != "Running":
+    probe = probes.get(instance)
+    if probe is None:  # not running -> not probed
         return "ok"
-    drift = vm_spec_status(instance, spec_fingerprint(spec))
-    state = "NEEDS-REBUILD" if drift == "needs-rebuild" else "ok"
+    state = "ok" if probe[2] == spec_fingerprint(spec) else "NEEDS-REBUILD"
     if spec.under:
         state = f"{state} ⚠ under ({','.join(spec.under)})"
     return state
@@ -541,12 +582,13 @@ def _list_rows(
     identity: Identity,
     dedicated: list[DedicatedRow],
     status: dict[str, str],
+    probes: Mapping[str, ProbeResult],
 ) -> list[dict[str, object]]:
     """Build display rows for one identity: the base VM plus each dedicated row."""
     base = _base_footprint(identity)
     rows: list[dict[str, object]] = []
 
-    b_agents, b_humans = _occupancy(identity.vm_instance, status)
+    b_agents, b_humans = _occupancy(identity.vm_instance, probes)
     rows.append(
         {
             "scope": "base",
@@ -562,7 +604,7 @@ def _list_rows(
 
     for d in dedicated:
         scope = f"{d.org}/{d.repo}"
-        agents, humans = _occupancy(d.instance, status)
+        agents, humans = _occupancy(d.instance, probes)
         st = status.get(d.instance, "Not Created")
         if d.state == "orphaned":
             rows.append(
@@ -591,7 +633,7 @@ def _list_rows(
                 "disk": spec.disk,
                 "agents": agents,
                 "humans": humans,
-                "spec": _present_spec_state(d.instance, spec, status),
+                "spec": _present_spec_state(d.instance, spec, probes),
             }
         )
     return rows
@@ -607,6 +649,12 @@ def _cmd_list(args: argparse.Namespace) -> int:
     status = {vm["name"]: vm["status"] for vm in list_vms()}
     instances = list(status)
 
+    discovered = {
+        id_name: discover_dedicated(id_name, instances, identity.projects_dir)
+        for id_name, identity in config.identities.items()
+    }
+    probes = _probe_running(config.identities, discovered, status)
+
     header = (
         f"{'IDENTITY':<14} {'SCOPE':<40} {'STATUS':<11} {'CPUS':<5} {'MEM':<7} "
         f"{'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
@@ -615,8 +663,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     print("─" * len(header))
 
     for id_name, identity in config.identities.items():
-        dedicated = discover_dedicated(id_name, instances, identity.projects_dir)
-        for r in _list_rows(id_name, identity, dedicated, status):
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
                 f"{id_name:<14} {r['scope']!s:<40} {r['status']!s:<11} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "

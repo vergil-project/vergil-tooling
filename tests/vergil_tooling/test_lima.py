@@ -31,6 +31,7 @@ from vergil_tooling.lib.lima import (
     update_tooling,
     vm_age_days,
     vm_occupancy,
+    vm_probe,
     vm_spec_status,
     vm_status,
 )
@@ -1120,3 +1121,51 @@ class TestOccupancy:
     def test_exec_failure_is_zeros(self, mock_shell: MagicMock) -> None:
         mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
         assert vm_occupancy("inst") == (0, 0)
+
+
+class TestVmProbe:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_occupancy_only_skips_fingerprint(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\n", stderr=""
+        )
+        assert vm_probe("inst") == (2, 1, None)
+        assert mock_shell.call_count == 1
+        script = mock_shell.call_args[0][3]
+        assert "vm-spec.fingerprint" not in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_fingerprint_combined_in_single_invocation(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=2 humans=1\nfingerprint=abc123\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (2, 1, "abc123")
+        assert mock_shell.call_count == 1
+        script = mock_shell.call_args[0][3]
+        assert "vm-spec.fingerprint" in script
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_missing_fingerprint_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=0 humans=0\nfingerprint=\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (0, 0, None)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_absent_fingerprint_line_is_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="agents=1 humans=0\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (1, 0, None)
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_unparseable_occupancy_is_zeros(self, mock_shell: MagicMock) -> None:
+        mock_shell.return_value = subprocess.CompletedProcess(
+            [], 0, stdout="garbage\nfingerprint=abc123\n", stderr=""
+        )
+        assert vm_probe("inst", fingerprint=True) == (0, 0, "abc123")
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_exec_failure_is_zeros_and_none(self, mock_shell: MagicMock) -> None:
+        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_probe("inst", fingerprint=True) == (0, 0, None)
