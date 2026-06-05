@@ -32,6 +32,9 @@ class ComposedSpec:
     vagrant_plugins: tuple[str, ...]
     dedicated: bool
     under: tuple[str, ...]
+    # Per-profile nested virtualization (issue #1447): default off, last-wins
+    # through the [vm]/[vm.<role>] cascade like the footprint scalars.
+    nested: bool = False
 
 
 @dataclass
@@ -46,6 +49,7 @@ class _Acc:
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
     customized: bool
+    nested: bool
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
     declared_cpus: int | None
@@ -78,6 +82,9 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     if overlay.stale_days is not None:
         acc.stale_days = overlay.stale_days
         acc.customized = True
+    if overlay.nested is not None:
+        acc.nested = overlay.nested
+        acc.customized = True
 
 
 def compose_vm_spec(
@@ -98,6 +105,7 @@ def compose_vm_spec(
         apt_repos=[],
         vagrant_plugins=[],
         customized=False,
+        nested=False,
         declared_cpus=None,
         declared_mem=None,
         declared_disk=None,
@@ -139,6 +147,7 @@ def compose_vm_spec(
         vagrant_plugins=tuple(sorted(set(acc.vagrant_plugins))),
         dedicated=acc.customized,
         under=tuple(under),
+        nested=acc.nested,
     )
 
 
@@ -185,15 +194,19 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
     what the VM is built from. Packages, apt repos, and vagrant plugins are sorted so
     order cannot change the hash. Editing any declarative field flips the fingerprint.
     """
-    payload = "\n".join(
-        (
-            f"cpus={spec.cpus}",
-            f"memory={spec.memory}",
-            f"disk={spec.disk}",
-            f"stale_days={spec.stale_days}",
-            "packages=" + ",".join(sorted(spec.packages)),
-            "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
-            "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
-        )
-    )
+    fields = [
+        f"cpus={spec.cpus}",
+        f"memory={spec.memory}",
+        f"disk={spec.disk}",
+        f"stale_days={spec.stale_days}",
+        "packages=" + ",".join(sorted(spec.packages)),
+        "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
+        "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
+    ]
+    # nested enters the payload only when true: profiles that never set it keep
+    # the fingerprint they had before the knob existed (no spurious NEEDS-REBUILD
+    # on upgrade), while toggling it flips the hash in both directions.
+    if spec.nested:
+        fields.append("nested=true")
+    payload = "\n".join(fields)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

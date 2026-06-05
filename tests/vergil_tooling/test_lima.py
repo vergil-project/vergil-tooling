@@ -12,6 +12,7 @@ from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.lima import (
     _inject_host_git_identity,
     _limactl,
+    _nested_virt_unsupported_reason,
     _read_host_git_config,
     copy_claude_config,
     create_vm,
@@ -22,6 +23,7 @@ from vergil_tooling.lib.lima import (
     install_tooling,
     link_claude_dirs,
     list_vms,
+    nested_virt_unsupported_reason,
     read_fingerprint,
     shell_pipe,
     shell_run,
@@ -379,6 +381,90 @@ class TestCreateVm:
         assert '--set=.memory = "24GiB"' in args
         assert '--set=.disk = "100GiB"' in args
         assert str(tpl) == args[-1]
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_nested_sets_both_lima_halves(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects", nested=True)
+        args = mock.call_args[0]
+        assert "--set=.nestedVirtualization = true" in args
+        assert '--set=.param.NESTED_VIRT = "true"' in args
+
+    @patch("vergil_tooling.lib.lima.Path.home")
+    @patch("vergil_tooling.lib.lima._limactl")
+    def test_no_nested_flags_by_default(
+        self, mock: MagicMock, mock_home: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_home.return_value = tmp_path
+        tpl = Path("/tmp/template.yaml")  # noqa: S108
+        create_vm("vergil-agent", tpl, "/home/user/projects")
+        args = mock.call_args[0]
+        assert not any("nestedVirtualization" in a for a in args)
+        assert not any("NESTED_VIRT" in a for a in args)
+
+
+class TestNestedVirtSupport:
+    """Host-support preflight for nested virtualization (macOS 15+, M3+)."""
+
+    def test_non_darwin_host_unsupported(self) -> None:
+        reason = _nested_virt_unsupported_reason("Linux", "", "")
+        assert reason is not None
+        assert "macOS 15" in reason
+        assert "Linux" in reason
+
+    def test_old_macos_unsupported(self) -> None:
+        reason = _nested_virt_unsupported_reason("Darwin", "14.7.1", "Apple M3 Pro")
+        assert reason is not None
+        assert "14.7.1" in reason
+
+    def test_pre_m3_chip_unsupported(self) -> None:
+        reason = _nested_virt_unsupported_reason("Darwin", "15.2", "Apple M2 Max")
+        assert reason is not None
+        assert "Apple M2 Max" in reason
+
+    def test_unknown_cpu_brand_unsupported(self) -> None:
+        reason = _nested_virt_unsupported_reason("Darwin", "15.2", "")
+        assert reason is not None
+
+    def test_intel_mac_unsupported(self) -> None:
+        reason = _nested_virt_unsupported_reason(
+            "Darwin", "15.2", "Intel(R) Core(TM) i9-9980HK CPU @ 2.40GHz"
+        )
+        assert reason is not None
+
+    def test_m3_on_macos_15_supported(self) -> None:
+        assert _nested_virt_unsupported_reason("Darwin", "15.2", "Apple M3 Pro") is None
+
+    def test_m4_on_macos_26_supported(self) -> None:
+        assert _nested_virt_unsupported_reason("Darwin", "26.0", "Apple M4") is None
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    @patch("vergil_tooling.lib.lima.platform.mac_ver", return_value=("15.2", ("", "", ""), ""))
+    @patch("vergil_tooling.lib.lima.platform.system", return_value="Darwin")
+    def test_wrapper_gathers_host_facts(
+        self, _system: MagicMock, _ver: MagicMock, mock_run: MagicMock
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0, stdout="Apple M3 Pro\n")
+        assert nested_virt_unsupported_reason() is None
+        assert mock_run.call_args.args[0] == ["sysctl", "-n", "machdep.cpu.brand_string"]
+
+    @patch("vergil_tooling.lib.lima.subprocess.run")
+    @patch("vergil_tooling.lib.lima.platform.mac_ver", return_value=("15.2", ("", "", ""), ""))
+    @patch("vergil_tooling.lib.lima.platform.system", return_value="Darwin")
+    def test_wrapper_sysctl_failure_is_unsupported(
+        self, _system: MagicMock, _ver: MagicMock, mock_run: MagicMock
+    ) -> None:
+        # No silent failures: an unreadable CPU brand aborts rather than guessing.
+        mock_run.return_value = MagicMock(returncode=1, stdout="")
+        assert nested_virt_unsupported_reason() is not None
+
+    @patch("vergil_tooling.lib.lima.platform.system", return_value="Linux")
+    def test_wrapper_non_darwin_short_circuits(self, _system: MagicMock) -> None:
+        assert nested_virt_unsupported_reason() is not None
 
 
 class TestStartStopVm:

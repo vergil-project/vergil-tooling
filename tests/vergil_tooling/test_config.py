@@ -658,6 +658,22 @@ class TestParseVmStanza:
         assert overlay.stale_days == 7
         assert overlay.packages == []
 
+    def test_nested_parsed_at_vm_and_role_tiers(self) -> None:
+        raw = {"vm": {"nested": True, "vergil-user": {"nested": False}}}
+        stanza = parse_vm_stanza(raw)
+        assert stanza is not None
+        assert stanza.nested is True
+        assert stanza.roles["vergil-user"].nested is False
+
+    def test_nested_absent_is_none(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"packages": []}})
+        assert stanza is not None
+        assert stanza.nested is None
+
+    def test_nested_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
+        parse_vm_stanza({"vm": {"nested": True, "vergil-user": {"nested": True}}})
+        assert "unrecognized" not in capsys.readouterr().err
+
     def test_vm_section_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
         _warn_unrecognized_keys({"vm": {"packages": [], "vergil-user": {"cpus": 4}}})
         err = capsys.readouterr().err

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
 import shlex
 import subprocess
@@ -145,6 +146,45 @@ def fetch_template(tag: str) -> Path:
     return Path(tmp.name)
 
 
+_NESTED_VIRT_REQUIREMENT = "nested virtualization requires macOS 15+ on M3-or-later Apple silicon"
+_NESTED_VIRT_MIN_MACOS_MAJOR = 15
+_NESTED_VIRT_MIN_APPLE_M = 3
+
+
+def _nested_virt_unsupported_reason(system: str, mac_ver: str, cpu_brand: str) -> str | None:
+    """Pure-logic core of nested_virt_unsupported_reason (testable without a host)."""
+    if system != "Darwin":
+        return f"{_NESTED_VIRT_REQUIREMENT}; host OS is {system or 'unknown'}"
+    major = mac_ver.split(".", 1)[0]
+    if not major.isdigit() or int(major) < _NESTED_VIRT_MIN_MACOS_MAJOR:
+        return f"{_NESTED_VIRT_REQUIREMENT}; host macOS is {mac_ver or 'unknown'}"
+    match = re.search(r"\bApple M(\d+)\b", cpu_brand)
+    if match is None or int(match.group(1)) < _NESTED_VIRT_MIN_APPLE_M:
+        return f"{_NESTED_VIRT_REQUIREMENT}; host CPU is {cpu_brand or 'unknown'}"
+    return None
+
+
+def nested_virt_unsupported_reason() -> str | None:
+    """Return why this host cannot do nested virtualization, or None if it can.
+
+    First line of the three-layer defense for the per-profile ``nested`` knob
+    (issue #1447): abort before any build starts. Lima's own rejection is the
+    backstop; the template's in-guest /dev/kvm check is the last line.
+    """
+    system = platform.system()
+    if system != "Darwin":
+        return _nested_virt_unsupported_reason(system, "", "")
+    result = subprocess.run(  # noqa: S603
+        ["sysctl", "-n", "machdep.cpu.brand_string"],  # noqa: S607
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    # An unreadable brand string yields a reason (abort), never a silent pass.
+    cpu_brand = result.stdout.strip() if result.returncode == 0 else ""
+    return _nested_virt_unsupported_reason(system, platform.mac_ver()[0], cpu_brand)
+
+
 def create_vm(
     instance: str,
     template: Path,
@@ -157,6 +197,7 @@ def create_vm(
     apt_repos: list[dict[str, str]] | None = None,
     vagrant_plugins: list[str] | None = None,
     fingerprint: str | None = None,
+    nested: bool = False,
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
     claude_skills_path = Path.home() / ".claude" / "skills"
@@ -203,6 +244,12 @@ def create_vm(
         args.append(f'--set=.param.VAGRANT_PLUGINS = "{" ".join(vagrant_plugins)}"')
     if fingerprint:
         args.append(f'--set=.param.SPEC_FINGERPRINT = "{fingerprint}"')
+    if nested:
+        # Both halves together (vergil-vm#131): the Lima config knob exposes
+        # /dev/kvm, the template param turns on the in-guest verification that
+        # fails the build loudly when it didn't appear.
+        args.append("--set=.nestedVirtualization = true")
+        args.append('--set=.param.NESTED_VIRT = "true"')
     args.append(str(template))
     _limactl(*args)
 
