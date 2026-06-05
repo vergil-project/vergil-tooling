@@ -11,6 +11,11 @@ On settle it prints a JSON object (``reason``, ``head_sha``, ``review_count``,
 ``checks``, ``failed_checks``, ``all_checks_passed``) for the wrapping skill to
 reconcile, and exits 0. Like ``vrg-await`` it blocks patiently and
 indefinitely — a wait that never returns means the PR has not changed.
+
+If any poll (including the first) finds the PR already merged, it aborts with
+an error and exits 1: a merged PR can never settle into actionable output, and
+a merge observed mid-watch means the audit cycle was bypassed — failing loudly
+surfaces the short-circuit instead of leaving an orphaned poll loop running.
 """
 
 from __future__ import annotations
@@ -44,11 +49,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    state, reason = pr_await.wait_for_settle(
-        args.pr,
-        since_sha=args.since_sha,
-        since_reviews=args.since_reviews,
-    )
+    try:
+        state, reason = pr_await.wait_for_settle(
+            args.pr,
+            since_sha=args.since_sha,
+            since_reviews=args.since_reviews,
+        )
+    except pr_await.PrMergedError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
     print(json.dumps(pr_await.to_output(state, reason), indent=2))
     return 0
 
