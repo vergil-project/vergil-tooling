@@ -818,6 +818,8 @@
       
         
       
+        
+      
     
     
     
@@ -870,6 +872,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.9/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.9
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -8142,10 +8172,14 @@ VM. The dual-identity model uses one stanza per role.</p>
   agent identities lets the agent VMs run new tooling while the human
   host stays on a stable <code>v2.0</code> (the top-level default). Only set the
   <code>v2.1</code> pin once 2.1 has been released.</li>
-<li><strong><code>VRG_IDENTITY_MODE</code></strong> (<code>user</code> / <code>audit</code>) is set by VM
-  provisioning in the vergil-vm repo, not here. It selects the
-  identity-aware allowlists at runtime; it is a soft-gate ergonomic,
-  not the security boundary (the App credential is).</li>
+<li><strong><code>VRG_IDENTITY_MODE</code></strong> (<code>user</code> / <code>audit</code>) is derived from the
+  identity's stanza name at provisioning time — a name containing
+  <code>user</code> provisions as user mode, <code>audit</code> as audit mode; a name
+  containing neither (or both) fails provisioning. The mode is
+  written to <code>~/.config/vergil/identity-mode</code> in the VM and exported
+  from the shell profile. It selects the identity-aware allowlists
+  at runtime; it is a soft-gate ergonomic, not the security boundary
+  (the App credential is).</li>
 </ul>
 <h2 id="verification-checklist">Verification checklist<a class="headerlink" href="#verification-checklist" title="Permanent link">&para;</a></h2>
 <p>After both Apps are registered, installed, and configured:</p>

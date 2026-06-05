@@ -818,6 +818,8 @@
       
         
       
+        
+      
     
     
     
@@ -870,6 +872,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.9/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.9
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5186,6 +5216,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#choosing-the-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the PR
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waiting-for-green" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for green
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5220,10 +5272,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
+  <a href="#1-provenance-check-wait-and-merge-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Provenance Check and Merge (PR mode only)
+        1. Provenance Check, Wait, and Merge (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1a-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. Explicit-Target Cleanup (PR mode only)
       
     </span>
   </a>
@@ -7581,6 +7644,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#choosing-the-pr" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choosing the PR
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#waiting-for-green" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Waiting for green
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#usage" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7615,10 +7700,21 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
+  <a href="#1-provenance-check-wait-and-merge-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Provenance Check and Merge (PR mode only)
+        1. Provenance Check, Wait, and Merge (PR mode only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#1a-explicit-target-cleanup-pr-mode-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1a. Explicit-Target Cleanup (PR mode only)
       
     </span>
   </a>
@@ -7742,15 +7838,41 @@
 two modes, keyed on whether a PR argument is given:</p>
 <ul>
 <li><strong><code>vrg-finalize-pr &lt;PR&gt;</code></strong> — runs the pre-merge provenance check,
-  merges the PR (or confirms it is already merged), then runs the
-  cleanup below. This replaces a manual web merge followed by a
-  separate cleanup step.</li>
-<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — cleanup only: switch to the target
-  branch, fast-forward pull, delete merged local branches, and prune
-  stale remote-tracking references. This is the release path.</li>
+  waits for checks to go green, merges the PR (or confirms it is
+  already merged), then runs the cleanup below. This replaces a
+  manual web merge followed by a separate cleanup step.</li>
+<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — infers the PR from the
+  <code>.worktrees/</code> worktrees and always confirms before acting (see
+  <em>Choosing the PR</em> below). With no candidates, cleanup-only after
+  confirmation: switch to the target branch, fast-forward pull,
+  delete merged local branches, and prune stale remote-tracking
+  references.</li>
 </ul>
 <p>Must be run from the <strong>main worktree</strong> — the cleanup removes
 worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
+<h2 id="choosing-the-pr">Choosing the PR<a class="headerlink" href="#choosing-the-pr" title="Permanent link">&para;</a></h2>
+<ul>
+<li><code>vrg-finalize-pr &lt;pr-url-or-number&gt;</code> — no prompts; the explicit
+  argument is the confirmation. This is the scriptable path
+  (<code>vrg-submit-pr</code> prints the URL to pass here).</li>
+<li><code>vrg-finalize-pr</code> (no arguments) — infers candidates by mapping each
+  <code>.worktrees/</code> worktree's branch to its open PR, and <strong>always
+  confirms before acting</strong>: one candidate asks <code>Finalize PR #N?</code>;
+  several present a menu; none asks before running cleanup-only.
+  Worktrees without an open PR are listed with the reason they were
+  skipped. Inference mode requires an interactive terminal and fails
+  fast when stdin is not a TTY.</li>
+</ul>
+<h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
+<p>When the PR's checks are not finished, <code>vrg-finalize-pr</code> waits for
+them and merges automatically once everything is green and current.
+Doomed outcomes abort immediately rather than after the wait: a draft
+PR, merge conflicts, a failed check (named in the error), or a branch
+still behind after five update attempts. A branch that is merely
+behind the target is updated automatically and the wait restarts.</p>
+<p>After the merge, the PR's own branch and worktree are cleaned up
+explicitly (a squash merge hides them from <code>git branch --merged</code>),
+followed by the usual sweep, pull, and prune.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
@@ -7787,10 +7909,20 @@ worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
 </tbody>
 </table>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
-<h3 id="1-provenance-check-and-merge-pr-mode-only">1. Provenance Check and Merge (PR mode only)<a class="headerlink" href="#1-provenance-check-and-merge-pr-mode-only" title="Permanent link">&para;</a></h3>
-<p>Runs the pre-merge provenance check. Advisories are printed but do not
-block. Violations abort the merge unless <code>--allow-provenance-violation</code>
-is given. If the PR is already merged, the merge step is skipped.</p>
+<h3 id="1-provenance-check-wait-and-merge-pr-mode-only">1. Provenance Check, Wait, and Merge (PR mode only)<a class="headerlink" href="#1-provenance-check-wait-and-merge-pr-mode-only" title="Permanent link">&para;</a></h3>
+<p>Runs the pre-merge provenance check first, so violations surface
+before any waiting. Advisories are printed but do not block.
+Violations abort the merge unless <code>--allow-provenance-violation</code>
+is given. If the PR is already merged, the merge step is skipped and
+finalize proceeds straight to cleanup. Otherwise the wait-for-green
+loop runs (see <em>Waiting for green</em>) and the PR is merged with the
+selected strategy. <code>--dry-run</code> skips the wait and prints what it
+would do.</p>
+<h3 id="1a-explicit-target-cleanup-pr-mode-only">1a. Explicit-Target Cleanup (PR mode only)<a class="headerlink" href="#1a-explicit-target-cleanup-pr-mode-only" title="Permanent link">&para;</a></h3>
+<p>The just-merged PR branch and its <code>.worktrees/</code> worktree are deleted
+by name. The default squash strategy rewrites history onto the
+target, so the branch is never an ancestor and the merged-branch
+sweep below cannot see it.</p>
 <h3 id="2-switch-to-target-branch">2. Switch to Target Branch<a class="headerlink" href="#2-switch-to-target-branch" title="Permanent link">&para;</a></h3>
 <p>Checks out the target branch (default: <code>develop</code>).</p>
 <h3 id="3-fast-forward-pull">3. Fast-Forward Pull<a class="headerlink" href="#3-fast-forward-pull" title="Permanent link">&para;</a></h3>
@@ -7847,11 +7979,11 @@ silently (issue #303).</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Finalization complete</td>
+<td>Finalization complete, or declined at a confirmation prompt</td>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, not run from main worktree, dirty working tree, failed validation, or failed CD run</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-interactive stdin in inference mode, dirty working tree, failed validation, or failed CD run</td>
 </tr>
 </tbody>
 </table>
