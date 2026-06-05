@@ -5152,6 +5152,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#running-from-the-repo-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running from the repo root
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#arguments" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7548,6 +7559,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#running-from-the-repo-root" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running from the repo root
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#arguments" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7629,12 +7651,19 @@
 <p><strong>Installed as:</strong> <code>vrg-submit-pr</code> (Python console script)</p>
 <p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_submit_pr.py</code></p>
 <p>Wrapper that creates standards-compliant pull requests with
-proper issue linkage.</p>
+proper issue linkage. Has two modes:</p>
+<ul>
+<li><strong>Template mode</strong> (no arguments) — the normal path. Reads
+  <code>.vergil/pr-template.yml</code> (written by the agent), shows a preview,
+  asks for confirmation, pushes the branch, creates the PR, and emits
+  the <code>/vergil:pr-watch</code> handoff line.</li>
+<li><strong>CLI mode</strong> (<code>--issue/--summary/--title</code>) — direct invocation for
+  human emergency use.</li>
+</ul>
 <div class="admonition warning">
-<p class="admonition-title">Required for AI agents</p>
-<p>AI agents <strong>must</strong> use this tool instead of raw
-<code>gh pr create</code>. The tool constructs the PR body from
-CLI arguments.</p>
+<p class="admonition-title">Human-run tool</p>
+<p>PR submission is a human action. Agent identities are blocked;
+agents hand off via <code>.vergil/pr-template.yml</code> instead.</p>
 </div>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>When running inside a dev container, <code>GH_TOKEN</code> must be set so <code>gh</code> can
@@ -7643,15 +7672,32 @@ authenticate. The
 cover <code>gh auth login</code> and how <code>GH_TOKEN</code> flows through to the
 container.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--issue<span class="w"> </span>NUMBER<span class="w"> </span>--summary<span class="w"> </span>TEXT<span class="w"> </span>--title<span class="w"> </span>TEXT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="c1"># Template mode (normal): from the repo root or inside the worktree</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>vrg-submit-pr
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="c1"># CLI mode (emergency): from inside the worktree</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>vrg-submit-pr<span class="w"> </span>--issue<span class="w"> </span>NUMBER<span class="w"> </span>--summary<span class="w"> </span>TEXT<span class="w"> </span>--title<span class="w"> </span>TEXT<span class="w"> </span><span class="o">[</span>options<span class="o">]</span>
 </code></pre></div>
+<h2 id="running-from-the-repo-root">Running from the repo root<a class="headerlink" href="#running-from-the-repo-root" title="Permanent link">&para;</a></h2>
+<p>In template mode, <code>vrg-submit-pr</code> may be run from the repo root — it
+resolves the target worktree itself:</p>
+<ul>
+<li><strong>One submittable worktree</strong> (contains <code>.vergil/pr-template.yml</code>):
+  announced and entered automatically; the usual preview + <code>[y/N]</code>
+  confirmation follows.</li>
+<li><strong>Several submittable worktrees:</strong> a numbered menu shows each
+  worktree with its issue number and title; pick one.</li>
+<li><strong>None:</strong> an error lists each worktree and why it was skipped.</li>
+</ul>
+<p>Run from inside a worktree, behavior is unchanged. The tool is
+interactive by design — it is a human touch point of the workflow and
+requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
 <tr>
 <th>Argument</th>
-<th>Required</th>
+<th>Required (CLI mode)</th>
 <th>Description</th>
 </tr>
 </thead>
@@ -7682,6 +7728,11 @@ container.</p>
 <td>Additional notes for the PR</td>
 </tr>
 <tr>
+<td><code>--base</code></td>
+<td>No</td>
+<td>Override the auto-detected target branch</td>
+</tr>
+<tr>
 <td><code>--dry-run</code></td>
 <td>No</td>
 <td>Print PR body without executing</td>
@@ -7691,29 +7742,36 @@ container.</p>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
 <p><code>Ref</code></p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Standard PR</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="c1"># Normal flow: resolve the worktree, preview, confirm</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>vrg-submit-pr
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>
+<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="c1"># Preview without submitting</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>vrg-submit-pr<span class="w"> </span>--dry-run
 <a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Dry run to preview</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="c1"># Emergency CLI mode</span>
 <a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Fix regex bug&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;fix(regex): handle edge case&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">  </span>--dry-run
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
-<li>Validates arguments and issue reference format.</li>
+<li>Template mode from the repo root: resolves the target worktree
+   (see above) and moves into it — the invoking shell is unaffected.</li>
+<li>Reads <code>.vergil/pr-template.yml</code> (template mode) or validates CLI
+   arguments, including the issue reference format.</li>
 <li>Detects target branch from the current branch:<ul>
 <li><code>release/*</code> branches target <code>main</code></li>
 <li>All other branches target <code>develop</code></li>
 </ul>
 </li>
-<li>Pushes the branch to origin.</li>
-<li>Creates the PR via <code>gh pr create</code>.</li>
+<li>Shows the PR preview and asks <code>Submit this PR? [y/N]</code>
+   (template mode).</li>
+<li>Pushes the branch to origin with the human's host credentials.</li>
+<li>Creates the PR via <code>gh pr create</code> and deletes the template.</li>
+<li>Prints the <code>/vergil:pr-watch</code> line to paste into both agent
+   sessions, plus the PR URL — which can be passed straight to
+   <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a>.</li>
 </ol>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
@@ -7730,7 +7788,7 @@ container.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Validation failure</td>
+<td>Validation failure, declined confirmation, or no submittable worktree</td>
 </tr>
 </tbody>
 </table>
