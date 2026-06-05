@@ -178,9 +178,7 @@ def _compare_marked_region(
             if actual_line is not None
             else f"CLAUDE.md line {stop + 1}: end of marked region"
         )
-        items.append(
-            DiffItem(field="local.claude_md", expected=expected, actual=actual)
-        )
+        items.append(DiffItem(field="local.claude_md", expected=expected, actual=actual))
         return
 
 

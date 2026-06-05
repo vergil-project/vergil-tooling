@@ -140,9 +140,7 @@ class TestClaudeMdMarkers:
         assert _claude_md_items(tmp_path) == []
 
     def test_divergent_line_reports_both_line_numbers(self, tmp_path: Path) -> None:
-        mutated = _TEMPLATE_TEXT.replace(
-            "## Memory management", "## Memory mismanagement", 1
-        )
+        mutated = _TEMPLATE_TEXT.replace("## Memory management", "## Memory mismanagement", 1)
         # _BEGIN is line 1, so template line 1 lands on CLAUDE.md line 2.
         content = f"{_BEGIN}\n{mutated}{_END}\n"
         (tmp_path / "CLAUDE.md").write_text(content)
@@ -191,6 +189,13 @@ class TestClaudeMdMarkers:
         items = _claude_md_items(tmp_path)
         assert len(items) == 1
         assert "multiple begin markers" in str(items[0].actual)
+
+    def test_multiple_end_markers_fail(self, tmp_path: Path) -> None:
+        content = f"{_BEGIN}\n{_TEMPLATE_TEXT}{_END}\n{_END}\n"
+        (tmp_path / "CLAUDE.md").write_text(content)
+        items = _claude_md_items(tmp_path)
+        assert len(items) == 1
+        assert "multiple end markers" in str(items[0].actual)
 
     def test_end_before_begin_fails(self, tmp_path: Path) -> None:
         content = f"{_END}\n{_TEMPLATE_TEXT}{_BEGIN}\n"
