@@ -94,30 +94,63 @@ Two entry modes:
   - Declining any prompt exits 0 without acting.
 
 Merge path (both modes): provenance check (existing, runs first so
-violations surface before any waiting) → wait-and-merge loop (below)
-→ existing cleanup (checkout target, ff pull, delete merged branches
-and their worktrees, prune remotes, post-finalization validation, CD
-workflow check).
+violations surface before any waiting) → already-merged pre-check
+(existing: PR state MERGED → print and skip directly to cleanup;
+someone merged in the UI and cleanup is exactly what remains) →
+wait-and-merge loop (below) → cleanup.
+
+Cleanup gains one step: after this invocation merges PR #N, the tool
+knows exactly which branch and worktree it merged (from inference or
+the PR lookup) and deletes them **explicitly** — the PR state is
+MERGED, so no ancestry inference is needed. The existing
+ancestry-based sweep (`git branch --merged`) then runs for stragglers.
+This matters because the default `--squash` strategy creates a new
+commit on the target, so the feature branch is never an ancestor and
+the sweep alone cannot see it; without the explicit step, the flagship
+flow would merge and then silently fail to clean up the very worktree
+it inferred the PR from.
+
+Both tools are **interactive by requirement, not by accident**: they
+are the human touch points of the workflow, and a human is assumed to
+be present. Unattended operation exists only *after* the human
+confirms (the walk-away wait), never instead of the confirmation.
+Batch/scripted use is served solely by the explicit-PR argument path.
 
 Existing flags (`--strategy`, `--target-branch`,
 `--allow-provenance-violation`, `--dry-run`) are unchanged.
 `--dry-run` skips waiting and prints what it would wait on. The
 existing must-run-from-main-worktree guard stays.
 
-### Wait-and-merge loop (BEHIND-first ordering)
+### Wait-and-merge loop (fail-fast ordering)
 
-A stale check run is detectable up front: if the branch is BEHIND the
-target, the current CI run's outcome is irrelevant because
-update-branch cancels it and starts a new one. Therefore the BEHIND
-check runs **first**, on entry and after every wait — never after
-letting a doomed run finish:
+Doomed outcomes are detectable up front, so the loop checks them
+before waiting, never after letting a pointless run finish:
+
+- A **MERGED** PR means the caller's premise is wrong — the engine
+  raises (consistent with `vrg-pr-await` per #1420); finalize never
+  reaches this because of its pre-check.
+- A **draft** PR can go green but `gh pr merge` will refuse it —
+  abort immediately with guidance (`gh pr ready`), not after the wait.
+- A **CONFLICTING** PR cannot merge no matter what CI says — abort
+  immediately with resolve-in-worktree guidance. Checked every
+  iteration, not just on entry, because a conflict can *arise*
+  mid-loop when another PR merges — exactly the multi-worktree
+  scenario this feature targets. (This check exists in the release
+  module's loop today and must not be lost in the generalization.)
+- A **BEHIND** branch's current CI run is irrelevant because
+  update-branch cancels it and starts a new one — update immediately
+  rather than waiting out a doomed run.
 
 ```text
-attempts = 0
+updates = 0
 loop:
+  if pr_state == MERGED → raise (caller decides what MERGED means)
+  if isDraft → abort: "PR #N is a draft — mark it ready (gh pr ready) and re-run"
+  if mergeable == CONFLICTING → abort with resolve-in-worktree guidance
   if merge_state == BEHIND:
-      if attempts == 3: abort (merge-train guard)
-      update-branch; attempts += 1
+      if updates == 5: abort (merge-train guard, matches release's
+                              existing _MAX_BRANCH_UPDATES)
+      update-branch; updates += 1
       wait for the new check run to register
       continue
   wait for checks (progress feedback via `gh pr checks --watch`)
@@ -147,13 +180,18 @@ Single home for canonical-worktree logic:
 
 ### New: `lib/pr_merge.py`
 
-- `wait_and_merge(pr, *, strategy, verbose) -> None` — the
-  BEHIND-first loop, assembled from existing `lib/github.py`
-  primitives (`merge_state_status`, `wait_for_checks`,
+- `wait_and_merge(pr, *, strategy, verbose) -> None` — the fail-fast
+  loop, assembled from existing `lib/github.py` primitives
+  (`pr_state`, `mergeable`, `merge_state_status`, `wait_for_checks`,
   `update_branch`, `failed_check_names`, `merge`).
+- Raises on an already-MERGED PR: what MERGED means is a caller-level
+  decision (finalize pre-checks and skips to cleanup; `vrg-pr-await`
+  aborts per #1420; release treats it as unexpected). The engine never
+  guesses, and never silently no-ops.
 - `lib/release/merge.py` becomes a thin call into this with
-  `strategy="merge"` — release keeps its public interface, loses its
-  private copy of the loop, and inherits the BEHIND-first ordering.
+  `strategy="merge"` — release keeps its public interface (including
+  its CONFLICTING abort and update cap of 5), loses its private copy
+  of the loop, and inherits the fail-fast ordering.
 
 ### Modified: `bin/vrg_submit_pr.py`
 
@@ -167,9 +205,13 @@ existing `pr_template.read_template()`.
 - PR inference via new helper `github.pr_for_branch(branch) ->
   dict | None`.
 - Confirmation prompts per the behavior section.
-- `_finalize_specific_pr()` swaps its direct `github.merge()` call for
+- `_finalize_specific_pr()` keeps its MERGED pre-check (skip to
+  cleanup) and swaps its direct `github.merge()` call for
   `pr_merge.wait_and_merge()`.
-- Cleanup phase unchanged.
+- Cleanup gains the explicit-target step (delete the just-merged PR's
+  branch and worktree by name, since the squash strategy hides them
+  from the ancestry sweep); the existing sweep runs afterward for
+  stragglers.
 
 ### Explicitly not changing
 
@@ -196,11 +238,25 @@ behavioral gain.
   fix CI is the recovery path.
 - **Ctrl-C during wait:** nothing destructive has happened
   (update-branch excepted, which is harmless); re-run resumes cleanly.
-- **update-branch failure (e.g., conflict with target):** abort with
-  the API error and instructions to resolve in the worktree; conflicts
-  need a human or agent, not a retry loop.
-- **Merge-train guard:** at most 3 update-branch attempts per
-  invocation; abort with status on exhaustion.
+- **Merge conflicts (CONFLICTING):** detected at the top of every
+  loop iteration, before any waiting; abort with instructions to
+  resolve in the worktree. Conflicts need a human or agent, not a
+  retry loop.
+- **Draft PR:** detected at loop entry; abort with `gh pr ready`
+  guidance instead of failing at the merge after a full green wait.
+- **Already-merged PR:** finalize's pre-check skips straight to
+  cleanup; the shared engine raises if it ever sees MERGED, so no
+  caller can wait on a merged PR by accident.
+- **update-branch failure:** abort with the API error.
+- **Merge-train guard:** at most 5 update-branch attempts per
+  invocation (release's existing cap); abort with status on
+  exhaustion.
+- **Non-interactive stdin:** the inference/menu/confirmation paths
+  check `sys.stdin.isatty()` before prompting and fail fast with
+  guidance to pass the PR explicitly (`vrg-finalize-pr <url>`), which
+  remains the scriptable path. EOF-as-default or a raw `EOFError`
+  traceback are both unacceptable: the former is a silent failure,
+  the latter an unhelpful loud one.
 - **Provenance violations:** checked before any waiting, so they
   surface immediately rather than after minutes of green CI.
 - **No silent failures:** every skip and exclusion prints its reason.
@@ -215,15 +271,23 @@ boundaries mocked:
   worktree ignored), branch mapping, selection one/many/none with
   mocked `prompt_choice`.
 - **`lib/pr_merge.py`:** loop state table — green-first-try;
-  BEHIND-on-entry → update → green; BEHIND-after-wait → update →
-  green; check failure → abort; update-branch failure → abort;
-  attempt-cap exhaustion. All `github.*` calls mocked.
+  MERGED-on-entry → raise; draft → abort; CONFLICTING on entry →
+  abort; CONFLICTING arising mid-loop → abort; BEHIND-on-entry →
+  update → green; BEHIND-after-wait → update → green; check failure →
+  abort; update-branch failure → abort; attempt-cap (5) exhaustion.
+  All `github.*` calls mocked.
 - **`bin/vrg_submit_pr.py`:** location matrix — in-worktree
   (unchanged), root + one ready, root + multiple ready (menu),
   root + none ready (error names skip reasons), CLI mode untouched.
 - **`bin/vrg_finalize_pr.py`:** inference matrix — explicit arg (no
   prompt), one candidate (confirm), multiple (menu + confirm), none
-  (cleanup confirm), decline → exit 0 without action.
+  (cleanup confirm), decline → exit 0 without action; already-merged
+  PR → skip merge, proceed to cleanup; non-TTY stdin in a prompting
+  path → fail fast with the explicit-arg guidance.
+- **Cleanup:** after a squash merge, the just-merged branch and
+  worktree are deleted via the explicit-target step even though
+  `git branch --merged` cannot see them; ancestry sweep still removes
+  stragglers.
 - **Release regression:** existing release-module merge tests pass
   against the relocated helper.
 - Full validation: `vrg-container-run -- uv run vrg-validate`.
