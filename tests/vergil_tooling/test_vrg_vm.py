@@ -1384,6 +1384,143 @@ class TestCreateDedicated:
         assert kwargs["apt_repos"] == []
         assert kwargs["vagrant_plugins"] == []
 
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch("vergil_tooling.bin.vrg_vm.nested_virt_unsupported_reason", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_dedicated_create_passes_nested(
+        self,
+        _status: MagicMock,
+        mock_support: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION + "\nnested = true\n")
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_support.assert_called_once()
+        assert mock_create.call_args.kwargs["nested"] is True
+
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch(
+        "vergil_tooling.bin.vrg_vm.nested_virt_unsupported_reason",
+        return_value="macOS 15+ on M3-or-later Apple silicon required",
+    )
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_aborts_on_unsupported_host_before_build(
+        self,
+        _status: MagicMock,
+        _support: MagicMock,
+        mock_fetch: MagicMock,
+        mock_create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION + "\nnested = true\n")
+        cfg = _identities(tmp_path, projects)
+
+        assert main(["create", "lmf/mq", "--config", str(cfg)]) == 1
+        assert "M3-or-later" in capsys.readouterr().err
+        mock_fetch.assert_not_called()
+        mock_create.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch(
+        "vergil_tooling.bin.vrg_vm.nested_virt_unsupported_reason",
+        return_value="unsupported host",
+    )
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
+    def test_create_without_nested_skips_host_check(
+        self,
+        _status: MagicMock,
+        mock_support: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _start: MagicMock,
+        _link: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        # An unsupported host must not block profiles that never asked for nested.
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
+        cfg = _identities(tmp_path, projects)
+        template = tmp_path / "tpl.yaml"
+        template.write_text("x")
+        mock_fetch.return_value = template
+
+        assert main(["create", "lmf/mq", "--config", str(cfg)]) == 0
+        mock_support.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.install_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.create_vm")
+    @patch("vergil_tooling.bin.vrg_vm.fetch_template")
+    @patch(
+        "vergil_tooling.bin.vrg_vm.nested_virt_unsupported_reason",
+        return_value="unsupported host",
+    )
+    @patch("vergil_tooling.bin.vrg_vm.delete_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_rebuild_aborts_on_unsupported_host_before_destroy(
+        self,
+        _status: MagicMock,
+        mock_delete: MagicMock,
+        _support: MagicMock,
+        mock_fetch: MagicMock,
+        _create: MagicMock,
+        _start: MagicMock,
+        _inject: MagicMock,
+        _install: MagicMock,
+        _link: MagicMock,
+        _copy: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The preflight must fire before the old VM is destroyed, or an
+        # unsupported host turns a rebuild into a destroy-only operation.
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION + "\nnested = true\n")
+        cfg = _identities(tmp_path, projects)
+
+        assert main(["rebuild", "lmf/mq", "--config", str(cfg)]) == 1
+        assert "unsupported host" in capsys.readouterr().err
+        mock_delete.assert_not_called()
+        mock_fetch.assert_not_called()
+
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")

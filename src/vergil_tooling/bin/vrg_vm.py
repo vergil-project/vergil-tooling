@@ -46,6 +46,7 @@ from vergil_tooling.lib.lima import (
     install_tooling,
     link_claude_dirs,
     list_vms,
+    nested_virt_unsupported_reason,
     shell_run,
     start_vm,
     stop_vm,
@@ -209,6 +210,26 @@ def _preflight_target(target: Target) -> int:
     return 0
 
 
+def _nested_preflight(target: Target) -> int:
+    """Abort (nonzero) when the target wants nested virt the host cannot provide.
+
+    Runs before any build step — and before the destroy half of a rebuild —
+    so an unsupported host never eats a VM it cannot recreate. Lima's own
+    rejection is the backstop; the template's in-guest /dev/kvm check is the
+    last line (no-silent-failures).
+    """
+    if not target.spec.nested:
+        return 0
+    reason = nested_virt_unsupported_reason()
+    if reason is None:
+        return 0
+    print(
+        f"ERROR: cannot build VM '{target.instance}': {reason}",
+        file=sys.stderr,
+    )
+    return 1
+
+
 def _create_from_target(target: Target, template: Path) -> None:
     """Build the VM for a target: dedicated boxes carry the composed spec, base is unchanged."""
     if target.spec.dedicated:
@@ -223,6 +244,7 @@ def _create_from_target(target: Target, template: Path) -> None:
             apt_repos=list(target.spec.apt_repos),
             vagrant_plugins=list(target.spec.vagrant_plugins),
             fingerprint=target.fingerprint,
+            nested=target.spec.nested,
         )
     else:
         create_vm(
@@ -254,6 +276,9 @@ def _cmd_create(args: argparse.Namespace) -> int:
             f"ERROR: identity '{name}' has no projects_dir configured",
             file=sys.stderr,
         )
+        return 1
+
+    if _nested_preflight(target) != 0:
         return 1
 
     print(f"Creating VM '{target.instance}' for identity '{name}'...")
@@ -421,6 +446,9 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
             f"ERROR: identity '{name}' has no projects_dir configured",
             file=sys.stderr,
         )
+        return 1
+
+    if _nested_preflight(target) != 0:
         return 1
 
     vergil_version = resolve_vergil_version(config, identity)

@@ -100,6 +100,7 @@ class RoleOverlay:
     stale_days: int | None
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
+    nested: bool | None = None
 
 
 @dataclass
@@ -112,13 +113,16 @@ class VmStanza:
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
     roles: dict[str, RoleOverlay]
+    nested: bool | None = None
 
 
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
 # (key + apt source line); vagrant_plugins is a list of plugin names. The
 # vergil-vm template owns *how* these install — repos never supply a script.
+# nested enables Lima nested virtualization for the profile (issue #1447);
+# default off, requires macOS 15+ on M3-or-later Apple silicon at create time.
 _VM_KEYS = frozenset(
-    {"cpus", "memory", "disk", "stale_days", "packages", "apt_repos", "vagrant_plugins"}
+    {"cpus", "memory", "disk", "stale_days", "packages", "apt_repos", "vagrant_plugins", "nested"}
 )
 
 
@@ -134,6 +138,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FIL
         stale_days=raw.get("stale_days"),
         apt_repos=list(raw.get("apt_repos", [])),
         vagrant_plugins=list(raw.get("vagrant_plugins", [])),
+        nested=raw.get("nested"),
     )
 
 
@@ -160,6 +165,7 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         apt_repos=list(fields.get("apt_repos", [])),
         vagrant_plugins=list(fields.get("vagrant_plugins", [])),
         roles=roles,
+        nested=fields.get("nested"),
     )
 
 
