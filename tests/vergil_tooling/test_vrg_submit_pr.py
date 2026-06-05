@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -12,9 +13,23 @@ from vergil_tooling.bin.vrg_submit_pr import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import worktrees
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Iterator
+
+_MOD = "vergil_tooling.bin.vrg_submit_pr"
+
+
+@pytest.fixture(autouse=True)
+def _in_worktree() -> Iterator[None]:
+    """Default every test to running inside a worktree (legacy behavior).
+
+    Root-launch tests override by patching is_main_worktree directly —
+    the innermost patch wins.
+    """
+    with patch(_MOD + ".git.is_main_worktree", return_value=False):
+        yield
 
 
 def test_resolve_plain_number() -> None:
@@ -470,3 +485,81 @@ class TestTemplateMode:
         assert result == 0
         out = capsys.readouterr().out
         assert "main" in out
+
+
+# -- root-launch worktree resolution (issue #1423) ----------------------------
+
+
+class TestRootLaunch:
+    """From the repo root, submit-pr resolves the target worktree itself."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    @staticmethod
+    def _wt(name: str, branch: str) -> worktrees.Worktree:
+        return worktrees.Worktree(path=Path(f"/repo/.worktrees/{name}"), branch=branch)
+
+    def test_root_single_ready_worktree_chdirs_and_submits(self) -> None:
+        wt = self._wt("issue-7-foo", "feature/7-foo")
+        fields = {"issue": "7", "title": "Foo title", "summary": "S"}
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".pr_template.read_template", return_value=fields),
+            patch(_MOD + ".os.chdir") as chdir,
+            patch(_MOD + ".git.current_branch", return_value="feature/7-foo"),
+        ):
+            rc = main(["--dry-run"])
+        assert rc == 0
+        chdir.assert_called_once_with(wt.path)
+
+    def test_root_no_ready_worktrees_errors_with_reasons(self) -> None:
+        wt = self._wt("issue-7-foo", "feature/7-foo")
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".pr_template.read_template", side_effect=FileNotFoundError("x")),
+            pytest.raises(SystemExit, match="no submittable worktrees"),
+        ):
+            main(["--dry-run"])
+
+    def test_root_non_tty_fails_fast(self) -> None:
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(
+                _MOD + ".worktrees.require_tty",
+                side_effect=SystemExit("requires an interactive terminal"),
+            ),
+            patch(_MOD + ".worktrees.list_worktrees") as listing,
+            pytest.raises(SystemExit, match="interactive terminal"),
+        ):
+            main([])
+        listing.assert_not_called()
+
+    def test_root_multiple_ready_worktrees_prompts(self) -> None:
+        wts = [self._wt("issue-7-foo", "feature/7-foo"), self._wt("issue-8-bar", "feature/8-bar")]
+        fields = {"issue": "8", "title": "Bar title", "summary": "S"}
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=wts),
+            patch(_MOD + ".pr_template.read_template", return_value=fields),
+            patch(
+                "vergil_tooling.lib.worktrees.prompt_choice",
+                return_value="issue-8-bar — issue 8: Bar title",
+            ),
+            patch(_MOD + ".os.chdir") as chdir,
+            patch(_MOD + ".git.current_branch", return_value="feature/8-bar"),
+        ):
+            rc = main(["--dry-run"])
+        assert rc == 0
+        chdir.assert_called_once_with(wts[1].path)

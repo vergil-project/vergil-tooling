@@ -19,12 +19,13 @@ Agent identities are blocked — PR submission is a Chief Steward
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import git, github, identity_mode, pr_template
+from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
 
 ALLOWED_LINKAGES = ("Ref",)
 _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
@@ -132,8 +133,66 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def _choose_submit_worktree(root: Path) -> Path:
+    """At the repo root, pick the template-ready worktree to submit from.
+
+    Candidates are worktrees containing a valid ``.vergil/pr-template.yml``
+    — the agent-written signal that the issue is ready for submission.
+    One candidate is auto-picked (the existing y/N preview still
+    confirms); several prompt a menu; none is an error that names each
+    skipped worktree and why.
+
+    Root launches are interactive by requirement regardless of how many
+    candidates exist — even the auto-picked path ends in a y/N confirm —
+    so the TTY guard fires up front, not per-prompt.
+    """
+    worktrees.require_tty("vrg-submit-pr from the repo root")
+
+    ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
+    skipped: list[str] = []
+    for wt in worktrees.list_worktrees(root):
+        try:
+            fields = pr_template.read_template(wt.path)
+        except FileNotFoundError:
+            skipped.append(f"{wt.path.name}: no .vergil/pr-template.yml — not ready")
+            continue
+        except pr_template.TemplateError as exc:
+            skipped.append(f"{wt.path.name}: {exc}")
+            continue
+        ready.append((wt, fields))
+
+    if not ready:
+        lines = ["vrg-submit-pr: no submittable worktrees found."]
+        if skipped:
+            lines.extend(f"  {reason}" for reason in skipped)
+        else:
+            lines.append("  (no .worktrees/ entries exist)")
+        raise SystemExit("\n".join(lines))
+
+    if len(ready) == 1:
+        wt, fields = ready[0]
+        print(f"Using worktree {wt.path.name} (issue {fields['issue']}: {fields['title']})")
+        return wt.path
+
+    labels = [f"{wt.path.name} — issue {f['issue']}: {f['title']}" for wt, f in ready]
+    chosen = worktrees.select_worktree(
+        [wt for wt, _ in ready],
+        purpose="Multiple submittable worktrees",
+        labels=labels,
+    )
+    return chosen.path
+
+
 def _run_template_mode(args: argparse.Namespace) -> int:
     root = Path(git.repo_root())
+
+    # Location resolution: from the main worktree (repo root), resolve
+    # which `.worktrees/` worktree to submit from and move there. The
+    # invoking shell is unaffected — chdir applies to this process only.
+    if git.is_main_worktree():
+        target = _choose_submit_worktree(root)
+        os.chdir(target)
+        root = target
 
     try:
         fields = pr_template.read_template(root)
