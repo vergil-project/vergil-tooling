@@ -263,7 +263,7 @@ wrappers through. Only active in repos with a `vergil.toml`.
 **Host install** (canonical):
 
 ```bash
-uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v1.4'
+uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v2.1'
 ```
 
 **Claude Code hook** (any consuming repo): each repo ships a thin

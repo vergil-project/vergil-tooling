@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   github-config:
-    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@v2.0
+    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@v2.1
     permissions:
       contents: read
       issues: write
