@@ -26,6 +26,15 @@ _token_cache: dict[str, tuple[str, float]] = {}
 _installation_cache: dict[str, str] | None = None
 
 
+class NoInstallationError(Exception):
+    """The GitHub App has no installation for the requested owner."""
+
+    def __init__(self, org: str, known: list[str]) -> None:
+        super().__init__(f"no App installation for owner {org!r}")
+        self.org = org
+        self.known = known
+
+
 def _load_app_config() -> tuple[str, Path] | None:
     """Read GitHub App credentials from env vars or ~/.config/vergil/.
 
@@ -150,13 +159,23 @@ def _generate_jwt(app_id: str, key_path: Path) -> str:
     return f"{header}.{payload}.{signature}"
 
 
-def get_installation_token(org: str | None = None) -> str | None:
+def get_installation_token(
+    org: str | None = None, *, require_installation: bool = False
+) -> str | None:
     """Return a GitHub App installation token, or ``None`` if not in App mode.
 
     Resolves the installation ID dynamically by calling
     ``GET /app/installations`` and matching the org. If *org* is
     ``None``, detects it from the current repo's git remote.
     Tokens are cached per-org for 55 minutes.
+
+    With *require_installation*, an org that has no App installation
+    raises :class:`NoInstallationError` instead of returning ``None``
+    — an App token minted for a different installation cannot reach
+    the requested owner's private repos, so silently falling back
+    would mask the failure as a missing grant. Without App
+    credentials configured, ``None`` is still returned (ambient gh
+    auth is not installation-scoped).
     """
     if org is None:
         org = _detect_org()
@@ -180,6 +199,8 @@ def get_installation_token(org: str | None = None) -> str | None:
         installations = _resolve_installations(jwt_token)
         installation_id = installations.get(org)
         if not installation_id:
+            if require_installation:
+                raise NoInstallationError(org, sorted(installations))
             return None
 
         data = _jwt_api_request(
