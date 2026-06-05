@@ -124,6 +124,11 @@ _MINIMAL_SETTINGS = {
     },
 }
 
+_SETTINGS_TEMPLATE_PATH = (
+    Path(__file__).resolve().parents[2] / "src" / "vergil_tooling" / "data" / "claude_settings.json"
+)
+_SETTINGS_TEMPLATE = json.loads(_SETTINGS_TEMPLATE_PATH.read_text(encoding="utf-8"))
+
 
 def _write_settings(tmp_path: Path, settings: dict) -> None:
     (tmp_path / ".claude").mkdir(exist_ok=True)
@@ -169,7 +174,75 @@ class TestClaudeSettings:
         _write_settings(tmp_path, settings)
         diff = audit_local_config(tmp_path)
         fields = {i.field for i in diff.items}
-        assert "local.claude_settings.marketplace_repo" in fields
+        assert "local.claude_settings.marketplace" in fields
+
+    def test_marketplace_source_drift(self, tmp_path: Path) -> None:
+        settings = {
+            "extraKnownMarketplaces": {
+                "vergil-marketplace": {
+                    "source": {"source": "git", "repo": "vergil-project/vergil-claude-plugin"}
+                }
+            },
+            "enabledPlugins": {"vergil@vergil-marketplace": True},
+        }
+        _write_settings(tmp_path, settings)
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.claude_settings.marketplace" in fields
+
+    def test_plugin_truthy_but_not_true(self, tmp_path: Path) -> None:
+        settings = {
+            **_MINIMAL_SETTINGS,
+            "enabledPlugins": {"vergil@vergil-marketplace": "yes"},
+        }
+        _write_settings(tmp_path, settings)
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.claude_settings.plugin" in fields
+
+    def test_plugin_manager_clobber_detected(self, tmp_path: Path) -> None:
+        # Regression for issue #1427: Claude Code's plugin manager
+        # rewrote a checked-in settings.json, emptying both keys.
+        settings = {
+            "permissions": {"allow": ["Bash(vrg-*)"]},
+            "extraKnownMarketplaces": {},
+            "enabledPlugins": {},
+        }
+        _write_settings(tmp_path, settings)
+        diff = audit_local_config(tmp_path)
+        fields = {i.field for i in diff.items}
+        assert "local.claude_settings.marketplace" in fields
+        assert "local.claude_settings.plugin" in fields
+
+    def test_canonical_template_sections_compliant(self, tmp_path: Path) -> None:
+        settings = {
+            "extraKnownMarketplaces": _SETTINGS_TEMPLATE["extraKnownMarketplaces"],
+            "enabledPlugins": _SETTINGS_TEMPLATE["enabledPlugins"],
+        }
+        _write_settings(tmp_path, settings)
+        diff = audit_local_config(tmp_path)
+        settings_fields = {
+            i.field for i in diff.items if i.field.startswith("local.claude_settings")
+        }
+        assert not settings_fields
+
+    def test_extra_entries_allowed(self, tmp_path: Path) -> None:
+        settings = {
+            "extraKnownMarketplaces": {
+                **_SETTINGS_TEMPLATE["extraKnownMarketplaces"],
+                "other-marketplace": {"source": {"source": "github", "repo": "other/repo"}},
+            },
+            "enabledPlugins": {
+                **_SETTINGS_TEMPLATE["enabledPlugins"],
+                "other@other-marketplace": True,
+            },
+        }
+        _write_settings(tmp_path, settings)
+        diff = audit_local_config(tmp_path)
+        settings_fields = {
+            i.field for i in diff.items if i.field.startswith("local.claude_settings")
+        }
+        assert not settings_fields
 
     def test_plugin_not_enabled(self, tmp_path: Path) -> None:
         settings = {
