@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.github import GitHubAPIError
-from vergil_tooling.lib.pr_merge import MergeAbort, wait_and_merge
+from vergil_tooling.lib.pr_merge import MergeAbortError, wait_and_merge
 
 _MOD = "vergil_tooling.lib.pr_merge"
 
@@ -41,21 +41,21 @@ def test_green_first_try_merges() -> None:
 
 def test_merged_on_entry_raises() -> None:
     gh = _gh(state="MERGED")
-    with patch(_MOD + ".github", gh), pytest.raises(MergeAbort, match="already merged"):
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="already merged"):
         wait_and_merge("99", strategy="squash")
     gh.merge.assert_not_called()
 
 
 def test_draft_aborts_before_waiting() -> None:
     gh = _gh(draft=True)
-    with patch(_MOD + ".github", gh), pytest.raises(MergeAbort, match="draft"):
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="draft"):
         wait_and_merge("99", strategy="squash")
     gh.wait_for_checks.assert_not_called()
 
 
 def test_conflicting_aborts_before_waiting() -> None:
     gh = _gh(mergeable="CONFLICTING")
-    with patch(_MOD + ".github", gh), pytest.raises(MergeAbort, match="merge conflicts"):
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="merge conflicts"):
         wait_and_merge("99", strategy="squash")
     gh.wait_for_checks.assert_not_called()
 
@@ -83,7 +83,7 @@ def test_behind_after_wait_loops_and_updates() -> None:
 
 def test_check_failure_aborts_with_names() -> None:
     gh = _gh(failed=["ci / test", "vergil-audit/approved"])
-    with patch(_MOD + ".github", gh), pytest.raises(MergeAbort, match="ci / test"):
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="ci / test"):
         wait_and_merge("99", strategy="squash")
     gh.merge.assert_not_called()
 
@@ -93,7 +93,7 @@ def test_merge_train_guard_exhausts() -> None:
     with (
         patch(_MOD + ".github", gh),
         patch(_MOD + ".time.sleep"),
-        pytest.raises(MergeAbort, match="still behind"),
+        pytest.raises(MergeAbortError, match="still behind"),
     ):
         wait_and_merge("99", strategy="squash")
     assert gh.update_branch.call_count == 5
@@ -116,7 +116,7 @@ def test_conflict_arising_mid_loop_aborts() -> None:
     with (
         patch(_MOD + ".github", gh),
         patch(_MOD + ".time.sleep"),
-        pytest.raises(MergeAbort, match="merge conflicts"),
+        pytest.raises(MergeAbortError, match="merge conflicts"),
     ):
         wait_and_merge("99", strategy="squash")
     gh.update_branch.assert_called_once_with("99")
@@ -129,7 +129,7 @@ def test_update_branch_failure_aborts_cleanly() -> None:
     with (
         patch(_MOD + ".github", gh),
         patch(_MOD + ".time.sleep"),
-        pytest.raises(MergeAbort, match="update-branch failed"),
+        pytest.raises(MergeAbortError, match="update-branch failed"),
     ):
         wait_and_merge("99", strategy="squash")
     gh.merge.assert_not_called()

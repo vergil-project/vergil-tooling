@@ -21,7 +21,7 @@ def wait_and_merge(pr_url: str, *, phase: str, verbose: bool = False) -> None:
             strategy="merge",
             wait_checks=lambda pr: wait_for_checks(pr, verbose=verbose),
         )
-    except pr_merge.MergeAbort as exc:
+    except pr_merge.MergeAbortError as exc:
         raise ReleaseError(
             phase=phase,
             command="pr_merge.wait_and_merge",

@@ -581,13 +581,13 @@ def pr_for_branch(branch: str) -> dict[str, str] | None:
     )
     if not isinstance(result, list) or not result:
         return None
-    first = result[0]
-    if not isinstance(first, dict):
+    if not isinstance(result[0], dict):
         return None
+    first = cast("dict[str, object]", result[0])
     return {
-        "number": str(first.get("number", "")),
-        "url": str(first.get("url", "")),
-        "title": str(first.get("title", "")),
+        "number": str(first.get("number") or ""),
+        "url": str(first.get("url") or ""),
+        "title": str(first.get("title") or ""),
     }
 
 

@@ -13,7 +13,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import worktrees
+from vergil_tooling.lib import pr_template, worktrees
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -563,3 +563,28 @@ class TestRootLaunch:
             rc = main(["--dry-run"])
         assert rc == 0
         chdir.assert_called_once_with(wts[1].path)
+
+    def test_root_malformed_template_skipped_with_reason(self) -> None:
+        wt = self._wt("issue-7-foo", "feature/7-foo")
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(
+                _MOD + ".pr_template.read_template",
+                side_effect=pr_template.TemplateError("missing required field: issue"),
+            ),
+            pytest.raises(SystemExit, match="missing required field"),
+        ):
+            main(["--dry-run"])
+
+    def test_root_no_worktrees_at_all_errors(self) -> None:
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            pytest.raises(SystemExit, match="no .worktrees/ entries exist"),
+        ):
+            main(["--dry-run"])

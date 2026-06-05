@@ -33,7 +33,7 @@ _MAX_BRANCH_UPDATES = 5
 _UPDATE_SETTLE_SECS = 5
 
 
-class MergeAbort(Exception):
+class MergeAbortError(Exception):
     """The PR cannot be merged; the message explains why and what to do."""
 
 
@@ -49,7 +49,7 @@ def wait_and_merge(
     primitive (the release workflow passes its verbose-aware wrapper);
     the default is ``github.wait_for_checks``.
 
-    Raises ``MergeAbort`` on any unmergeable condition.
+    Raises ``MergeAbortError`` on any unmergeable condition.
     """
     wait = wait_checks if wait_checks is not None else github.wait_for_checks
     updates = 0
@@ -59,16 +59,16 @@ def wait_and_merge(
                 f"PR {pr} is already merged — nothing to wait for. "
                 "If cleanup is what remains, run vrg-finalize-pr without arguments."
             )
-            raise MergeAbort(msg)
+            raise MergeAbortError(msg)
         if github.is_draft(pr):
             msg = f"PR {pr} is a draft — mark it ready (gh pr ready {pr}) and re-run."
-            raise MergeAbort(msg)
+            raise MergeAbortError(msg)
         if github.mergeable(pr) == "CONFLICTING":
             msg = (
                 f"PR {pr} has merge conflicts. Resolve them in the PR's worktree "
                 "(merge the target branch in, push), then re-run."
             )
-            raise MergeAbort(msg)
+            raise MergeAbortError(msg)
         if github.merge_state_status(pr) == "BEHIND":
             updates += 1
             if updates > _MAX_BRANCH_UPDATES:
@@ -76,13 +76,13 @@ def wait_and_merge(
                     f"PR {pr} still behind after {_MAX_BRANCH_UPDATES} branch updates "
                     "— the merge train is busy; re-run when it settles."
                 )
-                raise MergeAbort(msg)
+                raise MergeAbortError(msg)
             print("Branch is behind base — updating and re-checking...")
             try:
                 github.update_branch(pr)
             except GitHubAPIError as exc:
                 msg = f"update-branch failed for PR {pr}: {exc}"
-                raise MergeAbort(msg) from exc
+                raise MergeAbortError(msg) from exc
             time.sleep(_UPDATE_SETTLE_SECS)
             continue
 
@@ -92,7 +92,7 @@ def wait_and_merge(
         failed = github.failed_check_names(pr)
         if failed:
             msg = f"Checks failed on PR {pr}: {', '.join(failed)}"
-            raise MergeAbort(msg)
+            raise MergeAbortError(msg)
 
         if github.merge_state_status(pr) == "BEHIND":
             continue  # something merged while we waited -> update at loop top

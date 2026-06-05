@@ -1372,3 +1372,8 @@ def test_is_draft_false() -> None:
 def test_head_ref() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="feature/1423-x"):
         assert github.head_ref("1423") == "feature/1423-x"
+
+
+def test_pr_for_branch_none_when_payload_not_dict() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
+        assert github.pr_for_branch("feature/1423-pr-interface") is None

@@ -190,9 +190,9 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # which `.worktrees/` worktree to submit from and move there. The
     # invoking shell is unaffected — chdir applies to this process only.
     if git.is_main_worktree():
-        target = _choose_submit_worktree(root)
-        os.chdir(target)
-        root = target
+        wt_path = _choose_submit_worktree(root)
+        os.chdir(wt_path)
+        root = wt_path
 
     try:
         fields = pr_template.read_template(root)

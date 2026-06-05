@@ -18,7 +18,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib.pr_merge import MergeAbort
+from vergil_tooling.lib.pr_merge import MergeAbortError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
 from vergil_tooling.lib.worktrees import Worktree
 
@@ -937,7 +937,7 @@ def test_finalize_specific_pr_merge_abort_returns_error(
     with (
         patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbort("is a draft")),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
     ):
         rc = _finalize_specific_pr(args)
     assert rc == 1
@@ -1034,3 +1034,35 @@ def test_explicit_target_cleanup_skips_missing_local_branch(
     assert rc == 0
     assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
     assert "no local branch" in capsys.readouterr().out
+
+
+def test_explicit_target_cleanup_skips_dirty_worktree(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A dirty worktree blocks the explicit-target deletion, loudly."""
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
+        patch(
+            _MOD + ".worktrees.worktree_for_branch",
+            return_value=Path("/repo/.worktrees/issue-7-foo"),
+        ),
+        patch(_MOD + "._worktree_is_dirty", return_value=True),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+    ):
+        rc = main(["123"])
+    assert rc == 0
+    assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
+    assert "uncommitted changes" in capsys.readouterr().out

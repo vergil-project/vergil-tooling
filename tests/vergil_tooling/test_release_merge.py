@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.pr_merge import MergeAbort
+from vergil_tooling.lib.pr_merge import MergeAbortError
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.merge import wait_and_merge
 
@@ -25,7 +25,7 @@ def test_delegates_with_merge_strategy() -> None:
 
 def test_wraps_merge_abort_in_release_error() -> None:
     with (
-        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbort("merge conflicts")),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("merge conflicts")),
         pytest.raises(ReleaseError, match="merge conflicts") as excinfo,
     ):
         wait_and_merge("https://github.com/o/r/pull/5", phase="phase-3")

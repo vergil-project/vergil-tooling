@@ -259,7 +259,7 @@ def _finalize_specific_pr(args: argparse.Namespace) -> int:
     else:
         try:
             pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
-        except pr_merge.MergeAbort as exc:
+        except pr_merge.MergeAbortError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
 
