@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.10] - 2026-06-05
+
+### Documentation
+
+- adopt marker-delimited template region in CLAUDE.md (#1439)
+
+### Features
+
+- marker-delimited CLAUDE.md template region check (#1439)
+- per-profile nested virtualization via the [vm] cascade (#1449)
+
+### Testing
+
+- cover multiple-end-marker diagnostic (#1439)
+
 ## [2.1.9] - 2026-06-05
 
 ### Bug fixes
