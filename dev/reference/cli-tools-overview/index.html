@@ -4783,10 +4783,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-finalize-repo" class="md-nav__link">
+  <a href="#vrg-finalize-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        vrg-finalize-repo
+        vrg-finalize-pr
       
     </span>
   </a>
@@ -5424,14 +5424,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev/finalize-repo/" class="md-nav__link">
+      <a href="../dev/finalize-pr/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -7750,10 +7750,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#vrg-finalize-repo" class="md-nav__link">
+  <a href="#vrg-finalize-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        vrg-finalize-repo
+        vrg-finalize-pr
       
     </span>
   </a>
@@ -8153,11 +8153,12 @@ Claude plugin, VERSION file) to find the version.</p>
 </tr>
 </tbody>
 </table>
-<h3 id="vrg-finalize-repo">vrg-finalize-repo<a class="headerlink" href="#vrg-finalize-repo" title="Permanent link">&para;</a></h3>
-<p>Post-merge repository cleanup. Switches to the target branch,
-fast-forward pulls, deletes merged local branches (auto-removing
-worktrees inside <code>.worktrees/</code> when necessary), prunes remotes,
-runs validation, and checks the Documentation workflow status.</p>
+<h3 id="vrg-finalize-pr">vrg-finalize-pr<a class="headerlink" href="#vrg-finalize-pr" title="Permanent link">&para;</a></h3>
+<p>Finalize a pull request. Given a PR, runs the provenance check, merges
+it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
+the target branch, fast-forward pulls, deletes merged local branches
+(auto-removing worktrees inside <code>.worktrees/</code> when necessary), prunes
+remotes, runs validation, and checks the CD workflow status.</p>
 <table>
 <thead>
 <tr>
@@ -8168,23 +8169,23 @@ runs validation, and checks the Documentation workflow status.</p>
 <tbody>
 <tr>
 <td>Source</td>
-<td><code>vergil_tooling.bin.vrg_finalize_repo</code></td>
+<td><code>vergil_tooling.bin.vrg_finalize_pr</code></td>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--target-branch</code> (default: develop), <code>--dry-run</code></td>
+<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash), <code>--allow-provenance-violation</code>, <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, worktree-aware (auto-switches to main worktree), <code>vrg-container-run</code> on PATH</td>
+<td>Must run from the main worktree, <code>vrg-container-run</code> on PATH</td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Validation failures return exit 1; docs workflow failure is a soft warning (exit 0)</td>
+<td>Provenance violations, a dirty working tree, validation failures, or a failed CD run all return exit 1</td>
 </tr>
 <tr>
 <td>Exit codes</td>
-<td>0 success, 1 validation failure or unrecognized branching model</td>
+<td>0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model</td>
 </tr>
 <tr>
 <td>Status</td>

@@ -25,7 +25,7 @@
     
     
       
-        <title>vrg-finalize-repo - VERGIL Tooling</title>
+        <title>vrg-finalize-pr - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#vrg-finalize-repo" class="md-skip">
+        <a href="#vrg-finalize-pr" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              vrg-finalize-repo
+              vrg-finalize-pr
             
           </span>
         </div>
@@ -5112,7 +5112,7 @@
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -5130,7 +5130,7 @@
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -5190,10 +5190,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-switch-to-target-branch" class="md-nav__link">
+  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Switch to Target Branch
+        1. Provenance Check and Merge (PR mode only)
       
     </span>
   </a>
@@ -5201,10 +5201,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-fast-forward-pull" class="md-nav__link">
+  <a href="#2-switch-to-target-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Fast-Forward Pull
+        2. Switch to Target Branch
       
     </span>
   </a>
@@ -5212,10 +5212,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-delete-merged-branches" class="md-nav__link">
+  <a href="#3-fast-forward-pull" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Delete Merged Branches
+        3. Fast-Forward Pull
       
     </span>
   </a>
@@ -5223,10 +5223,54 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-prune-remote-references" class="md-nav__link">
+  <a href="#4-delete-merged-branches-and-worktrees" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Prune Remote References
+        4. Delete Merged Branches and Worktrees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-prune-remote-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Prune Remote References
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-working-tree-cleanliness-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Working-Tree Cleanliness Gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-post-finalization-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Post-Finalization Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-cd-workflow-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. CD Workflow Check
       
     </span>
   </a>
@@ -7541,10 +7585,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#1-switch-to-target-branch" class="md-nav__link">
+  <a href="#1-provenance-check-and-merge-pr-mode-only" class="md-nav__link">
     <span class="md-ellipsis">
       
-        1. Switch to Target Branch
+        1. Provenance Check and Merge (PR mode only)
       
     </span>
   </a>
@@ -7552,10 +7596,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#2-fast-forward-pull" class="md-nav__link">
+  <a href="#2-switch-to-target-branch" class="md-nav__link">
     <span class="md-ellipsis">
       
-        2. Fast-Forward Pull
+        2. Switch to Target Branch
       
     </span>
   </a>
@@ -7563,10 +7607,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#3-delete-merged-branches" class="md-nav__link">
+  <a href="#3-fast-forward-pull" class="md-nav__link">
     <span class="md-ellipsis">
       
-        3. Delete Merged Branches
+        3. Fast-Forward Pull
       
     </span>
   </a>
@@ -7574,10 +7618,54 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#4-prune-remote-references" class="md-nav__link">
+  <a href="#4-delete-merged-branches-and-worktrees" class="md-nav__link">
     <span class="md-ellipsis">
       
-        4. Prune Remote References
+        4. Delete Merged Branches and Worktrees
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-prune-remote-references" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Prune Remote References
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-working-tree-cleanliness-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Working-Tree Cleanliness Gate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-post-finalization-validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        7. Post-Finalization Validation
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-cd-workflow-check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        8. CD Workflow Check
       
     </span>
   </a>
@@ -7617,14 +7705,25 @@
 
 
 
-<h1 id="vrg-finalize-repo">vrg-finalize-repo<a class="headerlink" href="#vrg-finalize-repo" title="Permanent link">&para;</a></h1>
-<p><strong>Installed as:</strong> <code>vrg-finalize-repo</code> (Python console script)</p>
-<p><strong>Source:</strong> <code>src/vergil_tooling/finalize_repo.py</code></p>
-<p>Cleans up a repository after a PR merge: switches to the target
-branch, fast-forward pulls, deletes merged local branches, and
-prunes remote tracking references.</p>
+<h1 id="vrg-finalize-pr">vrg-finalize-pr<a class="headerlink" href="#vrg-finalize-pr" title="Permanent link">&para;</a></h1>
+<p><strong>Installed as:</strong> <code>vrg-finalize-pr</code> (Python console script)</p>
+<p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_finalize_pr.py</code></p>
+<p>Finalizes a pull request and reconciles local state afterwards. Has
+two modes, keyed on whether a PR argument is given:</p>
+<ul>
+<li><strong><code>vrg-finalize-pr &lt;PR&gt;</code></strong> — runs the pre-merge provenance check,
+  merges the PR (or confirms it is already merged), then runs the
+  cleanup below. This replaces a manual web merge followed by a
+  separate cleanup step.</li>
+<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — cleanup only: switch to the target
+  branch, fast-forward pull, delete merged local branches, and prune
+  stale remote-tracking references. This is the release path.</li>
+</ul>
+<p>Must be run from the <strong>main worktree</strong> — the cleanup removes
+worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-repo<span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -7636,8 +7735,20 @@ prunes remote tracking references.</p>
 </thead>
 <tbody>
 <tr>
+<td><code>PR</code></td>
+<td>PR number or URL to merge and finalize. Omit for cleanup-only (release path).</td>
+</tr>
+<tr>
 <td><code>--target-branch</code></td>
 <td>Branch to switch to (default: <code>develop</code>)</td>
+</tr>
+<tr>
+<td><code>--strategy</code></td>
+<td>Merge strategy when a PR is given (default: <code>squash</code>)</td>
+</tr>
+<tr>
+<td><code>--allow-provenance-violation</code></td>
+<td>Proceed despite provenance violations (conscious human override)</td>
 </tr>
 <tr>
 <td><code>--dry-run</code></td>
@@ -7646,14 +7757,20 @@ prunes remote tracking references.</p>
 </tbody>
 </table>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
-<h3 id="1-switch-to-target-branch">1. Switch to Target Branch<a class="headerlink" href="#1-switch-to-target-branch" title="Permanent link">&para;</a></h3>
+<h3 id="1-provenance-check-and-merge-pr-mode-only">1. Provenance Check and Merge (PR mode only)<a class="headerlink" href="#1-provenance-check-and-merge-pr-mode-only" title="Permanent link">&para;</a></h3>
+<p>Runs the pre-merge provenance check. Advisories are printed but do not
+block. Violations abort the merge unless <code>--allow-provenance-violation</code>
+is given. If the PR is already merged, the merge step is skipped.</p>
+<h3 id="2-switch-to-target-branch">2. Switch to Target Branch<a class="headerlink" href="#2-switch-to-target-branch" title="Permanent link">&para;</a></h3>
 <p>Checks out the target branch (default: <code>develop</code>).</p>
-<h3 id="2-fast-forward-pull">2. Fast-Forward Pull<a class="headerlink" href="#2-fast-forward-pull" title="Permanent link">&para;</a></h3>
-<p>Fetches and fast-forward merges <code>origin/{target}</code>.</p>
-<h3 id="3-delete-merged-branches">3. Delete Merged Branches<a class="headerlink" href="#3-delete-merged-branches" title="Permanent link">&para;</a></h3>
-<p>Deletes local branches that have been merged into the target branch.
-Eternal branches are protected from deletion based on the
-<code>branching_model</code>:</p>
+<h3 id="3-fast-forward-pull">3. Fast-Forward Pull<a class="headerlink" href="#3-fast-forward-pull" title="Permanent link">&para;</a></h3>
+<p>Fetches (<code>--tags --force</code>) and fast-forward merges <code>origin/{target}</code>.</p>
+<h3 id="4-delete-merged-branches-and-worktrees">4. Delete Merged Branches and Worktrees<a class="headerlink" href="#4-delete-merged-branches-and-worktrees" title="Permanent link">&para;</a></h3>
+<p>Deletes local branches merged into the target branch. If a merged
+branch is still checked out in a canonical <code>.worktrees/</code> worktree, that
+worktree is removed first (skipped if it has uncommitted changes).
+Cached container images for the branch are cleaned. Eternal branches
+are protected based on the <code>branching_model</code>:</p>
 <table>
 <thead>
 <tr>
@@ -7676,9 +7793,19 @@ Eternal branches are protected from deletion based on the
 </tr>
 </tbody>
 </table>
-<h3 id="4-prune-remote-references">4. Prune Remote References<a class="headerlink" href="#4-prune-remote-references" title="Permanent link">&para;</a></h3>
+<h3 id="5-prune-remote-references">5. Prune Remote References<a class="headerlink" href="#5-prune-remote-references" title="Permanent link">&para;</a></h3>
 <p>Runs <code>git remote prune origin</code> to clean up stale remote-tracking
 branches.</p>
+<h3 id="6-working-tree-cleanliness-gate">6. Working-Tree Cleanliness Gate<a class="headerlink" href="#6-working-tree-cleanliness-gate" title="Permanent link">&para;</a></h3>
+<p>Fails if the target branch's working tree is not clean, so leftover
+files are cleaned up before the next issue.</p>
+<h3 id="7-post-finalization-validation">7. Post-Finalization Validation<a class="headerlink" href="#7-post-finalization-validation" title="Permanent link">&para;</a></h3>
+<p>Runs canonical validation via <code>vrg-container-run</code> to catch problems on
+the target branch before the next PR is created.</p>
+<h3 id="8-cd-workflow-check">8. CD Workflow Check<a class="headerlink" href="#8-cd-workflow-check" title="Permanent link">&para;</a></h3>
+<p>Inspects the most recent CD workflow run on the target branch and fails
+if it did not succeed. Docs publishing is async and used to fail
+silently (issue #303).</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -7694,7 +7821,7 @@ branches.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Unrecognized branching model</td>
+<td>Provenance violation, not run from main worktree, dirty working tree, failed validation, or failed CD run</td>
 </tr>
 </tbody>
 </table>

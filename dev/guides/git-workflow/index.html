@@ -5080,14 +5080,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../reference/dev/finalize-repo/" class="md-nav__link">
+      <a href="../../reference/dev/finalize-pr/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    vrg-finalize-repo
+    vrg-finalize-pr
   
 
     
@@ -7337,10 +7337,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-finalize-with-vrg-finalize-repo" class="md-nav__link">
+  <a href="#5-finalize-with-vrg-finalize-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Finalize with vrg-finalize-repo
+        5. Finalize with vrg-finalize-pr
       
     </span>
   </a>
@@ -7762,10 +7762,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#5-finalize-with-vrg-finalize-repo" class="md-nav__link">
+  <a href="#5-finalize-with-vrg-finalize-pr" class="md-nav__link">
     <span class="md-ellipsis">
       
-        5. Finalize with vrg-finalize-repo
+        5. Finalize with vrg-finalize-pr
       
     </span>
   </a>
@@ -7972,7 +7972,7 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>new issue  →  branch  →  commit  →  PR  →  (human review)  →  merge  →  finalize
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>                  │         │        │                                      │
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>                  ▼         ▼        ▼                                      ▼
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  vrg-commit  vrg-submit-pr                    vrg-finalize-repo
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>            feature/&lt;N&gt;  vrg-commit  vrg-submit-pr                    vrg-finalize-pr
 </code></pre></div>
 <ul>
 <li>One issue per branch. Branch name encodes the issue number.</li>
@@ -7982,8 +7982,8 @@ see <a href="https://github.com/vergil-project/vergil-tooling/blob/develop/docs/
   <code>gh pr create</code> is blocked.</strong></li>
 <li>Merging is <strong>manual</strong>. Auto-merge is disabled org-wide as of
   2026-04-22.</li>
-<li>After merge, <code>vrg-finalize-repo</code> pulls develop, deletes the merged
-  branch, and prunes remote refs.</li>
+<li>After merge, <code>vrg-finalize-pr</code> pulls develop, deletes the merged
+  branch and its worktree, and prunes remote refs.</li>
 </ul>
 <p>For parallel work on multiple issues, use the worktree convention
 (below) — every session starts at the project root, each concurrent
@@ -8121,14 +8121,15 @@ merge. Removing that call is tracked in
 <h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
 <p>Once CI is green and a reviewer approves, merge through the GitHub
 UI (squash merge for feature PRs). No automated merge will happen.</p>
-<h3 id="5-finalize-with-vrg-finalize-repo">5. Finalize with <code>vrg-finalize-repo</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-repo" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-repo
+<h3 id="5-finalize-with-vrg-finalize-pr">5. Finalize with <code>vrg-finalize-pr</code><a class="headerlink" href="#5-finalize-with-vrg-finalize-pr" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>vrg-finalize-pr<span class="w">            </span><span class="c1"># cleanup only, after merging in the UI</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>vrg-finalize-pr<span class="w"> </span>&lt;PR&gt;<span class="w">       </span><span class="c1"># provenance check, merge, then cleanup</span>
 </code></pre></div>
 <p>This:</p>
 <ul>
 <li>Switches back to the integration branch (<code>develop</code>).</li>
 <li>Pulls the latest.</li>
-<li>Deletes the merged local feature branch.</li>
+<li>Deletes the merged local feature branch and removes its worktree.</li>
 <li>Prunes stale remote-tracking refs.</li>
 <li>Runs post-merge validation via <code>vrg-container-run</code> to catch any
   regression introduced by the merge.</li>
@@ -8136,7 +8137,7 @@ UI (squash merge for feature PRs). No automated merge will happen.</p>
 <p>Run this immediately after the PR merges. A Stop hook in the plugin
 will remind you if you try to end the session with an unsubmitted
 or unfinalized PR still dangling.</p>
-<p>See the <a href="../../reference/dev/finalize-repo/">vrg-finalize-repo reference</a>.</p>
+<p>See the <a href="../../reference/dev/finalize-pr/">vrg-finalize-pr reference</a>.</p>
 <h2 id="parallel-work-with-worktrees">Parallel work with worktrees<a class="headerlink" href="#parallel-work-with-worktrees" title="Permanent link">&para;</a></h2>
 <p>Use the worktree convention when running <strong>more than one agent in
 the same repo at the same time</strong>, or when you want to start a second
@@ -8202,9 +8203,9 @@ contract"):</p>
 <a id="__codelineno-9-16" name="__codelineno-9-16" href="#__codelineno-9-16"></a>  (vrg-container-run mounts the current directory).
 </code></pre></div>
 <h3 id="cleanup-after-merge">Cleanup after merge<a class="headerlink" href="#cleanup-after-merge" title="Permanent link">&para;</a></h3>
-<p><code>vrg-finalize-repo</code> will handle worktree removal once
-<a href="https://github.com/vergil-project/vergil-tooling/issues/260">vergil-tooling#260</a>
-lands. Until then, do it by hand alongside the usual finalization:</p>
+<p><code>vrg-finalize-pr</code> handles worktree removal for the finalized branch
+when the worktree lives under the canonical <code>.worktrees/</code> directory, so
+the cleanup above is automatic. To remove one by hand:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="nb">cd</span><span class="w"> </span>~/dev/github/&lt;repo&gt;
 <a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>git<span class="w"> </span>worktree<span class="w"> </span>remove<span class="w"> </span>.worktrees/issue-42-add-caching
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a>git<span class="w"> </span>branch<span class="w"> </span>-D<span class="w"> </span>feature/42-add-caching<span class="w">    </span><span class="c1"># usually already deleted</span>
@@ -8221,7 +8222,7 @@ lands. Until then, do it by hand alongside the usual finalization:</p>
 <li>Merge the release PR manually. CI auto-tags, creates the GitHub
    Release, publishes the package artifact, and opens a
    version-bump PR back to <code>develop</code>.</li>
-<li><code>vrg-finalize-repo</code> as usual.</li>
+<li><code>vrg-finalize-pr</code> as usual.</li>
 </ol>
 <h2 id="adoption-for-a-new-repo">Adoption for a new repo<a class="headerlink" href="#adoption-for-a-new-repo" title="Permanent link">&para;</a></h2>
 <p>Onboarding a brand-new repository has two entry points:</p>
