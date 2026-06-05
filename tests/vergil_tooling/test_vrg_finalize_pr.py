@@ -631,9 +631,11 @@ def test_pr_arg_runs_provenance_then_merges(tmp_path: Path) -> None:
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()) as mock_check,
         patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
-        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.pr_merge.wait_and_merge") as mock_merge,
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop"),
         patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
         patch(f"{_MOD}.git.run"),
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
@@ -669,9 +671,11 @@ def test_provenance_violation_override_merges(tmp_path: Path) -> None:
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_with_violation()),
         patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
-        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.pr_merge.wait_and_merge") as mock_merge,
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop"),
         patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
         patch(f"{_MOD}.git.run"),
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
@@ -691,9 +695,11 @@ def test_advisory_surfaced_and_merge_proceeds(
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_with_advisory()),
         patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
-        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.pr_merge.wait_and_merge") as mock_merge,
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop"),
         patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
         patch(f"{_MOD}.git.run"),
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
@@ -712,9 +718,11 @@ def test_already_merged_skips_merge(tmp_path: Path) -> None:
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
         patch(f"{_MOD}.github.pr_state", return_value="MERGED"),
-        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.pr_merge.wait_and_merge") as mock_merge,
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop"),
         patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
         patch(f"{_MOD}.git.run"),
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
@@ -732,9 +740,11 @@ def test_pr_dry_run_skips_merge(tmp_path: Path) -> None:
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
         patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
-        patch(f"{_MOD}.github.merge") as mock_merge,
+        patch(f"{_MOD}.pr_merge.wait_and_merge") as mock_merge,
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.git.current_branch", return_value="develop"),
         patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
     ):
@@ -901,3 +911,126 @@ def test_explicit_pr_skips_inference_and_prompts() -> None:
     listing.assert_not_called()
     confirm.assert_not_called()
     fin.assert_called_once()
+
+
+# -- engine swap + explicit-target cleanup (issue #1423) -----------------------
+
+_CLEAN_PROVENANCE = ProvenanceResult(violations=[], advisories=[])
+
+
+def test_finalize_specific_pr_uses_wait_and_merge() -> None:
+    args = parse_args(["123"])
+    with (
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        rc = _finalize_specific_pr(args)
+    assert rc == 0
+    engine.assert_called_once_with("123", strategy="squash")
+
+
+def test_finalize_specific_pr_merge_abort_returns_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    args = parse_args(["123"])
+    with (
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbort("is a draft")),
+    ):
+        rc = _finalize_specific_pr(args)
+    assert rc == 1
+    assert "is a draft" in capsys.readouterr().err
+
+
+def test_finalize_specific_pr_already_merged_skips_engine() -> None:
+    args = parse_args(["123"])
+    with (
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+    ):
+        rc = _finalize_specific_pr(args)
+    assert rc == 0
+    engine.assert_not_called()
+
+
+def test_explicit_target_cleanup_deletes_merged_pr_branch() -> None:
+    """After a squash merge, the just-merged branch is cleaned even though
+    `git branch --merged` cannot see it."""
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=[]),  # squash: sweep is blind
+        patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+    ):
+        rc = main(["123"])
+    assert rc == 0
+    confirm.assert_not_called()  # explicit arg: no prompt
+    assert ("branch", "-D", "feature/7-foo") in git_run_calls
+
+
+def test_explicit_target_cleanup_respects_eternal_branches() -> None:
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="develop"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+    ):
+        rc = main(["123"])
+    assert rc == 0
+    assert not any(c[:2] == ("branch", "-D") for c in git_run_calls), (
+        "must never delete an eternal branch"
+    )
+
+
+def test_explicit_target_cleanup_skips_missing_local_branch(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A merged PR whose branch has no local counterpart is skipped loudly."""
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value=""),  # no local branch
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+    ):
+        rc = main(["123"])
+    assert rc == 0
+    assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
+    assert "no local branch" in capsys.readouterr().out

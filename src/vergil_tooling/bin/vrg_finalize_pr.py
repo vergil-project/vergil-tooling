@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import config, git, github, pr_provenance, worktrees
+from vergil_tooling.lib import config, git, github, pr_merge, pr_provenance, worktrees
 from vergil_tooling.lib.container_cache import clean_branch_images
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
 
@@ -80,6 +80,43 @@ def _worktree_is_dirty(wt_path: Path) -> bool:
     if result.returncode != 0:
         return True
     return bool(result.stdout.strip())
+
+
+def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bool:
+    """Remove *branch* and its canonical worktree; True if the branch was deleted.
+
+    Shared by the explicit-target step (the PR branch just merged, which
+    a squash merge hides from ``git branch --merged``) and the ancestry
+    sweep for stragglers.
+
+    If the branch is still checked out in a `.worktrees/` worktree
+    (typical: the worktree we did the PR's work in), `git branch -D`
+    refuses to delete it — there's no force past "branch is checked out
+    somewhere." Auto-remove the worktree first, constrained to the
+    canonical `.worktrees/` location so user-created worktrees elsewhere
+    are never silently removed. Issue #315.
+
+    `git branch -D` (force) rather than `-d` because the callers have
+    already vetted these branches as merged; `-d`'s redundant safety
+    check rejects branches whose tips were rewritten by rebase +
+    force-push during a CI fixup loop (the upstream-tracking ref is gone
+    after `fetch --prune`). Trusting our own filter avoids the
+    disagreement. Issue #307.
+    """
+    wt = worktrees.worktree_for_branch(branch, root)
+    if wt is not None:
+        if _worktree_is_dirty(wt):
+            print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")
+            return False
+        print(f"  Removing worktree: {wt}")
+        _run(["worktree", "remove", str(wt)], dry_run=dry_run)
+    print(f"  Deleting merged branch: {branch}")
+    _run(["branch", "-D", branch], dry_run=dry_run)
+    if not dry_run:
+        removed = clean_branch_images(branch)
+        if removed:
+            print(f"  Cleaned {removed} cached container image(s) for {branch}")
+    return True
 
 
 def _infer_pr(root: Path, target_branch: str) -> str | None:
@@ -218,10 +255,13 @@ def _finalize_specific_pr(args: argparse.Namespace) -> int:
     if github.pr_state(args.pr) == "MERGED":
         print(f"PR {args.pr} already merged.")
     elif args.dry_run:
-        print(f"  [dry-run] merge PR {args.pr} (--{args.strategy})")
+        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{args.strategy})")
     else:
-        print(f"Merging PR {args.pr} (--{args.strategy})...")
-        github.merge(args.pr, strategy=args.strategy)
+        try:
+            pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
+        except pr_merge.MergeAbort as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
 
     return 0
 
@@ -254,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
         if rc != 0:
             return rc
 
+    merged_branch: str | None = None
+    if args.pr is not None:
+        merged_branch = github.head_ref(args.pr)
+
     try:
         vergil_config = config.read_config(root)
         model = vergil_config.project.branching_model
@@ -281,38 +325,27 @@ def main(argv: list[str] | None = None) -> int:
     _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
     _run(["pull", "--ff-only", "origin", args.target_branch], dry_run=args.dry_run)
 
-    print("Checking for merged local branches...")
     deleted: list[str] = []
+
+    # Explicit-target cleanup: the just-merged PR branch. The default
+    # squash strategy rewrites history onto the target, so the branch is
+    # never an ancestor and `git branch --merged` cannot see it — without
+    # this step the flagship flow would merge and then silently fail to
+    # clean up the very worktree it inferred the PR from.
+    if merged_branch and merged_branch not in eternal:
+        if git.read_output("branch", "--list", merged_branch):
+            print(f"Cleaning up merged PR branch {merged_branch}...")
+            if _delete_branch_and_worktree(merged_branch, root, dry_run=args.dry_run):
+                deleted.append(merged_branch)
+        else:
+            print(f"  Merged PR branch {merged_branch} has no local branch — skipping.")
+
+    print("Checking for merged local branches...")
     for branch in git.merged_branches(args.target_branch):
-        if branch in eternal:
+        if branch in eternal or branch in deleted:
             continue
-        # If the branch is still checked out in a `.worktrees/` worktree
-        # (typical: the worktree we did the PR's work in), `git branch -D`
-        # refuses to delete it — there's no force past "branch is
-        # checked out somewhere." Auto-remove the worktree first.
-        # Constrained to the canonical `.worktrees/` location so user-
-        # created worktrees elsewhere are never silently removed.
-        # Issue #315.
-        wt = worktrees.worktree_for_branch(branch, root)
-        if wt is not None:
-            if _worktree_is_dirty(wt):
-                print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")
-                continue
-            print(f"  Removing worktree: {wt}")
-            _run(["worktree", "remove", str(wt)], dry_run=args.dry_run)
-        # `git branch -D` (force) rather than `-d` because `--merged`
-        # already vetted these branches as reachable from the target;
-        # `-d`'s redundant safety check rejects branches whose tips
-        # were rewritten by rebase + force-push during a CI fixup loop
-        # (the upstream-tracking ref is gone after `fetch --prune`).
-        # Trusting our own filter avoids the disagreement. Issue #307.
-        print(f"  Deleting merged branch: {branch}")
-        _run(["branch", "-D", branch], dry_run=args.dry_run)
-        deleted.append(branch)
-        if not args.dry_run:
-            removed = clean_branch_images(branch)
-            if removed:
-                print(f"  Cleaned {removed} cached container image(s) for {branch}")
+        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+            deleted.append(branch)
 
     print("Pruning stale remote-tracking references...")
     if args.dry_run:
