@@ -14,6 +14,7 @@ from vergil_tooling.bin.vrg_vm import (
     Target,
     _list_rows,
     _preflight_target,
+    _probe_running,
     _resolve_target,
     _target_ref,
     _warn_under,
@@ -613,12 +614,12 @@ class TestRebuild:
 
 
 class TestList:
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe", return_value=(0, 0, None))
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(
         self,
         mock_list: MagicMock,
-        _occ: MagicMock,
+        _probe: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -1581,16 +1582,14 @@ class TestListRows:
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         return discover_dedicated("vergil-user", ["vergil-user.lmf.mq"], str(projects))
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(2, 1))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
-    def test_base_and_present_running_ok(
-        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
-    ) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_base_and_present_running_ok(self, _fp: MagicMock, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         ident = self._identity(projects)
         dedic = self._present(projects)
         status = {"vergil-user": "Running", "vergil-user.lmf.mq": "Running"}
-        rows = _list_rows("vergil-user", ident, dedic, status)
+        probes = {"vergil-user": (2, 1, None), "vergil-user.lmf.mq": (2, 1, "fp")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         base = self._row(rows, "base")
         ded = self._row(rows, "lmf/mq")
         assert base["cpus"] == 4
@@ -1599,31 +1598,43 @@ class TestListRows:
         assert ded["cpus"] == 12
         assert ded["spec"] == "ok"
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
-    def test_present_running_needs_rebuild(
-        self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_needs_rebuild(self, _fp: MagicMock, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        ident = self._identity(projects)
+        dedic = self._present(projects)
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, "stale")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
+        assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
+
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_missing_fingerprint_needs_rebuild(
+        self, _fp: MagicMock, tmp_path: Path
     ) -> None:
         projects = tmp_path / "projects"
         ident = self._identity(projects)
         dedic = self._present(projects)
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, None)}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "lmf/mq")["spec"] == "NEEDS-REBUILD"
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(0, 0))
-    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
-    def test_present_running_under(self, _spec: MagicMock, _occ: MagicMock, tmp_path: Path) -> None:
+    @patch("vergil_tooling.bin.vrg_vm.spec_fingerprint", return_value="fp")
+    def test_present_running_under(self, _fp: MagicMock, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         ident = self._identity(projects, overrides={("lmf", "mq"): {"memory": "32GiB"}})
         dedic = self._present(projects)
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.lmf.mq": "Running"})
+        status = {"vergil-user.lmf.mq": "Running"}
+        probes = {"vergil-user.lmf.mq": (0, 0, "fp")}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert "under (mem)" in str(self._row(rows, "lmf/mq")["spec"])
 
     def test_present_not_running_is_ok(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         ident = self._identity(projects)
         dedic = self._present(projects)
-        rows = _list_rows("vergil-user", ident, dedic, {})  # nothing running
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})  # nothing running
         ded = self._row(rows, "lmf/mq")
         assert ded["spec"] == "ok"
         assert ded["agents"] == "—"
@@ -1633,20 +1644,21 @@ class TestListRows:
         # to the base footprint.
         ident = self._identity(tmp_path / "projects")
         dedic = [DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present", None)]
-        rows = _list_rows("vergil-user", ident, dedic, {})
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
         assert self._row(rows, "lmf/mq")["cpus"] == 4  # stanza None -> base footprint
 
     def test_orphaned(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
         dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
-        rows = _list_rows("vergil-user", ident, dedic, {})
+        rows = _list_rows("vergil-user", ident, dedic, {}, {})
         assert self._row(rows, "o/gone")["spec"] == "orphaned"
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_occupancy", return_value=(1, 0))
-    def test_orphaned_running_shows_occupancy(self, _occ: MagicMock, tmp_path: Path) -> None:
+    def test_orphaned_running_shows_occupancy(self, tmp_path: Path) -> None:
         ident = self._identity(tmp_path / "projects")
         dedic = [DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned")]
-        rows = _list_rows("vergil-user", ident, dedic, {"vergil-user.o.gone": "Running"})
+        status = {"vergil-user.o.gone": "Running"}
+        probes = {"vergil-user.o.gone": (1, 0, None)}
+        rows = _list_rows("vergil-user", ident, dedic, status, probes)
         assert self._row(rows, "o/gone")["agents"] == "1"
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
@@ -1655,3 +1667,58 @@ class TestListRows:
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1
+
+
+class TestProbeRunning:
+    def _identity(self, tmp_path: Path) -> Identity:
+        return Identity(vm_instance="vergil-user", projects_dir=str(tmp_path / "projects"))
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe")
+    def test_probes_running_only_with_fingerprint_for_present(
+        self, mock_probe: MagicMock, tmp_path: Path
+    ) -> None:
+        mock_probe.side_effect = lambda _inst, *, fingerprint=False: (
+            (1, 0, "fp") if fingerprint else (1, 0, None)
+        )
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered = {
+            "vergil-user": [
+                DedicatedRow("lmf", "mq", "vergil-user.lmf.mq", "present", None),
+                DedicatedRow("o", "gone", "vergil-user.o.gone", "orphaned"),
+                DedicatedRow("o", "off", "vergil-user.o.off", "present", None),
+            ]
+        }
+        status = {
+            "vergil-user": "Running",
+            "vergil-user.lmf.mq": "Running",
+            "vergil-user.o.gone": "Running",
+            "vergil-user.o.off": "Stopped",
+        }
+        probes = _probe_running(identities, discovered, status)
+        assert probes == {
+            "vergil-user": (1, 0, None),
+            "vergil-user.lmf.mq": (1, 0, "fp"),
+            "vergil-user.o.gone": (1, 0, None),
+        }
+        wants = {c.args[0]: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
+        assert wants == {
+            "vergil-user": False,  # base: occupancy only
+            "vergil-user.lmf.mq": True,  # present dedicated: combined probe
+            "vergil-user.o.gone": False,  # orphaned: no spec to compare
+        }
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe")
+    def test_nothing_running_probes_nothing(self, mock_probe: MagicMock, tmp_path: Path) -> None:
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
+        assert _probe_running(identities, discovered, {"vergil-user": "Stopped"}) == {}
+        mock_probe.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_probe", side_effect=RuntimeError("boom"))
+    def test_probe_errors_propagate(self, _probe: MagicMock, tmp_path: Path) -> None:
+        # Parallelization must not swallow new error modes: anything beyond
+        # vm_probe's documented (0, 0, None) contract surfaces to the caller.
+        identities = {"vergil-user": self._identity(tmp_path)}
+        discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
+        with pytest.raises(RuntimeError, match="boom"):
+            _probe_running(identities, discovered, {"vergil-user": "Running"})
