@@ -14,7 +14,6 @@ import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
     _check_cd_workflow_status,
-    _worktree_for_branch,
     _worktree_is_dirty,
     main,
     parse_args,
@@ -413,7 +412,7 @@ def test_worktree_is_dirty_returns_true_on_git_failure(tmp_path: Path) -> None:
         assert _worktree_is_dirty(tmp_path) is True
 
 
-# -- _worktree_for_branch (issue #315) ---------------------------------------
+# -- worktree porcelain helper (lookup tests live in test_worktrees.py) ------
 
 
 def _porcelain(*records: tuple[str, str | None]) -> str:
@@ -430,50 +429,6 @@ def _porcelain(*records: tuple[str, str | None]) -> str:
             lines.append(f"branch refs/heads/{branch}")
         lines.append("")
     return "\n".join(lines)
-
-
-def test_worktree_for_branch_finds_canonical(tmp_path: Path) -> None:
-    """A branch checked out under `.worktrees/<name>/` is auto-removable."""
-    wt_dir = tmp_path / ".worktrees" / "issue-1-x"
-    wt_dir.mkdir(parents=True)
-    porcelain = _porcelain(
-        (str(tmp_path), "develop"),
-        (str(wt_dir), "feature/1-x"),
-    )
-    with patch(_MOD + ".git.read_output", return_value=porcelain):
-        result = _worktree_for_branch("feature/1-x", tmp_path)
-    assert result == wt_dir.resolve()
-
-
-def test_worktree_for_branch_returns_none_when_branch_absent(tmp_path: Path) -> None:
-    porcelain = _porcelain((str(tmp_path), "develop"))
-    with patch(_MOD + ".git.read_output", return_value=porcelain):
-        assert _worktree_for_branch("feature/missing", tmp_path) is None
-
-
-def test_worktree_for_branch_skips_non_canonical_location(tmp_path: Path) -> None:
-    """A branch checked out OUTSIDE `.worktrees/` is deliberately ignored —
-    user-managed worktrees are never silently removed.
-    """
-    rogue = tmp_path / "elsewhere" / "feature-branch"
-    rogue.mkdir(parents=True)
-    porcelain = _porcelain(
-        (str(tmp_path), "develop"),
-        (str(rogue), "feature/1-x"),
-    )
-    with patch(_MOD + ".git.read_output", return_value=porcelain):
-        assert _worktree_for_branch("feature/1-x", tmp_path) is None
-
-
-def test_worktree_for_branch_ignores_detached_worktrees(tmp_path: Path) -> None:
-    wt_dir = tmp_path / ".worktrees" / "issue-1-x"
-    wt_dir.mkdir(parents=True)
-    porcelain = _porcelain(
-        (str(tmp_path), "develop"),
-        (str(wt_dir), None),
-    )
-    with patch(_MOD + ".git.read_output", return_value=porcelain):
-        assert _worktree_for_branch("feature/1-x", tmp_path) is None
 
 
 def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:

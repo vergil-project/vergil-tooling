@@ -22,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import config, git, github, pr_provenance
+from vergil_tooling.lib import config, git, github, pr_provenance, worktrees
 from vergil_tooling.lib.container_cache import clean_branch_images
 
 _CD_WORKFLOW_NAME = "CD"
@@ -79,37 +79,6 @@ def _worktree_is_dirty(wt_path: Path) -> bool:
     if result.returncode != 0:
         return True
     return bool(result.stdout.strip())
-
-
-def _worktree_for_branch(branch: str, repo_root: Path) -> Path | None:
-    """Return the worktree path that has *branch* checked out, or None.
-
-    Constrains the search to worktrees inside ``repo_root/.worktrees/``
-    — the canonical location per the worktree convention. Worktrees
-    elsewhere (developer-managed, outside the convention) are
-    deliberately ignored: auto-removing them would surprise the user
-    in cases the convention doesn't account for. Issue #315.
-    """
-    output = git.read_output("worktree", "list", "--porcelain")
-    canonical_root = (repo_root / ".worktrees").resolve()
-
-    current_path: Path | None = None
-    target_ref = f"refs/heads/{branch}"
-    for line in output.splitlines():
-        if line.startswith("worktree "):
-            current_path = Path(line.removeprefix("worktree ").strip())
-        elif line.startswith("branch ") and current_path is not None:
-            ref = line.removeprefix("branch ").strip()
-            if ref == target_ref:
-                resolved = current_path.resolve()
-                # Only auto-remove worktrees inside the canonical
-                # `.worktrees/` directory.
-                try:
-                    resolved.relative_to(canonical_root)
-                except ValueError:
-                    return None
-                return resolved
-    return None
 
 
 def _check_cd_workflow_status(target_branch: str) -> str | None:
@@ -271,7 +240,7 @@ def main(argv: list[str] | None = None) -> int:
         # Constrained to the canonical `.worktrees/` location so user-
         # created worktrees elsewhere are never silently removed.
         # Issue #315.
-        wt = _worktree_for_branch(branch, root)
+        wt = worktrees.worktree_for_branch(branch, root)
         if wt is not None:
             if _worktree_is_dirty(wt):
                 print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")

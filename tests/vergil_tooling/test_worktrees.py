@@ -57,6 +57,11 @@ def test_worktree_for_branch_found() -> None:
     assert path == Path("/repo/.worktrees/issue-8-bar")
 
 
+def test_worktree_for_branch_none_when_absent() -> None:
+    with patch(_MOD + ".git.read_output", return_value=_PORCELAIN):
+        assert worktree_for_branch("feature/missing", Path("/repo")) is None
+
+
 def test_worktree_for_branch_ignores_non_canonical() -> None:
     with patch(_MOD + ".git.read_output", return_value=_PORCELAIN):
         assert worktree_for_branch("feature/9-rogue", Path("/repo")) is None
