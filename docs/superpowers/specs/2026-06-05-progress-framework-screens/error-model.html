@@ -1,0 +1,115 @@
+<h2>Which stages should be allowed to fail without aborting?</h2>
+<p class="subtitle">Two models — the difference is whether you predeclare which failures are tolerable, or decide at runtime</p>
+
+<style>
+  .term {
+    background: #0d1117;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    color: #c9d1d9;
+    margin: 8px 0 4px 0;
+  }
+  .t-done { color: #3fb950; }
+  .t-fail { color: #f85149; }
+  .t-warn { color: #d29922; }
+  .t-run  { color: #58a6ff; }
+  .t-dim  { color: #6e7681; }
+  .t-bold { font-weight: 700; color: #e6edf3; }
+  .t-indent { padding-left: 20px; }
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 12px;
+    margin-right: 6px;
+  }
+  .badge-green  { background: #1a3a24; color: #3fb950; }
+  .badge-yellow { background: #3a2f0a; color: #d29922; }
+  .badge-red    { background: #3a0f0f; color: #f85149; }
+</style>
+
+<div class="cards">
+
+  <!-- Option A: predeclared soft/hard -->
+  <div class="card" data-choice="predeclared" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span>       <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span>     <span class="t-dim">1.1s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">tag-and-release</span>  <span class="t-dim">8.4s</span></div>
+        <div><span class="t-warn">⚠</span> <span class="t-bold">build-images</span>     <span class="t-dim">failed — continuing</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">publish-pypi</span>     <span class="t-dim">4.7s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">docs-deploy</span>      <span class="t-dim">12.1s</span></div>
+        <div style="margin-top:8px;border-top:1px solid #21262d;padding-top:8px">
+          <div class="t-warn">⚠ release complete with 1 non-fatal failure:</div>
+          <div class="t-indent t-fail">✗ build-images: docker build exited 1 (dev-base:2.1.2)</div>
+          <div class="t-indent t-dim" style="font-size:10px">  full output → ~/.vrg/release-20260605.log</div>
+        </div>
+        <div style="margin-top:4px"><span style="color:#f85149;font-size:10px">exit 1</span></div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — Predeclared failure tolerance</h3>
+      <div style="margin-bottom:6px">
+        <span class="badge badge-yellow">optional</span> stages declared in config/code<br>
+        <span class="badge badge-red">required</span> stages abort the whole run if they fail
+      </div>
+      <p>Each stage is statically marked <code>optional=True</code> or <code>required=True</code>. Optional failures are recorded, logged, shown in the summary, and exit 1 at the end — but don't stop subsequent stages.</p>
+    </div>
+  </div>
+
+  <!-- Option B: --continue-on-error flag -->
+  <div class="card" data-choice="continue-flag" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div class="t-dim" style="font-size:10px">$ vrg release --continue-on-error build-images,docs-deploy</div>
+        <div style="height:4px"></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span>       <span class="t-dim">3.2s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">version-bump</span>     <span class="t-dim">1.1s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">tag-and-release</span>  <span class="t-dim">8.4s</span></div>
+        <div><span class="t-warn">⚠</span> <span class="t-bold">build-images</span>     <span class="t-dim">failed — continuing</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">publish-pypi</span>     <span class="t-dim">4.7s</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">docs-deploy</span>      <span class="t-dim">17.3s</span></div>
+        <div style="margin-top:6px" class="t-warn">⚠ 1 failure (non-fatal by flag): build-images</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Runtime flag</h3>
+      <div style="margin-bottom:6px">
+        <span class="badge badge-yellow">--continue-on-error</span> specifies which stages are forgiven at call time
+      </div>
+      <p>No static declaration. Caller decides per-invocation which stages are optional. More flexible, but the CI workflow config (not the code) owns the failure model. Forgiven stages still log failures and cause exit 1.</p>
+    </div>
+  </div>
+
+  <!-- Option C: both -->
+  <div class="card" data-choice="both" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div class="t-dim" style="font-size:10px"># stage definition (code/config)</div>
+        <div style="color:#58a6ff;font-size:10px">Stage("build-images", optional=True, <span style="color:#3fb950">on_failure="warn"</span>)</div>
+        <div style="height:6px"></div>
+        <div><span class="t-warn">⚠</span> <span class="t-bold">build-images</span>  <span class="t-dim">failed (optional)</span></div>
+        <div><span class="t-done">✓</span> <span class="t-bold">publish-pypi</span>  <span class="t-dim">4.7s</span></div>
+        <div style="margin-top:6px;font-size:10px" class="t-dim">
+          <span class="t-warn">⚠</span> 1 optional stage failed · <span class="t-fail">0 required stages failed</span>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Predeclared + runtime override</h3>
+      <div style="margin-bottom:6px">
+        <span class="badge badge-green">default in code</span>
+        <span class="badge badge-yellow">--force-optional to override</span>
+      </div>
+      <p>Stages have a default tolerance level baked in (the known-flaky ones are <code>optional</code> by default). A runtime flag can escalate an optional to required for stricter runs, or demote a required to optional as an escape hatch.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">In all three: failures are always logged in full, always shown in the final summary, always cause a non-zero exit code.</p>

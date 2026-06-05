@@ -1,0 +1,98 @@
+<h2>What should the output look like in CI?</h2>
+<p class="subtitle">When stdout is not a TTY (GitHub Actions, piped), rich's live rendering is disabled automatically. Three options for what replaces it.</p>
+
+<style>
+  .term {
+    background: #0d1117;
+    border-radius: 6px;
+    padding: 12px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11px;
+    line-height: 1.7;
+    color: #c9d1d9;
+    margin: 8px 0 4px 0;
+  }
+  .t-done { color: #3fb950; }
+  .t-fail { color: #f85149; }
+  .t-warn { color: #d29922; }
+  .t-run  { color: #58a6ff; }
+  .t-dim  { color: #6e7681; }
+  .t-bold { font-weight: 700; color: #e6edf3; }
+  .gh-group { color: #58a6ff; font-style: italic; }
+  .indent { padding-left: 18px; display: block; }
+  .sep { border: none; border-top: 1px solid #21262d; margin: 6px 0; }
+</style>
+
+<div class="cards">
+
+  <!-- Option A: GitHub Actions groups -->
+  <div class="card" data-choice="gha-groups" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div class="gh-group">▶ changelog</div>
+        <span class="indent t-dim">generating CHANGELOG.md from commits…</span>
+        <span class="indent t-dim">wrote 42 entries</span>
+        <div class="gh-group">◀ changelog — ✓ 3.2s</div>
+        <div style="height:4px"></div>
+        <div class="gh-group">▶ build-images</div>
+        <span class="indent t-dim">building ghcr.io/vergil-project/dev-base:2.1.2</span>
+        <span class="indent t-dim">Step 1/12: FROM python:3.12-slim</span>
+        <span class="indent t-dim">Step 2/12: RUN apt-get install…</span>
+        <span class="indent" style="color:#f85149">Step 9/12: FAILED — exit 1</span>
+        <div class="gh-group">◀ build-images — ✗ 31.2s (deferred)</div>
+        <div style="height:4px"></div>
+        <div class="t-fail">✗ release 2.1.2 completed with errors</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A — GitHub Actions log groups</h3>
+      <p>Emit <code>::group::</code> / <code>::endgroup::</code> annotations. Each stage becomes a collapsible section in the Actions log UI — failed stages auto-expand. Only works in GHA; plain text in other CI.</p>
+    </div>
+  </div>
+
+  <!-- Option B: flat verbose -->
+  <div class="card" data-choice="flat-verbose" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div><span class="t-run">→</span> <span class="t-bold">changelog</span> <span class="t-dim">starting…</span></div>
+        <span class="indent t-dim">generating CHANGELOG.md from commits…</span>
+        <span class="indent t-dim">wrote 42 entries</span>
+        <div><span class="t-done">✓</span> <span class="t-bold">changelog</span> <span class="t-dim">3.2s</span></div>
+        <div><span class="t-run">→</span> <span class="t-bold">build-images</span> <span class="t-dim">starting…</span></div>
+        <span class="indent t-dim">building ghcr.io/vergil-project/dev-base:2.1.2</span>
+        <span class="indent t-dim">Step 1/12…  Step 2/12…  Step 9/12: FAILED</span>
+        <div><span class="t-fail">✗</span> <span class="t-bold">build-images</span> <span class="t-dim">31.2s (deferred)</span></div>
+        <div class="t-fail" style="margin-top:4px">✗ release completed with errors — exit 1</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B — Flat verbose (CI default)</h3>
+      <p>Plain sequential output: start marker, all subprocess output, completion marker. No cursor tricks, no CI-specific annotations. Works identically in every CI system and when piped locally. Simple and portable.</p>
+    </div>
+  </div>
+
+  <!-- Option C: auto-detect -->
+  <div class="card" data-choice="auto-detect" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="term">
+        <div class="t-dim" style="font-size:10px"># GITHUB_ACTIONS=true → uses groups</div>
+        <div class="t-dim" style="font-size:10px"># piped locally → uses flat verbose</div>
+        <div class="t-dim" style="font-size:10px"># TTY → uses rich live display</div>
+        <div style="height:6px"></div>
+        <div style="font-size:10px">
+          <span class="t-done">✓</span> <span class="t-bold">TTY</span>         → rich rolling window<br>
+          <span class="t-done">✓</span> <span class="t-bold">GITHUB_ACTIONS</span> → ::group:: annotations<br>
+          <span class="t-done">✓</span> <span class="t-bold">piped/other CI</span> → flat verbose
+        </div>
+        <div style="margin-top:6px" class="t-dim" style="font-size:10px">--output-format [rich|gha|plain] overrides</div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>C — Auto-detect with override</h3>
+      <p>Checks <code>$GITHUB_ACTIONS</code>, TTY state, and a <code>--output-format</code> flag to pick the right renderer automatically. TTY → rich. GHA → groups. Piped/other CI → flat. One flag to override if auto-detect is wrong.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">The existing <code>output.py</code> already detects TTY vs CI — this would extend that detection to drive renderer selection.</p>

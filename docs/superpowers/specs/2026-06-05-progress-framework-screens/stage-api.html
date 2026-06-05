@@ -1,0 +1,90 @@
+<h2>How should stages be declared in code?</h2>
+<p class="subtitle">This is the API every procedural command will use. Pick what feels most natural to write and read.</p>
+
+<style>
+  .code {
+    background: #0d1117;
+    border-radius: 6px;
+    padding: 14px 18px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    line-height: 1.75;
+    color: #c9d1d9;
+    margin: 8px 0 4px 0;
+    white-space: pre;
+  }
+  .kw   { color: #ff7b72; }
+  .fn   { color: #d2a8ff; }
+  .str  { color: #a5d6ff; }
+  .cmt  { color: #6e7681; font-style: italic; }
+  .cls  { color: #ffa657; }
+  .num  { color: #79c0ff; }
+  .dim  { color: #6e7681; }
+</style>
+
+<div class="cards">
+
+  <!-- Option A: context manager -->
+  <div class="card" data-choice="context-manager" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="code"><span class="kw">def</span> <span class="fn">run</span>(ctx):
+    <span class="kw">with</span> <span class="fn">stage</span>(<span class="str">"audit"</span>, mode=<span class="str">"fail_fast"</span>,
+                  skip_flag=<span class="str">"skip_audit"</span>):
+        <span class="fn">run_audit</span>(ctx)
+
+    <span class="kw">with</span> <span class="fn">stage</span>(<span class="str">"build-images"</span>, mode=<span class="str">"fail_defer"</span>):
+        <span class="fn">build_docker_images</span>(ctx)
+
+    <span class="kw">with</span> <span class="fn">stage</span>(<span class="str">"publish-pypi"</span>, mode=<span class="str">"fail_defer"</span>):
+        <span class="fn">publish_to_pypi</span>(ctx)</div>
+    </div>
+    <div class="card-body">
+      <h3>A — Context manager</h3>
+      <p>Each stage wraps its work in a <code>with</code> block. The framework catches exceptions, applies the failure mode, and handles rendering. Familiar Python idiom — same shape as <code>with open()</code>.</p>
+    </div>
+  </div>
+
+  <!-- Option B: declarative stage list -->
+  <div class="card" data-choice="declarative" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="code"><span class="cls">STAGES</span> = [
+    <span class="cls">Stage</span>(<span class="str">"audit"</span>,        <span class="fn">run_audit</span>,
+          mode=<span class="str">"fail_fast"</span>, skip_flag=<span class="str">"skip_audit"</span>),
+    <span class="cls">Stage</span>(<span class="str">"build-images"</span>, <span class="fn">build_docker_images</span>,
+          mode=<span class="str">"fail_defer"</span>),
+    <span class="cls">Stage</span>(<span class="str">"publish-pypi"</span>, <span class="fn">publish_to_pypi</span>,
+          mode=<span class="str">"fail_defer"</span>),
+]
+
+<span class="fn">run_pipeline</span>(ctx, <span class="cls">STAGES</span>)</div>
+    </div>
+    <div class="card-body">
+      <h3>B — Declarative stage list</h3>
+      <p>Stages declared as data, pipeline driven by a runner. Easy to inspect, reorder, or skip stages programmatically. The stage list becomes a readable spec of what the command does.</p>
+    </div>
+  </div>
+
+  <!-- Option C: both -->
+  <div class="card" data-choice="both" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="code"><span class="cmt"># stages defined as data (reorderable, inspectable)</span>
+<span class="cls">STAGES</span> = [
+    <span class="cls">Stage</span>(<span class="str">"audit"</span>,        <span class="fn">run_audit</span>,
+          mode=<span class="str">"fail_fast"</span>, skip_flag=<span class="str">"skip_audit"</span>),
+    <span class="cls">Stage</span>(<span class="str">"build-images"</span>, <span class="fn">build_docker_images</span>,
+          mode=<span class="str">"fail_defer"</span>),
+]
+
+<span class="cmt"># runner exposes context manager for ad-hoc inline stages</span>
+<span class="kw">with</span> pipeline.<span class="fn">stage</span>(<span class="str">"preflight-check"</span>, mode=<span class="str">"fail_fast"</span>):
+    <span class="fn">assert_clean_tree</span>(ctx)</div>
+    </div>
+    <div class="card-body">
+      <h3>C — Declarative list + context manager escape hatch</h3>
+      <p>Main stages declared as data and run by the pipeline. Inline <code>with pipeline.stage()</code> available for one-off stages that don't warrant a named function. Best of both — structure where it matters, flexibility where it doesn't.</p>
+    </div>
+  </div>
+
+</div>
+
+<p class="subtitle" style="margin-top:14px">All three support the same failure modes, skip flags, and rendering. This is purely about the authoring experience.</p>
