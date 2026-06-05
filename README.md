@@ -43,8 +43,8 @@ export PATH="$(pwd)/.venv/bin:$PATH"
 ## CLI tools
 
 - `vrg-commit` — Standards-compliant conventional commits
-- `vrg-submit-pr` — Standards-compliant PR creation with auto-merge
-- `vrg-prepare-release` — Automated release preparation
+- `vrg-submit-pr` — Standards-compliant PR creation (manual merge)
+- `vrg-release` — Mechanized end-to-end release workflow
 - `vrg-finalize-pr` — Merge a PR and run post-merge cleanup
 - `vrg-validate` — Unified validation driver (via vrg-container-run)
 - `vrg-ensure-label` — Idempotent GitHub label creation

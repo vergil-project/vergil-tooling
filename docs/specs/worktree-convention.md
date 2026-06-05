@@ -129,7 +129,7 @@ Your branch is:   feature/<N>-<slug>
 
 Rules for this session:
 - Do all git operations from inside your worktree:
-    cd <absolute-worktree-path> && git <command>
+    cd <absolute-worktree-path> && vrg-git <command>
 - For Read / Edit / Write tools, use the absolute worktree path.
 - For Bash commands that touch files, cd into the worktree first
   or use absolute paths.
