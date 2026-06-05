@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.lib import pr_await
-from vergil_tooling.lib.pr_await import PrState, settle_reason, to_output
+from vergil_tooling.lib.pr_await import PrMergedError, PrState, settle_reason, to_output
 
 _MOD = "vergil_tooling.lib.pr_await"
 
@@ -108,11 +110,48 @@ def test_gather_state_reads_github() -> None:
         patch(f"{_MOD}.github.head_sha", return_value="abc123"),
         patch(f"{_MOD}.github.pr_checks", return_value=checks),
         patch(f"{_MOD}.github.pr_reviews", return_value=reviews),
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
     ):
         state = pr_await.gather_state("PR")
     assert state.head_sha == "abc123"
     assert state.checks == checks
     assert state.reviews == reviews
+    assert state.pr_state == "OPEN"
+
+
+def test_wait_for_settle_aborts_when_merged_at_start() -> None:
+    merged = PrState("sha", _checks("pass"), [], pr_state="MERGED")
+    with (
+        patch(f"{_MOD}.gather_state", return_value=merged),
+        patch(f"{_MOD}.time.sleep") as slept,
+        pytest.raises(PrMergedError, match="already merged"),
+    ):
+        pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
+    slept.assert_not_called()
+
+
+def test_wait_for_settle_aborts_when_merged_mid_watch() -> None:
+    pending = PrState("sha", _checks("pending"), [])
+    merged = PrState("sha", _checks("pending"), [], pr_state="MERGED")
+    with (
+        patch(f"{_MOD}.gather_state", side_effect=[pending, merged]),
+        patch(f"{_MOD}.time.sleep") as slept,
+        pytest.raises(PrMergedError),
+    ):
+        pr_await.wait_for_settle("PR", since_sha=None, since_reviews=None)
+    slept.assert_called_once()
+
+
+def test_wait_for_settle_merged_abort_wins_over_settle() -> None:
+    # Even when a settle reason exists (new commit, checks terminal), a
+    # merged PR aborts instead of settling.
+    merged = PrState("new-sha", _checks("pass"), [], pr_state="MERGED")
+    with (
+        patch(f"{_MOD}.gather_state", return_value=merged),
+        patch(f"{_MOD}.time.sleep"),
+        pytest.raises(PrMergedError),
+    ):
+        pr_await.wait_for_settle("PR", since_sha="old-sha", since_reviews=0)
 
 
 def test_to_output_shape() -> None:

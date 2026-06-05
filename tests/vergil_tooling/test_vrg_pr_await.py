@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_pr_await import main, parse_args
-from vergil_tooling.lib.pr_await import PrState
+from vergil_tooling.lib.pr_await import PrMergedError, PrState
 
 if TYPE_CHECKING:
     import pytest
@@ -47,3 +47,13 @@ def test_main_passes_baselines_through() -> None:
     _, kwargs = waiter.call_args
     assert kwargs["since_sha"] == "old"
     assert kwargs["since_reviews"] == 3
+
+
+def test_main_errors_when_pr_already_merged(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.pr_await.wait_for_settle", side_effect=PrMergedError(_PR)):
+        result = main([_PR])
+    assert result == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("error:")
+    assert "already merged" in captured.err
