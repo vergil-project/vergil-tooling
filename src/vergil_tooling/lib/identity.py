@@ -19,6 +19,7 @@ _DEFAULT_SESSION_ARCHIVE_DAYS = 14
 class Identity:
     vm_instance: str
     auth_type: str = "app"
+    mode: str = ""  # "user" / "audit", derived from the stanza name at load time
     app_id: str = ""
     private_key_path: str = ""
     claude_token_path: str = ""
@@ -79,6 +80,22 @@ def _validate_identity_resources(name: str, identity: Identity) -> None:
             raise SystemExit(1)
 
 
+def derive_identity_mode(name: str) -> str:
+    """Derive the identity mode (``"user"`` or ``"audit"``) from an identity name.
+
+    The dual-identity convention names stanzas ``vergil-user`` and
+    ``vergil-audit``; the role token in the name is the mode. Returns
+    ``""`` when the name contains neither token or both — callers that
+    require a mode (VM provisioning) must fail loudly on ``""`` rather
+    than guess.
+    """
+    has_user = "user" in name
+    has_audit = "audit" in name
+    if has_user == has_audit:
+        return ""
+    return "user" if has_user else "audit"
+
+
 def load_config(path: Path) -> IdentityConfig:
     if not path.exists():
         print(f"ERROR: identity config not found: {path}", file=sys.stderr)
@@ -109,6 +126,7 @@ def load_config(path: Path) -> IdentityConfig:
         identities[name] = Identity(
             vm_instance=data["vm_instance"],
             auth_type=data.get("auth_type", "app"),
+            mode=derive_identity_mode(name),
             app_id=str(data.get("app_id", "")),
             private_key_path=data.get("private_key_path", ""),
             claude_token_path=data.get("claude_token_path", ""),
