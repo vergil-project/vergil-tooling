@@ -95,7 +95,21 @@ Raw `git` and `gh` are denied by the permission model. If a command
 is not available through the wrappers, explain the situation to the
 human who can run it directly via `! <command>` in the prompt.
 
-### Identity modes and PR submission
+## Validation
+
+```bash
+vrg-container-run -- vrg-validate
+```
+
+This is the **only** validation command. Do not run individual linters,
+formatters, or other tools outside of `vrg-validate`. If a tool is not
+invoked by `vrg-validate`, it is not part of the validation pipeline.
+
+> **Note:** This repository uses
+> `vrg-container-run -- uv run vrg-validate` because it runs its own
+> unreleased code rather than the pre-installed version.
+
+## Identity modes and PR submission
 
 Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
 `VRG_IDENTITY_MODE` (`human`, `user`, or `audit`; see
@@ -110,20 +124,6 @@ finalization are human actions. The PR handoff is:
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
    template, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
-
-## Validation
-
-```bash
-vrg-container-run -- vrg-validate
-```
-
-This is the **only** validation command. Do not run individual linters,
-formatters, or other tools outside of `vrg-validate`. If a tool is not
-invoked by `vrg-validate`, it is not part of the validation pipeline.
-
-> **Note:** This repository uses
-> `vrg-container-run -- uv run vrg-validate` because it runs its own
-> unreleased code rather than the pre-installed version.
 
 ## Project Overview
 
