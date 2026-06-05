@@ -569,6 +569,38 @@ def pr_state(pr: str) -> str:
     return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
 
 
+def pr_for_branch(branch: str) -> dict[str, str] | None:
+    """Return the open PR whose head is *branch*, or None.
+
+    GitHub permits at most one open PR per head/base pair within a
+    repo, so taking the first result is safe for the same-repo
+    workflow this serves.
+    """
+    result = read_json(
+        "pr", "list", "--head", branch, "--state", "open", "--json", "number,url,title"
+    )
+    if not isinstance(result, list) or not result:
+        return None
+    first = result[0]
+    if not isinstance(first, dict):
+        return None
+    return {
+        "number": str(first.get("number", "")),
+        "url": str(first.get("url", "")),
+        "title": str(first.get("title", "")),
+    }
+
+
+def is_draft(pr: str) -> bool:
+    """Return True if *pr* is a draft."""
+    return read_output("pr", "view", pr, "--json", "isDraft", "--jq", ".isDraft") == "true"
+
+
+def head_ref(pr: str) -> str:
+    """Return the PR's head branch name."""
+    return read_output("pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName")
+
+
 def merge(pr: str, *, strategy: str) -> None:
     """Merge a PR synchronously (without ``--auto``).
 
