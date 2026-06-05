@@ -263,10 +263,14 @@ Notes:
   agent identities lets the agent VMs run new tooling while the human
   host stays on a stable `v2.0` (the top-level default). Only set the
   `v2.1` pin once 2.1 has been released.
-- **`VRG_IDENTITY_MODE`** (`user` / `audit`) is set by VM
-  provisioning in the vergil-vm repo, not here. It selects the
-  identity-aware allowlists at runtime; it is a soft-gate ergonomic,
-  not the security boundary (the App credential is).
+- **`VRG_IDENTITY_MODE`** (`user` / `audit`) is derived from the
+  identity's stanza name at provisioning time — a name containing
+  `user` provisions as user mode, `audit` as audit mode; a name
+  containing neither (or both) fails provisioning. The mode is
+  written to `~/.config/vergil/identity-mode` in the VM and exported
+  from the shell profile. It selects the identity-aware allowlists
+  at runtime; it is a soft-gate ergonomic, not the security boundary
+  (the App credential is).
 
 ## Verification checklist
 
