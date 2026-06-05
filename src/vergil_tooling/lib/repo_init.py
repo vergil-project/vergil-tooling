@@ -236,6 +236,9 @@ def render_gitignore() -> str:
         "# Vergil\n"
         ".venv-host/\n"
         ".worktrees/\n"
+        ".vergil/\n"
+        ".superpowers/\n"
+        "build/\n"
     )
 
 
