@@ -5,6 +5,56 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.9] - 2026-06-05
+
+### Bug fixes
+
+- include config path in vergil.toml warnings and errors
+- provision and detect identity mode so agent VMs never resolve to human
+- select App installation from -R/--repo owner (#1413)
+- combine and parallelize list probes per running VM (#1414)
+- abort with an error when the target PR is already merged (#1420)
+- add .vergil/, build/, .superpowers/ to gitignore baseline (#1425)
+- allow branch -D for branches tracking integration branches (#1426)
+- verify claude_settings marketplace/plugin keys against canonical template (#1427)
+- relocate identity-modes section out of CLAUDE.md templated region
+- address validation findings from full pipeline run (#1423)
+
+### Chores
+
+- ignore Superpowers plugin state directory
+- bump pip to 26.1.2 for PYSEC-2026-196
+
+### Documentation
+
+- refresh stale agent-facing tooling references
+- add progress framework design spec for long-running CLI commands
+- relocate progress framework spec to docs/specs
+- apply pushback review resolutions to progress framework spec
+- add progress framework implementation plan
+- apply alignment review resolutions to spec and plan
+- add submit-pr/finalize-pr interface upgrade design (#1423)
+- apply pushback review resolutions to PR interface design (#1423)
+- add PR interface upgrade implementation plan (#1423)
+- apply alignment review resolutions to PR interface plan (#1423)
+- document root launch, PR inference, and wait-for-green (#1423)
+- mark PR interface design as implemented (#1423)
+
+### Features
+
+- list enumerates dedicated VMs from instances only (#1412)
+- add canonical worktree discovery and selection library (#1423)
+- add pr_for_branch, is_draft, and head_ref helpers (#1423)
+- add shared fail-fast wait-and-merge engine (#1423)
+- resolve target worktree when run from the repo root (#1423)
+- infer the target PR from worktrees and always confirm (#1423)
+- wait for green before merging and clean the squash-merged branch (#1423)
+
+### Refactoring
+
+- use shared worktree discovery library (#1423)
+- delegate wait_and_merge to shared pr_merge engine (#1423)
+
 ## [2.1.8] - 2026-06-05
 
 ### Chores
