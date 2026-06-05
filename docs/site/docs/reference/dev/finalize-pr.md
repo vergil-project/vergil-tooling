@@ -8,15 +8,44 @@ Finalizes a pull request and reconciles local state afterwards. Has
 two modes, keyed on whether a PR argument is given:
 
 - **`vrg-finalize-pr <PR>`** — runs the pre-merge provenance check,
-  merges the PR (or confirms it is already merged), then runs the
-  cleanup below. This replaces a manual web merge followed by a
-  separate cleanup step.
-- **`vrg-finalize-pr`** (no PR) — cleanup only: switch to the target
-  branch, fast-forward pull, delete merged local branches, and prune
-  stale remote-tracking references. This is the release path.
+  waits for checks to go green, merges the PR (or confirms it is
+  already merged), then runs the cleanup below. This replaces a
+  manual web merge followed by a separate cleanup step.
+- **`vrg-finalize-pr`** (no PR) — infers the PR from the
+  `.worktrees/` worktrees and always confirms before acting (see
+  *Choosing the PR* below). With no candidates, cleanup-only after
+  confirmation: switch to the target branch, fast-forward pull,
+  delete merged local branches, and prune stale remote-tracking
+  references.
 
 Must be run from the **main worktree** — the cleanup removes
 worktrees, which is unsafe when the calling shell's CWD is inside one.
+
+## Choosing the PR
+
+- `vrg-finalize-pr <pr-url-or-number>` — no prompts; the explicit
+  argument is the confirmation. This is the scriptable path
+  (`vrg-submit-pr` prints the URL to pass here).
+- `vrg-finalize-pr` (no arguments) — infers candidates by mapping each
+  `.worktrees/` worktree's branch to its open PR, and **always
+  confirms before acting**: one candidate asks `Finalize PR #N?`;
+  several present a menu; none asks before running cleanup-only.
+  Worktrees without an open PR are listed with the reason they were
+  skipped. Inference mode requires an interactive terminal and fails
+  fast when stdin is not a TTY.
+
+## Waiting for green
+
+When the PR's checks are not finished, `vrg-finalize-pr` waits for
+them and merges automatically once everything is green and current.
+Doomed outcomes abort immediately rather than after the wait: a draft
+PR, merge conflicts, a failed check (named in the error), or a branch
+still behind after five update attempts. A branch that is merely
+behind the target is updated automatically and the wait restarts.
+
+After the merge, the PR's own branch and worktree are cleaned up
+explicitly (a squash merge hides them from `git branch --merged`),
+followed by the usual sweep, pull, and prune.
 
 ## Usage
 
@@ -37,11 +66,23 @@ vrg-finalize-pr [PR] [--target-branch BRANCH] [--strategy {merge,squash,rebase}]
 
 ## Behavior
 
-### 1. Provenance Check and Merge (PR mode only)
+### 1. Provenance Check, Wait, and Merge (PR mode only)
 
-Runs the pre-merge provenance check. Advisories are printed but do not
-block. Violations abort the merge unless `--allow-provenance-violation`
-is given. If the PR is already merged, the merge step is skipped.
+Runs the pre-merge provenance check first, so violations surface
+before any waiting. Advisories are printed but do not block.
+Violations abort the merge unless `--allow-provenance-violation`
+is given. If the PR is already merged, the merge step is skipped and
+finalize proceeds straight to cleanup. Otherwise the wait-for-green
+loop runs (see *Waiting for green*) and the PR is merged with the
+selected strategy. `--dry-run` skips the wait and prints what it
+would do.
+
+### 1a. Explicit-Target Cleanup (PR mode only)
+
+The just-merged PR branch and its `.worktrees/` worktree are deleted
+by name. The default squash strategy rewrites history onto the
+target, so the branch is never an ancestor and the merged-branch
+sweep below cannot see it.
 
 ### 2. Switch to Target Branch
 
@@ -90,5 +131,5 @@ silently (issue #303).
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | Finalization complete |
-| 1 | Provenance violation, not run from main worktree, dirty working tree, failed validation, or failed CD run |
+| 0 | Finalization complete, or declined at a confirmation prompt |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-interactive stdin in inference mode, dirty working tree, failed validation, or failed CD run |
