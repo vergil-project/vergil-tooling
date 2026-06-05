@@ -66,6 +66,12 @@ _PROTECTED_BRANCHES: set[str] = {"develop", "main"}
 _PROTECTED_PREFIXES: tuple[str, ...] = ("release/",)
 
 
+def _is_protected_branch_name(branch_name: str) -> bool:
+    if branch_name in _PROTECTED_BRANCHES:
+        return True
+    return any(branch_name.startswith(p) for p in _PROTECTED_PREFIXES)
+
+
 def _is_protected_branch() -> bool:
     result = subprocess.run(
         ["git", "rev-parse", "--abbrev-ref", "HEAD"],  # noqa: S603, S607
@@ -73,10 +79,7 @@ def _is_protected_branch() -> bool:
         text=True,
         check=False,
     )
-    branch = result.stdout.strip()
-    if branch in _PROTECTED_BRANCHES:
-        return True
-    return any(branch.startswith(p) for p in _PROTECTED_PREFIXES)
+    return _is_protected_branch_name(result.stdout.strip())
 
 
 def _is_upstream_gone(branch_name: str) -> bool:
@@ -94,6 +97,27 @@ def _is_upstream_gone(branch_name: str) -> bool:
         if parts and parts[0] == branch_name:
             return ": gone]" in line
     return False
+
+
+def _upstream_is_integration_branch(branch_name: str) -> bool:
+    """Return True if the branch's upstream is a protected integration branch.
+
+    Branches created per the worktree convention
+    (``git worktree add -b <branch> ... origin/develop``) track
+    ``origin/develop``, which is never gone — so the upstream-gone
+    signal carries no information about unpushed work for them (#1426).
+    """
+    result = subprocess.run(  # noqa: S603
+        ["git", "rev-parse", "--abbrev-ref", f"{branch_name}@{{upstream}}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    # Strip the remote name (e.g. "origin/develop" -> "develop").
+    _, _, upstream = result.stdout.strip().partition("/")
+    return _is_protected_branch_name(upstream)
 
 
 def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
@@ -128,8 +152,15 @@ def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
                 if idx + 1 >= len(args):
                     return "branch -D is denied by vrg-git."
                 branch_name = args[idx + 1]
-                if not _is_upstream_gone(branch_name):
-                    return f"branch -D is denied (upstream is not gone for {branch_name})."
+                if _is_protected_branch_name(branch_name):
+                    return f"branch -D is denied for protected branch {branch_name}."
+                if not _is_upstream_gone(branch_name) and not _upstream_is_integration_branch(
+                    branch_name
+                ):
+                    return (
+                        f"branch -D is denied (upstream is not gone and not an "
+                        f"integration branch for {branch_name})."
+                    )
         return None
 
     for arg in args:
