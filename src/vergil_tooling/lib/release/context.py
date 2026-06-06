@@ -17,7 +17,6 @@ class ReleaseContext:
     version: str
     repo_root: Path
     version_override: str | None
-    verbose: bool = False
 
     issue_number: int | None = None
     issue_url: str | None = None

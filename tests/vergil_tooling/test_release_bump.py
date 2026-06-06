@@ -115,7 +115,6 @@ def test_back_merge_waits_and_merges() -> None:
     mock_wm.assert_called_once_with(
         "https://github.com/owner/repo/pull/101",
         phase="back-merge-bump",
-        verbose=False,
     )
 
 

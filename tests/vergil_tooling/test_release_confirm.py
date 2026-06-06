@@ -259,7 +259,6 @@ def test_confirm_main_skip_cd_docs_skips_docs_job() -> None:
     m_watch.assert_called_once_with(
         "owner/repo",
         "12345",
-        verbose=False,
         check_status=False,
     )
     assert ctx.tag == "v2.1.0"
@@ -285,7 +284,6 @@ def test_confirm_develop_skip_cd_docs_skips_verify() -> None:
     m_watch.assert_called_once_with(
         "owner/repo",
         "67890",
-        verbose=False,
         check_status=False,
     )
     assert ctx.develop_cd_run_id == "67890"

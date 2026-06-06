@@ -40,11 +40,7 @@ def merge_release(ctx: ReleaseContext) -> None:
             command="merge_release",
             message=("release_pr_url is not set — prepare phase may not have run."),
         )
-    wait_and_merge(
-        ctx.release_pr_url,
-        phase="merge-release",
-        verbose=ctx.verbose,
-    )
+    wait_and_merge(ctx.release_pr_url, phase="merge-release")
     ctx.release_merge_sha = "merged"
 
 

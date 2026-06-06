@@ -77,7 +77,7 @@ def _watch_cd(
     )
     print(f"  Workflow run: {run_url}")
 
-    watch_workflow(ctx.repo, run_id, verbose=ctx.verbose, check_status=check_status)
+    watch_workflow(ctx.repo, run_id, check_status=check_status)
 
     if check_status:
         print(f"  CD workflow succeeded: {run_url}")

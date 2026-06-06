@@ -240,7 +240,6 @@ def test_merge_release_calls_wait_and_merge() -> None:
     m_wm.assert_called_once_with(
         "https://github.com/o/r/pull/100",
         phase="merge-release",
-        verbose=False,
     )
     assert ctx.release_merge_sha == "merged"
 

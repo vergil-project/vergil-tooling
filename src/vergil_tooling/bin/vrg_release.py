@@ -25,13 +25,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Bump to next minor or major before releasing (default: release current version).",
     )
     parser.add_argument(
-        "-v",
-        "--verbose",
-        action="store_true",
-        default=False,
-        help="Show full subprocess output (default: summarized).",
-    )
-    parser.add_argument(
         "--no-promote",
         action="store_true",
         default=False,
@@ -62,7 +55,6 @@ def main(argv: list[str] | None = None) -> int:
         ctx = preflight(
             version_override=args.version_override,
             repo_root=repo_root,
-            verbose=args.verbose,
             skip_audit=args.skip_audit,
         )
         ctx.promote = not args.no_promote

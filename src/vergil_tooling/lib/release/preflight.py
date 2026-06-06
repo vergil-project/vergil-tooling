@@ -20,7 +20,6 @@ def preflight(
     *,
     version_override: str | None,
     repo_root: Path,
-    verbose: bool = False,
     skip_audit: bool = False,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext."""
@@ -54,7 +53,6 @@ def preflight(
         version=release_version,
         repo_root=repo_root,
         version_override=version_override,
-        verbose=verbose,
     )
 
 
