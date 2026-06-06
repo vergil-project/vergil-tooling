@@ -1990,9 +1990,7 @@ class TestRunLifecycle:
         template = tmp_path / "template.yaml"
         template.write_text("cpus: 4")
         state = _LifecycleState(target=_lifecycle_target(tmp_path), template=template)
-        rc = _run_lifecycle(
-            "create", state, [Stage("bad", _boom, mode="fail_fast")], self._args()
-        )
+        rc = _run_lifecycle("create", state, [Stage("bad", _boom, mode="fail_fast")], self._args())
         assert rc == 1
         assert not template.exists()
 

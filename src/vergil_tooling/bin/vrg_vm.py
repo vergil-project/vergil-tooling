@@ -23,6 +23,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib import progress
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -58,7 +59,6 @@ from vergil_tooling.lib.lima import (
     vm_spec_status,
     vm_status,
 )
-from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
 from vergil_tooling.lib.vm_spec import (
@@ -420,7 +420,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 def _cmd_start(args: argparse.Namespace) -> int:
     target = _resolve_target(args)
-    name, identity, config = target.identity_name, target.identity, target.config
+    name = target.identity_name
 
     if _preflight_target(target) != 0:
         return 1
