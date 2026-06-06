@@ -395,6 +395,40 @@ class TestTemplateMode:
         assert result == 0
         assert "/vergil:pr-watch https://github.com/pr/7" in capsys.readouterr().out
 
+    def test_template_rejects_forbidden_linkage(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nlinkage: Closes\n"
+        )
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        ):
+            result = main([])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "pr-template.yml" in err
+        assert "Ref" in err
+
+    def test_template_belt_and_suspenders_linkage_check(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Even if read_template returns a bad linkage, template mode rejects it."""
+        fields = {"issue": "42", "title": "fix", "summary": "Fix", "linkage": "Closes"}
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".pr_template.read_template", return_value=fields),
+        ):
+            result = main([])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "linkage" in err.lower()
+        assert "Ref" in err
+
     def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()

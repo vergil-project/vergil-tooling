@@ -26,8 +26,8 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
+from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 
-ALLOWED_LINKAGES = ("Ref",)
 _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
 _ISSUE_CROSS_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9]\d*$")
 
@@ -194,6 +194,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         os.chdir(wt_path)
         root = wt_path
 
+    template_path = root / ".vergil" / "pr-template.yml"
     try:
         fields = pr_template.read_template(root)
     except FileNotFoundError:
@@ -204,6 +205,9 @@ def _run_template_mode(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    except pr_template.TemplateError as exc:
+        print(f"vrg-submit-pr: invalid PR template at {template_path}:\n  {exc}", file=sys.stderr)
+        return 1
 
     issue_ref = _resolve_issue_ref(fields["issue"])
     branch = git.current_branch()
@@ -211,6 +215,17 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     title = fields["title"]
     linkage = fields.get("linkage", "Ref")
     notes = fields.get("notes", "")
+
+    # Belt-and-suspenders: read_template validates linkage, but guard the
+    # value used to build the PR body so a forbidden auto-close keyword can
+    # never reach the PR regardless of how the fields were obtained.
+    if linkage not in ALLOWED_LINKAGES:
+        print(
+            f"vrg-submit-pr: linkage '{linkage}' in {template_path} is not allowed; "
+            f"use: {', '.join(ALLOWED_LINKAGES)}.",
+            file=sys.stderr,
+        )
+        return 1
     pr_body = _build_pr_body(
         summary=fields["summary"],
         linkage=linkage,
