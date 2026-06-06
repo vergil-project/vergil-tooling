@@ -822,6 +822,8 @@
       
         
       
+        
+      
     
     
     
@@ -874,6 +876,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.11/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.11
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5077,6 +5107,8 @@
       
         
       
+        
+      
     
     
     
@@ -5168,6 +5200,34 @@
     
   
     vrg-submit-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../pr-fix-body/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-pr-fix-body
   
 
     
@@ -7895,18 +7955,23 @@
 <p><strong>Installed as:</strong> <code>vrg-finalize-pr</code> (Python console script)</p>
 <p><strong>Source:</strong> <code>src/vergil_tooling/bin/vrg_finalize_pr.py</code></p>
 <p>Finalizes a pull request and reconciles local state afterwards. Has
-two modes, keyed on whether a PR argument is given:</p>
+three modes:</p>
 <ul>
 <li><strong><code>vrg-finalize-pr &lt;PR&gt;</code></strong> — runs the pre-merge provenance check,
   waits for checks to go green, merges the PR (or confirms it is
   already merged), then runs the cleanup below. This replaces a
   manual web merge followed by a separate cleanup step.</li>
-<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — infers the PR from the
+<li><strong><code>vrg-finalize-pr</code></strong> (no PR) — interactive: infers the PR from the
   <code>.worktrees/</code> worktrees and always confirms before acting (see
   <em>Choosing the PR</em> below). With no candidates, cleanup-only after
   confirmation: switch to the target branch, fast-forward pull,
   delete merged local branches, and prune stale remote-tracking
   references.</li>
+<li><strong><code>vrg-finalize-pr --cleanup-only</code></strong> — non-interactive release path:
+  skips inference and merge entirely, never reads stdin, and runs only
+  the cleanup. This is what <code>vrg-release</code> invokes during its
+  close-finalize phase (issue #1448). Mutually exclusive with a PR
+  argument.</li>
 </ul>
 <p>Must be run from the <strong>main worktree</strong> — the cleanup removes
 worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
@@ -7921,7 +7986,11 @@ worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
   several present a menu; none asks before running cleanup-only.
   Worktrees without an open PR are listed with the reason they were
   skipped. Inference mode requires an interactive terminal and fails
-  fast when stdin is not a TTY.</li>
+  fast unless both stdin and stdout are TTYs — a captured stdout would
+  make the prompts invisible (issue #1448).</li>
+<li><code>vrg-finalize-pr --cleanup-only</code> — no prompts and no merge; the
+  scriptable path for callers (like <code>vrg-release</code>) that only want the
+  cleanup.</li>
 </ul>
 <h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
 <p>When the PR's checks are not finished, <code>vrg-finalize-pr</code> waits for
@@ -7934,8 +8003,9 @@ behind the target is updated automatically and the wait restarts.</p>
 explicitly (a squash merge hides them from <code>git branch --merged</code>),
 followed by the usual sweep, pull, and prune.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span><span class="w"> </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -7948,7 +8018,11 @@ followed by the usual sweep, pull, and prune.</p>
 <tbody>
 <tr>
 <td><code>PR</code></td>
-<td>PR number or URL to merge and finalize. Omit for cleanup-only (release path).</td>
+<td>PR number or URL to merge and finalize. Omit to infer interactively.</td>
+</tr>
+<tr>
+<td><code>--cleanup-only</code></td>
+<td>Skip PR inference and merge; run cleanup without prompting or reading stdin (non-interactive release path). Mutually exclusive with <code>PR</code>.</td>
 </tr>
 <tr>
 <td><code>--target-branch</code></td>
@@ -7991,8 +8065,26 @@ sweep below cannot see it.</p>
 <p>Deletes local branches merged into the target branch. If a merged
 branch is still checked out in a canonical <code>.worktrees/</code> worktree, that
 worktree is removed first (skipped if it has uncommitted changes).
-Cached container images for the branch are cleaned. Eternal branches
-are protected based on the <code>branching_model</code>:</p>
+Cached container images for the branch are cleaned.</p>
+<p>Two guards keep this sweep from racing parallel agent sessions in
+their creation-to-first-commit window (issue #1445), since
+<code>git branch --merged</code> classifies a branch just created from the
+target's tip as merged:</p>
+<ul>
+<li><strong>Zero-commit branches are skipped.</strong> A branch whose tip equals the
+  target's tip carries no merged work, so deleting it saves nothing —
+  and it is exactly what an in-flight issue branch looks like before
+  its first commit.</li>
+<li><strong>Merge evidence is required.</strong> A branch is only swept when a closed
+  or merged PR exists for its head; ancestry alone cannot distinguish
+  a merged branch from one created off an older target tip. Branches
+  skipped for lack of evidence are listed with the reason and left for
+  manual cleanup.</li>
+</ul>
+<p>Both guards gate the worktree removal as strictly as the branch
+deletion. The explicit-target cleanup (step 1a) is unaffected — the
+just-merged PR branch has merge evidence by construction.</p>
+<p>Eternal branches are protected based on the <code>branching_model</code>:</p>
 <table>
 <thead>
 <tr>
@@ -8043,7 +8135,7 @@ silently (issue #303).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-interactive stdin in inference mode, dirty working tree, failed validation, or failed CD run</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, or failed CD run</td>
 </tr>
 </tbody>
 </table>
