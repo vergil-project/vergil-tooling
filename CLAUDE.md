@@ -224,6 +224,10 @@ CLI tools installed as `vrg-*` console scripts:
   commits with co-author resolution
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge;
   human-run — agents hand off via `.vergil/pr-template.yml`)
+- **`vrg-pr-fix-body`** — Regenerate a PR body from corrected fields via
+  the validated builder; the agent-safe path to fix body-level standards
+  failures on its own PR during pr-watch (pushes an empty commit to
+  re-trigger CI)
 - **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)

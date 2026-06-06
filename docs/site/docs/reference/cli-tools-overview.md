@@ -40,6 +40,23 @@ and opens a PR with a populated template body.
 | Exit codes | 0 success |
 | Status | Active |
 
+### vrg-pr-fix-body
+
+Repair a PR's body by regenerating it from corrected fields through
+the same validated builder as `vrg-submit-pr`, then push an empty
+commit to re-trigger CI. The agent-safe fix path for body-level
+standards failures during the pr-watch reconcile loop (denied to the
+`audit` identity; the `user` identity may only fix its own PR).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_pr_fix_body` |
+| Args | `pr` (positional, required), `--issue` (required), `--summary` (required), `--linkage` (default: Ref), `--notes`, `--dry-run`, `--no-retrigger` |
+| Preconditions | Git repo, `gh` CLI on PATH, PR open, agent identities on the PR's head branch |
+| Failure mode | `SystemExit`/diagnostic on identity, scope, or state rejection |
+| Exit codes | 0 success, 1 rejection or error |
+| Status | Active |
+
 ### vrg-merge-when-green
 
 Poll a PR's CI checks, then merge when they all pass. Designed for
