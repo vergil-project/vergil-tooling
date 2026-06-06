@@ -1,10 +1,11 @@
-"""Sequential phase runner for vrg-release."""
+"""Declarative stage list for the vrg-release pipeline."""
 
 from __future__ import annotations
 
-import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
@@ -12,6 +13,7 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.finalize import close_and_finalize
 from vergil_tooling.lib.release.handoff import consumer_refresh
 from vergil_tooling.lib.release.merge import wait_and_merge
+from vergil_tooling.lib.release.preflight import preflight, run_audit
 from vergil_tooling.lib.release.prepare import prepare
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
@@ -20,16 +22,94 @@ from vergil_tooling.lib.release.tracking import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
 
-def _format_elapsed(seconds: float) -> str:
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    minutes = int(seconds // 60)
-    secs = int(seconds % 60)
-    return f"{minutes}m{secs:02d}s"
+@dataclass
+class ReleaseState:
+    """Pipeline context for vrg-release; ctx is populated by the preflight stage."""
+
+    version_override: str | None
+    repo_root: Path
+    promote: bool
+    ctx: ReleaseContext | None = None
+
+
+def _audit_stage(_state: ReleaseState) -> None:
+    run_audit()
+
+
+def _preflight_stage(state: ReleaseState) -> None:
+    ctx = preflight(
+        version_override=state.version_override,
+        repo_root=state.repo_root,
+    )
+    ctx.promote = state.promote
+    state.ctx = ctx
+
+
+def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[ReleaseState], None]:
+    """Wrap a phase fn with tracking-issue comments (command-local, per spec)."""
+
+    def stage(state: ReleaseState) -> None:
+        ctx = state.ctx
+        if ctx is None:
+            raise ReleaseError(
+                phase=name,
+                command=name,
+                message="release context missing — preflight did not run",
+            )
+        try:
+            fn(ctx)
+        except ReleaseError as exc:
+            comment_phase_failed(ctx, name, exc)
+            raise
+        except Exception as exc:
+            wrapped = ReleaseError(
+                phase=name,
+                command=str(getattr(exc, "cmd", type(exc).__name__)),
+                message=str(exc),
+                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
+            )
+            comment_phase_failed(ctx, name, wrapped)
+            raise wrapped from exc
+        comment_phase_complete(ctx, name, _phase_details(ctx, name))
+
+    return stage
+
+
+def build_stages() -> list[Stage]:
+    """The vrg-release pipeline, in execution order."""
+    return [
+        Stage("audit", _audit_stage, mode="fail_fast", skip_flag="skip_audit"),
+        Stage("preflight", _preflight_stage, mode="fail_fast"),
+        Stage("prepare", _tracked("prepare", prepare), mode="fail_fast"),
+        Stage("merge-release", _tracked("merge-release", merge_release), mode="fail_fast"),
+        Stage("confirm-main", _tracked("confirm-main", confirm_main), mode="fail_fast"),
+        Stage(
+            "back-merge-bump",
+            _tracked("back-merge-bump", back_merge_and_bump),
+            mode="fail_fast",
+        ),
+        Stage(
+            "confirm-develop",
+            _tracked("confirm-develop", confirm_develop),
+            mode="fail_defer",
+        ),
+        Stage("promote", _tracked("promote", _promote_phase), mode="fail_defer"),
+        Stage(
+            "close-finalize",
+            _tracked("close-finalize", close_and_finalize),
+            mode="fail_defer",
+        ),
+        Stage(
+            "consumer-refresh",
+            _tracked("consumer-refresh", consumer_refresh),
+            mode="fail_defer",
+        ),
+    ]
 
 
 def merge_release(ctx: ReleaseContext) -> None:
@@ -40,11 +120,7 @@ def merge_release(ctx: ReleaseContext) -> None:
             command="merge_release",
             message=("release_pr_url is not set — prepare phase may not have run."),
         )
-    wait_and_merge(
-        ctx.release_pr_url,
-        phase="merge-release",
-        verbose=ctx.verbose,
-    )
+    wait_and_merge(ctx.release_pr_url, phase="merge-release")
     ctx.release_merge_sha = "merged"
 
 
@@ -95,54 +171,3 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "consumer-refresh":
         lines.append("Consumer refresh instructions displayed.")
     return "\n".join(lines)
-
-
-def run_release(ctx: ReleaseContext) -> None:
-    """Execute the release workflow phase by phase."""
-    phases: list[tuple[str, Callable[[ReleaseContext], None]]] = [
-        ("prepare", prepare),
-        ("merge-release", merge_release),
-        ("confirm-main", confirm_main),
-        ("back-merge-bump", back_merge_and_bump),
-        ("confirm-develop", confirm_develop),
-        ("promote", _promote_phase),
-        ("close-finalize", close_and_finalize),
-        ("consumer-refresh", consumer_refresh),
-    ]
-
-    for phase_name, phase_fn in phases:
-        print(f"\n=== Phase: {phase_name} ===")
-        start = time.monotonic()
-        try:
-            phase_fn(ctx)
-        except ReleaseError as exc:
-            elapsed = time.monotonic() - start
-            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
-            comment_phase_failed(ctx, phase_name, exc)
-            raise
-        except Exception as exc:
-            elapsed = time.monotonic() - start
-            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
-            wrapped = ReleaseError(
-                phase=phase_name,
-                command=str(getattr(exc, "cmd", type(exc).__name__)),
-                message=str(exc),
-                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
-            )
-            comment_phase_failed(ctx, phase_name, wrapped)
-            raise wrapped from exc
-        elapsed = time.monotonic() - start
-        print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
-        try:
-            comment_phase_complete(
-                ctx,
-                phase_name,
-                _phase_details(ctx, phase_name),
-            )
-        except Exception as exc:
-            raise ReleaseError(
-                phase=f"comment({phase_name})",
-                command="comment_phase_complete",
-                message=str(exc),
-                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
-            ) from exc

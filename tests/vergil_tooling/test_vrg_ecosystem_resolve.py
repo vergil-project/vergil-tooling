@@ -29,6 +29,7 @@ def test_python_ecosystem_ci_mode(capsys: pytest.CaptureFixture[str], tmp_path: 
     output_file.write_text("")
     with (
         patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
+        patch("vergil_tooling.lib.output.is_ci", return_value=True),
         patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_file)}),
     ):
         rc = main(["python"])
@@ -44,6 +45,7 @@ def test_go_ecosystem_ci_mode(tmp_path: Path) -> None:
     output_file.write_text("")
     with (
         patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
+        patch("vergil_tooling.lib.output.is_ci", return_value=True),
         patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_file)}),
     ):
         rc = main(["go"])
@@ -68,6 +70,7 @@ def test_rust_ecosystem_ci_mode(tmp_path: Path) -> None:
     output_file.write_text("")
     with (
         patch("vergil_tooling.bin.vrg_ecosystem_resolve.is_ci", return_value=True),
+        patch("vergil_tooling.lib.output.is_ci", return_value=True),
         patch.dict(os.environ, {"GITHUB_OUTPUT": str(output_file)}),
     ):
         rc = main(["rust"])

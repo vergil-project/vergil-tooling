@@ -17,7 +17,6 @@ class ReleaseContext:
     version: str
     repo_root: Path
     version_override: str | None
-    verbose: bool = False
 
     issue_number: int | None = None
     issue_url: str | None = None
@@ -39,7 +38,6 @@ class ReleaseContext:
     develop_cd_run_url: str | None = None
 
     promote: bool = True
-    skip_cd_docs: bool = False
 
 
 class ReleaseError(Exception):

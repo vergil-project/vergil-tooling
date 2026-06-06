@@ -15,72 +15,32 @@ def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedPro
     return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout)
 
 
-def test_run_delegates_to_subprocess() -> None:
-    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
-        mock_run.return_value = _completed()
+def test_run_delegates_to_progress_run() -> None:
+    with patch("vergil_tooling.lib.git.progress") as m_progress:
         git.run("status")
-    mock_run.assert_called_once_with(
-        ("git", "status"), check=True, capture_output=True, text=True, env=None
-    )
+    m_progress.run.assert_called_once_with(("git", "status"), env=None)
 
 
 def test_run_commit_no_env_var_gate() -> None:
     """Commit calls no longer set VRG_COMMIT_CONTEXT — the git hook
     has been replaced by a Claude Code PreToolUse hook (#1135).
     """
-    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
-        mock_run.return_value = _completed()
+    with patch("vergil_tooling.lib.git.progress") as m_progress:
         git.run("commit", "-m", "msg")
-    _args, kwargs = mock_run.call_args
-    assert "env" not in kwargs or kwargs.get("env") is None
+    _args, kwargs = m_progress.run.call_args
+    assert kwargs.get("env") is None
 
 
-def test_run_prints_captured_output(capsys: pytest.CaptureFixture[str]) -> None:
-    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
-        result = _completed(stdout="branch created\n")
-        result.stderr = "warning: refname\n"
-        mock_run.return_value = result
-        git.run("checkout", "-b", "test")
-    captured = capsys.readouterr()
-    assert "branch created" in captured.out
-    assert "warning: refname" in captured.err
-
-
-def test_run_error_carries_output() -> None:
-    err = subprocess.CalledProcessError(1, "git push", output="out", stderr="err")
+def test_run_raises_on_failure() -> None:
+    err = subprocess.CalledProcessError(1, ("git", "status"), output="so", stderr="se")
     with (
-        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
-        pytest.raises(subprocess.CalledProcessError) as exc_info,
+        patch("vergil_tooling.lib.git.progress") as m_progress,
+        pytest.raises(subprocess.CalledProcessError) as excinfo,
     ):
-        git.run("push", "origin", "main")
-    assert exc_info.value.stdout == "out"
-    assert exc_info.value.stderr == "err"
-
-
-def test_run_prints_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
-    err = subprocess.CalledProcessError(1, "git push", output="partial\n", stderr="fatal: error\n")
-    with (
-        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
-        pytest.raises(subprocess.CalledProcessError),
-    ):
-        git.run("push", "origin", "main")
-    captured = capsys.readouterr()
-    assert "partial" in captured.out
-    assert "fatal: error" in captured.err
-
-
-def test_run_error_no_output(capsys: pytest.CaptureFixture[str]) -> None:
-    err = subprocess.CalledProcessError(1, "git status")
-    err.stderr = ""
-    err.stdout = ""
-    with (
-        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
-        pytest.raises(subprocess.CalledProcessError),
-    ):
+        m_progress.run.side_effect = err
         git.run("status")
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert captured.err == ""
+    assert excinfo.value.output == "so"
+    assert excinfo.value.stderr == "se"
 
 
 def test_read_output_prints_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
@@ -228,11 +188,10 @@ class TestRunRemoteCredentialInjection:
                 "vergil_tooling.lib.git.github.get_installation_token",
                 return_value="ghs_test_token",
             ),
-            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.git.progress") as mock_progress,
         ):
-            mock_run.return_value = _completed()
             git.run(subcmd, "origin", "main")
-        _, kwargs = mock_run.call_args
+        _, kwargs = mock_progress.run.call_args
         env = kwargs.get("env")
         assert env is not None
         assert env["GIT_CONFIG_COUNT"] == "1"
@@ -246,11 +205,10 @@ class TestRunRemoteCredentialInjection:
                 "vergil_tooling.lib.git.github.get_installation_token",
                 return_value="ghs_test_token",
             ),
-            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.git.progress") as mock_progress,
         ):
-            mock_run.return_value = _completed()
             git.run(subcmd)
-        _, kwargs = mock_run.call_args
+        _, kwargs = mock_progress.run.call_args
         assert "env" not in kwargs or kwargs.get("env") is None
 
     def test_no_injection_when_no_token(self) -> None:
@@ -259,11 +217,10 @@ class TestRunRemoteCredentialInjection:
                 "vergil_tooling.lib.git.github.get_installation_token",
                 return_value=None,
             ),
-            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.git.progress") as mock_progress,
         ):
-            mock_run.return_value = _completed()
             git.run("push", "origin", "main")
-        _, kwargs = mock_run.call_args
+        _, kwargs = mock_progress.run.call_args
         assert "env" not in kwargs or kwargs.get("env") is None
 
     def test_token_encodes_as_basic_auth(self) -> None:
@@ -274,11 +231,10 @@ class TestRunRemoteCredentialInjection:
                 "vergil_tooling.lib.git.github.get_installation_token",
                 return_value="ghs_test_token",
             ),
-            patch("vergil_tooling.lib.git.subprocess.run") as mock_run,
+            patch("vergil_tooling.lib.git.progress") as mock_progress,
         ):
-            mock_run.return_value = _completed()
             git.run("push", "origin", "main")
-        _, kwargs = mock_run.call_args
+        _, kwargs = mock_progress.run.call_args
         header_value = kwargs["env"]["GIT_CONFIG_VALUE_0"]
         expected = base64.b64encode(b"x-access-token:ghs_test_token").decode()
         assert expected in header_value
