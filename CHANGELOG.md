@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.11] - 2026-06-06
+
+### Bug fixes
+
+- adopt canonical quote-strip and command-position matcher (#1453)
+- guard merged-branch sweep against in-flight worktrees (#1455)
+- validate template linkage against ALLOWED_LINKAGES (#1460)
+- cycle the VM after create/rebuild so sessions see provisioned groups (#1465)
+- unblock close-finalize by making the release cleanup path non-interactive (#1466)
+
+### Features
+
+- stage-aware progress framework for long-running CLI commands (#1456)
+- port vrg-vm lifecycle commands to the progress framework (#1457)
+- auto-size the RichRenderer rolling window to terminal height (#1462)
+- restore a safe agent path to fix its own PR body (#1464)
+
 ## [2.1.10] - 2026-06-05
 
 ### Documentation
