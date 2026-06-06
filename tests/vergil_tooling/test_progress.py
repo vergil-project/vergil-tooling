@@ -3,16 +3,18 @@
 from __future__ import annotations
 
 import io
+import subprocess
+import sys
 from typing import TYPE_CHECKING
 from unittest.mock import patch
+
+import pytest
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import PipelineError, Stage, StageResult
 
 if TYPE_CHECKING:
     from pathlib import Path
-
-    import pytest
 
 _MOD = "vergil_tooling.lib.progress"
 
@@ -201,3 +203,90 @@ def test_rich_renderer_window_zero_streams() -> None:
     r.summary("S")
     r.close()
     assert "streamed line" in out.getvalue()
+
+
+class _FakeRenderer:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def start_stage(self, name: str) -> None:
+        pass
+
+    def stage_line(self, line: str) -> None:
+        self.lines.append(line)
+
+    def end_stage(self, result: StageResult) -> None:
+        pass
+
+    def summary(self, text: str) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def _fake_session(tmp_path: Path) -> tuple[_FakeRenderer, progress.RunLog]:
+    renderer = _FakeRenderer()
+    log = progress.RunLog("test-cmd", tmp_path)
+    progress._session = progress._Session(renderer=renderer, log=log)
+    return renderer, log
+
+
+def test_emit_without_session_prints(capsys: pytest.CaptureFixture[str]) -> None:
+    progress._session = None
+    progress.emit("hello")
+    assert capsys.readouterr().out == "hello\n"
+
+
+def test_emit_with_session_routes_to_renderer_and_log(tmp_path: Path) -> None:
+    renderer, log = _fake_session(tmp_path)
+    try:
+        progress.emit("\x1b[31mred\x1b[0m line")
+    finally:
+        progress._session = None
+        log.close()
+    assert renderer.lines == ["\x1b[31mred\x1b[0m line"]  # raw to renderer
+    assert log.path.read_text() == "red line\n"  # stripped in log
+
+
+def test_emit_writer_buffers_partial_lines(tmp_path: Path) -> None:
+    renderer, log = _fake_session(tmp_path)
+    try:
+        w = progress._EmitWriter()
+        w.write("par")
+        w.write("tial\nsecond\nthi")
+        w.flush()  # flushes the partial third line
+    finally:
+        progress._session = None
+        log.close()
+    assert renderer.lines == ["partial", "second", "thi"]
+
+
+def test_run_streams_lines_to_session(tmp_path: Path) -> None:
+    renderer, log = _fake_session(tmp_path)
+    try:
+        rc = progress.run(
+            (sys.executable, "-c", "import sys; print('out1'); print('err1', file=sys.stderr)")
+        )
+    finally:
+        progress._session = None
+        log.close()
+    assert rc == 0
+    assert "out1" in renderer.lines
+    assert "err1" in renderer.lines
+
+
+def test_run_raises_with_captured_output(tmp_path: Path) -> None:
+    progress._session = None
+    code = "import sys; print('so long'); print('bad', file=sys.stderr); sys.exit(3)"
+    with pytest.raises(subprocess.CalledProcessError) as excinfo:
+        progress.run((sys.executable, "-c", code))
+    assert excinfo.value.returncode == 3
+    assert "so long" in excinfo.value.output
+    assert "bad" in excinfo.value.stderr
+
+
+def test_run_check_false_returns_code() -> None:
+    progress._session = None
+    rc = progress.run((sys.executable, "-c", "import sys; sys.exit(2)"), check=False)
+    assert rc == 2

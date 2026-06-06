@@ -5,9 +5,12 @@ Design: docs/specs/2026-06-05-progress-framework-design.md
 
 from __future__ import annotations
 
+import io
 import os
 import re
+import subprocess
 import sys
+import threading
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -265,3 +268,104 @@ class RichRenderer:
     def close(self) -> None:
         if self._live.is_started:
             self._live.stop()
+
+
+@dataclass
+class _Session:
+    """Active pipeline state: routes output lines to the renderer and the log."""
+
+    renderer: Any
+    log: RunLog
+
+    def __post_init__(self) -> None:
+        self._lock = threading.Lock()
+
+    def handle_line(self, line: str) -> None:
+        with self._lock:
+            self.log.write(line)
+            self.renderer.stage_line(line)
+
+
+_session: _Session | None = None
+
+
+def emit(line: str) -> None:
+    """Route one line of output through the active pipeline, or print it."""
+    session = _session
+    if session is not None:
+        session.handle_line(line)
+    else:
+        print(line)
+
+
+class _EmitWriter(io.TextIOBase):
+    """File-like sink that forwards complete lines to ``emit``.
+
+    Used to redirect sys.stdout/sys.stderr during stage execution so bare
+    ``print()`` calls deep in stage code join the renderer and log.
+    """
+
+    def __init__(self) -> None:
+        self._buf = ""
+
+    def write(self, s: str) -> int:
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            emit(line)
+        return len(s)
+
+    def flush(self) -> None:
+        if self._buf:
+            emit(self._buf)
+            self._buf = ""
+
+
+def run(
+    cmd: Sequence[str],
+    *,
+    env: dict[str, str] | None = None,
+    check: bool = True,
+) -> int:
+    """Run *cmd*, streaming each output line through the active pipeline.
+
+    Raises CalledProcessError (carrying captured stdout/stderr) on nonzero
+    exit when ``check`` is true; otherwise returns the exit code.
+    """
+    proc = subprocess.Popen(  # noqa: S603
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+    def _pump(stream: IO[str], name: str) -> None:
+        for raw in stream:
+            line = raw.rstrip("\n")
+            captured[name].append(line)
+            emit(line)
+
+    threads = [
+        threading.Thread(target=_pump, args=(proc.stdout, "stdout"), daemon=True),
+        threading.Thread(target=_pump, args=(proc.stderr, "stderr"), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        returncode = proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+        raise
+    for thread in threads:
+        thread.join()
+    if check and returncode != 0:
+        raise subprocess.CalledProcessError(
+            returncode,
+            tuple(cmd),
+            output="\n".join(captured["stdout"]),
+            stderr="\n".join(captured["stderr"]),
+        )
+    return returncode
