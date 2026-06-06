@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.progress import Stage
@@ -23,6 +22,7 @@ from vergil_tooling.lib.release.tracking import (
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from vergil_tooling.lib.release.context import ReleaseContext
 
@@ -37,7 +37,7 @@ class ReleaseState:
     ctx: ReleaseContext | None = None
 
 
-def _audit_stage(state: ReleaseState) -> None:
+def _audit_stage(_state: ReleaseState) -> None:
     run_audit()
 
 

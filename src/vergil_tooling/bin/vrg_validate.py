@@ -67,7 +67,7 @@ def _find_custom_validator(repo_root: Path) -> str | None:
     return None
 
 
-class ValidationFailure(Exception):
+class ValidationError(Exception):
     """One or more validation commands failed."""
 
 
@@ -83,7 +83,7 @@ def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Sta
                     break
         if failed:
             msg = f"{failed} of {len(cmds)} {label} command(s) failed"
-            raise ValidationFailure(msg)
+            raise ValidationError(msg)
 
     return Stage(label, fn, mode=mode)
 
@@ -97,16 +97,12 @@ def _build_stages(check: str | None, language: str | None, repo_root: Path) -> l
             rc = _run_common_checks(repo_root)
             if rc != 0:
                 msg = f"common checks exited {rc}"
-                raise ValidationFailure(msg)
+                raise ValidationError(msg)
 
         stages.append(Stage("common", common_fn, mode="fail_defer"))
 
     if language is not None and check != "common":
-        kinds = [
-            kind
-            for kind in _LANGUAGE_CHECK_ORDER
-            if check is None or check == kind.value
-        ]
+        kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
         kind_cmds = [(kind, language_commands(language, kind)) for kind in kinds]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
         if kind_cmds:
@@ -114,8 +110,7 @@ def _build_stages(check: str | None, language: str | None, repo_root: Path) -> l
             if install_cmds:
                 stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
             stages.extend(
-                _command_stage(kind.value, cmds, mode="fail_defer")
-                for kind, cmds in kind_cmds
+                _command_stage(kind.value, cmds, mode="fail_defer") for kind, cmds in kind_cmds
             )
 
     if check is None:
@@ -127,7 +122,7 @@ def _build_stages(check: str | None, language: str | None, repo_root: Path) -> l
                 rc = progress.run((custom,), check=False)
                 if rc != 0:
                     msg = f"custom validator exited {rc}"
-                    raise ValidationFailure(msg)
+                    raise ValidationError(msg)
 
             stages.append(Stage("custom", custom_fn, mode="fail_defer"))
 

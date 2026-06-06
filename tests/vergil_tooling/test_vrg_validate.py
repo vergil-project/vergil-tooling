@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 import pytest
 
 from vergil_tooling.bin.vrg_validate import (
-    ValidationFailure,
+    ValidationError,
     _build_stages,
     _command_stage,
     _find_custom_validator,
@@ -127,7 +127,7 @@ def test_build_stages_no_commands_for_check() -> None:
 def test_command_stage_fail_defer_runs_all_commands() -> None:
     with patch(_MOD + ".progress.run", side_effect=[1, 0, 2]) as m_run:
         stage = _command_stage("test", [["cmd1"], ["cmd2"], ["cmd3"]], mode="fail_defer")
-        with pytest.raises(ValidationFailure, match="2 of 3 test command"):
+        with pytest.raises(ValidationError, match="2 of 3 test command"):
             stage.fn(None)
     assert m_run.call_count == 3
 
@@ -135,7 +135,7 @@ def test_command_stage_fail_defer_runs_all_commands() -> None:
 def test_command_stage_fail_fast_stops_on_first_failure() -> None:
     with patch(_MOD + ".progress.run", return_value=1) as m_run:
         stage = _command_stage("install", [["cmd1"], ["cmd2"]], mode="fail_fast")
-        with pytest.raises(ValidationFailure, match="1 of 2 install command"):
+        with pytest.raises(ValidationError, match="1 of 2 install command"):
             stage.fn(None)
     assert m_run.call_count == 1
 

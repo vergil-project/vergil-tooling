@@ -7,7 +7,7 @@ import io
 import subprocess
 import sys
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -331,9 +331,7 @@ def _boom(ctx: object) -> None:
     raise RuntimeError(msg)
 
 
-def test_pipeline_fail_defer_continues(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_pipeline_fail_defer_continues(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     stages = [
         Stage("bad", _boom, mode="fail_defer"),
@@ -367,9 +365,7 @@ def test_pipeline_warn_does_not_affect_exit(
 def test_pipeline_skip_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     stages = [
-        Stage(
-            "audit", lambda ctx: calls.append("audit"), mode="fail_fast", skip_flag="skip_audit"
-        ),
+        Stage("audit", lambda ctx: calls.append("audit"), mode="fail_fast", skip_flag="skip_audit"),
         Stage("after", lambda ctx: calls.append("after"), mode="fail_defer"),
     ]
     assert _pipeline(tmp_path, stages, _args(skip_audit=True)) == 0
@@ -381,9 +377,7 @@ def _interrupt(ctx: object) -> None:
     raise KeyboardInterrupt
 
 
-def test_pipeline_interrupt_exits_130(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_pipeline_interrupt_exits_130(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     stages = [
         Stage("slow", _interrupt, mode="fail_defer"),
@@ -421,3 +415,48 @@ def test_add_progress_args_rejects_skip_on_non_fail_fast() -> None:
     stages = [Stage("docs", lambda ctx: None, mode="fail_defer", skip_flag="skip_docs")]
     with pytest.raises(ValueError, match="skip_flag is only supported on fail_fast stages"):
         progress.add_progress_args(parser, stages)
+
+
+def test_gha_renderer_ok_stage_no_error_annotation() -> None:
+    out = io.StringIO()
+    r = progress.GhaRenderer(out)
+    r.start_stage("lint")
+    r.end_stage(StageResult("lint", "ok", 1.0))
+    r.close()
+    text = out.getvalue()
+    assert "::endgroup::" in text
+    assert "::error" not in text
+
+
+def test_rich_renderer_close_without_summary_stops_live() -> None:
+    out = io.StringIO()
+    r = progress.RichRenderer(out, window=2, force_terminal=True)
+    r.start_stage("build")
+    r.close()  # live still started — close() must stop it
+    assert r._live.is_started is False
+
+
+def test_make_renderer_selects_by_format() -> None:
+    out = io.StringIO()
+    rich_renderer = progress._make_renderer("rich", out, 5)
+    assert isinstance(rich_renderer, progress.RichRenderer)
+    rich_renderer.close()
+    assert isinstance(progress._make_renderer("gha", out, 5), progress.GhaRenderer)
+    plain = progress._make_renderer("plain", out, 5)
+    assert isinstance(plain, progress.PlainRenderer)
+    assert not isinstance(plain, progress.GhaRenderer)
+
+
+def test_run_keyboard_interrupt_terminates_child() -> None:
+    progress._session = None
+    fake_proc = MagicMock()
+    fake_proc.stdout = io.StringIO("")
+    fake_proc.stderr = io.StringIO("")
+    fake_proc.wait.side_effect = [KeyboardInterrupt, 130]
+    with (
+        patch(_MOD + ".subprocess.Popen", return_value=fake_proc),
+        pytest.raises(KeyboardInterrupt),
+    ):
+        progress.run(("sleep", "60"))
+    fake_proc.terminate.assert_called_once_with()
+    assert fake_proc.wait.call_count == 2

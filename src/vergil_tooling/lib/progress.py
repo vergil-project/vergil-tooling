@@ -5,7 +5,6 @@ Design: docs/specs/2026-06-05-progress-framework-design.md
 
 from __future__ import annotations
 
-import argparse
 import contextlib
 import io
 import os
@@ -18,7 +17,6 @@ import traceback
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
 
 from rich.console import Console, Group
@@ -27,7 +25,9 @@ from rich.spinner import Spinner
 from rich.text import Text
 
 if TYPE_CHECKING:
+    import argparse
     from collections.abc import Callable, Sequence
+    from pathlib import Path
 
 LOG_RETAIN = 20
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -239,9 +239,7 @@ class RichRenderer:
         if self._active is not None:
             parts.append(Spinner("dots", text=Text(f" {self._active}")))
             if self._window > 0:
-                parts.extend(
-                    Text.from_ansi(f"   {line}", style="dim") for line in self._tail
-                )
+                parts.extend(Text.from_ansi(f"   {line}", style="dim") for line in self._tail)
         return Group(*parts)
 
     def start_stage(self, name: str) -> None:
@@ -257,9 +255,7 @@ class RichRenderer:
         self._live.update(self._renderable())
 
     def end_stage(self, result: StageResult) -> None:
-        self._completed.append(
-            Text(_status_line(result), style=_STATUS_STYLES[result.status])
-        )
+        self._completed.append(Text(_status_line(result), style=_STATUS_STYLES[result.status]))
         self._active = None
         self._tail.clear()
         self._live.update(self._renderable())

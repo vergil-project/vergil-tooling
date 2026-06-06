@@ -226,6 +226,20 @@ def test_phase_details_unknown_phase() -> None:
     assert details == ""
 
 
+def test_phase_details_unset_fields_yield_empty() -> None:
+    from vergil_tooling.lib.release.orchestrator import _phase_details
+
+    ctx = _ctx()  # all URL/tag/version fields unset
+    for phase in (
+        "prepare",
+        "merge-release",
+        "confirm-main",
+        "back-merge-bump",
+        "confirm-develop",
+    ):
+        assert _phase_details(ctx, phase) == ""
+
+
 def test_merge_release_raises_if_no_pr_url() -> None:
     from vergil_tooling.lib.release.orchestrator import merge_release
 

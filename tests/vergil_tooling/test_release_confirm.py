@@ -29,6 +29,28 @@ def _ctx() -> ReleaseContext:
     return ctx
 
 
+def test_watch_cd_check_status_false_reports_completed(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vergil_tooling.lib.release.confirm import _watch_cd
+
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.read_output",
+            side_effect=["12345", "https://github.com/o/r/actions/runs/12345"],
+        ),
+        patch(_MOD + ".watch_workflow"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.read_output", return_value=_SHA),
+    ):
+        run_id, run_url = _watch_cd(ctx, branch="main", check_status=False)
+    assert run_id == "12345"
+    out = capsys.readouterr().out
+    assert "CD workflow completed" in out
+    assert "CD workflow succeeded" not in out
+
+
 def test_main_expected_jobs() -> None:
     assert _MAIN_EXPECTED_JOBS == ("docs", "release")
 
