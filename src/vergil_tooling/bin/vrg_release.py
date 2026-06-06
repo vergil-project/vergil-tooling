@@ -9,7 +9,7 @@ import time
 from vergil_tooling.lib import git
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.orchestrator import _format_elapsed, run_release
-from vergil_tooling.lib.release.preflight import preflight
+from vergil_tooling.lib.release.preflight import preflight, run_audit
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -52,10 +52,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         print("\n=== Phase: preflight ===")
         start = time.monotonic()
+        if not args.skip_audit:
+            run_audit()
         ctx = preflight(
             version_override=args.version_override,
             repo_root=repo_root,
-            skip_audit=args.skip_audit,
         )
         ctx.promote = not args.no_promote
         ctx.skip_cd_docs = args.skip_cd_docs
