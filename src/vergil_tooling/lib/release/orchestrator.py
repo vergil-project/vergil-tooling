@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -26,14 +25,6 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from vergil_tooling.lib.release.context import ReleaseContext
-
-
-def _format_elapsed(seconds: float) -> str:
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    minutes = int(seconds // 60)
-    secs = int(seconds % 60)
-    return f"{minutes}m{secs:02d}s"
 
 
 @dataclass
@@ -180,54 +171,3 @@ def _phase_details(ctx: ReleaseContext, phase: str) -> str:
     elif phase == "consumer-refresh":
         lines.append("Consumer refresh instructions displayed.")
     return "\n".join(lines)
-
-
-def run_release(ctx: ReleaseContext) -> None:
-    """Execute the release workflow phase by phase."""
-    phases: list[tuple[str, Callable[[ReleaseContext], None]]] = [
-        ("prepare", prepare),
-        ("merge-release", merge_release),
-        ("confirm-main", confirm_main),
-        ("back-merge-bump", back_merge_and_bump),
-        ("confirm-develop", confirm_develop),
-        ("promote", _promote_phase),
-        ("close-finalize", close_and_finalize),
-        ("consumer-refresh", consumer_refresh),
-    ]
-
-    for phase_name, phase_fn in phases:
-        print(f"\n=== Phase: {phase_name} ===")
-        start = time.monotonic()
-        try:
-            phase_fn(ctx)
-        except ReleaseError as exc:
-            elapsed = time.monotonic() - start
-            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
-            comment_phase_failed(ctx, phase_name, exc)
-            raise
-        except Exception as exc:
-            elapsed = time.monotonic() - start
-            print(f"=== {phase_name}: FAILED ({_format_elapsed(elapsed)}) ===")
-            wrapped = ReleaseError(
-                phase=phase_name,
-                command=str(getattr(exc, "cmd", type(exc).__name__)),
-                message=str(exc),
-                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
-            )
-            comment_phase_failed(ctx, phase_name, wrapped)
-            raise wrapped from exc
-        elapsed = time.monotonic() - start
-        print(f"=== {phase_name}: done ({_format_elapsed(elapsed)}) ===")
-        try:
-            comment_phase_complete(
-                ctx,
-                phase_name,
-                _phase_details(ctx, phase_name),
-            )
-        except Exception as exc:
-            raise ReleaseError(
-                phase=f"comment({phase_name})",
-                command="comment_phase_complete",
-                message=str(exc),
-                detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
-            ) from exc

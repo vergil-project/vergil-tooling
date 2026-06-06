@@ -4,12 +4,9 @@ from __future__ import annotations
 
 import argparse
 import sys
-import time
 
-from vergil_tooling.lib import git
-from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.orchestrator import _format_elapsed, run_release
-from vergil_tooling.lib.release.preflight import preflight, run_audit
+from vergil_tooling.lib import git, progress
+from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -30,50 +27,26 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         help="Skip rolling-tag promotion after release.",
     )
-    parser.add_argument(
-        "--skip-cd-docs",
-        action="store_true",
-        default=False,
-        help="Skip docs job verification in CD workflows (release job still verified).",
-    )
-    parser.add_argument(
-        "--skip-audit",
-        action="store_true",
-        default=False,
-        help="Skip the repo config audit in preflight.",
-    )
+    progress.add_progress_args(parser, build_stages())
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo_root = git.repo_root()
-
-    try:
-        print("\n=== Phase: preflight ===")
-        start = time.monotonic()
-        if not args.skip_audit:
-            run_audit()
-        ctx = preflight(
-            version_override=args.version_override,
-            repo_root=repo_root,
-        )
-        ctx.promote = not args.no_promote
-        ctx.skip_cd_docs = args.skip_cd_docs
-        elapsed = time.monotonic() - start
-        print(f"=== preflight: done ({_format_elapsed(elapsed)}) ===")
-        run_release(ctx)
-    except ReleaseError as exc:
-        print(f"\nRelease failed in phase '{exc.phase}'.", file=sys.stderr)
-        print(f"Command: {exc.command}", file=sys.stderr)
-        print(f"Error: {exc}", file=sys.stderr)
-        if exc.detail:
-            print(f"Detail: {exc.detail}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        print(f"\nUnexpected error: {exc}", file=sys.stderr)
-        return 1
-    return 0
+    state = ReleaseState(
+        version_override=args.version_override,
+        repo_root=repo_root,
+        promote=not args.no_promote,
+    )
+    return progress.run_pipeline(
+        state,
+        build_stages(),
+        command="vrg-release",
+        label="vrg-release",
+        args=args,
+        repo_root=repo_root,
+    )
 
 
 if __name__ == "__main__":

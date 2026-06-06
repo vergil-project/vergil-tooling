@@ -21,13 +21,8 @@ _CD_POLL_ATTEMPTS = 30
 
 def confirm_main(ctx: ReleaseContext) -> None:
     """Watch CD on main and verify publish artifacts."""
-    skip_docs = ctx.skip_cd_docs
-    run_id, run_url = _watch_cd(ctx, branch="main", check_status=not skip_docs)
-    expected: tuple[str, ...] = _MAIN_EXPECTED_JOBS
-    if skip_docs:
-        expected = tuple(j for j in expected if j != "docs")
-        print("  Skipping docs job verification (--skip-cd-docs).")
-    _verify_jobs(ctx, run_id, expected, phase="confirm-main")
+    run_id, run_url = _watch_cd(ctx, branch="main", check_status=True)
+    _verify_jobs(ctx, run_id, _MAIN_EXPECTED_JOBS, phase="confirm-main")
 
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
@@ -38,14 +33,8 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
 def confirm_develop(ctx: ReleaseContext) -> None:
     """Watch CD on develop after back-merge."""
-    skip_docs = ctx.skip_cd_docs
-    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=not skip_docs)
-    expected: tuple[str, ...] = _DEVELOP_EXPECTED_JOBS
-    if skip_docs:
-        expected = tuple(j for j in expected if j != "docs")
-        print("  Skipping docs job verification (--skip-cd-docs).")
-    if expected:
-        _verify_jobs(ctx, run_id, expected, phase="confirm-develop")
+    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=True)
+    _verify_jobs(ctx, run_id, _DEVELOP_EXPECTED_JOBS, phase="confirm-develop")
 
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url

@@ -236,59 +236,6 @@ def test_confirm_develop_fails_job_not_success() -> None:
         confirm_develop(ctx)
 
 
-def test_confirm_main_skip_cd_docs_skips_docs_job() -> None:
-    ctx = _ctx()
-    ctx.skip_cd_docs = True
-    with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "12345",
-                "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "https://github.com/o/r/releases/tag/v2.1.0",
-            ],
-        ),
-        patch(_MOD + ".watch_workflow") as m_watch,
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.read_output", return_value=_SHA),
-        patch(_MOD + ".git.ref_exists", return_value=True),
-    ):
-        confirm_main(ctx)
-
-    m_watch.assert_called_once_with(
-        "owner/repo",
-        "12345",
-        check_status=False,
-    )
-    assert ctx.tag == "v2.1.0"
-
-
-def test_confirm_develop_skip_cd_docs_skips_verify() -> None:
-    ctx = _ctx()
-    ctx.skip_cd_docs = True
-    with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "67890",
-                "https://github.com/o/r/actions/runs/67890",
-            ],
-        ),
-        patch(_MOD + ".watch_workflow") as m_watch,
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.read_output", return_value=_SHA),
-    ):
-        confirm_develop(ctx)
-
-    m_watch.assert_called_once_with(
-        "owner/repo",
-        "67890",
-        check_status=False,
-    )
-    assert ctx.develop_cd_run_id == "67890"
-
-
 def test_poll_attempts_constant() -> None:
     assert _CD_POLL_ATTEMPTS == 30
 
