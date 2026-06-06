@@ -8,7 +8,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, progress
 
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote"}
 
@@ -34,26 +34,9 @@ def _remote_env(args: tuple[str, ...]) -> dict[str, str] | None:
 
 
 def run(*args: str) -> None:
-    """Run a git command and raise on failure."""
+    """Run a git command, streaming output, and raise on failure."""
     env = _remote_env(args)
-    try:
-        result = subprocess.run(  # noqa: S603
-            ("git", *args),  # noqa: S607
-            check=True,
-            capture_output=True,
-            text=True,
-            env=env,
-        )
-    except subprocess.CalledProcessError as exc:
-        if exc.stdout:
-            print(exc.stdout, end="")
-        if exc.stderr:
-            print(exc.stderr, end="", file=sys.stderr)
-        raise
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    progress.run(("git", *args), env=env)
 
 
 def read_output(*args: str) -> str:
