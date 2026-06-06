@@ -121,6 +121,11 @@ def ref_exists(ref: str) -> bool:
     return result.returncode == 0
 
 
+def commit_sha(ref: str) -> str:
+    """Return the commit SHA that *ref* resolves to."""
+    return read_output("rev-parse", ref)
+
+
 def merged_branches(target: str) -> list[str]:
     """Return local branches merged into *target*."""
     output = read_output("branch", "--merged", target, "--format=%(refname:short)")

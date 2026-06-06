@@ -1377,3 +1377,37 @@ def test_head_ref() -> None:
 def test_pr_for_branch_none_when_payload_not_dict() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
         assert github.pr_for_branch("feature/1423-pr-interface") is None
+
+
+# -- closed_pr_for_branch (issue #1445) ----------------------------------------
+
+
+def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
+    payload = [{"number": 1445, "url": "https://github.com/o/r/pull/1445", "title": "T"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
+        result = github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
+    assert result == {
+        "number": "1445",
+        "url": "https://github.com/o/r/pull/1445",
+        "title": "T",
+    }
+    rj.assert_called_once_with(
+        "pr",
+        "list",
+        "--head",
+        "feature/1445-finalize-cleanup-race",
+        "--state",
+        "closed",
+        "--json",
+        "number,url,title",
+    )
+
+
+def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
+        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
+
+
+def test_closed_pr_for_branch_none_when_payload_not_dict() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
+        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
