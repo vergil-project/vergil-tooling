@@ -97,8 +97,28 @@ Fetches (`--tags --force`) and fast-forward merges `origin/{target}`.
 Deletes local branches merged into the target branch. If a merged
 branch is still checked out in a canonical `.worktrees/` worktree, that
 worktree is removed first (skipped if it has uncommitted changes).
-Cached container images for the branch are cleaned. Eternal branches
-are protected based on the `branching_model`:
+Cached container images for the branch are cleaned.
+
+Two guards keep this sweep from racing parallel agent sessions in
+their creation-to-first-commit window (issue #1445), since
+`git branch --merged` classifies a branch just created from the
+target's tip as merged:
+
+- **Zero-commit branches are skipped.** A branch whose tip equals the
+  target's tip carries no merged work, so deleting it saves nothing —
+  and it is exactly what an in-flight issue branch looks like before
+  its first commit.
+- **Merge evidence is required.** A branch is only swept when a closed
+  or merged PR exists for its head; ancestry alone cannot distinguish
+  a merged branch from one created off an older target tip. Branches
+  skipped for lack of evidence are listed with the reason and left for
+  manual cleanup.
+
+Both guards gate the worktree removal as strictly as the branch
+deletion. The explicit-target cleanup (step 1a) is unaffected — the
+just-merged PR branch has merge evidence by construction.
+
+Eternal branches are protected based on the `branching_model`:
 
 | Branching Model | Protected Branches |
 | --------------- | ------------------ |

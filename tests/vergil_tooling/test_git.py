@@ -185,6 +185,12 @@ def test_ref_exists_false() -> None:
         assert git.ref_exists("nonexistent") is False
 
 
+def test_commit_sha_resolves_ref() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="abc123") as mock:
+        assert git.commit_sha("develop") == "abc123"
+    mock.assert_called_once_with("rev-parse", "develop")
+
+
 def test_merged_branches_returns_list() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="feature/a\nfeature/b"):
         result = git.merged_branches("develop")

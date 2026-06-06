@@ -109,9 +109,28 @@ def _validation_ok() -> CompletedProcess[bytes]:
     return CompletedProcess(args=("vrg-validate",), returncode=0)
 
 
+_PR_EVIDENCE = {"number": "9", "url": "https://github.com/o/r/pull/9", "title": "Done"}
+
+
+@contextmanager
+def _sweep_guards_pass() -> Iterator[None]:
+    """Make the ancestry-sweep guards (issue #1445) pass.
+
+    The candidate branch resolves to a different SHA than the target
+    (it has commits of its own) and a closed PR exists as merge
+    evidence, so the sweep proceeds to delete it.
+    """
+    with (
+        patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=_PR_EVIDENCE),
+    ):
+        yield
+
+
 def test_main_library_release(tmp_path: Path) -> None:
     _make_profile(tmp_path, "library-release")
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_run,
@@ -147,6 +166,7 @@ def test_main_already_on_target(tmp_path: Path) -> None:
 def test_main_dry_run(tmp_path: Path) -> None:
     _make_profile(tmp_path, "library-release")
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="feature/x"),
         patch(_MOD + ".git.run") as mock_git_run,
@@ -185,6 +205,7 @@ def test_main_unrecognized_model(tmp_path: Path) -> None:
 def test_main_application_promotion(tmp_path: Path) -> None:
     _make_profile(tmp_path, "application-promotion")
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
@@ -464,6 +485,7 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         git_run_calls.append(args)
 
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
@@ -500,6 +522,7 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
         git_run_calls.append(args)
 
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
@@ -531,6 +554,7 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
         git_run_calls.append(args)
 
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
@@ -557,6 +581,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
 ) -> None:
     _make_profile(tmp_path, "library-release")
     with (
+        _sweep_guards_pass(),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
@@ -1066,3 +1091,128 @@ def test_explicit_target_cleanup_skips_dirty_worktree(
     assert rc == 0
     assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
     assert "uncommitted changes" in capsys.readouterr().out
+
+
+# -- ancestry-sweep guards (issue #1445) ----------------------------------------
+
+
+def test_sweep_skips_zero_commit_branch(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #1445: a branch whose tip equals the target's tip is the
+    starting state of a freshly created issue worktree — the sweep must
+    not delete the branch or remove its worktree, and must not even need
+    a gh lookup to decide."""
+    _make_profile(tmp_path, "library-release")
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/1439-fresh"]),
+        patch(_MOD + ".git.commit_sha", return_value="same-sha"),
+        patch(_MOD + ".github.closed_pr_for_branch") as evidence,
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main([])
+
+    assert result == 0
+    assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
+    assert not any(c[:1] == ("worktree",) for c in git_run_calls)
+    evidence.assert_not_called()  # guard 1 decides before the gh lookup
+    out = capsys.readouterr().out
+    assert "Skipping feature/1439-fresh" in out
+    assert "zero-commit" in out
+
+
+def test_sweep_skips_branch_without_merge_evidence(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #1445: an ancestor branch with no closed/merged PR may be a
+    fresh branch created off an older target tip — without merge
+    evidence the sweep leaves the branch and its worktree alone."""
+    _make_profile(tmp_path, "library-release")
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/77-stale-tip"]),
+        patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main([])
+
+    assert result == 0
+    assert not any(c[:2] == ("branch", "-D") for c in git_run_calls)
+    assert not any(c[:1] == ("worktree",) for c in git_run_calls)
+    out = capsys.readouterr().out
+    assert "Skipping feature/77-stale-tip" in out
+    assert "no closed or merged PR" in out
+
+
+def test_sweep_deletes_straggler_with_commits_and_merge_evidence(tmp_path: Path) -> None:
+    """A genuine straggler — own commits plus a closed/merged PR — is
+    still swept; the guards relax the cleanup, they don't disable it."""
+    _make_profile(tmp_path, "library-release")
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        _sweep_guards_pass(),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/55-straggler"]),
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main([])
+
+    assert result == 0
+    assert ("branch", "-D", "feature/55-straggler") in git_run_calls
+
+
+def test_explicit_target_cleanup_bypasses_sweep_guards() -> None:
+    """Issue #1445: the guards gate the ancestry sweep only — the
+    just-merged PR branch keeps its existing explicit-target cleanup,
+    which already has PR evidence by construction."""
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def mock_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=mock_git_run),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
+        patch(_MOD + ".git.commit_sha") as sha,
+        patch(_MOD + ".github.closed_pr_for_branch") as evidence,
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
+    ):
+        rc = main(["123"])
+    assert rc == 0
+    assert ("branch", "-D", "feature/7-foo") in git_run_calls
+    sha.assert_not_called()
+    evidence.assert_not_called()

@@ -340,9 +340,36 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"  Merged PR branch {merged_branch} has no local branch — skipping.")
 
+    # Ancestry sweep for stragglers. `git branch --merged` classifies a
+    # branch as merged when its tip is an *ancestor* of the target —
+    # which a branch just created from the target's tip satisfies
+    # trivially. That is the normal starting state of every new issue
+    # worktree, so an unguarded sweep races parallel agent sessions in
+    # their creation-to-first-commit window and deletes their branch and
+    # worktree out from under them. Two guards close the race
+    # (issue #1445); both gate the worktree removal exactly as strictly
+    # as the branch deletion, since they sit ahead of either action.
     print("Checking for merged local branches...")
     for branch in git.merged_branches(args.target_branch):
         if branch in eternal or branch in deleted:
+            continue
+        # Guard 1 — skip zero-commit branches. A tip equal to the
+        # target's carries no merged work, so deleting it saves nothing;
+        # it is also exactly what an in-flight branch looks like before
+        # its first commit.
+        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
+            print(
+                f"  Skipping {branch}: tip matches {args.target_branch} "
+                "(zero-commit branch, nothing to clean up)"
+            )
+            continue
+        # Guard 2 — require merge evidence. Ancestry alone cannot
+        # distinguish a merged branch from one created off an older
+        # target tip; only sweep branches whose head has a closed or
+        # merged PR. The just-merged PR branch is handled by the
+        # explicit-target step above, which keeps its own behavior.
+        if github.closed_pr_for_branch(branch) is None:
+            print(f"  Skipping {branch}: no closed or merged PR for this branch")
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
             deleted.append(branch)
