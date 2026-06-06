@@ -373,6 +373,25 @@ def test_pipeline_skip_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) 
     assert "audit — skipped via --skip-audit" in capsys.readouterr().out
 
 
+def _exit_one(ctx: object) -> None:
+    raise SystemExit(1)
+
+
+def test_pipeline_systemexit_is_stage_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stage calling sys.exit() is a recorded failure, not a silent process exit."""
+    calls: list[str] = []
+    stages = [
+        Stage("bad", _exit_one, mode="fail_defer"),
+        Stage("after", lambda ctx: calls.append("after"), mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 1
+    assert calls == ["after"]
+    out = capsys.readouterr().out
+    assert "bad — SystemExit: 1" in out
+
+
 def _interrupt(ctx: object) -> None:
     raise KeyboardInterrupt
 
