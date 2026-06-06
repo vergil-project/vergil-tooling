@@ -1,13 +1,18 @@
 """Finalize a pull request: provenance check, merge, and cleanup.
 
-Two modes, keyed on whether a PR argument is given:
+Three modes:
 
 - ``vrg-finalize-pr <PR>`` — run the pre-merge provenance check, merge
   the PR (or confirm it is already merged), then run the cleanup below.
   This replaces the manual web merge + post-merge repo cleanup.
-- ``vrg-finalize-pr`` (no PR) — cleanup only, the backward-compatible
-  release path: switch to the target branch, fast-forward pull, delete
+- ``vrg-finalize-pr`` (no PR) — interactive: infer which PR to finalize
+  from open PRs in ``.worktrees/`` worktrees, confirm via prompts, then
+  run the cleanup. Requires a real terminal on both stdin and stdout.
+- ``vrg-finalize-pr --cleanup-only`` — non-interactive release path:
+  skip inference and merge entirely, never read stdin, and run only the
+  cleanup: switch to the target branch, fast-forward pull, delete
   merged local branches, and prune stale remote-tracking references.
+  This is what ``vrg-release`` invokes (issue #1448).
 
 After validation succeeds, also checks the most recent CD workflow run
 on the target branch and fails if it did not succeed (issue #303 — docs
@@ -38,11 +43,20 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Finalize a pull request.")
-    parser.add_argument(
+    # A PR argument and --cleanup-only contradict each other: the flag
+    # promises no merge and no prompts, the argument requests a merge.
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
         "pr",
         nargs="?",
         default=None,
-        help="PR number or URL to merge and finalize. Omit for cleanup-only (release path).",
+        help="PR number or URL to merge and finalize. Omit to infer interactively.",
+    )
+    target.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help="Skip PR inference and merge; run cleanup without prompting "
+        "or reading stdin (non-interactive release path).",
     )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
@@ -281,7 +295,10 @@ def main(argv: list[str] | None = None) -> int:
 
     root = git.repo_root()
 
-    if args.pr is None:
+    # --cleanup-only is the scriptable release path: no inference, no
+    # prompts, no stdin reads — args.pr stays None and only the cleanup
+    # below runs (issue #1448).
+    if args.pr is None and not args.cleanup_only:
         try:
             args.pr = _infer_pr(root, args.target_branch)
         except SystemExit as exc:

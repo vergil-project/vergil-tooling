@@ -60,13 +60,18 @@ def worktree_for_branch(branch: str, repo_root: Path) -> Path | None:
 
 
 def require_tty(context: str) -> None:
-    """Fail fast when an interactive prompt would read from non-TTY stdin.
+    """Fail fast when an interactive prompt cannot reach the human.
 
     These tools are human touch points by design: a human is assumed to
     be present, and EOF-as-default would be a silent failure. Scripted
     use is served by explicit arguments, not by piping into prompts.
+
+    Both stdin and stdout must be terminals: a non-TTY stdin means the
+    answer cannot be typed; a non-TTY stdout means the prompt text is
+    written into a pipe the human never sees — the prompt blocks
+    invisibly instead of failing fast (issue #1448).
     """
-    if not sys.stdin.isatty():
+    if not (sys.stdin.isatty() and sys.stdout.isatty()):
         msg = (
             f"{context} requires an interactive terminal.\n"
             "  Pass the target explicitly to run non-interactively."

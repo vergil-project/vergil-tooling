@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
@@ -43,16 +44,43 @@ def test_close_and_finalize_succeeds() -> None:
     mock_close.assert_called_once()
 
 
-def test_close_and_finalize_prints_stdout() -> None:
+def test_close_and_finalize_streams_cleanup_only() -> None:
+    """Issue #1448: invoke the non-interactive flag, stream stdout to the
+    user, never hand the child the TTY stdin, and capture only stderr
+    (for ReleaseError.detail)."""
     ctx = _ctx()
     with (
         patch(_MOD + ".close_tracking_issue"),
         patch(
             _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=0, stdout="cleaned up"),
+            return_value=CompletedProcess(args=(), returncode=0, stderr=""),
+        ) as run,
+    ):
+        close_and_finalize(ctx)
+    (cmd,) = run.call_args.args
+    assert cmd == ("vrg-finalize-pr", "--cleanup-only")
+    kwargs = run.call_args.kwargs
+    assert "capture_output" not in kwargs
+    assert "stdout" not in kwargs  # stdout streams to the user
+    assert kwargs["stdin"] == subprocess.DEVNULL
+    assert kwargs["stderr"] == subprocess.PIPE
+
+
+def test_close_and_finalize_relays_child_stderr(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Captured child stderr is replayed on success so warnings are
+    never silently swallowed."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".close_tracking_issue"),
+        patch(
+            _MOD + ".subprocess.run",
+            return_value=CompletedProcess(args=(), returncode=0, stderr="WARNING: x"),
         ),
     ):
         close_and_finalize(ctx)
+    assert "WARNING: x" in capsys.readouterr().err
 
 
 def test_build_summary_omits_none_fields() -> None:
@@ -91,6 +119,7 @@ def test_close_and_finalize_fails_on_finalize_error() -> None:
             _MOD + ".subprocess.run",
             return_value=CompletedProcess(args=(), returncode=1, stderr="validation failed"),
         ),
-        pytest.raises(ReleaseError, match="vrg-finalize-pr"),
+        pytest.raises(ReleaseError, match="vrg-finalize-pr") as excinfo,
     ):
         close_and_finalize(ctx)
+    assert excinfo.value.detail == "validation failed"
