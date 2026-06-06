@@ -32,6 +32,14 @@ if TYPE_CHECKING:
 LOG_RETAIN = 20
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 
+# Auto-sized rolling window (--output-window omitted): the visible tail is
+# computed per render from the live terminal height. The cap bounds redraw
+# churn on very tall terminals; the margin leaves headroom for the summary
+# line and shell prompt; the floor keeps degenerate terminals usable.
+AUTO_WINDOW_CAP = 40
+AUTO_WINDOW_MARGIN = 2
+AUTO_WINDOW_FLOOR = 3
+
 StageMode = Literal["warn", "fail_defer", "fail_fast"]
 StageStatus = Literal["ok", "warn", "failed", "skipped", "interrupted"]
 
@@ -223,22 +231,51 @@ _STATUS_STYLES: dict[str, str] = {
 
 class RichRenderer:
     """Live TTY display: completed stages collapse to one line, the active stage
-    shows a spinner plus a rolling window of its last N output lines."""
+    shows a spinner plus a rolling window of its last N output lines.
 
-    def __init__(self, out: IO[str], window: int, *, force_terminal: bool | None = None) -> None:
-        self._console = Console(file=out, highlight=False, force_terminal=force_terminal)
+    ``window=None`` (the default) auto-sizes the window to the terminal:
+    each render shows as many tail lines as fit the current console height
+    after the completed-stage lines and spinner, clamped to
+    [AUTO_WINDOW_FLOOR, AUTO_WINDOW_CAP]. Querying ``console.size`` per
+    render makes the window resize-aware."""
+
+    def __init__(
+        self,
+        out: IO[str],
+        window: int | None,
+        *,
+        force_terminal: bool | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> None:
+        self._console = Console(
+            file=out, highlight=False, force_terminal=force_terminal, width=width, height=height
+        )
         self._window = window
         self._completed: list[Text] = []
-        self._tail: deque[str] = deque(maxlen=window if window > 0 else 1)
+        # In auto mode the visible slice never exceeds the cap, so buffering
+        # more than AUTO_WINDOW_CAP lines is pointless.
+        maxlen = AUTO_WINDOW_CAP if window is None else window if window > 0 else 1
+        self._tail: deque[str] = deque(maxlen=maxlen)
         self._active: str | None = None
         self._live = Live(console=self._console, refresh_per_second=8)
         self._live.start()
+
+    def _visible_window(self) -> int:
+        """Tail size for auto mode, computed from the live terminal height."""
+        available = (
+            self._console.size.height - len(self._completed) - 1 - AUTO_WINDOW_MARGIN
+        )  # − 1 for the spinner line
+        return max(AUTO_WINDOW_FLOOR, min(AUTO_WINDOW_CAP, available))
 
     def _renderable(self) -> Group:
         parts: list[Text | Spinner] = list(self._completed)
         if self._active is not None:
             parts.append(Spinner("dots", text=Text(f" {self._active}")))
-            if self._window > 0:
+            if self._window is None:
+                visible = list(self._tail)[-self._visible_window() :]
+                parts.extend(Text.from_ansi(f"   {line}", style="dim") for line in visible)
+            elif self._window > 0:
                 parts.extend(Text.from_ansi(f"   {line}", style="dim") for line in self._tail)
         return Group(*parts)
 
@@ -376,9 +413,13 @@ def add_progress_args(parser: argparse.ArgumentParser, stages: Sequence[Stage]) 
     parser.add_argument(
         "--output-window",
         type=int,
-        default=5,
+        default=None,
         metavar="N",
-        help="Rolling window size for the TTY renderer. 0 = full stream then collapse.",
+        help=(
+            "Rolling window size for the TTY renderer. Default: auto-size to the "
+            f"terminal height (max {AUTO_WINDOW_CAP} lines, resize-aware). "
+            "N = fixed window. 0 = full stream then collapse."
+        ),
     )
     parser.add_argument(
         "--output-format",
@@ -399,7 +440,7 @@ def add_progress_args(parser: argparse.ArgumentParser, stages: Sequence[Stage]) 
             )
 
 
-def _make_renderer(fmt: str, out: IO[str], window: int) -> Any:
+def _make_renderer(fmt: str, out: IO[str], window: int | None) -> Any:
     if fmt == "rich":
         return RichRenderer(out, window)
     if fmt == "gha":

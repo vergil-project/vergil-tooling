@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import pytest
+from rich.spinner import Spinner
+from rich.text import Text
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.progress import PipelineError, Stage, StageResult
@@ -204,6 +206,73 @@ def test_rich_renderer_window_zero_streams() -> None:
     r.summary("S")
     r.close()
     assert "streamed line" in out.getvalue()
+
+
+def _auto_renderer(height: int) -> progress.RichRenderer:
+    out = io.StringIO()
+    return progress.RichRenderer(out, window=None, force_terminal=True, width=80, height=height)
+
+
+def _rendered_tail_lines(r: progress.RichRenderer) -> list[str]:
+    """Extract the dim tail lines from the current renderable (after the spinner)."""
+    parts = list(r._renderable().renderables)
+    spinner_idx = next(i for i, p in enumerate(parts) if isinstance(p, Spinner))
+    return [part.plain for part in parts[spinner_idx + 1 :] if isinstance(part, Text)]
+
+
+def test_rich_renderer_auto_window_caps_on_tall_terminal() -> None:
+    r = _auto_renderer(height=100)
+    r.start_stage("build")
+    for i in range(progress.AUTO_WINDOW_CAP + 20):
+        r.stage_line(f"line {i}")
+    tail = _rendered_tail_lines(r)
+    assert len(tail) == progress.AUTO_WINDOW_CAP
+    # most recent lines, not the oldest
+    assert tail[-1].strip() == f"line {progress.AUTO_WINDOW_CAP + 19}"
+    r.close()
+
+
+def test_rich_renderer_auto_window_fits_short_terminal() -> None:
+    r = _auto_renderer(height=24)
+    for name in ("one", "two", "three"):
+        r.end_stage(StageResult(name, "ok", 1.0))
+    r.start_stage("build")
+    for i in range(50):
+        r.stage_line(f"line {i}")
+    # height − completed(3) − spinner(1) − margin = visible
+    expected = 24 - 3 - 1 - progress.AUTO_WINDOW_MARGIN
+    assert len(_rendered_tail_lines(r)) == expected
+    r.close()
+
+
+def test_rich_renderer_auto_window_shrinks_as_stages_complete() -> None:
+    r = _auto_renderer(height=24)
+    r.start_stage("first")
+    for i in range(50):
+        r.stage_line(f"line {i}")
+    before = len(_rendered_tail_lines(r))
+    r.end_stage(StageResult("first", "ok", 1.0))
+    r.start_stage("second")
+    for i in range(50):
+        r.stage_line(f"line {i}")
+    after = len(_rendered_tail_lines(r))
+    assert after == before - 1
+    r.close()
+
+
+def test_rich_renderer_auto_window_floor_on_degenerate_terminal() -> None:
+    r = _auto_renderer(height=4)
+    r.start_stage("build")
+    for i in range(50):
+        r.stage_line(f"line {i}")
+    assert len(_rendered_tail_lines(r)) == progress.AUTO_WINDOW_FLOOR
+    r.close()
+
+
+def test_rich_renderer_auto_buffers_only_up_to_cap() -> None:
+    r = _auto_renderer(height=100)
+    assert r._tail.maxlen == progress.AUTO_WINDOW_CAP
+    r.close()
 
 
 class _FakeRenderer:
@@ -426,7 +495,7 @@ def test_add_progress_args_generates_flags() -> None:
     assert args.output_format is None
     args = parser.parse_args([])
     assert args.skip_audit is False
-    assert args.output_window == 5
+    assert args.output_window is None  # auto-size to terminal height
 
 
 def test_add_progress_args_rejects_skip_on_non_fail_fast() -> None:
@@ -460,6 +529,9 @@ def test_make_renderer_selects_by_format() -> None:
     rich_renderer = progress._make_renderer("rich", out, 5)
     assert isinstance(rich_renderer, progress.RichRenderer)
     rich_renderer.close()
+    auto_renderer = progress._make_renderer("rich", out, None)
+    assert isinstance(auto_renderer, progress.RichRenderer)
+    auto_renderer.close()
     assert isinstance(progress._make_renderer("gha", out, 5), progress.GhaRenderer)
     plain = progress._make_renderer("plain", out, 5)
     assert isinstance(plain, progress.PlainRenderer)
