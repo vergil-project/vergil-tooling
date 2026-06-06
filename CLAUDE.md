@@ -122,7 +122,12 @@ Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
 finalization are human actions. The PR handoff is:
 
 1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
-   and `summary` fields (optional: `linkage`, `notes`).
+   and `summary` fields (optional: `linkage`, `notes`). If `linkage`
+   is present it must be `Ref` — GitHub auto-close keywords
+   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues
+   stay open until post-merge workflows succeed. Both
+   `pr_template.write_template()` and `vrg-submit-pr` reject any
+   other value.
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
    template, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).

@@ -8,6 +8,11 @@ from __future__ import annotations
 
 import re
 
+# The only linkage keywords allowed in PR bodies and templates.
+# Auto-close keywords (Closes/Fixes/Resolves) are banned repo-wide —
+# issues stay open until post-merge workflows succeed.
+ALLOWED_LINKAGES = ("Ref",)
+
 LINKAGE_RE = re.compile(
     r"^\s*[-*]?\s*Ref:?\s+"
     r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#([0-9]+)",
