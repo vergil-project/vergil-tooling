@@ -4853,6 +4853,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-fix-body" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-fix-body
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-when-green" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -5405,6 +5416,8 @@
       
         
       
+        
+      
     
     
     
@@ -5496,6 +5509,34 @@
     
   
     vrg-submit-pr
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/pr-fix-body/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    vrg-pr-fix-body
   
 
     
@@ -7848,6 +7889,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-fix-body" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-fix-body
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-when-green" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8190,6 +8242,46 @@ and opens a PR with a populated template body.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-pr-fix-body">vrg-pr-fix-body<a class="headerlink" href="#vrg-pr-fix-body" title="Permanent link">&para;</a></h3>
+<p>Repair a PR's body by regenerating it from corrected fields through
+the same validated builder as <code>vrg-submit-pr</code>, then push an empty
+commit to re-trigger CI. The agent-safe fix path for body-level
+standards failures during the pr-watch reconcile loop (denied to the
+<code>audit</code> identity; the <code>user</code> identity may only fix its own PR).</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_pr_fix_body</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>pr</code> (positional, required), <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref), <code>--notes</code>, <code>--dry-run</code>, <code>--no-retrigger</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Git repo, <code>gh</code> CLI on PATH, PR open, agent identities on the PR's head branch</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>SystemExit</code>/diagnostic on identity, scope, or state rejection</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 rejection or error</td>
 </tr>
 <tr>
 <td>Status</td>
