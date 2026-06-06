@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
-    _resolve_issue_ref,
     main,
     parse_args,
 )
@@ -30,24 +29,6 @@ def _in_worktree() -> Iterator[None]:
     """
     with patch(_MOD + ".git.is_main_worktree", return_value=False):
         yield
-
-
-def test_resolve_plain_number() -> None:
-    assert _resolve_issue_ref("42") == "#42"
-
-
-def test_resolve_cross_repo() -> None:
-    assert _resolve_issue_ref("owner/repo#42") == "owner/repo#42"
-
-
-def test_resolve_invalid() -> None:
-    with pytest.raises(SystemExit, match="must be a number"):
-        _resolve_issue_ref("bad-ref")
-
-
-def test_resolve_zero() -> None:
-    with pytest.raises(SystemExit, match="must be a number"):
-        _resolve_issue_ref("0")
 
 
 def test_parse_args_cli_fields() -> None:

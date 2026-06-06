@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -354,6 +355,17 @@ def delete_if_exists(endpoint: str) -> bool:
 def create_pr(*, base: str, title: str, body_file: str) -> str:
     """Create a pull request and return its URL."""
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
+
+
+def edit_pr_body(pr: str, *, body: str) -> None:
+    """Replace a PR's body, passing the text via a temp file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        f.write(body)
+        tmp_path = f.name
+    try:
+        run("pr", "edit", pr, "--body-file", tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
 
 
 def _checks_registered(repo: str, sha: str) -> bool:
