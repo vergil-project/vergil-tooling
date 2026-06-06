@@ -8,10 +8,16 @@ from __future__ import annotations
 import os
 import re
 import sys
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal
+
+from rich.console import Console, Group
+from rich.live import Live
+from rich.spinner import Spinner
+from rich.text import Text
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -197,3 +203,65 @@ class GhaRenderer(PlainRenderer):
         if result.status in ("failed", "interrupted"):
             self._print(f"::error title={result.name} failed::{result.error}")
         self._print("")
+
+
+_STATUS_STYLES: dict[str, str] = {
+    "ok": "green",
+    "warn": "yellow",
+    "failed": "red",
+    "skipped": "yellow",
+    "interrupted": "red",
+}
+
+
+class RichRenderer:
+    """Live TTY display: completed stages collapse to one line, the active stage
+    shows a spinner plus a rolling window of its last N output lines."""
+
+    def __init__(self, out: IO[str], window: int, *, force_terminal: bool | None = None) -> None:
+        self._console = Console(file=out, highlight=False, force_terminal=force_terminal)
+        self._window = window
+        self._completed: list[Text] = []
+        self._tail: deque[str] = deque(maxlen=window if window > 0 else 1)
+        self._active: str | None = None
+        self._live = Live(console=self._console, refresh_per_second=8)
+        self._live.start()
+
+    def _renderable(self) -> Group:
+        parts: list[Text | Spinner] = list(self._completed)
+        if self._active is not None:
+            parts.append(Spinner("dots", text=Text(f" {self._active}")))
+            if self._window > 0:
+                parts.extend(
+                    Text.from_ansi(f"   {line}", style="dim") for line in self._tail
+                )
+        return Group(*parts)
+
+    def start_stage(self, name: str) -> None:
+        self._active = name
+        self._tail.clear()
+        self._live.update(self._renderable())
+
+    def stage_line(self, line: str) -> None:
+        if self._window == 0:
+            self._console.print(Text.from_ansi(line))
+        else:
+            self._tail.append(line)
+        self._live.update(self._renderable())
+
+    def end_stage(self, result: StageResult) -> None:
+        self._completed.append(
+            Text(_status_line(result), style=_STATUS_STYLES[result.status])
+        )
+        self._active = None
+        self._tail.clear()
+        self._live.update(self._renderable())
+
+    def summary(self, text: str) -> None:
+        self._live.update(self._renderable())
+        self._live.stop()
+        self._console.print(Text(text))
+
+    def close(self) -> None:
+        if self._live.is_started:
+            self._live.stop()

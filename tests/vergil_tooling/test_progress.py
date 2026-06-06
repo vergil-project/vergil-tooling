@@ -170,3 +170,34 @@ def test_gha_renderer_groups_and_error() -> None:
     assert "::endgroup::\n" in text
     assert "::error title=audit failed::boom" in text
     assert "SUMMARY" in text
+
+
+def _rich_renderer() -> tuple[progress.RichRenderer, io.StringIO]:
+    out = io.StringIO()
+    return progress.RichRenderer(out, window=2, force_terminal=True), out
+
+
+def test_rich_renderer_lifecycle_and_window() -> None:
+    r, out = _rich_renderer()
+    r.start_stage("build")
+    for i in range(5):
+        r.stage_line(f"line {i}")
+    assert list(r._tail) == ["line 3", "line 4"]  # window of 2
+    r.end_stage(StageResult("build", "ok", 2.1))
+    assert r._active is None
+    assert not r._tail
+    r.summary("SUMMARY TEXT")
+    r.close()
+    assert "SUMMARY TEXT" in out.getvalue()
+    assert "build" in out.getvalue()
+
+
+def test_rich_renderer_window_zero_streams() -> None:
+    out = io.StringIO()
+    r = progress.RichRenderer(out, window=0, force_terminal=True)
+    r.start_stage("build")
+    r.stage_line("streamed line")
+    r.end_stage(StageResult("build", "ok", 1.0))
+    r.summary("S")
+    r.close()
+    assert "streamed line" in out.getvalue()
