@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import subprocess
-import sys
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import progress
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.tracking import close_tracking_issue
 
@@ -21,27 +21,23 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
 
     print("Running vrg-finalize-pr...")
     # --cleanup-only is the non-interactive release path: no PR
-    # inference, no prompts (issue #1448). stdout is inherited so the
-    # slow finalize phases (validation takes ~a minute) stream live;
-    # stdin is closed so the child can never block on a terminal read;
-    # stderr is captured for ReleaseError.detail and replayed below so
-    # warnings are never silently swallowed.
-    result = subprocess.run(  # noqa: S603
-        ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
-        check=False,
-        stdin=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-        text=True,
-    )
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, end="")
-    if result.returncode != 0:
+    # inference, no prompts (issue #1448). Output streams through the
+    # progress session so the live display stays intact and the run log
+    # captures the cleanup narration (issue #1470) — the child must not
+    # inherit the TTY: raw writes under the live display strand stale
+    # frames on screen. stdin is closed so the child can never block on
+    # a terminal read. Captured stderr rides on CalledProcessError for
+    # ReleaseError.detail; the streamed lines mean warnings are never
+    # silently swallowed.
+    try:
+        progress.run(("vrg-finalize-pr", "--cleanup-only"), stdin=subprocess.DEVNULL)  # noqa: S607
+    except subprocess.CalledProcessError as exc:
         raise ReleaseError(
             phase="close-finalize",
             command="vrg-finalize-pr --cleanup-only",
             message="vrg-finalize-pr failed.",
-            detail=result.stderr,
-        )
+            detail=exc.stderr,
+        ) from exc
     print("Finalization complete.")
 
 
