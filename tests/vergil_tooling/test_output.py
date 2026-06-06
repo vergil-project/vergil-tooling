@@ -20,15 +20,15 @@ if TYPE_CHECKING:
     import pytest
 
 
-def test_is_ci_returns_true_when_not_a_tty() -> None:
+def test_is_ci_true_under_github_actions(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GITHUB_ACTIONS", "true")
+    assert is_ci() is True
+
+
+def test_is_ci_false_when_merely_piped(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GITHUB_ACTIONS", raising=False)
     with patch("sys.stdout") as mock_stdout:
         mock_stdout.isatty.return_value = False
-        assert is_ci() is True
-
-
-def test_is_ci_returns_false_when_tty() -> None:
-    with patch("sys.stdout") as mock_stdout:
-        mock_stdout.isatty.return_value = True
         assert is_ci() is False
 
 

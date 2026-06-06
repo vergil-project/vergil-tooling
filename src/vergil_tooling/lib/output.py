@@ -1,8 +1,8 @@
-"""TTY-aware output formatting for CI and interactive use.
+"""CI-aware output formatting for CI and interactive use.
 
-Detection: ``sys.stdout.isatty()``. When stdout is a TTY, output is
-formatted for human reading. When not (CI, piped), output uses
-GitHub Actions workflow commands.
+Detection: ``$GITHUB_ACTIONS == "true"`` (owned by ``lib/progress.py``).
+When actually running under GitHub Actions, output uses GitHub Actions
+workflow commands; otherwise output is formatted for human reading.
 """
 
 from __future__ import annotations
@@ -11,9 +11,16 @@ import os
 import sys
 from pathlib import Path
 
+from vergil_tooling.lib.progress import is_github_actions
+
 
 def is_ci() -> bool:
-    return not sys.stdout.isatty()
+    """True when actually running under GitHub Actions.
+
+    Detection is owned by lib/progress.py; this fixes the old behavior where
+    merely piped output (local pipes, agent runs) got ::error:: annotations.
+    """
+    return is_github_actions()
 
 
 def emit_error(msg: str, *, file: str | None = None, line: int | None = None) -> None:
