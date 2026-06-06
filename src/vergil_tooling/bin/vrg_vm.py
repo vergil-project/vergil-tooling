@@ -312,6 +312,18 @@ def _st_update_tooling(state: _LifecycleState) -> None:
     update_tooling(state.target.instance, fallback_tag=fallback)
 
 
+def _st_cycle_ssh(state: _LifecycleState) -> None:
+    # Lima establishes its multiplexed SSH ControlMaster as soon as the
+    # guest's sshd answers — before cloud-init group provisioning
+    # (usermod -aG) has run. sshd resolves supplementary groups once, at
+    # session establishment, so every later `limactl shell` rides that stale
+    # session and never sees provisioned groups (#1463). Cycle the VM as the
+    # final build step so the master is re-established against the fully
+    # provisioned guest; the second boot re-runs no provisioning and is fast.
+    stop_vm(state.target.instance)
+    start_vm(state.target.instance, timeout=state.timeout)
+
+
 def _create_stages() -> list[Stage]:
     return [
         Stage("fetch-template", _st_fetch_template, mode="fail_fast"),
@@ -320,6 +332,7 @@ def _create_stages() -> list[Stage]:
         Stage("link-config", _st_link_config, mode="fail_fast"),
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("tooling", _st_install_tooling, mode="fail_fast"),
+        Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
     ]
 
 
@@ -341,6 +354,7 @@ def _rebuild_stages() -> list[Stage]:
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("tooling", _st_install_tooling, mode="fail_fast"),
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
+        Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
     ]
 
 

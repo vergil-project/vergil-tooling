@@ -6,7 +6,7 @@ import os
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -101,6 +101,7 @@ class TestNoSubcommand:
 
 
 class TestCreate:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -115,6 +116,7 @@ class TestCreate:
         mock_start: MagicMock,
         mock_inject: MagicMock,
         mock_install: MagicMock,
+        mock_stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -127,9 +129,11 @@ class TestCreate:
 
         mock_fetch.assert_called_once_with("v2.0")
         mock_create.assert_called_once()
-        mock_start.assert_called_once()
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
+        # The provisioning start plus the post-provision SSH cycle (#1463).
+        assert mock_start.call_count == 2
+        mock_stop.assert_called_once_with("vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_create_fails_if_exists(self, _status: MagicMock, config_file: Path) -> None:
@@ -150,6 +154,7 @@ class TestCreate:
         result = main(["create", "--config", str(p)])
         assert result == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -164,6 +169,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -188,6 +194,7 @@ class TestCreate:
         with pytest.raises(SystemExit):
             main(["create", "--config", str(p)])
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -202,6 +209,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -223,6 +231,7 @@ class TestCreate:
         mock_fetch.assert_called_once_with("v2.2")
         mock_install.assert_called_once_with("vergil-agent", "v2.2")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -237,6 +246,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -258,6 +268,7 @@ class TestCreate:
         mock_fetch.assert_called_once_with("v2.1")
         mock_install.assert_called_once_with("vergil-agent", "v2.0")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -272,6 +283,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -497,6 +509,7 @@ class TestDestroy:
 
 
 class TestRebuild:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -515,6 +528,7 @@ class TestRebuild:
         mock_inject: MagicMock,
         mock_install: MagicMock,
         _copy: MagicMock,
+        mock_stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -526,10 +540,16 @@ class TestRebuild:
         assert result == 0
         mock_delete.assert_called_once_with("vergil-agent")
         mock_create.assert_called_once()
-        mock_start.assert_called_once_with("vergil-agent", timeout="30m")
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
+        # The provisioning start plus the post-provision SSH cycle (#1463).
+        assert mock_start.call_args_list == [
+            call("vergil-agent", timeout="30m"),
+            call("vergil-agent", timeout="30m"),
+        ]
+        mock_stop.assert_called_once_with("vergil-agent")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -548,6 +568,7 @@ class TestRebuild:
         _inject: MagicMock,
         _install: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -557,7 +578,10 @@ class TestRebuild:
 
         result = main(["rebuild", "--config", str(config_file), "--timeout", "45m"])
         assert result == 0
-        mock_start.assert_called_once_with("vergil-agent", timeout="45m")
+        assert mock_start.call_args_list == [
+            call("vergil-agent", timeout="45m"),
+            call("vergil-agent", timeout="45m"),
+        ]
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_rebuild_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
@@ -578,6 +602,7 @@ class TestRebuild:
         result = main(["rebuild", "--config", str(p)])
         assert result == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -596,6 +621,7 @@ class TestRebuild:
         _inject: MagicMock,
         _install: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -1331,6 +1357,7 @@ class TestResolveTarget:
 
 
 class TestCreateDedicated:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1347,6 +1374,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1366,6 +1394,7 @@ class TestCreateDedicated:
         assert len(kwargs["apt_repos"]) == 1
         assert kwargs["vagrant_plugins"] == ["vagrant-libvirt"]
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1382,6 +1411,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1397,6 +1427,7 @@ class TestCreateDedicated:
         assert kwargs["apt_repos"] == []
         assert kwargs["vagrant_plugins"] == []
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1415,6 +1446,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1461,6 +1493,7 @@ class TestCreateDedicated:
         mock_fetch.assert_not_called()
         mock_create.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1482,6 +1515,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         # An unsupported host must not block profiles that never asked for nested.
@@ -1534,6 +1568,7 @@ class TestCreateDedicated:
         mock_delete.assert_not_called()
         mock_fetch.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -1554,6 +1589,7 @@ class TestCreateDedicated:
         _install: MagicMock,
         _link: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1912,6 +1948,7 @@ class TestLifecycleStages:
             "link-config",
             "credentials",
             "tooling",
+            "cycle-ssh",
         ]
         assert all(s.mode == "fail_fast" for s in stages)
 
@@ -1940,6 +1977,7 @@ class TestLifecycleStages:
             "credentials",
             "tooling",
             "copy-config",
+            "cycle-ssh",
         ]
         assert all(s.mode == "fail_fast" for s in stages)
 
@@ -1957,6 +1995,25 @@ class TestLifecycleStages:
         with patch("vergil_tooling.bin.vrg_vm.update_tooling") as m_update:
             _st_update_tooling(state)
         m_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+
+    def test_st_cycle_ssh_stops_then_starts(self, tmp_path: Path) -> None:
+        # The cycle must be a stop *then* a start: only a full power cycle is
+        # guaranteed to drop the stale boot-time SSH ControlMaster (#1463).
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_cycle_ssh
+
+        state = _LifecycleState(target=_lifecycle_target(tmp_path), timeout="45m")
+        manager = MagicMock()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.stop_vm") as m_stop,
+            patch("vergil_tooling.bin.vrg_vm.start_vm") as m_start,
+        ):
+            manager.attach_mock(m_stop, "stop_vm")
+            manager.attach_mock(m_start, "start_vm")
+            _st_cycle_ssh(state)
+        assert manager.mock_calls == [
+            call.stop_vm("vergil-agent"),
+            call.start_vm("vergil-agent", timeout="45m"),
+        ]
 
 
 class TestRunLifecycle:
