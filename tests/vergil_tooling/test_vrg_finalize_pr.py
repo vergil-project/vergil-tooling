@@ -938,6 +938,50 @@ def test_explicit_pr_skips_inference_and_prompts() -> None:
     fin.assert_called_once()
 
 
+# -- --cleanup-only: non-interactive release path (issue #1448) ----------------
+
+
+def test_parse_args_cleanup_only_defaults_false() -> None:
+    assert parse_args([]).cleanup_only is False
+
+
+def test_parse_args_cleanup_only_flag() -> None:
+    assert parse_args(["--cleanup-only"]).cleanup_only is True
+
+
+def test_cleanup_only_rejects_pr_argument(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A PR argument and --cleanup-only contradict each other: the flag
+    promises no merge and no prompts, the argument requests a merge."""
+    with pytest.raises(SystemExit):
+        parse_args(["123", "--cleanup-only"])
+    err = capsys.readouterr().err
+    assert "--cleanup-only" in err
+    assert "not allowed with" in err
+
+
+def test_cleanup_only_skips_inference_and_prompts() -> None:
+    """--cleanup-only is the scriptable release path: no TTY guard, no
+    worktree enumeration, no prompts, no merge — straight to cleanup."""
+    with (
+        patch(_MOD + ".worktrees.require_tty") as guard,
+        patch(_MOD + ".worktrees.list_worktrees") as listing,
+        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + "._finalize_specific_pr") as fin,
+        patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+    ):
+        rc = main(["--cleanup-only", "--dry-run"])
+    assert rc == 0
+    guard.assert_not_called()
+    listing.assert_not_called()
+    confirm.assert_not_called()
+    fin.assert_not_called()
+
+
 # -- engine swap + explicit-target cleanup (issue #1423) -----------------------
 
 _CLEAN_PROVENANCE = ProvenanceResult(violations=[], advisories=[])

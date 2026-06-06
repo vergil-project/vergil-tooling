@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.release.context import ReleaseError
@@ -19,20 +20,27 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     print("Tracking issue closed.")
 
     print("Running vrg-finalize-pr...")
+    # --cleanup-only is the non-interactive release path: no PR
+    # inference, no prompts (issue #1448). stdout is inherited so the
+    # slow finalize phases (validation takes ~a minute) stream live;
+    # stdin is closed so the child can never block on a terminal read;
+    # stderr is captured for ReleaseError.detail and replayed below so
+    # warnings are never silently swallowed.
     result = subprocess.run(  # noqa: S603
-        ("vrg-finalize-pr",),  # noqa: S607
+        ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
         check=False,
-        capture_output=True,
+        stdin=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
         text=True,
     )
-    if result.stdout:
-        print(result.stdout)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")
     if result.returncode != 0:
         raise ReleaseError(
             phase="close-finalize",
-            command="vrg-finalize-pr",
+            command="vrg-finalize-pr --cleanup-only",
             message="vrg-finalize-pr failed.",
-            detail=result.stderr or result.stdout,
+            detail=result.stderr,
         )
     print("Finalization complete.")
 
