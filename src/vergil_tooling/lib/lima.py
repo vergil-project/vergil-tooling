@@ -9,11 +9,14 @@ import shlex
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from vergil_tooling.lib import progress
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -37,6 +40,16 @@ def _limactl(*args: str) -> subprocess.CompletedProcess[str]:
         if exc.stderr:
             print(exc.stderr, end="", file=sys.stderr)
         raise
+
+
+def _limactl_stream(*args: str) -> None:
+    """Run limactl, streaming output through the progress framework.
+
+    Used for the long-running lifecycle verbs whose output is the only
+    progress signal (issue #1454); quick query verbs stay on ``_limactl``'s
+    captured model.
+    """
+    progress.run(("limactl", *args))
 
 
 def shell_run(
@@ -254,11 +267,97 @@ def create_vm(
     _limactl(*args)
 
 
+_GUEST_LOG_POLL_SECS = 2.0
+_HEARTBEAT_SECS = 30.0
+
+_DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)([hms])")
+
+
+def _parse_duration_secs(value: str) -> float | None:
+    """Parse a Go-style duration ('30m', '1h30m', '90s') to seconds, or None."""
+    parts = _DURATION_RE.findall(value)
+    if not parts or "".join(f"{n}{u}" for n, u in parts) != value:
+        return None
+    scale = {"h": 3600.0, "m": 60.0, "s": 1.0}
+    return sum(float(n) * scale[u] for n, u in parts)
+
+
+def _serial_dir(instance: str) -> Path:
+    return Path.home() / ".lima" / instance
+
+
+def _drain_serial_logs(serial_dir: Path, offsets: dict[Path, int]) -> None:
+    """Emit complete new lines appended to the instance's serial logs.
+
+    The serial console carries the in-guest provision output (cloud-init,
+    extra-package installs, vagrant plugin builds) that ``limactl start``
+    itself never prints. Partial trailing lines are held back until the
+    newline arrives; *offsets* tracks per-file progress between calls.
+    """
+    for path in sorted(serial_dir.glob("serial*.log")):
+        try:
+            start = offsets.get(path, 0)
+            with path.open("rb") as fh:
+                fh.seek(start)
+                chunk = fh.read()
+        except OSError:
+            continue
+        cut = chunk.rfind(b"\n")
+        if cut == -1:
+            continue
+        offsets[path] = start + cut + 1
+        for raw in chunk[: cut + 1].decode("utf-8", errors="replace").splitlines():
+            line = raw.strip()
+            if line:
+                progress.emit(f"[guest] {line}")
+
+
+def _heartbeat(elapsed: float, timeout: str, budget: float | None) -> str:
+    """One elapsed-vs-budget line, so an approaching timeout cliff is visible."""
+    if budget:
+        return f"[elapsed] {progress.format_elapsed(elapsed)} of {timeout} timeout budget"
+    return f"[elapsed] {progress.format_elapsed(elapsed)}"
+
+
+def _provision_monitor(
+    serial_dir: Path,
+    timeout: str,
+    stop: threading.Event,
+    *,
+    poll_secs: float = _GUEST_LOG_POLL_SECS,
+    heartbeat_secs: float = _HEARTBEAT_SECS,
+) -> None:
+    """Tail serial logs and emit a periodic heartbeat until *stop* is set."""
+    offsets: dict[Path, int] = {}
+    budget = _parse_duration_secs(timeout)
+    started = time.monotonic()
+    next_beat = heartbeat_secs
+    while not stop.wait(poll_secs):
+        _drain_serial_logs(serial_dir, offsets)
+        elapsed = time.monotonic() - started
+        if elapsed >= next_beat:
+            progress.emit(_heartbeat(elapsed, timeout, budget))
+            next_beat = elapsed + heartbeat_secs
+    _drain_serial_logs(serial_dir, offsets)
+
+
 def start_vm(instance: str, *, timeout: str = "30m") -> None:
+    """Start the VM, streaming limactl output and in-guest provision progress."""
     status = vm_status(instance)
     if status == "Running":
         return
-    _limactl("start", f"--timeout={timeout}", instance)
+    stop = threading.Event()
+    monitor = threading.Thread(
+        target=_provision_monitor,
+        args=(_serial_dir(instance), timeout, stop),
+        daemon=True,
+    )
+    monitor.start()
+    try:
+        _limactl_stream("start", f"--timeout={timeout}", instance)
+    finally:
+        stop.set()
+        monitor.join()
 
 
 def stop_vm(instance: str) -> None:

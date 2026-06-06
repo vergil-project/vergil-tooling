@@ -468,25 +468,33 @@ class TestNestedVirtSupport:
 
 
 class TestStartStopVm:
-    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima._limactl_stream")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
-    def test_start_calls_limactl_with_default_timeout(
+    def test_start_streams_limactl_with_default_timeout(
         self, _status: MagicMock, mock: MagicMock
     ) -> None:
         start_vm("vergil-agent")
         mock.assert_called_once_with("start", "--timeout=30m", "vergil-agent")
 
-    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima._limactl_stream")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
     def test_start_passes_custom_timeout(self, _status: MagicMock, mock: MagicMock) -> None:
         start_vm("vergil-agent", timeout="1h")
         mock.assert_called_once_with("start", "--timeout=1h", "vergil-agent")
 
-    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima._limactl_stream")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
     def test_start_skips_if_running(self, _status: MagicMock, mock: MagicMock) -> None:
         start_vm("vergil-agent")
         mock.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima._limactl_stream", side_effect=RuntimeError("boom"))
+    @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
+    def test_start_stops_monitor_on_failure(self, _status: MagicMock, mock: MagicMock) -> None:
+        # The monitor thread must be stopped and joined even when limactl fails.
+        with pytest.raises(RuntimeError, match="boom"):
+            start_vm("vergil-agent")
+        mock.assert_called_once()
 
     @patch("vergil_tooling.lib.lima._limactl")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
@@ -1255,3 +1263,160 @@ class TestVmProbe:
     def test_exec_failure_is_zeros_and_none(self, mock_shell: MagicMock) -> None:
         mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
         assert vm_probe("inst", fingerprint=True) == (0, 0, None)
+
+
+class TestLimactlStream:
+    @patch("vergil_tooling.lib.lima.progress")
+    def test_delegates_to_progress_run(self, m_progress: MagicMock) -> None:
+        from vergil_tooling.lib.lima import _limactl_stream
+
+        _limactl_stream("start", "--timeout=30m", "vergil-agent")
+        m_progress.run.assert_called_once_with(
+            ("limactl", "start", "--timeout=30m", "vergil-agent")
+        )
+
+
+class TestParseDurationSecs:
+    def test_minutes(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("30m") == 1800
+
+    def test_compound(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("1h30m") == 5400
+
+    def test_seconds(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("90s") == 90
+
+    def test_invalid(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("soon") is None
+
+    def test_empty(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("") is None
+
+    def test_trailing_garbage(self) -> None:
+        from vergil_tooling.lib.lima import _parse_duration_secs
+
+        assert _parse_duration_secs("30mxx") is None
+
+
+class TestDrainSerialLogs:
+    def test_emits_new_complete_lines(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        (tmp_path / "serial.log").write_bytes(b"boot one\nboot two\npartial")
+        offsets: dict[Path, int] = {}
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _drain_serial_logs(tmp_path, offsets)
+        assert [c.args[0] for c in m_emit.call_args_list] == [
+            "[guest] boot one",
+            "[guest] boot two",
+        ]
+        # partial line held back; offset stops at the last newline
+        assert offsets[tmp_path / "serial.log"] == len(b"boot one\nboot two\n")
+
+    def test_second_drain_emits_only_appended(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        log = tmp_path / "serial.log"
+        log.write_bytes(b"first\n")
+        offsets: dict[Path, int] = {}
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _drain_serial_logs(tmp_path, offsets)
+            log.write_bytes(b"first\nsecond\n")
+            _drain_serial_logs(tmp_path, offsets)
+        assert [c.args[0] for c in m_emit.call_args_list] == [
+            "[guest] first",
+            "[guest] second",
+        ]
+
+    def test_no_complete_line_is_silent(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        (tmp_path / "serial.log").write_bytes(b"no newline yet")
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _drain_serial_logs(tmp_path, {})
+        m_emit.assert_not_called()
+
+    def test_missing_dir_is_noop(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _drain_serial_logs(tmp_path / "absent", {})
+        m_emit.assert_not_called()
+
+    def test_unreadable_file_is_skipped(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        (tmp_path / "serial.log").write_bytes(b"line\n")
+        with (
+            patch("vergil_tooling.lib.lima.progress.emit") as m_emit,
+            patch.object(Path, "open", side_effect=OSError),
+        ):
+            _drain_serial_logs(tmp_path, {})
+        m_emit.assert_not_called()
+
+    def test_blank_lines_not_emitted(self, tmp_path: Path) -> None:
+        from vergil_tooling.lib.lima import _drain_serial_logs
+
+        (tmp_path / "serial.log").write_bytes(b"\r\n\nreal line\r\n")
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _drain_serial_logs(tmp_path, {})
+        assert [c.args[0] for c in m_emit.call_args_list] == ["[guest] real line"]
+
+
+class TestHeartbeat:
+    def test_with_budget(self) -> None:
+        from vergil_tooling.lib.lima import _heartbeat
+
+        line = _heartbeat(125.0, "30m", 1800.0)
+        assert line == "[elapsed] 2m05s of 30m timeout budget"
+
+    def test_without_budget(self) -> None:
+        from vergil_tooling.lib.lima import _heartbeat
+
+        assert _heartbeat(3.0, "soon", None) == "[elapsed] 3.0s"
+
+
+class TestProvisionMonitor:
+    def test_tails_and_emits_heartbeat(self, tmp_path: Path) -> None:
+        import threading
+        import time as _time
+
+        from vergil_tooling.lib.lima import _provision_monitor
+
+        (tmp_path / "serial.log").write_bytes(b"boot line\n")
+        stop = threading.Event()
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            thread = threading.Thread(
+                target=_provision_monitor,
+                args=(tmp_path, "30m", stop),
+                kwargs={"poll_secs": 0.01, "heartbeat_secs": 0.03},
+            )
+            thread.start()
+            _time.sleep(0.2)
+            stop.set()
+            thread.join()
+        emitted = [c.args[0] for c in m_emit.call_args_list]
+        assert "[guest] boot line" in emitted
+        assert any(e.startswith("[elapsed]") for e in emitted)
+
+    def test_stop_preset_drains_once_and_exits(self, tmp_path: Path) -> None:
+        import threading
+
+        from vergil_tooling.lib.lima import _provision_monitor
+
+        (tmp_path / "serial.log").write_bytes(b"final line\n")
+        stop = threading.Event()
+        stop.set()
+        with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
+            _provision_monitor(tmp_path, "30m", stop, poll_secs=0.01, heartbeat_secs=0.03)
+        assert [c.args[0] for c in m_emit.call_args_list] == ["[guest] final line"]

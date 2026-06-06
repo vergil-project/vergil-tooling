@@ -457,7 +457,9 @@ def run_pipeline(
                 results.append(result)
                 interrupted = True
                 break
-            except Exception as exc:  # noqa: BLE001 — the pipeline is the failure boundary
+            # SystemExit included: a stage calling sys.exit() is a stage
+            # failure to record and summarize, not a silent process exit.
+            except (Exception, SystemExit) as exc:  # noqa: BLE001 — the pipeline is the failure boundary
                 cause = f"{type(exc).__name__}: {exc}"
                 status: StageStatus = "warn" if stage.mode == "warn" else "failed"
                 result = StageResult(stage.name, status, time.monotonic() - start, cause)
