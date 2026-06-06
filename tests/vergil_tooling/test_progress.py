@@ -78,3 +78,34 @@ def test_detect_format_plain(monkeypatch: pytest.MonkeyPatch) -> None:
     with patch("sys.stdout") as mock_stdout:
         mock_stdout.isatty.return_value = False
         assert progress.detect_format() == "plain"
+
+
+def test_runlog_creates_timestamped_file(tmp_path: Path) -> None:
+    log = progress.RunLog("vrg-release", tmp_path)
+    assert log.path.parent == tmp_path / ".vergil"
+    assert log.path.name.startswith("vrg-release-")
+    assert log.path.name.endswith(".log")
+    log.close()
+
+
+def test_runlog_write_strips_ansi(tmp_path: Path) -> None:
+    log = progress.RunLog("vrg-release", tmp_path)
+    log.write("\x1b[32mgreen\x1b[0m line")
+    log.close()
+    assert log.path.read_text() == "green line\n"
+
+
+def test_runlog_prunes_to_retain_count(tmp_path: Path) -> None:
+    log_dir = tmp_path / ".vergil"
+    log_dir.mkdir()
+    for i in range(25):
+        (log_dir / f"vrg-release-20260101-{i:06d}.log").write_text("old")
+    (log_dir / "vrg-validate-20260101-000000.log").write_text("other command")
+    log = progress.RunLog("vrg-release", tmp_path)
+    log.close()
+    release_logs = sorted(log_dir.glob("vrg-release-*.log"))
+    assert len(release_logs) == progress.LOG_RETAIN
+    # newest survives, oldest pruned, other commands untouched
+    assert log.path in release_logs
+    assert (log_dir / "vrg-validate-20260101-000000.log").exists()
+    assert not (log_dir / "vrg-release-20260101-000000.log").exists()

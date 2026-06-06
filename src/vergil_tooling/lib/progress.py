@@ -9,6 +9,8 @@ import os
 import re
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -86,3 +88,34 @@ def detect_format() -> str:
     if is_github_actions():
         return "gha"
     return "plain"
+
+
+class RunLog:
+    """Full verbose log for one run of a progress-aware command.
+
+    Lives at ``.vergil/<command>-YYYYMMDD-HHMMSS.log``. On creation, prunes
+    older logs for the same command so at most ``LOG_RETAIN`` remain.
+    """
+
+    def __init__(self, command: str, repo_root: Path) -> None:
+        log_dir = repo_root / ".vergil"
+        log_dir.mkdir(exist_ok=True)
+        _prune_logs(log_dir, command)
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")  # noqa: DTZ005
+        self.path = log_dir / f"{command}-{stamp}.log"
+        self._fh = self.path.open("a", encoding="utf-8")
+
+    def write(self, line: str) -> None:
+        """Append one line, with ANSI escapes stripped, and flush."""
+        self._fh.write(_ANSI_RE.sub("", line) + "\n")
+        self._fh.flush()
+
+    def close(self) -> None:
+        self._fh.close()
+
+
+def _prune_logs(log_dir: Path, command: str) -> None:
+    logs = sorted(log_dir.glob(f"{command}-*.log"))
+    excess = len(logs) - (LOG_RETAIN - 1)
+    for stale in logs[: max(0, excess)]:
+        stale.unlink(missing_ok=True)
