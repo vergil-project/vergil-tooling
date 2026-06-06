@@ -7,6 +7,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.bin.vrg_hook_guard import _find_vergil_toml, main
 
 
@@ -100,26 +102,6 @@ class TestRawGitDetection:
         result = json.loads(out)
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
-    def test_env_var_prefix(self) -> None:
-        rc, out = _run("VRG_COMMIT_CONTEXT=1 git commit -m 'test'")
-        result = json.loads(out)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-    def test_multiple_env_vars(self) -> None:
-        rc, out = _run("FOO=bar BAZ=1 git commit -m 'test'")
-        result = json.loads(out)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-    def test_env_command_wrapper(self) -> None:
-        rc, out = _run("env git commit -m 'test'")
-        result = json.loads(out)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-    def test_command_wrapper(self) -> None:
-        rc, out = _run("command git commit -m 'test'")
-        result = json.loads(out)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-
     def test_bash_c_subshell(self) -> None:
         rc, out = _run('bash -c "git commit -m test"')
         result = json.loads(out)
@@ -137,11 +119,6 @@ class TestRawGitDetection:
 
     def test_dollar_paren(self) -> None:
         rc, out = _run("echo $(git log --oneline)")
-        result = json.loads(out)
-        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
-
-    def test_backtick(self) -> None:
-        rc, out = _run("echo `git log --oneline`")
         result = json.loads(out)
         assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
 
@@ -243,6 +220,107 @@ class TestQuotedArgumentExclusion:
 
     def test_bash_c_vrg_git_allowed(self) -> None:
         rc, out = _run('bash -c "vrg-git push origin main"')
+        assert rc == 0
+        assert out == ""
+
+
+# -- canonical case table (spec section 6.1) -----------------------------------
+#
+# Encoded verbatim from the command-matcher quoting design spec,
+# section 6.1 (vergil-claude-plugin,
+# docs/specs/2026-06-05-450-command-matcher-quoting-design.md). The
+# rule is implemented twice (jq/Oniguruma in the plugin scripts,
+# Python re here); drift between the implementations requires editing
+# the spec table — a visible act. Verdicts are for the raw-git
+# predicate. Rows 11-12 apply only to vrg-hook-guard.
+
+_SPEC_TABLE = [
+    # columns: row number, command, denies, exercises
+    (1, "git commit -m x", True, "plain invocation"),
+    (2, "cd foo && git commit", True, "separator"),
+    (3, "x=$(git commit -m x)", True, "( separator"),
+    (4, "{ git commit -m x; }", True, "{ separator"),
+    (
+        5,
+        'vrg-commit --body "line one\ngit commit prose"',
+        False,
+        "#450 repro",
+    ),
+    (6, "find . -path ./.git -prune", False, "position anchor"),
+    (7, 'echo "git commit"', False, "quoted span stripped"),
+    (8, "echo 'say \"git commit\"'", False, "nesting"),
+    (9, 'echo "he said \\"git commit\\""', False, "escape handling"),
+    (
+        10,
+        'echo "; git commit',
+        True,
+        "unbalanced quote with a separator inside the span (spec 2.1)",
+    ),
+    (11, 'bash -c "git commit"', True, "recheck path"),
+    (
+        12,
+        "bash -c 'true' && vrg-commit --body \"git commit prose\"",
+        False,
+        "recheck confinement (spec 4.3)",
+    ),
+    (13, "if git commit; then :; fi", False, "keyword position (spec 2.4)"),
+    (
+        14,
+        'echo "git commit',
+        False,
+        "unbalanced quote; the unstripped quote is not a separator",
+    ),
+]
+
+
+class TestSpecCanonicalTable:
+    @pytest.mark.parametrize(
+        ("command", "denies"),
+        [(command, denies) for _, command, denies, _ in _SPEC_TABLE],
+        ids=[f"row-{row}" for row, _, _, _ in _SPEC_TABLE],
+    )
+    def test_spec_vector(self, command: str, denies: bool) -> None:
+        rc, out = _run(command)
+        assert rc == 0
+        if denies:
+            result = json.loads(out)
+            assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        else:
+            assert out == ""
+
+
+# -- accepted false-negative gaps (spec section 2.4) ---------------------------
+#
+# The canonical anchor (spec section 2.2) matches a tool name only at
+# line start or after a command separator. These shapes place the tool
+# name elsewhere and are accepted false negatives: the hook guards
+# against agent slip-ups, and the vrg-git/vrg-gh wrappers remain the
+# real enforcement layer.
+
+
+class TestAcceptedGaps:
+    def test_env_var_prefix(self) -> None:
+        rc, out = _run("VRG_COMMIT_CONTEXT=1 git commit -m 'test'")
+        assert rc == 0
+        assert out == ""
+
+    def test_multiple_env_vars(self) -> None:
+        rc, out = _run("FOO=bar BAZ=1 git commit -m 'test'")
+        assert rc == 0
+        assert out == ""
+
+    def test_env_command_wrapper(self) -> None:
+        rc, out = _run("env git commit -m 'test'")
+        assert rc == 0
+        assert out == ""
+
+    def test_command_wrapper(self) -> None:
+        rc, out = _run("command git commit -m 'test'")
+        assert rc == 0
+        assert out == ""
+
+    def test_backtick_substitution(self) -> None:
+        rc, out = _run("echo `git log --oneline`")
         assert rc == 0
         assert out == ""
 
