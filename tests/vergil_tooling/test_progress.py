@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import io
 import subprocess
 import sys
@@ -290,3 +291,133 @@ def test_run_check_false_returns_code() -> None:
     progress._session = None
     rc = progress.run((sys.executable, "-c", "import sys; sys.exit(2)"), check=False)
     assert rc == 2
+
+
+def _args(**skips: bool) -> argparse.Namespace:
+    return argparse.Namespace(output_window=5, output_format="plain", **skips)
+
+
+def _pipeline(tmp_path: Path, stages: list[Stage], args: argparse.Namespace) -> int:
+    return progress.run_pipeline(
+        None, stages, command="test-cmd", label="test", args=args, repo_root=tmp_path
+    )
+
+
+def test_pipeline_success_exit_zero(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[str] = []
+    stages = [
+        Stage("one", lambda ctx: calls.append("one"), mode="fail_fast"),
+        Stage("two", lambda ctx: calls.append("two"), mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    assert calls == ["one", "two"]
+    out = capsys.readouterr().out
+    assert "✓  test complete" in out
+
+
+def test_pipeline_stage_print_is_captured(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stages = [Stage("noisy", lambda ctx: print("deep print"), mode="fail_defer")]
+    _pipeline(tmp_path, stages, _args())
+    assert "deep print" in capsys.readouterr().out
+    logs = list((tmp_path / ".vergil").glob("test-cmd-*.log"))
+    assert len(logs) == 1
+    assert "deep print" in logs[0].read_text()
+
+
+def _boom(ctx: object) -> None:
+    msg = "boom"
+    raise RuntimeError(msg)
+
+
+def test_pipeline_fail_defer_continues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    stages = [
+        Stage("bad", _boom, mode="fail_defer"),
+        Stage("after", lambda ctx: calls.append("after"), mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 1
+    assert calls == ["after"]
+    out = capsys.readouterr().out
+    assert "✗  failures:" in out
+    assert "bad — RuntimeError: boom" in out
+
+
+def test_pipeline_fail_fast_stops(tmp_path: Path) -> None:
+    calls: list[str] = []
+    stages = [
+        Stage("bad", _boom, mode="fail_fast"),
+        Stage("after", lambda ctx: calls.append("after"), mode="fail_fast"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 1
+    assert calls == []
+
+
+def test_pipeline_warn_does_not_affect_exit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    stages = [Stage("meh", _boom, mode="warn")]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    assert "⚠  warnings (non-fatal):" in capsys.readouterr().out
+
+
+def test_pipeline_skip_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    calls: list[str] = []
+    stages = [
+        Stage(
+            "audit", lambda ctx: calls.append("audit"), mode="fail_fast", skip_flag="skip_audit"
+        ),
+        Stage("after", lambda ctx: calls.append("after"), mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args(skip_audit=True)) == 0
+    assert calls == ["after"]  # audit never ran
+    assert "audit — skipped via --skip-audit" in capsys.readouterr().out
+
+
+def _interrupt(ctx: object) -> None:
+    raise KeyboardInterrupt
+
+
+def test_pipeline_interrupt_exits_130(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    calls: list[str] = []
+    stages = [
+        Stage("slow", _interrupt, mode="fail_defer"),
+        Stage("after", lambda ctx: calls.append("after"), mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 130
+    assert calls == []
+    out = capsys.readouterr().out
+    assert "slow — interrupted" in out
+    assert "full log →" in out
+
+
+def test_pipeline_traceback_in_log(tmp_path: Path) -> None:
+    stages = [Stage("bad", _boom, mode="fail_defer")]
+    _pipeline(tmp_path, stages, _args())
+    log = next((tmp_path / ".vergil").glob("test-cmd-*.log"))
+    assert "Traceback" in log.read_text()
+
+
+def test_add_progress_args_generates_flags() -> None:
+    parser = argparse.ArgumentParser()
+    stages = [Stage("audit", lambda ctx: None, mode="fail_fast", skip_flag="skip_audit")]
+    progress.add_progress_args(parser, stages)
+    args = parser.parse_args(["--skip-audit", "--output-window", "3"])
+    assert args.skip_audit is True
+    assert args.output_window == 3
+    assert args.output_format is None
+    args = parser.parse_args([])
+    assert args.skip_audit is False
+    assert args.output_window == 5
+
+
+def test_add_progress_args_rejects_skip_on_non_fail_fast() -> None:
+    parser = argparse.ArgumentParser()
+    stages = [Stage("docs", lambda ctx: None, mode="fail_defer", skip_flag="skip_docs")]
+    with pytest.raises(ValueError, match="skip_flag is only supported on fail_fast stages"):
+        progress.add_progress_args(parser, stages)

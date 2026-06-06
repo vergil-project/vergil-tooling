@@ -5,12 +5,16 @@ Design: docs/specs/2026-06-05-progress-framework-design.md
 
 from __future__ import annotations
 
+import argparse
+import contextlib
 import io
 import os
 import re
 import subprocess
 import sys
 import threading
+import time
+import traceback
 from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
@@ -369,3 +373,119 @@ def run(
             stderr="\n".join(captured["stderr"]),
         )
     return returncode
+
+
+def add_progress_args(parser: argparse.ArgumentParser, stages: Sequence[Stage]) -> None:
+    """Add the framework's CLI flags, including per-stage --skip-* escape hatches."""
+    parser.add_argument(
+        "--output-window",
+        type=int,
+        default=5,
+        metavar="N",
+        help="Rolling window size for the TTY renderer. 0 = full stream then collapse.",
+    )
+    parser.add_argument(
+        "--output-format",
+        choices=("rich", "gha", "plain"),
+        default=None,
+        help="Override renderer auto-detection.",
+    )
+    for stage in stages:
+        if stage.skip_flag is not None:
+            if stage.mode != "fail_fast":
+                msg = f"skip_flag is only supported on fail_fast stages: {stage.name}"
+                raise ValueError(msg)
+            parser.add_argument(
+                "--" + stage.skip_flag.replace("_", "-"),
+                action="store_true",
+                default=False,
+                help=f"Skip the {stage.name} stage entirely.",
+            )
+
+
+def _make_renderer(fmt: str, out: IO[str], window: int) -> Any:
+    if fmt == "rich":
+        return RichRenderer(out, window)
+    if fmt == "gha":
+        return GhaRenderer(out)
+    return PlainRenderer(out)
+
+
+def run_pipeline(
+    ctx: Any,
+    stages: Sequence[Stage],
+    *,
+    command: str,
+    label: str,
+    args: argparse.Namespace,
+    repo_root: Path,
+) -> int:
+    """Run *stages* in order with progress rendering and full logging.
+
+    Returns 0 on success, 1 if any fail_defer/fail_fast stage failed,
+    130 on KeyboardInterrupt.
+    """
+    global _session  # noqa: PLW0603
+    out = sys.stdout
+    log = RunLog(command, repo_root)
+    fmt = args.output_format or detect_format()
+    renderer = _make_renderer(fmt, out, args.output_window)
+    _session = _Session(renderer=renderer, log=log)
+    results: list[StageResult] = []
+    interrupted = False
+    start_total = time.monotonic()
+    try:
+        for stage in stages:
+            if stage.skip_flag is not None and getattr(args, stage.skip_flag, False):
+                flag = "--" + stage.skip_flag.replace("_", "-")
+                result = StageResult(stage.name, "skipped", 0.0, f"skipped via {flag}")
+                log.write(f"=== {stage.name}: skipped via {flag} ===")
+                renderer.end_stage(result)
+                results.append(result)
+                continue
+            renderer.start_stage(stage.name)
+            log.write(f"=== {stage.name}: started ===")
+            start = time.monotonic()
+            try:
+                with (
+                    contextlib.redirect_stdout(_EmitWriter()),
+                    contextlib.redirect_stderr(_EmitWriter()),
+                ):
+                    stage.fn(ctx)
+            except KeyboardInterrupt:
+                result = StageResult(
+                    stage.name, "interrupted", time.monotonic() - start, "interrupted"
+                )
+                log.write(f"=== {stage.name}: interrupted ===")
+                renderer.end_stage(result)
+                results.append(result)
+                interrupted = True
+                break
+            except Exception as exc:  # noqa: BLE001 — the pipeline is the failure boundary
+                cause = f"{type(exc).__name__}: {exc}"
+                status: StageStatus = "warn" if stage.mode == "warn" else "failed"
+                result = StageResult(stage.name, status, time.monotonic() - start, cause)
+                log.write(f"=== {stage.name}: {status} ({cause}) ===")
+                log.write(traceback.format_exc())
+                renderer.end_stage(result)
+                results.append(result)
+                if stage.mode == "fail_fast":
+                    break
+            else:
+                elapsed = time.monotonic() - start
+                result = StageResult(stage.name, "ok", elapsed)
+                log.write(f"=== {stage.name}: ok ({format_elapsed(elapsed)}) ===")
+                renderer.end_stage(result)
+                results.append(result)
+    finally:
+        _session = None
+        text = build_summary(label, results, time.monotonic() - start_total, log.path)
+        renderer.summary(text)
+        renderer.close()
+        log.write(text)
+        log.close()
+    if interrupted:
+        return 130
+    if any(r.status == "failed" for r in results):
+        return 1
+    return 0
