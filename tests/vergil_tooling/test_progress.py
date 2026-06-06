@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
@@ -109,3 +110,63 @@ def test_runlog_prunes_to_retain_count(tmp_path: Path) -> None:
     assert log.path in release_logs
     assert (log_dir / "vrg-validate-20260101-000000.log").exists()
     assert not (log_dir / "vrg-release-20260101-000000.log").exists()
+
+
+def _results_mixed() -> list[StageResult]:
+    return [
+        StageResult("audit", "skipped", 0.0, "skipped via --skip-audit"),
+        StageResult("changelog", "ok", 3.2),
+        StageResult("build-images", "failed", 65.0, "docker build exited 1"),
+    ]
+
+
+def test_build_summary_with_failures(tmp_path: Path) -> None:
+    text = progress.build_summary("release 2.1.2", _results_mixed(), 61.0, tmp_path / "x.log")
+    assert "⚠  warnings (non-fatal):" in text
+    assert "audit — skipped via --skip-audit" in text
+    assert "✗  failures:" in text
+    assert "build-images — docker build exited 1" in text
+    assert "release 2.1.2 completed with errors  (total: 01:01)" in text
+    assert "PipelineError: 1 stage failed (build-images) · exit 1" in text
+    assert str(tmp_path / "x.log") in text
+
+
+def test_build_summary_success(tmp_path: Path) -> None:
+    text = progress.build_summary(
+        "release 2.1.2", [StageResult("changelog", "ok", 3.2)], 58.0, tmp_path / "x.log"
+    )
+    assert "✓  release 2.1.2 complete  (total: 00:58)" in text
+    assert "PipelineError" not in text
+
+
+def test_plain_renderer_lifecycle() -> None:
+    out = io.StringIO()
+    r = progress.PlainRenderer(out)
+    r.start_stage("audit")
+    r.stage_line("checking things")
+    r.end_stage(StageResult("audit", "ok", 2.1))
+    r.end_stage(StageResult("docs", "skipped", 0.0, "skipped via --skip-docs"))
+    r.summary("SUMMARY")
+    r.close()
+    text = out.getvalue()
+    assert "→ audit  starting..." in text
+    assert "checking things" in text
+    assert "✓ audit  2.1s" in text
+    assert "⚠ docs — skipped via --skip-docs" in text
+    assert "SUMMARY" in text
+
+
+def test_gha_renderer_groups_and_error() -> None:
+    out = io.StringIO()
+    r = progress.GhaRenderer(out)
+    r.start_stage("audit")
+    r.stage_line("checking")
+    r.end_stage(StageResult("audit", "failed", 2.0, "boom"))
+    r.summary("SUMMARY")
+    r.close()
+    text = out.getvalue()
+    assert "::group::audit\n" in text
+    assert "checking\n" in text
+    assert "::endgroup::\n" in text
+    assert "::error title=audit failed::boom" in text
+    assert "SUMMARY" in text

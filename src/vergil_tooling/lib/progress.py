@@ -11,10 +11,10 @@ import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import IO, TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Sequence
 
 LOG_RETAIN = 20
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -119,3 +119,81 @@ def _prune_logs(log_dir: Path, command: str) -> None:
     excess = len(logs) - (LOG_RETAIN - 1)
     for stale in logs[: max(0, excess)]:
         stale.unlink(missing_ok=True)
+
+
+_RULE = "─" * 45
+
+
+def build_summary(
+    label: str,
+    results: Sequence[StageResult],
+    total_elapsed: float,
+    log_path: Path,
+) -> str:
+    """Build the plain-text final summary shared by all renderers."""
+    warnings = [r for r in results if r.status in ("warn", "skipped")]
+    failures = [r for r in results if r.status in ("failed", "interrupted")]
+    lines = [_RULE]
+    if warnings:
+        lines.append("⚠  warnings (non-fatal):")
+        lines.extend(f"   {r.name} — {r.error}" for r in warnings)
+        lines.append("")
+    if failures:
+        lines.append("✗  failures:")
+        lines.extend(f"   {r.name} — {r.error}" for r in failures)
+        lines.append("")
+        lines.append(f"{label} completed with errors  (total: {format_total(total_elapsed)})")
+        lines.append(f"PipelineError: {PipelineError(failures)} · exit 1")
+    else:
+        lines.append(f"✓  {label} complete  (total: {format_total(total_elapsed)})")
+    lines.append(f"   full log → {log_path}")
+    return "\n".join(lines)
+
+
+def _status_line(result: StageResult) -> str:
+    symbol = _SYMBOLS[result.status]
+    if result.status == "skipped":
+        return f"{symbol} {result.name} — {result.error}"
+    detail = f" — {result.error}" if result.error else ""
+    return f"{symbol} {result.name}  {format_elapsed(result.elapsed)}{detail}"
+
+
+class PlainRenderer:
+    """Sequential flat output for piped / non-GHA-CI contexts."""
+
+    def __init__(self, out: IO[str]) -> None:
+        self._out = out
+
+    def start_stage(self, name: str) -> None:
+        self._print(f"→ {name}  starting...")
+
+    def stage_line(self, line: str) -> None:
+        self._print(line)
+
+    def end_stage(self, result: StageResult) -> None:
+        self._print(_status_line(result))
+        self._print("")
+
+    def summary(self, text: str) -> None:
+        self._print(text)
+
+    def close(self) -> None:
+        pass
+
+    def _print(self, line: str) -> None:
+        self._out.write(line + "\n")
+        self._out.flush()
+
+
+class GhaRenderer(PlainRenderer):
+    """GitHub Actions ::group:: rendering; one collapsible section per stage."""
+
+    def start_stage(self, name: str) -> None:
+        self._print(f"::group::{name}")
+
+    def end_stage(self, result: StageResult) -> None:
+        self._print("::endgroup::")
+        self._print(_status_line(result))
+        if result.status in ("failed", "interrupted"):
+            self._print(f"::error title={result.name} failed::{result.error}")
+        self._print("")
