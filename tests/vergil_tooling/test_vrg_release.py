@@ -48,7 +48,7 @@ def test_parse_args_has_progress_flags() -> None:
 def test_parse_args_default_skip_audit() -> None:
     args = parse_args([])
     assert args.skip_audit is False
-    assert args.output_window == 5
+    assert args.output_window is None  # auto-size to terminal height
     assert args.output_format is None
 
 
