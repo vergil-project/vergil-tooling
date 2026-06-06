@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from subprocess import CompletedProcess
 from unittest.mock import patch
 
 import pytest
@@ -35,52 +34,26 @@ def test_close_and_finalize_succeeds() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".close_tracking_issue") as mock_close,
-        patch(
-            _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=0),
-        ),
+        patch(_MOD + ".progress.run", return_value=0),
     ):
         close_and_finalize(ctx)
     mock_close.assert_called_once()
 
 
-def test_close_and_finalize_streams_cleanup_only() -> None:
-    """Issue #1448: invoke the non-interactive flag, stream stdout to the
-    user, never hand the child the TTY stdin, and capture only stderr
-    (for ReleaseError.detail)."""
+def test_close_and_finalize_streams_through_progress() -> None:
+    """Issue #1470: the cleanup child must not inherit the TTY — raw writes
+    under the live display strand stale frames on screen. Its output streams
+    through the progress session (live display + run log) instead; stdin is
+    closed so the child can never block on a terminal read (issue #1448)."""
     ctx = _ctx()
     with (
         patch(_MOD + ".close_tracking_issue"),
-        patch(
-            _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=0, stderr=""),
-        ) as run,
+        patch(_MOD + ".progress.run", return_value=0) as run,
     ):
         close_and_finalize(ctx)
     (cmd,) = run.call_args.args
     assert cmd == ("vrg-finalize-pr", "--cleanup-only")
-    kwargs = run.call_args.kwargs
-    assert "capture_output" not in kwargs
-    assert "stdout" not in kwargs  # stdout streams to the user
-    assert kwargs["stdin"] == subprocess.DEVNULL
-    assert kwargs["stderr"] == subprocess.PIPE
-
-
-def test_close_and_finalize_relays_child_stderr(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Captured child stderr is replayed on success so warnings are
-    never silently swallowed."""
-    ctx = _ctx()
-    with (
-        patch(_MOD + ".close_tracking_issue"),
-        patch(
-            _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=0, stderr="WARNING: x"),
-        ),
-    ):
-        close_and_finalize(ctx)
-    assert "WARNING: x" in capsys.readouterr().err
+    assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
 
 def test_build_summary_omits_none_fields() -> None:
@@ -113,12 +86,15 @@ def test_build_summary_labels_back_merge_pr() -> None:
 
 def test_close_and_finalize_fails_on_finalize_error() -> None:
     ctx = _ctx()
+    err = subprocess.CalledProcessError(
+        1,
+        ("vrg-finalize-pr", "--cleanup-only"),
+        output="",
+        stderr="validation failed",
+    )
     with (
         patch(_MOD + ".close_tracking_issue"),
-        patch(
-            _MOD + ".subprocess.run",
-            return_value=CompletedProcess(args=(), returncode=1, stderr="validation failed"),
-        ),
+        patch(_MOD + ".progress.run", side_effect=err),
         pytest.raises(ReleaseError, match="vrg-finalize-pr") as excinfo,
     ):
         close_and_finalize(ctx)
