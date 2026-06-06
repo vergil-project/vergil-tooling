@@ -20,16 +20,12 @@ def preflight(
     *,
     version_override: str | None,
     repo_root: Path,
-    verbose: bool = False,
-    skip_audit: bool = False,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext."""
     _check_host_prerequisites()
-    repo = _check_gh_auth()
+    repo = check_gh_auth()
     _read_and_validate_config(repo_root)
     _check_branch_and_tree()
-    if not skip_audit:
-        _audit_repo_config(repo)
 
     try:
         current_version = version.show(repo_root)
@@ -54,7 +50,6 @@ def preflight(
         version=release_version,
         repo_root=repo_root,
         version_override=version_override,
-        verbose=verbose,
     )
 
 
@@ -75,7 +70,12 @@ def _check_host_prerequisites() -> None:
         )
 
 
-def _check_gh_auth() -> str:
+def run_audit() -> None:
+    """Standalone audit stage: resolve the repo and audit its GitHub config."""
+    audit_repo_config(check_gh_auth())
+
+
+def check_gh_auth() -> str:
     try:
         return github.read_output(
             "repo",
@@ -128,7 +128,7 @@ def _check_branch_and_tree() -> None:
         )
 
 
-def _audit_repo_config(repo: str) -> None:
+def audit_repo_config(repo: str) -> None:
     result = subprocess.run(  # noqa: S603
         ("vrg-github-repo-config", "audit", "--repo", repo),  # noqa: S607
         check=False,

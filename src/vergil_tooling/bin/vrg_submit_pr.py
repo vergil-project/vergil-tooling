@@ -20,16 +20,13 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
-
-ALLOWED_LINKAGES = ("Ref",)
-_ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
-_ISSUE_CROSS_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9]\d*$")
+from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
+from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -47,26 +44,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Print without executing")
     parser.add_argument("--base", default=None, help="Override auto-detected target branch")
     return parser.parse_args(argv)
-
-
-def _resolve_issue_ref(issue: str) -> str:
-    """Validate and normalize the issue reference."""
-    if _ISSUE_PLAIN_RE.match(issue):
-        return f"#{issue}"
-    if _ISSUE_CROSS_RE.match(issue):
-        return issue
-    msg = f"--issue must be a number (42) or cross-repo ref (owner/repo#42), got '{issue}'."
-    raise SystemExit(msg)
-
-
-def _build_pr_body(*, summary: str, linkage: str, issue_ref: str, notes: str) -> str:
-    notes_section = notes or "-"
-    return (
-        f"# Pull Request\n\n"
-        f"## Summary\n\n- {summary}\n\n"
-        f"## Issue Linkage\n\n- {linkage} {issue_ref}\n\n"
-        f"## Notes\n\n- {notes_section}"
-    )
 
 
 def _target_branch(branch: str, base_override: str | None) -> str:
@@ -106,10 +83,10 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         msg = "internal error: CLI mode requires --issue, --summary, and --title"
         raise SystemExit(msg)
 
-    issue_ref = _resolve_issue_ref(args.issue)
+    issue_ref = resolve_issue_ref(args.issue)
     branch = git.current_branch()
     target = _target_branch(branch, args.base)
-    pr_body = _build_pr_body(
+    pr_body = build_pr_body(
         summary=args.summary,
         linkage=args.linkage,
         issue_ref=issue_ref,
@@ -194,6 +171,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         os.chdir(wt_path)
         root = wt_path
 
+    template_path = root / ".vergil" / "pr-template.yml"
     try:
         fields = pr_template.read_template(root)
     except FileNotFoundError:
@@ -204,14 +182,28 @@ def _run_template_mode(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
+    except pr_template.TemplateError as exc:
+        print(f"vrg-submit-pr: invalid PR template at {template_path}:\n  {exc}", file=sys.stderr)
+        return 1
 
-    issue_ref = _resolve_issue_ref(fields["issue"])
+    issue_ref = resolve_issue_ref(fields["issue"])
     branch = git.current_branch()
     target = _target_branch(branch, args.base)
     title = fields["title"]
     linkage = fields.get("linkage", "Ref")
     notes = fields.get("notes", "")
-    pr_body = _build_pr_body(
+
+    # Belt-and-suspenders: read_template validates linkage, but guard the
+    # value used to build the PR body so a forbidden auto-close keyword can
+    # never reach the PR regardless of how the fields were obtained.
+    if linkage not in ALLOWED_LINKAGES:
+        print(
+            f"vrg-submit-pr: linkage '{linkage}' in {template_path} is not allowed; "
+            f"use: {', '.join(ALLOWED_LINKAGES)}.",
+            file=sys.stderr,
+        )
+        return 1
+    pr_body = build_pr_body(
         summary=fields["summary"],
         linkage=linkage,
         issue_ref=issue_ref,

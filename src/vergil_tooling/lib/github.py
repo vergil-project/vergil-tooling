@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -356,6 +357,17 @@ def create_pr(*, base: str, title: str, body_file: str) -> str:
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
 
 
+def edit_pr_body(pr: str, *, body: str) -> None:
+    """Replace a PR's body, passing the text via a temp file."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        f.write(body)
+        tmp_path = f.name
+    try:
+        run("pr", "edit", pr, "--body-file", tmp_path)
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
 def _checks_registered(repo: str, sha: str) -> bool:
     """Return True if at least one check run exists for *sha*."""
     result = _run_with_retry(
@@ -569,15 +581,10 @@ def pr_state(pr: str) -> str:
     return read_output("pr", "view", pr, "--json", "state", "--jq", ".state")
 
 
-def pr_for_branch(branch: str) -> dict[str, str] | None:
-    """Return the open PR whose head is *branch*, or None.
-
-    GitHub permits at most one open PR per head/base pair within a
-    repo, so taking the first result is safe for the same-repo
-    workflow this serves.
-    """
+def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
+    """Return the first PR in *state* whose head is *branch*, or None."""
     result = read_json(
-        "pr", "list", "--head", branch, "--state", "open", "--json", "number,url,title"
+        "pr", "list", "--head", branch, "--state", state, "--json", "number,url,title"
     )
     if not isinstance(result, list) or not result:
         return None
@@ -589,6 +596,29 @@ def pr_for_branch(branch: str) -> dict[str, str] | None:
         "url": str(first.get("url") or ""),
         "title": str(first.get("title") or ""),
     }
+
+
+def pr_for_branch(branch: str) -> dict[str, str] | None:
+    """Return the open PR whose head is *branch*, or None.
+
+    GitHub permits at most one open PR per head/base pair within a
+    repo, so taking the first result is safe for the same-repo
+    workflow this serves.
+    """
+    return _first_pr_for_branch(branch, "open")
+
+
+def closed_pr_for_branch(branch: str) -> dict[str, str] | None:
+    """Return the most recent closed or merged PR whose head is *branch*.
+
+    GitHub's closed state includes merged PRs, so one query covers both.
+    Serves as merge evidence for the vrg-finalize-pr ancestry sweep
+    (issue #1445): a branch tip that is an ancestor of the target proves
+    nothing by itself — a freshly created branch satisfies the ancestry
+    test trivially — while a closed or merged PR shows the branch's work
+    is actually finished.
+    """
+    return _first_pr_for_branch(branch, "closed")
 
 
 def is_draft(pr: str) -> bool:

@@ -5,18 +5,23 @@
 **Source:** `src/vergil_tooling/bin/vrg_finalize_pr.py`
 
 Finalizes a pull request and reconciles local state afterwards. Has
-two modes, keyed on whether a PR argument is given:
+three modes:
 
 - **`vrg-finalize-pr <PR>`** — runs the pre-merge provenance check,
   waits for checks to go green, merges the PR (or confirms it is
   already merged), then runs the cleanup below. This replaces a
   manual web merge followed by a separate cleanup step.
-- **`vrg-finalize-pr`** (no PR) — infers the PR from the
+- **`vrg-finalize-pr`** (no PR) — interactive: infers the PR from the
   `.worktrees/` worktrees and always confirms before acting (see
   *Choosing the PR* below). With no candidates, cleanup-only after
   confirmation: switch to the target branch, fast-forward pull,
   delete merged local branches, and prune stale remote-tracking
   references.
+- **`vrg-finalize-pr --cleanup-only`** — non-interactive release path:
+  skips inference and merge entirely, never reads stdin, and runs only
+  the cleanup. This is what `vrg-release` invokes during its
+  close-finalize phase (issue #1448). Mutually exclusive with a PR
+  argument.
 
 Must be run from the **main worktree** — the cleanup removes
 worktrees, which is unsafe when the calling shell's CWD is inside one.
@@ -32,7 +37,11 @@ worktrees, which is unsafe when the calling shell's CWD is inside one.
   several present a menu; none asks before running cleanup-only.
   Worktrees without an open PR are listed with the reason they were
   skipped. Inference mode requires an interactive terminal and fails
-  fast when stdin is not a TTY.
+  fast unless both stdin and stdout are TTYs — a captured stdout would
+  make the prompts invisible (issue #1448).
+- `vrg-finalize-pr --cleanup-only` — no prompts and no merge; the
+  scriptable path for callers (like `vrg-release`) that only want the
+  cleanup.
 
 ## Waiting for green
 
@@ -50,7 +59,8 @@ followed by the usual sweep, pull, and prune.
 ## Usage
 
 ```bash
-vrg-finalize-pr [PR] [--target-branch BRANCH] [--strategy {merge,squash,rebase}]
+vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
+                [--strategy {merge,squash,rebase}]
                 [--allow-provenance-violation] [--dry-run]
 ```
 
@@ -58,7 +68,8 @@ vrg-finalize-pr [PR] [--target-branch BRANCH] [--strategy {merge,squash,rebase}]
 
 | Argument | Description |
 | -------- | ----------- |
-| `PR` | PR number or URL to merge and finalize. Omit for cleanup-only (release path). |
+| `PR` | PR number or URL to merge and finalize. Omit to infer interactively. |
+| `--cleanup-only` | Skip PR inference and merge; run cleanup without prompting or reading stdin (non-interactive release path). Mutually exclusive with `PR`. |
 | `--target-branch` | Branch to switch to (default: `develop`) |
 | `--strategy` | Merge strategy when a PR is given (default: `squash`) |
 | `--allow-provenance-violation` | Proceed despite provenance violations (conscious human override) |
@@ -97,8 +108,28 @@ Fetches (`--tags --force`) and fast-forward merges `origin/{target}`.
 Deletes local branches merged into the target branch. If a merged
 branch is still checked out in a canonical `.worktrees/` worktree, that
 worktree is removed first (skipped if it has uncommitted changes).
-Cached container images for the branch are cleaned. Eternal branches
-are protected based on the `branching_model`:
+Cached container images for the branch are cleaned.
+
+Two guards keep this sweep from racing parallel agent sessions in
+their creation-to-first-commit window (issue #1445), since
+`git branch --merged` classifies a branch just created from the
+target's tip as merged:
+
+- **Zero-commit branches are skipped.** A branch whose tip equals the
+  target's tip carries no merged work, so deleting it saves nothing —
+  and it is exactly what an in-flight issue branch looks like before
+  its first commit.
+- **Merge evidence is required.** A branch is only swept when a closed
+  or merged PR exists for its head; ancestry alone cannot distinguish
+  a merged branch from one created off an older target tip. Branches
+  skipped for lack of evidence are listed with the reason and left for
+  manual cleanup.
+
+Both guards gate the worktree removal as strictly as the branch
+deletion. The explicit-target cleanup (step 1a) is unaffected — the
+just-merged PR branch has merge evidence by construction.
+
+Eternal branches are protected based on the `branching_model`:
 
 | Branching Model | Protected Branches |
 | --------------- | ------------------ |
@@ -132,4 +163,4 @@ silently (issue #303).
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-interactive stdin in inference mode, dirty working tree, failed validation, or failed CD run |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, or failed CD run |

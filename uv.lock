@@ -835,8 +835,11 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.1.10"
+version = "2.1.11"
 source = { editable = "." }
+dependencies = [
+    { name = "rich" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -850,6 +853,7 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "rich", specifier = ">=13.0" }]
 
 [package.metadata.requires-dev]
 dev = [

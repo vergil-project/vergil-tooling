@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import shlex
+import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
+from vergil_tooling.lib import progress
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -57,6 +59,7 @@ from vergil_tooling.lib.lima import (
     vm_spec_status,
     vm_status,
 )
+from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
@@ -230,6 +233,149 @@ def _nested_preflight(target: Target) -> int:
     return 1
 
 
+@dataclass
+class _LifecycleState:
+    """Pipeline context for the long-running lifecycle commands.
+
+    ``template`` is populated by the fetch-template stage and cleaned up by
+    ``_run_lifecycle`` after the pipeline finishes, success or failure.
+    """
+
+    target: Target
+    tag: str = ""
+    vergil_version: str = ""
+    timeout: str = "30m"
+    template: Path | None = None
+
+
+def _log_root() -> Path:
+    """Where the .vergil run log lives: the enclosing repo, else the home dir.
+
+    vrg-vm is a host command runnable from anywhere; when invoked outside a
+    git checkout there is no project-local scratch dir to use.
+    """
+    result = subprocess.run(  # noqa: S603
+        ("git", "rev-parse", "--show-toplevel"),  # noqa: S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return Path(result.stdout.strip())
+    return Path.home()
+
+
+def _st_destroy(state: _LifecycleState) -> None:
+    delete_vm(state.target.instance)
+
+
+def _st_fetch_template(state: _LifecycleState) -> None:
+    print(f"Fetching template ({state.tag})...")
+    state.template = fetch_template(state.tag)
+
+
+def _st_create(state: _LifecycleState) -> None:
+    if state.template is None:
+        msg = "template missing — fetch-template did not run"
+        raise RuntimeError(msg)
+    print(f"Creating VM with projects mount: {state.target.identity.projects_dir}")
+    _create_from_target(state.target, state.template)
+
+
+def _st_start(state: _LifecycleState) -> None:
+    start_vm(state.target.instance, timeout=state.timeout)
+
+
+def _st_link_config(state: _LifecycleState) -> None:
+    link_claude_dirs(state.target.instance, Path.home() / ".claude")
+
+
+def _st_credentials(state: _LifecycleState) -> None:
+    inject_credentials(state.target.instance, state.target.identity)
+
+
+def _st_install_tooling(state: _LifecycleState) -> None:
+    install_tooling(state.target.instance, state.vergil_version)
+
+
+def _st_copy_config(state: _LifecycleState) -> None:
+    claude_dir = Path.home() / ".claude"
+    copy_claude_config(state.target.instance, claude_dir)
+    link_claude_dirs(state.target.instance, claude_dir)
+
+
+def _st_update_tooling(state: _LifecycleState) -> None:
+    # Runs as a warn-mode stage: a failed update surfaces as ⚠ in the summary
+    # and the start continues — the same warn-and-continue contract
+    # try_update_tooling provided before the pipeline port.
+    fallback = resolve_vergil_version(state.target.config, state.target.identity)
+    update_tooling(state.target.instance, fallback_tag=fallback)
+
+
+def _st_cycle_ssh(state: _LifecycleState) -> None:
+    # Lima establishes its multiplexed SSH ControlMaster as soon as the
+    # guest's sshd answers — before cloud-init group provisioning
+    # (usermod -aG) has run. sshd resolves supplementary groups once, at
+    # session establishment, so every later `limactl shell` rides that stale
+    # session and never sees provisioned groups (#1463). Cycle the VM as the
+    # final build step so the master is re-established against the fully
+    # provisioned guest; the second boot re-runs no provisioning and is fast.
+    stop_vm(state.target.instance)
+    start_vm(state.target.instance, timeout=state.timeout)
+
+
+def _create_stages() -> list[Stage]:
+    return [
+        Stage("fetch-template", _st_fetch_template, mode="fail_fast"),
+        Stage("create", _st_create, mode="fail_fast"),
+        Stage("start", _st_start, mode="fail_fast"),
+        Stage("link-config", _st_link_config, mode="fail_fast"),
+        Stage("credentials", _st_credentials, mode="fail_fast"),
+        Stage("tooling", _st_install_tooling, mode="fail_fast"),
+        Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
+    ]
+
+
+def _start_stages() -> list[Stage]:
+    return [
+        Stage("start", _st_start, mode="fail_fast"),
+        Stage("credentials", _st_credentials, mode="fail_fast"),
+        Stage("copy-config", _st_copy_config, mode="fail_fast"),
+        Stage("update-tooling", _st_update_tooling, mode="warn"),
+    ]
+
+
+def _rebuild_stages() -> list[Stage]:
+    return [
+        Stage("destroy", _st_destroy, mode="fail_fast"),
+        Stage("fetch-template", _st_fetch_template, mode="fail_fast"),
+        Stage("create", _st_create, mode="fail_fast"),
+        Stage("start", _st_start, mode="fail_fast"),
+        Stage("credentials", _st_credentials, mode="fail_fast"),
+        Stage("tooling", _st_install_tooling, mode="fail_fast"),
+        Stage("copy-config", _st_copy_config, mode="fail_fast"),
+        Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
+    ]
+
+
+def _run_lifecycle(
+    verb: str, state: _LifecycleState, stages: list[Stage], args: argparse.Namespace
+) -> int:
+    """Run a lifecycle pipeline, always cleaning up the fetched template."""
+    try:
+        return progress.run_pipeline(
+            state,
+            stages,
+            command="vrg-vm",
+            label=f"vrg-vm {verb} '{state.target.instance}'",
+            args=args,
+            repo_root=_log_root(),
+        )
+    finally:
+        if state.template is not None:
+            state.template.unlink(missing_ok=True)
+
+
 def _create_from_target(target: Target, template: Path) -> None:
     """Build the VM for a target: dedicated boxes carry the composed spec, base is unchanged."""
     if target.spec.dedicated:
@@ -282,34 +428,13 @@ def _cmd_create(args: argparse.Namespace) -> int:
         return 1
 
     print(f"Creating VM '{target.instance}' for identity '{name}'...")
-
-    print(f"  Fetching template ({tag})...")
-    template = fetch_template(tag)
-
-    try:
-        print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        _create_from_target(target, template)
-
-        print("  Starting VM...")
-        start_vm(target.instance)
-
-        print("  Linking Claude config directories...")
-        link_claude_dirs(target.instance, Path.home() / ".claude")
-
-        print("Injecting credentials...")
-        inject_credentials(target.instance, identity)
-
-        install_tooling(target.instance, vergil_version)
-    finally:
-        template.unlink(missing_ok=True)
-
-    print(f"\nVM '{target.instance}' is ready.")
-    return 0
+    state = _LifecycleState(target=target, tag=tag, vergil_version=vergil_version)
+    return _run_lifecycle("create", state, _create_stages(), args)
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
     target = _resolve_target(args)
-    name, identity, config = target.identity_name, target.identity, target.config
+    name = target.identity_name
 
     if _preflight_target(target) != 0:
         return 1
@@ -337,22 +462,8 @@ def _cmd_start(args: argparse.Namespace) -> int:
             return 1
 
     print(f"Starting VM '{target.instance}' (identity: {name})...")
-    start_vm(target.instance, timeout=args.timeout)
-
-    print("Injecting credentials...")
-    inject_credentials(target.instance, identity)
-
-    claude_dir = Path.home() / ".claude"
-    print("Copying Claude Code config...")
-    copy_claude_config(target.instance, claude_dir)
-    link_claude_dirs(target.instance, claude_dir)
-
-    fallback = resolve_vergil_version(config, identity)
-    print("Updating vergil-tooling...")
-    try_update_tooling(target.instance, fallback_tag=fallback)
-
-    print(f"VM '{target.instance}' is running.")
-    return 0
+    state = _LifecycleState(target=target, timeout=args.timeout)
+    return _run_lifecycle("start", state, _start_stages(), args)
 
 
 def _cmd_stop(args: argparse.Namespace) -> int:
@@ -455,34 +566,10 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
     print(f"Rebuilding VM '{target.instance}' (identity: {name})...")
-
-    print("  Destroying old VM...")
-    delete_vm(target.instance)
-
-    print(f"  Fetching template ({tag})...")
-    template = fetch_template(tag)
-
-    try:
-        print(f"  Creating VM with projects mount: {identity.projects_dir}")
-        _create_from_target(target, template)
-
-        print("  Starting VM...")
-        start_vm(target.instance, timeout=args.timeout)
-
-        print("  Injecting credentials...")
-        inject_credentials(target.instance, identity)
-
-        install_tooling(target.instance, vergil_version)
-
-        claude_dir = Path.home() / ".claude"
-        print("  Copying Claude Code config...")
-        copy_claude_config(target.instance, claude_dir)
-        link_claude_dirs(target.instance, claude_dir)
-    finally:
-        template.unlink(missing_ok=True)
-
-    print(f"\nVM '{target.instance}' rebuilt and ready.")
-    return 0
+    state = _LifecycleState(
+        target=target, tag=tag, vergil_version=vergil_version, timeout=args.timeout
+    )
+    return _run_lifecycle("rebuild", state, _rebuild_stages(), args)
 
 
 @dataclass
@@ -915,6 +1002,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
+    progress.add_progress_args(p_create, ())
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
@@ -929,6 +1017,7 @@ def main(argv: list[str] | None = None) -> int:
         default="30m",
         help="How long to wait for VM to reach running status (default: 30m)",
     )
+    progress.add_progress_args(p_start, ())
 
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
@@ -960,6 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
         default="30m",
         help="How long to wait for VM to reach running status (default: 30m)",
     )
+    progress.add_progress_args(p_rebuild, ())
 
     p_list = sub.add_parser(
         "list",

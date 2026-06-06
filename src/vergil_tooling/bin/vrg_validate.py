@@ -3,6 +3,9 @@
 Reads primary_language from vergil.toml, then either runs a
 specific check type (--check) or all checks in sequence:
   common -> install -> lint -> typecheck -> test -> audit -> custom
+
+Checks run as progress-framework stages: install is fail_fast,
+everything else is fail_defer so all failures are reported in one run.
 """
 
 from __future__ import annotations
@@ -10,12 +13,12 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
-import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import config, git
+from vergil_tooling.lib import config, git, progress
 from vergil_tooling.lib.languages import CheckKind, language_commands
+from vergil_tooling.lib.progress import Stage, StageMode
 
 _CHECK_KINDS = {
     "common": None,
@@ -47,18 +50,6 @@ def _in_dev_container() -> bool:
     return False
 
 
-def _run_commands(cmds: list[list[str]], label: str, *, fail_fast: bool = False) -> int:
-    worst = 0
-    for cmd in cmds:
-        print(f"Running ({label}): {' '.join(cmd)}")
-        result = subprocess.run(cmd, check=False)  # noqa: S603
-        if result.returncode != 0:
-            if fail_fast:
-                return result.returncode
-            worst = result.returncode
-    return worst
-
-
 def _run_common_checks(repo_root: Path) -> int:  # noqa: ARG001
     from vergil_tooling.bin.validate_common import main as common_main
 
@@ -76,10 +67,66 @@ def _find_custom_validator(repo_root: Path) -> str | None:
     return None
 
 
-def _run_custom_validator(path: str) -> int:
-    print(f"Running: {path}")
-    result = subprocess.run((path,), check=False)  # noqa: S603
-    return result.returncode
+class ValidationError(Exception):
+    """One or more validation commands failed."""
+
+
+def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Stage:
+    def fn(_ctx: object) -> None:
+        failed = 0
+        for cmd in cmds:
+            print(f"Running ({label}): {' '.join(cmd)}")
+            rc = progress.run(cmd, check=False)
+            if rc != 0:
+                failed += 1
+                if mode == "fail_fast":
+                    break
+        if failed:
+            msg = f"{failed} of {len(cmds)} {label} command(s) failed"
+            raise ValidationError(msg)
+
+    return Stage(label, fn, mode=mode)
+
+
+def _build_stages(check: str | None, language: str | None, repo_root: Path) -> list[Stage]:
+    stages: list[Stage] = []
+
+    if check in (None, "common"):
+
+        def common_fn(_ctx: object) -> None:
+            rc = _run_common_checks(repo_root)
+            if rc != 0:
+                msg = f"common checks exited {rc}"
+                raise ValidationError(msg)
+
+        stages.append(Stage("common", common_fn, mode="fail_defer"))
+
+    if language is not None and check != "common":
+        kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
+        kind_cmds = [(kind, language_commands(language, kind)) for kind in kinds]
+        kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
+        if kind_cmds:
+            install_cmds = language_commands(language, CheckKind.INSTALL)
+            if install_cmds:
+                stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
+            stages.extend(
+                _command_stage(kind.value, cmds, mode="fail_defer") for kind, cmds in kind_cmds
+            )
+
+    if check is None:
+        custom = _find_custom_validator(repo_root)
+        if custom is not None:
+
+            def custom_fn(_ctx: object) -> None:
+                print(f"Running: {custom}")
+                rc = progress.run((custom,), check=False)
+                if rc != 0:
+                    msg = f"custom validator exited {rc}"
+                    raise ValidationError(msg)
+
+            stages.append(Stage("custom", custom_fn, mode="fail_defer"))
+
+    return stages
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -93,6 +140,7 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Run only this check type. Omit to run all.",
     )
+    progress.add_progress_args(parser, ())
     args = parser.parse_args(argv)
 
     if not _in_dev_container():
@@ -118,70 +166,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    if args.check is not None:
-        return _run_single_check(args.check, language, repo_root)
-    return _run_all_checks(language, repo_root)
-
-
-def _run_single_check(check: str, language: str | None, repo_root: Path) -> int:
-    if check == "common":
-        return _run_common_checks(repo_root)
-
-    kind = _CHECK_KINDS[check]
-    assert kind is not None  # noqa: S101
-    cmds = language_commands(language, kind)
-    if not cmds:
-        print(f"No {check} commands for language '{language or '<not set>'}'")
+    stages = _build_stages(args.check, language, repo_root)
+    if not stages:
+        print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0
 
-    install_cmds = language_commands(language, CheckKind.INSTALL)
-    if install_cmds:
-        rc = _run_commands(install_cmds, "install", fail_fast=True)
-        if rc != 0:
-            return rc
-
-    return _run_commands(cmds, check)
-
-
-def _run_all_checks(language: str | None, repo_root: Path) -> int:
-    print("=" * 40)
-    print("vrg-validate")
-    print(f"primary_language: {language or '<not set>'}")
-    print("=" * 40)
-    print()
-
-    rc = _run_common_checks(repo_root)
-    if rc != 0:
-        return rc
-
-    if language:
-        install_cmds = language_commands(language, CheckKind.INSTALL)
-        if install_cmds:
-            print()
-            rc = _run_commands(install_cmds, "install", fail_fast=True)
-            if rc != 0:
-                return rc
-
-        for kind in _LANGUAGE_CHECK_ORDER:
-            cmds = language_commands(language, kind)
-            if cmds:
-                print()
-                rc = _run_commands(cmds, kind.value)
-                if rc != 0:
-                    return rc
-
-    custom = _find_custom_validator(repo_root)
-    if custom is not None:
-        print()
-        rc = _run_custom_validator(custom)
-        if rc != 0:
-            return rc
-
-    print()
-    print("=" * 40)
-    print("vrg-validate: all checks passed")
-    print("=" * 40)
-    return 0
+    return progress.run_pipeline(
+        None,
+        stages,
+        command="vrg-validate",
+        label="vrg-validate",
+        args=args,
+        repo_root=repo_root,
+    )
 
 
 if __name__ == "__main__":

@@ -11,6 +11,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.await_file import atomic_write
+from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -21,7 +22,19 @@ _REQUIRED_FIELDS = ("issue", "title", "summary")
 
 
 class TemplateError(Exception):
-    """Raised when a template file is malformed or missing required fields."""
+    """Raised when a template file is malformed or carries invalid field values."""
+
+
+def _validate_linkage(linkage: str) -> None:
+    """Raise ``TemplateError`` if the linkage keyword is not allowed."""
+    if linkage not in ALLOWED_LINKAGES:
+        allowed = ", ".join(ALLOWED_LINKAGES)
+        msg = (
+            f"PR template linkage '{linkage}' is not allowed; use: {allowed}. "
+            "GitHub auto-close keywords (Closes/Fixes/Resolves) are banned "
+            "repo-wide — issues stay open until post-merge workflows succeed."
+        )
+        raise TemplateError(msg)
 
 
 def _parse(text: str) -> dict[str, str]:
@@ -65,7 +78,8 @@ def read_template(worktree_root: Path) -> dict[str, str]:
     """Read and validate ``.vergil/pr-template.yml``.
 
     Raises ``FileNotFoundError`` if the file does not exist.
-    Raises ``TemplateError`` if required fields are missing.
+    Raises ``TemplateError`` if required fields are missing or the
+    linkage keyword is not allowed.
     """
     path = _template_path(worktree_root)
     if not path.exists():
@@ -76,6 +90,8 @@ def read_template(worktree_root: Path) -> dict[str, str]:
         if field not in fields:
             msg = f"PR template is missing required field: {field}"
             raise TemplateError(msg)
+    if "linkage" in fields:
+        _validate_linkage(fields["linkage"])
     return fields
 
 
@@ -88,7 +104,13 @@ def write_template(
     linkage: str = "Ref",
     notes: str = "",
 ) -> Path:
-    """Write ``.vergil/pr-template.yml``, warning if it already exists."""
+    """Write ``.vergil/pr-template.yml``, warning if it already exists.
+
+    Raises ``TemplateError`` if the linkage keyword is not allowed —
+    the producer fails loudly before a forbidden auto-close linkage
+    can reach the template file.
+    """
+    _validate_linkage(linkage)
     path = _template_path(worktree_root)
     if path.exists():
         print(

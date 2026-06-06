@@ -6,15 +6,12 @@ import http.client
 import json
 import subprocess
 import urllib.error
-from typing import TYPE_CHECKING
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.lib import github
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 _real_gh_env = github._gh_env
 
@@ -63,6 +60,31 @@ def test_create_pr_returns_url() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/1"):
         url = github.create_pr(base="main", title="title", body_file="body.md")
     assert url == "https://github.com/pr/1"
+
+
+def test_edit_pr_body_passes_body_via_file() -> None:
+    """edit_pr_body writes the body to a temp file and passes it to gh."""
+    captured: dict[str, str] = {}
+
+    def fake_run(*args: str) -> None:
+        assert args[:3] == ("pr", "edit", "https://github.com/pr/1")
+        assert args[3] == "--body-file"
+        captured["body"] = Path(args[4]).read_text()
+
+    with patch("vergil_tooling.lib.github.run", side_effect=fake_run):
+        github.edit_pr_body("https://github.com/pr/1", body="# Pull Request\n\nnew body")
+    assert captured["body"] == "# Pull Request\n\nnew body"
+
+
+def test_edit_pr_body_cleans_up_temp_file() -> None:
+    paths: list[Path] = []
+
+    def fake_run(*args: str) -> None:
+        paths.append(Path(args[4]))
+
+    with patch("vergil_tooling.lib.github.run", side_effect=fake_run):
+        github.edit_pr_body("123", body="body")
+    assert paths and not paths[0].exists()
 
 
 def test_wait_for_checks_resolves_sha_and_watches() -> None:
@@ -1377,3 +1399,37 @@ def test_head_ref() -> None:
 def test_pr_for_branch_none_when_payload_not_dict() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
         assert github.pr_for_branch("feature/1423-pr-interface") is None
+
+
+# -- closed_pr_for_branch (issue #1445) ----------------------------------------
+
+
+def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
+    payload = [{"number": 1445, "url": "https://github.com/o/r/pull/1445", "title": "T"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
+        result = github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
+    assert result == {
+        "number": "1445",
+        "url": "https://github.com/o/r/pull/1445",
+        "title": "T",
+    }
+    rj.assert_called_once_with(
+        "pr",
+        "list",
+        "--head",
+        "feature/1445-finalize-cleanup-race",
+        "--state",
+        "closed",
+        "--json",
+        "number,url,title",
+    )
+
+
+def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[]):
+        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
+
+
+def test_closed_pr_for_branch_none_when_payload_not_dict() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
+        assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None

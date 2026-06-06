@@ -68,14 +68,31 @@ def test_worktree_for_branch_ignores_non_canonical() -> None:
 
 
 def test_require_tty_passes_on_tty() -> None:
-    with patch(_MOD + ".sys.stdin") as stdin:
+    with (
+        patch(_MOD + ".sys.stdin") as stdin,
+        patch(_MOD + ".sys.stdout") as stdout,
+    ):
         stdin.isatty.return_value = True
+        stdout.isatty.return_value = True
         require_tty("test context")  # no raise
 
 
 def test_require_tty_fails_fast_on_non_tty() -> None:
     with patch(_MOD + ".sys.stdin") as stdin:
         stdin.isatty.return_value = False
+        with pytest.raises(SystemExit, match="interactive terminal"):
+            require_tty("test context")
+
+
+def test_require_tty_fails_fast_on_non_tty_stdout() -> None:
+    """Issue #1448: when stdout is captured, prompts are written into the
+    void — a TTY stdin alone must not pass the guard."""
+    with (
+        patch(_MOD + ".sys.stdin") as stdin,
+        patch(_MOD + ".sys.stdout") as stdout,
+    ):
+        stdin.isatty.return_value = True
+        stdout.isatty.return_value = False
         with pytest.raises(SystemExit, match="interactive terminal"):
             require_tty("test context")
 

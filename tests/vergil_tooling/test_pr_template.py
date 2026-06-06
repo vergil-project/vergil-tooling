@@ -93,6 +93,39 @@ class TestParseAndRead:
             read_template(tmp_path)
 
 
+class TestLinkageValidation:
+    @pytest.mark.parametrize("forbidden", ["Closes", "Fixes", "Resolves", "closes", "ref"])
+    def test_read_rejects_forbidden_linkage(self, tmp_path: Path, forbidden: str) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            f"issue: 42\ntitle: fix\nsummary: Fix\nlinkage: {forbidden}\n"
+        )
+        with pytest.raises(TemplateError, match="linkage"):
+            read_template(tmp_path)
+
+    def test_read_error_names_allowed_value(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nlinkage: Closes\n"
+        )
+        with pytest.raises(TemplateError, match="Ref"):
+            read_template(tmp_path)
+
+    def test_read_accepts_absent_linkage(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        result = read_template(tmp_path)
+        assert "linkage" not in result
+
+    def test_write_rejects_forbidden_linkage(self, tmp_path: Path) -> None:
+        with pytest.raises(TemplateError, match="linkage"):
+            write_template(tmp_path, issue="42", title="fix", summary="Fix", linkage="Closes")
+        assert not (tmp_path / ".vergil" / "pr-template.yml").exists()
+
+
 class TestWriteTemplate:
     def test_creates_vergil_dir_and_file(self, tmp_path: Path) -> None:
         path = write_template(tmp_path, issue="42", title="fix: bug", summary="Fix the bug")

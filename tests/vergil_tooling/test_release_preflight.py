@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.release import preflight as preflight_module
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.preflight import (
     _compute_release_version,
@@ -19,10 +20,10 @@ def test_preflight_success() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
+        patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
@@ -37,10 +38,10 @@ def test_preflight_with_minor_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
+        patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
@@ -54,10 +55,10 @@ def test_preflight_with_major_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
+        patch(_MOD + ".audit_repo_config"),
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
@@ -71,10 +72,10 @@ def test_preflight_wraps_version_error() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
+        patch(_MOD + ".audit_repo_config"),
         patch(
             _MOD + ".version.show",
             side_effect=FileNotFoundError("VERSION file not found"),
@@ -102,14 +103,14 @@ def test_check_host_prerequisites_fails() -> None:
         _check_host_prerequisites()
 
 
-def test_check_gh_auth_fails() -> None:
-    from vergil_tooling.lib.release.preflight import _check_gh_auth
+def testcheck_gh_auth_fails() -> None:
+    from vergil_tooling.lib.release.preflight import check_gh_auth
 
     with (
         patch(_MOD + ".github.read_output", side_effect=Exception("auth failed")),
         pytest.raises(ReleaseError, match="authentication failed"),
     ):
-        _check_gh_auth()
+        check_gh_auth()
 
 
 def test_check_branch_wrong_branch() -> None:
@@ -145,10 +146,10 @@ def test_check_branch_not_synced() -> None:
         _check_branch_and_tree()
 
 
-def test_audit_repo_config_fails() -> None:
+def testaudit_repo_config_fails() -> None:
     from subprocess import CompletedProcess
 
-    from vergil_tooling.lib.release.preflight import _audit_repo_config
+    from vergil_tooling.lib.release.preflight import audit_repo_config
 
     with (
         patch(
@@ -162,7 +163,7 @@ def test_audit_repo_config_fails() -> None:
         ),
         pytest.raises(ReleaseError, match="non-compliant"),
     ):
-        _audit_repo_config("owner/repo")
+        audit_repo_config("owner/repo")
 
 
 def test_check_version_not_tagged_passes() -> None:
@@ -219,11 +220,11 @@ def test_check_host_prerequisites_success() -> None:
         _check_host_prerequisites()
 
 
-def test_check_gh_auth_success() -> None:
-    from vergil_tooling.lib.release.preflight import _check_gh_auth
+def testcheck_gh_auth_success() -> None:
+    from vergil_tooling.lib.release.preflight import check_gh_auth
 
     with patch(_MOD + ".github.read_output", return_value="owner/repo"):
-        assert _check_gh_auth() == "owner/repo"
+        assert check_gh_auth() == "owner/repo"
 
 
 def test_read_and_validate_config(tmp_path: Path) -> None:
@@ -258,49 +259,44 @@ def test_check_branch_and_tree_success() -> None:
         _check_branch_and_tree()
 
 
-def test_audit_repo_config_success() -> None:
+def testaudit_repo_config_success() -> None:
     from subprocess import CompletedProcess
 
-    from vergil_tooling.lib.release.preflight import _audit_repo_config
+    from vergil_tooling.lib.release.preflight import audit_repo_config
 
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=0, stdout="", stderr=""),
     ):
-        _audit_repo_config("owner/repo")
+        audit_repo_config("owner/repo")
 
 
-def test_preflight_skips_audit_when_requested() -> None:
+def test_preflight_never_audits() -> None:
+    """The audit is its own pipeline stage now — preflight never runs it."""
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config") as mock_audit,
+        patch(_MOD + ".audit_repo_config") as mock_audit,
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
     ):
-        ctx = preflight(version_override=None, repo_root=root, skip_audit=True)
+        ctx = preflight(version_override=None, repo_root=root)
     assert ctx.repo == "owner/repo"
     mock_audit.assert_not_called()
 
 
-def test_preflight_runs_audit_by_default() -> None:
-    root = Path("/tmp/repo")  # noqa: S108
+def test_run_audit_resolves_repo_and_audits() -> None:
     with (
-        patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
-        patch(_MOD + "._read_and_validate_config"),
-        patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config") as mock_audit,
-        patch(_MOD + ".version.show", return_value="2.1.0"),
-        patch(_MOD + "._check_version_not_tagged"),
-        patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo") as m_auth,
+        patch(_MOD + ".audit_repo_config") as m_audit,
     ):
-        preflight(version_override=None, repo_root=root)
-    mock_audit.assert_called_once_with("owner/repo")
+        preflight_module.run_audit()
+    m_auth.assert_called_once_with()
+    m_audit.assert_called_once_with("owner/repo")
 
 
 def test_preflight_wraps_version_sync_error() -> None:
@@ -309,10 +305,10 @@ def test_preflight_wraps_version_sync_error() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
-        patch(_MOD + "._check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
         patch(_MOD + "._read_and_validate_config"),
         patch(_MOD + "._check_branch_and_tree"),
-        patch(_MOD + "._audit_repo_config"),
+        patch(_MOD + ".audit_repo_config"),
         patch(
             _MOD + ".version.show",
             side_effect=VersionSyncError("VERSION", "1.0.0", {"pyproject.toml": "1.0.1"}),

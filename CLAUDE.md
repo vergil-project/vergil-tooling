@@ -122,7 +122,12 @@ Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
 finalization are human actions. The PR handoff is:
 
 1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
-   and `summary` fields (optional: `linkage`, `notes`).
+   and `summary` fields (optional: `linkage`, `notes`). If `linkage`
+   is present it must be `Ref` — GitHub auto-close keywords
+   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues
+   stay open until post-merge workflows succeed. Both
+   `pr_template.write_template()` and `vrg-submit-pr` reject any
+   other value.
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
    template, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
@@ -219,6 +224,10 @@ CLI tools installed as `vrg-*` console scripts:
   commits with co-author resolution
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge;
   human-run — agents hand off via `.vergil/pr-template.yml`)
+- **`vrg-pr-fix-body`** — Regenerate a PR body from corrected fields via
+  the validated builder; the agent-safe path to fix body-level standards
+  failures on its own PR during pr-watch (pushes an empty commit to
+  re-trigger CI)
 - **`vrg-release`** — Mechanized end-to-end release workflow (develop to main)
 - **`vrg-resolve-tracking-issue`** — Extract tracking issue number from a merge commit's PR linkage
 - **`vrg-finalize-pr`** — Merge a PR and run post-merge cleanup (branch/worktree deletion, remote pruning)

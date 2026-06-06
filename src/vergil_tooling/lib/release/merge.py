@@ -2,7 +2,7 @@
 
 Thin wrapper over the shared engine in ``vergil_tooling.lib.pr_merge``
 — release keeps its public interface (``ReleaseError`` on failure,
-verbose-aware check waiting, merge-commit strategy) while the loop
+streamed check waiting, merge-commit strategy) while the loop
 logic lives in one place.
 """
 
@@ -13,13 +13,13 @@ from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import wait_for_checks
 
 
-def wait_and_merge(pr_url: str, *, phase: str, verbose: bool = False) -> None:
+def wait_and_merge(pr_url: str, *, phase: str) -> None:
     """Wait for checks, handle behind-base, then merge with a merge commit."""
     try:
         pr_merge.wait_and_merge(
             pr_url,
             strategy="merge",
-            wait_checks=lambda pr: wait_for_checks(pr, verbose=verbose),
+            wait_checks=wait_for_checks,
         )
     except pr_merge.MergeAbortError as exc:
         raise ReleaseError(

@@ -4,8 +4,9 @@ import argparse
 import json
 import os
 import textwrap
+from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -13,6 +14,7 @@ from vergil_tooling.bin.vrg_vm import (
     DedicatedRow,
     Target,
     _list_rows,
+    _log_root,
     _preflight_target,
     _probe_running,
     _resolve_target,
@@ -25,8 +27,19 @@ from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_spec import ComposedSpec
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from collections.abc import Iterator
     from typing import Any
+
+# Bound at import time, before the autouse _vm_log_root fixture patches the
+# module attribute — TestLogRoot exercises the real implementation.
+_REAL_LOG_ROOT = _log_root
+
+
+@pytest.fixture(autouse=True)
+def _vm_log_root(tmp_path: Path) -> Iterator[None]:
+    """Keep pipeline run logs out of the real repo's .vergil directory."""
+    with patch("vergil_tooling.bin.vrg_vm._log_root", return_value=tmp_path):
+        yield
 
 
 @pytest.fixture()
@@ -88,6 +101,7 @@ class TestNoSubcommand:
 
 
 class TestCreate:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -102,6 +116,7 @@ class TestCreate:
         mock_start: MagicMock,
         mock_inject: MagicMock,
         mock_install: MagicMock,
+        mock_stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -114,9 +129,11 @@ class TestCreate:
 
         mock_fetch.assert_called_once_with("v2.0")
         mock_create.assert_called_once()
-        mock_start.assert_called_once()
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
+        # The provisioning start plus the post-provision SSH cycle (#1463).
+        assert mock_start.call_count == 2
+        mock_stop.assert_called_once_with("vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_create_fails_if_exists(self, _status: MagicMock, config_file: Path) -> None:
@@ -137,6 +154,7 @@ class TestCreate:
         result = main(["create", "--config", str(p)])
         assert result == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -151,6 +169,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -175,6 +194,7 @@ class TestCreate:
         with pytest.raises(SystemExit):
             main(["create", "--config", str(p)])
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -189,6 +209,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -210,6 +231,7 @@ class TestCreate:
         mock_fetch.assert_called_once_with("v2.2")
         mock_install.assert_called_once_with("vergil-agent", "v2.2")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -224,6 +246,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         mock_install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -245,6 +268,7 @@ class TestCreate:
         mock_fetch.assert_called_once_with("v2.1")
         mock_install.assert_called_once_with("vergil-agent", "v2.0")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
@@ -259,6 +283,7 @@ class TestCreate:
         _start: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -292,7 +317,7 @@ class TestCreate:
 
 class TestStart:
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -315,7 +340,7 @@ class TestStart:
         mock_copy.assert_called_once()
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -342,7 +367,7 @@ class TestStart:
 
 class TestStartStaleness:
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
@@ -365,7 +390,7 @@ class TestStartStaleness:
         assert "--allow-stale-vm" in captured.err
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
@@ -385,7 +410,7 @@ class TestStartStaleness:
         mock_start.assert_called_once()
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -405,7 +430,7 @@ class TestStartStaleness:
         mock_start.assert_called_once()
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -424,7 +449,7 @@ class TestStartStaleness:
         mock_update.assert_called_once()
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
@@ -484,6 +509,7 @@ class TestDestroy:
 
 
 class TestRebuild:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -502,6 +528,7 @@ class TestRebuild:
         mock_inject: MagicMock,
         mock_install: MagicMock,
         _copy: MagicMock,
+        mock_stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -513,10 +540,16 @@ class TestRebuild:
         assert result == 0
         mock_delete.assert_called_once_with("vergil-agent")
         mock_create.assert_called_once()
-        mock_start.assert_called_once_with("vergil-agent", timeout="30m")
         mock_inject.assert_called_once()
         mock_install.assert_called_once()
+        # The provisioning start plus the post-provision SSH cycle (#1463).
+        assert mock_start.call_args_list == [
+            call("vergil-agent", timeout="30m"),
+            call("vergil-agent", timeout="30m"),
+        ]
+        mock_stop.assert_called_once_with("vergil-agent")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -535,6 +568,7 @@ class TestRebuild:
         _inject: MagicMock,
         _install: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         config_file: Path,
         tmp_path: Path,
     ) -> None:
@@ -544,7 +578,10 @@ class TestRebuild:
 
         result = main(["rebuild", "--config", str(config_file), "--timeout", "45m"])
         assert result == 0
-        mock_start.assert_called_once_with("vergil-agent", timeout="45m")
+        assert mock_start.call_args_list == [
+            call("vergil-agent", timeout="45m"),
+            call("vergil-agent", timeout="45m"),
+        ]
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_rebuild_fails_if_not_created(self, _status: MagicMock, config_file: Path) -> None:
@@ -565,6 +602,7 @@ class TestRebuild:
         result = main(["rebuild", "--config", str(p)])
         assert result == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -583,6 +621,7 @@ class TestRebuild:
         _inject: MagicMock,
         _install: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         p = tmp_path / "identities.toml"
@@ -1318,6 +1357,7 @@ class TestResolveTarget:
 
 
 class TestCreateDedicated:
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1334,6 +1374,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1353,6 +1394,7 @@ class TestCreateDedicated:
         assert len(kwargs["apt_repos"]) == 1
         assert kwargs["vagrant_plugins"] == ["vagrant-libvirt"]
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1369,6 +1411,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1384,6 +1427,7 @@ class TestCreateDedicated:
         assert kwargs["apt_repos"] == []
         assert kwargs["vagrant_plugins"] == []
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1402,6 +1446,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1448,6 +1493,7 @@ class TestCreateDedicated:
         mock_fetch.assert_not_called()
         mock_create.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
@@ -1469,6 +1515,7 @@ class TestCreateDedicated:
         _link: MagicMock,
         _inject: MagicMock,
         _install: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         # An unsupported host must not block profiles that never asked for nested.
@@ -1521,6 +1568,7 @@ class TestCreateDedicated:
         mock_delete.assert_not_called()
         mock_fetch.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -1541,6 +1589,7 @@ class TestCreateDedicated:
         _install: MagicMock,
         _link: MagicMock,
         _copy: MagicMock,
+        _stop: MagicMock,
         tmp_path: Path,
     ) -> None:
         projects = tmp_path / "projects"
@@ -1859,3 +1908,184 @@ class TestProbeRunning:
         discovered: dict[str, list[DedicatedRow]] = {"vergil-user": []}
         with pytest.raises(RuntimeError, match="boom"):
             _probe_running(identities, discovered, {"vergil-user": "Running"})
+
+
+def _lifecycle_target(tmp_path: Path) -> Any:
+    from vergil_tooling.lib.identity import load_config
+    from vergil_tooling.lib.vm_spec import compose_vm_spec
+
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    config = load_config(p)
+    identity = config.identities["vergil"]
+    spec = compose_vm_spec(
+        identity="vergil",
+        base={"cpus": 4, "memory": "4GiB", "disk": "50GiB"},
+        stanza=None,
+        override=None,
+    )
+    return Target("vergil", identity, config, None, None, spec, "vergil-agent", "")
+
+
+class TestLifecycleStages:
+    def test_create_stage_order_and_modes(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _create_stages
+
+        stages = _create_stages()
+        assert [s.name for s in stages] == [
+            "fetch-template",
+            "create",
+            "start",
+            "link-config",
+            "credentials",
+            "tooling",
+            "cycle-ssh",
+        ]
+        assert all(s.mode == "fail_fast" for s in stages)
+
+    def test_start_stage_order_and_modes(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _start_stages
+
+        stages = _start_stages()
+        assert [s.name for s in stages] == [
+            "start",
+            "credentials",
+            "copy-config",
+            "update-tooling",
+        ]
+        assert stages[-1].mode == "warn"
+        assert all(s.mode == "fail_fast" for s in stages[:-1])
+
+    def test_rebuild_stage_order_and_modes(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _rebuild_stages
+
+        stages = _rebuild_stages()
+        assert [s.name for s in stages] == [
+            "destroy",
+            "fetch-template",
+            "create",
+            "start",
+            "credentials",
+            "tooling",
+            "copy-config",
+            "cycle-ssh",
+        ]
+        assert all(s.mode == "fail_fast" for s in stages)
+
+    def test_st_create_requires_template(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_create
+
+        state = _LifecycleState(target=_lifecycle_target(tmp_path))
+        with pytest.raises(RuntimeError, match="fetch-template did not run"):
+            _st_create(state)
+
+    def test_st_update_tooling_resolves_fallback(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_update_tooling
+
+        state = _LifecycleState(target=_lifecycle_target(tmp_path))
+        with patch("vergil_tooling.bin.vrg_vm.update_tooling") as m_update:
+            _st_update_tooling(state)
+        m_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+
+    def test_st_cycle_ssh_stops_then_starts(self, tmp_path: Path) -> None:
+        # The cycle must be a stop *then* a start: only a full power cycle is
+        # guaranteed to drop the stale boot-time SSH ControlMaster (#1463).
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_cycle_ssh
+
+        state = _LifecycleState(target=_lifecycle_target(tmp_path), timeout="45m")
+        manager = MagicMock()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.stop_vm") as m_stop,
+            patch("vergil_tooling.bin.vrg_vm.start_vm") as m_start,
+        ):
+            manager.attach_mock(m_stop, "stop_vm")
+            manager.attach_mock(m_start, "start_vm")
+            _st_cycle_ssh(state)
+        assert manager.mock_calls == [
+            call.stop_vm("vergil-agent"),
+            call.start_vm("vergil-agent", timeout="45m"),
+        ]
+
+
+class TestRunLifecycle:
+    def _args(self) -> argparse.Namespace:
+        return argparse.Namespace(output_window=5, output_format="plain")
+
+    def test_cleans_up_template_on_success(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _run_lifecycle
+        from vergil_tooling.lib.progress import Stage
+
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        state = _LifecycleState(target=_lifecycle_target(tmp_path), template=template)
+        rc = _run_lifecycle(
+            "create",
+            state,
+            [Stage("noop", lambda ctx: None, mode="fail_fast")],
+            self._args(),
+        )
+        assert rc == 0
+        assert not template.exists()
+
+    def test_cleans_up_template_on_failure(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _run_lifecycle
+        from vergil_tooling.lib.progress import Stage
+
+        def _boom(ctx: object) -> None:
+            msg = "boom"
+            raise RuntimeError(msg)
+
+        template = tmp_path / "template.yaml"
+        template.write_text("cpus: 4")
+        state = _LifecycleState(target=_lifecycle_target(tmp_path), template=template)
+        rc = _run_lifecycle("create", state, [Stage("bad", _boom, mode="fail_fast")], self._args())
+        assert rc == 1
+        assert not template.exists()
+
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    @patch(
+        "vergil_tooling.bin.vrg_vm.update_tooling",
+        side_effect=RuntimeError("update failed"),
+    )
+    @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+    @patch("vergil_tooling.bin.vrg_vm.start_vm")
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_start_update_failure_is_warning_not_error(
+        self,
+        _status: MagicMock,
+        _age: MagicMock,
+        _start: MagicMock,
+        _inject: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # warn-mode stage: a failed tooling update must not fail the start.
+        result = main(["start", "--config", str(config_file), "--output-format", "plain"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "⚠  warnings (non-fatal):" in out
+        assert "update-tooling — RuntimeError: update failed" in out
+
+
+class TestLogRoot:
+    def test_inside_repo_uses_toplevel(self, tmp_path: Path) -> None:
+        completed = MagicMock(returncode=0, stdout=f"{tmp_path}\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _REAL_LOG_ROOT() == tmp_path
+
+    def test_outside_repo_falls_back_to_home(self) -> None:
+        completed = MagicMock(returncode=128, stdout="")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _REAL_LOG_ROOT() == Path.home()

@@ -33,7 +33,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     pr_url = _create_bump_pr(ctx, next_ver)
     print(f"Back-merge PR created: {pr_url}")
 
-    wait_and_merge(pr_url, phase="back-merge-bump", verbose=ctx.verbose)
+    wait_and_merge(pr_url, phase="back-merge-bump")
 
     git.run("checkout", "develop")
     git.run("pull", "--ff-only", "origin", "develop")

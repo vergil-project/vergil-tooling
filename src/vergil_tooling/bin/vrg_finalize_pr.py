@@ -1,13 +1,18 @@
 """Finalize a pull request: provenance check, merge, and cleanup.
 
-Two modes, keyed on whether a PR argument is given:
+Three modes:
 
 - ``vrg-finalize-pr <PR>`` — run the pre-merge provenance check, merge
   the PR (or confirm it is already merged), then run the cleanup below.
   This replaces the manual web merge + post-merge repo cleanup.
-- ``vrg-finalize-pr`` (no PR) — cleanup only, the backward-compatible
-  release path: switch to the target branch, fast-forward pull, delete
+- ``vrg-finalize-pr`` (no PR) — interactive: infer which PR to finalize
+  from open PRs in ``.worktrees/`` worktrees, confirm via prompts, then
+  run the cleanup. Requires a real terminal on both stdin and stdout.
+- ``vrg-finalize-pr --cleanup-only`` — non-interactive release path:
+  skip inference and merge entirely, never read stdin, and run only the
+  cleanup: switch to the target branch, fast-forward pull, delete
   merged local branches, and prune stale remote-tracking references.
+  This is what ``vrg-release`` invokes (issue #1448).
 
 After validation succeeds, also checks the most recent CD workflow run
 on the target branch and fails if it did not succeed (issue #303 — docs
@@ -38,11 +43,20 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Finalize a pull request.")
-    parser.add_argument(
+    # A PR argument and --cleanup-only contradict each other: the flag
+    # promises no merge and no prompts, the argument requests a merge.
+    target = parser.add_mutually_exclusive_group()
+    target.add_argument(
         "pr",
         nargs="?",
         default=None,
-        help="PR number or URL to merge and finalize. Omit for cleanup-only (release path).",
+        help="PR number or URL to merge and finalize. Omit to infer interactively.",
+    )
+    target.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help="Skip PR inference and merge; run cleanup without prompting "
+        "or reading stdin (non-interactive release path).",
     )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
@@ -281,7 +295,10 @@ def main(argv: list[str] | None = None) -> int:
 
     root = git.repo_root()
 
-    if args.pr is None:
+    # --cleanup-only is the scriptable release path: no inference, no
+    # prompts, no stdin reads — args.pr stays None and only the cleanup
+    # below runs (issue #1448).
+    if args.pr is None and not args.cleanup_only:
         try:
             args.pr = _infer_pr(root, args.target_branch)
         except SystemExit as exc:
@@ -340,9 +357,36 @@ def main(argv: list[str] | None = None) -> int:
         else:
             print(f"  Merged PR branch {merged_branch} has no local branch — skipping.")
 
+    # Ancestry sweep for stragglers. `git branch --merged` classifies a
+    # branch as merged when its tip is an *ancestor* of the target —
+    # which a branch just created from the target's tip satisfies
+    # trivially. That is the normal starting state of every new issue
+    # worktree, so an unguarded sweep races parallel agent sessions in
+    # their creation-to-first-commit window and deletes their branch and
+    # worktree out from under them. Two guards close the race
+    # (issue #1445); both gate the worktree removal exactly as strictly
+    # as the branch deletion, since they sit ahead of either action.
     print("Checking for merged local branches...")
     for branch in git.merged_branches(args.target_branch):
         if branch in eternal or branch in deleted:
+            continue
+        # Guard 1 — skip zero-commit branches. A tip equal to the
+        # target's carries no merged work, so deleting it saves nothing;
+        # it is also exactly what an in-flight branch looks like before
+        # its first commit.
+        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
+            print(
+                f"  Skipping {branch}: tip matches {args.target_branch} "
+                "(zero-commit branch, nothing to clean up)"
+            )
+            continue
+        # Guard 2 — require merge evidence. Ancestry alone cannot
+        # distinguish a merged branch from one created off an older
+        # target tip; only sweep branches whose head has a closed or
+        # merged PR. The just-merged PR branch is handled by the
+        # explicit-target step above, which keeps its own behavior.
+        if github.closed_pr_for_branch(branch) is None:
+            print(f"  Skipping {branch}: no closed or merged PR for this branch")
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
             deleted.append(branch)
