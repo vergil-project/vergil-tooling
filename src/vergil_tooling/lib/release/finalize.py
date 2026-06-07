@@ -25,16 +25,22 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
     # progress session so the live display stays intact and the run log
     # captures the cleanup narration (issue #1470) — the child must not
     # inherit the TTY: raw writes under the live display strand stale
-    # frames on screen. stdin is closed so the child can never block on
-    # a terminal read. Captured stderr rides on CalledProcessError for
-    # ReleaseError.detail; the streamed lines mean warnings are never
-    # silently swallowed.
+    # frames on screen. The child is itself progress-aware (issue #1479);
+    # --output-format plain states the rendering contract explicitly
+    # because two live displays cannot nest (TTY auto-detection on the
+    # piped stdout is the backstop). stdin is closed so the child can
+    # never block on a terminal read. Captured stderr rides on
+    # CalledProcessError for ReleaseError.detail; the streamed lines
+    # mean warnings are never silently swallowed.
     try:
-        progress.run(("vrg-finalize-pr", "--cleanup-only"), stdin=subprocess.DEVNULL)  # noqa: S607
+        progress.run(
+            ("vrg-finalize-pr", "--cleanup-only", "--output-format", "plain"),  # noqa: S607
+            stdin=subprocess.DEVNULL,
+        )
     except subprocess.CalledProcessError as exc:
         raise ReleaseError(
             phase="close-finalize",
-            command="vrg-finalize-pr --cleanup-only",
+            command="vrg-finalize-pr --cleanup-only --output-format plain",
             message="vrg-finalize-pr failed.",
             detail=exc.stderr,
         ) from exc

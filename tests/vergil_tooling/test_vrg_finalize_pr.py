@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -12,9 +13,15 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
+    FinalizeContext,
+    FinalizeError,
     _check_cd_workflow_status,
-    _finalize_specific_pr,
+    _stage_cd_check,
+    _stage_merge,
+    _stage_provenance,
+    _stage_validation,
     _worktree_is_dirty,
+    build_stages,
     main,
     parse_args,
 )
@@ -65,6 +72,18 @@ def _clean_working_tree() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _validation_passes() -> Iterator[None]:
+    """Default: the post-finalization validation child succeeds.
+
+    The validation stage streams through progress.run (issue #1479);
+    tests that assert validation behavior re-patch it directly — the
+    innermost patch wins.
+    """
+    with patch(_MOD + ".progress.run", return_value=0):
+        yield
+
+
 def test_parse_args_defaults() -> None:
     args = parse_args([])
     assert args.target_branch == "develop"
@@ -105,10 +124,6 @@ def _make_profile(tmp_path: Path, model: str) -> None:
     )
 
 
-def _validation_ok() -> CompletedProcess[bytes]:
-    return CompletedProcess(args=("vrg-validate",), returncode=0)
-
-
 _PR_EVIDENCE = {"number": "9", "url": "https://github.com/o/r/pull/9", "title": "Done"}
 
 
@@ -139,7 +154,6 @@ def test_main_library_release(tmp_path: Path) -> None:
             return_value=["feature/x", "develop"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
@@ -156,7 +170,6 @@ def test_main_already_on_target(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -186,7 +199,6 @@ def test_main_no_profile(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -214,7 +226,6 @@ def test_main_application_promotion(tmp_path: Path) -> None:
             return_value=["develop", "release", "main", "feature/y"],
         ),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
@@ -229,7 +240,6 @@ def test_main_docs_single_branch(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -243,7 +253,6 @@ def test_main_no_deleted_branches(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["develop"]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -258,47 +267,15 @@ def test_main_validation_fails(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
-            "vergil_tooling.bin.vrg_finalize_pr.subprocess.run",
-            return_value=CompletedProcess(args=("vrg-validate",), returncode=1),
+            _MOD + ".progress.run",
+            side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",)),
         ),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None) as cd_check,
     ):
         result = main([])
     assert result == 1
-
-
-def test_main_calls_docker_run(tmp_path: Path) -> None:
-    _make_profile(tmp_path, "library-release")
-    with (
-        patch(_MOD + ".git.repo_root", return_value=tmp_path),
-        patch(_MOD + ".git.current_branch", return_value="develop"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()) as mock_sub,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
-    ):
-        result = main([])
-    assert result == 0
-    cmd = mock_sub.call_args[0][0]
-    assert cmd[0] == "vrg-container-run"
-    assert cmd[1:] == ("--", "vrg-validate")
-
-
-def test_main_container_run_uses_uv_for_python(tmp_path: Path) -> None:
-    _make_profile(tmp_path, "library-release")
-    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
-    with (
-        patch(_MOD + ".git.repo_root", return_value=tmp_path),
-        patch(_MOD + ".git.current_branch", return_value="develop"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()) as mock_sub,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
-    ):
-        result = main([])
-    assert result == 0
-    cmd = mock_sub.call_args[0][0]
-    assert cmd == ("vrg-container-run", "--", "uv", "run", "vrg-validate")
+    # fail_defer: a validation failure must not skip the CD check.
+    cd_check.assert_called_once()
 
 
 # -- _check_cd_workflow_status (issue #303) --------------------------------
@@ -392,7 +369,6 @@ def test_main_returns_one_on_docs_failure(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(
             _MOD + "._check_cd_workflow_status",
             return_value=(
@@ -402,8 +378,7 @@ def test_main_returns_one_on_docs_failure(
     ):
         result = main([])
     assert result == 1
-    stderr = capsys.readouterr().err
-    assert "CD workflow" in stderr
+    assert "CD workflow" in capsys.readouterr().out
 
 
 def test_main_skips_docs_check_on_dry_run(tmp_path: Path) -> None:
@@ -494,7 +469,6 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         # is patched directly (the autouse fixture stubs list_worktrees).
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=False),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
@@ -528,7 +502,6 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=["feature/99-x"]),
         patch(_MOD + ".git.read_output", return_value=porcelain),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
@@ -563,7 +536,6 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
         # is patched directly (the autouse fixture stubs list_worktrees).
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -587,7 +559,6 @@ def test_main_cleans_docker_cache_on_branch_delete(
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["feature/x"]),
         patch(_MOD + ".git.read_output", return_value=""),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + ".clean_branch_images", return_value=2) as mock_clean,
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
@@ -618,10 +589,10 @@ def test_main_fails_on_dirty_working_tree(
         result = main([])
 
     assert result == 1
-    stderr = capsys.readouterr().err
-    assert "working tree is not clean" in stderr
-    assert "orphan-spec.md" in stderr
-    assert "stale-plan.md" in stderr
+    out = capsys.readouterr().out
+    assert "working tree is not clean" in out
+    assert "orphan-spec.md" in out
+    assert "stale-plan.md" in out
 
 
 def test_main_skips_dirty_check_on_dry_run(tmp_path: Path) -> None:
@@ -666,9 +637,7 @@ def test_pr_arg_runs_provenance_then_merges(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
         patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
-        patch(f"{_MOD}.subprocess.run") as mock_sub,
     ):
-        mock_sub.return_value.returncode = 0
         result = main(["42"])
     assert result == 0
     mock_check.assert_called_once_with("42")
@@ -687,9 +656,9 @@ def test_provenance_violation_aborts_without_merge(
         result = main(["42"])
     assert result == 1
     mock_merge.assert_not_called()
-    err = capsys.readouterr().err
-    assert "provenance violation" in err.lower()
-    assert "closed" in err
+    out = capsys.readouterr().out
+    assert "provenance violation" in out.lower()
+    assert "closed" in out
 
 
 def test_provenance_violation_override_merges(tmp_path: Path) -> None:
@@ -706,9 +675,7 @@ def test_provenance_violation_override_merges(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
         patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
-        patch(f"{_MOD}.subprocess.run") as mock_sub,
     ):
-        mock_sub.return_value.returncode = 0
         result = main(["42", "--allow-provenance-violation"])
     assert result == 0
     mock_merge.assert_called_once()
@@ -730,13 +697,11 @@ def test_advisory_surfaced_and_merge_proceeds(
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
         patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
-        patch(f"{_MOD}.subprocess.run") as mock_sub,
     ):
-        mock_sub.return_value.returncode = 0
         result = main(["42"])
     assert result == 0
     mock_merge.assert_called_once()
-    assert "advisory" in capsys.readouterr().err.lower()
+    assert "advisory" in capsys.readouterr().out.lower()
 
 
 def test_already_merged_skips_merge(tmp_path: Path) -> None:
@@ -753,9 +718,7 @@ def test_already_merged_skips_merge(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
         patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
-        patch(f"{_MOD}.subprocess.run") as mock_sub,
     ):
-        mock_sub.return_value.returncode = 0
         result = main(["42"])
     assert result == 0
     mock_merge.assert_not_called()
@@ -778,6 +741,22 @@ def test_pr_dry_run_skips_merge(tmp_path: Path) -> None:
     mock_merge.assert_not_called()
 
 
+def test_merge_abort_returns_one_from_main(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
+        patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}.git.current_branch") as branch,
+    ):
+        result = main(["42"])
+    assert result == 1
+    branch.assert_not_called()  # fail_fast: cleanup never starts
+    assert "is a draft" in capsys.readouterr().out
+
+
 def test_no_pr_arg_is_cleanup_only(tmp_path: Path) -> None:
     with (
         patch(f"{_MOD}.pr_provenance.check_pr") as mock_check,
@@ -789,9 +768,7 @@ def test_no_pr_arg_is_cleanup_only(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
         patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
-        patch(f"{_MOD}.subprocess.run") as mock_sub,
     ):
-        mock_sub.return_value.returncode = 0
         result = main([])
     assert result == 0
     mock_check.assert_not_called()
@@ -807,13 +784,13 @@ _WT8 = Worktree(path=Path("/repo/.worktrees/issue-8-bar"), branch="feature/8-bar
 
 
 @contextmanager
-def _cleanup_path_mocks() -> Iterator[None]:
+def _cleanup_path_mocks(root: Path) -> Iterator[None]:
     """Neutralize the post-merge cleanup path for inference-focused tests.
 
     Keeps main() off real git/config/gh calls after the part under test.
     """
     with (
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".git.repo_root", return_value=root),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
@@ -823,18 +800,19 @@ def _cleanup_path_mocks() -> Iterator[None]:
         yield
 
 
-def test_no_arg_single_candidate_confirms_and_finalizes() -> None:
+def test_no_arg_single_candidate_confirms_and_finalizes(tmp_path: Path) -> None:
     with (
-        _cleanup_path_mocks(),
+        _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
         patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
         patch(_MOD + ".prompt_yes_no", return_value=True) as confirm,
-        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+        patch(_MOD + "._stage_provenance") as prov,
+        patch(_MOD + "._stage_merge"),
     ):
         rc = main(["--dry-run"])
     assert rc == 0
     assert "PR #7" in confirm.call_args[0][0]
-    assert fin.call_args[0][0].pr == "https://github.com/o/r/pull/7"
+    assert prov.call_args[0][0].args.pr == "https://github.com/o/r/pull/7"
 
 
 def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
@@ -842,7 +820,7 @@ def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
         patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
         patch(_MOD + ".prompt_yes_no", return_value=False),
-        patch(_MOD + "._finalize_specific_pr") as fin,
+        patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".git.current_branch") as branch,
     ):
         rc = main([])
@@ -851,22 +829,23 @@ def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
     branch.assert_not_called()  # cleanup never started
 
 
-def test_no_arg_multiple_candidates_menu_then_confirm() -> None:
+def test_no_arg_multiple_candidates_menu_then_confirm(tmp_path: Path) -> None:
     def _pr_for(branch: str) -> dict[str, str]:
         return _PR7 if branch == "feature/7-foo" else _PR8
 
     with (
-        _cleanup_path_mocks(),
+        _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
         patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
         patch(_MOD + ".prompt_yes_no", return_value=True),
-        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+        patch(_MOD + "._stage_provenance") as prov,
+        patch(_MOD + "._stage_merge"),
     ):
         rc = main(["--dry-run"])
     assert rc == 0
     menu.assert_called_once()
-    assert fin.call_args[0][0].pr == "https://github.com/o/r/pull/8"
+    assert prov.call_args[0][0].args.pr == "https://github.com/o/r/pull/8"
 
 
 def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
@@ -881,6 +860,7 @@ def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
 
 
 def test_no_arg_excluded_worktree_prints_reason(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """No silent exclusions: a worktree without an open PR says why it
@@ -890,11 +870,12 @@ def test_no_arg_excluded_worktree_prints_reason(
         return _PR7 if branch == "feature/7-foo" else None
 
     with (
-        _cleanup_path_mocks(),
+        _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
         patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".prompt_yes_no", return_value=True),
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
+        patch(_MOD + "._stage_provenance"),
+        patch(_MOD + "._stage_merge"),
     ):
         rc = main(["--dry-run"])
     assert rc == 0
@@ -911,7 +892,7 @@ def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
             side_effect=SystemExit("requires an interactive terminal"),
         ),
         patch(_MOD + ".prompt_yes_no") as confirm,
-        patch(_MOD + "._finalize_specific_pr") as fin,
+        patch(_MOD + "._stage_provenance") as fin,
         pytest.raises(SystemExit, match="interactive terminal"),
     ):
         main([])
@@ -919,14 +900,15 @@ def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
     fin.assert_not_called()
 
 
-def test_explicit_pr_skips_inference_and_prompts() -> None:
+def test_explicit_pr_skips_inference_and_prompts(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees") as listing,
         patch(_MOD + ".prompt_yes_no") as confirm,
-        patch(_MOD + "._finalize_specific_pr", return_value=0) as fin,
+        patch(_MOD + "._stage_provenance") as fin,
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value=""),
@@ -961,16 +943,16 @@ def test_cleanup_only_rejects_pr_argument(
     assert "not allowed with" in err
 
 
-def test_cleanup_only_skips_inference_and_prompts() -> None:
+def test_cleanup_only_skips_inference_and_prompts(tmp_path: Path) -> None:
     """--cleanup-only is the scriptable release path: no TTY guard, no
     worktree enumeration, no prompts, no merge — straight to cleanup."""
     with (
         patch(_MOD + ".worktrees.require_tty") as guard,
         patch(_MOD + ".worktrees.list_worktrees") as listing,
         patch(_MOD + ".prompt_yes_no") as confirm,
-        patch(_MOD + "._finalize_specific_pr") as fin,
+        patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
     ):
@@ -987,45 +969,7 @@ def test_cleanup_only_skips_inference_and_prompts() -> None:
 _CLEAN_PROVENANCE = ProvenanceResult(violations=[], advisories=[])
 
 
-def test_finalize_specific_pr_uses_wait_and_merge() -> None:
-    args = parse_args(["123"])
-    with (
-        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
-    ):
-        rc = _finalize_specific_pr(args)
-    assert rc == 0
-    engine.assert_called_once_with("123", strategy="squash")
-
-
-def test_finalize_specific_pr_merge_abort_returns_error(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    args = parse_args(["123"])
-    with (
-        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
-        patch(_MOD + ".github.pr_state", return_value="OPEN"),
-        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
-    ):
-        rc = _finalize_specific_pr(args)
-    assert rc == 1
-    assert "is a draft" in capsys.readouterr().err
-
-
-def test_finalize_specific_pr_already_merged_skips_engine() -> None:
-    args = parse_args(["123"])
-    with (
-        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
-        patch(_MOD + ".github.pr_state", return_value="MERGED"),
-        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
-    ):
-        rc = _finalize_specific_pr(args)
-    assert rc == 0
-    engine.assert_not_called()
-
-
-def test_explicit_target_cleanup_deletes_merged_pr_branch() -> None:
+def test_explicit_target_cleanup_deletes_merged_pr_branch(tmp_path: Path) -> None:
     """After a squash merge, the just-merged branch is cleaned even though
     `git branch --merged` cannot see it."""
     git_run_calls: list[tuple[str, ...]] = []
@@ -1035,8 +979,9 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch() -> None:
 
     with (
         patch(_MOD + ".prompt_yes_no") as confirm,
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
@@ -1046,7 +991,6 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch() -> None:
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1054,22 +998,22 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch() -> None:
     assert ("branch", "-D", "feature/7-foo") in git_run_calls
 
 
-def test_explicit_target_cleanup_respects_eternal_branches() -> None:
+def test_explicit_target_cleanup_respects_eternal_branches(tmp_path: Path) -> None:
     git_run_calls: list[tuple[str, ...]] = []
 
     def mock_git_run(*args: str) -> None:
         git_run_calls.append(args)
 
     with (
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".github.head_ref", return_value="develop"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1079,6 +1023,7 @@ def test_explicit_target_cleanup_respects_eternal_branches() -> None:
 
 
 def test_explicit_target_cleanup_skips_missing_local_branch(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A merged PR whose branch has no local counterpart is skipped loudly."""
@@ -1088,8 +1033,9 @@ def test_explicit_target_cleanup_skips_missing_local_branch(
         git_run_calls.append(args)
 
     with (
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
@@ -1097,7 +1043,6 @@ def test_explicit_target_cleanup_skips_missing_local_branch(
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value=""),  # no local branch
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1106,6 +1051,7 @@ def test_explicit_target_cleanup_skips_missing_local_branch(
 
 
 def test_explicit_target_cleanup_skips_dirty_worktree(
+    tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     """A dirty worktree blocks the explicit-target deletion, loudly."""
@@ -1115,8 +1061,9 @@ def test_explicit_target_cleanup_skips_dirty_worktree(
         git_run_calls.append(args)
 
     with (
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
@@ -1129,7 +1076,6 @@ def test_explicit_target_cleanup_skips_dirty_worktree(
         ),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1158,7 +1104,6 @@ def test_sweep_skips_zero_commit_branch(tmp_path: Path, capsys: pytest.CaptureFi
         patch(_MOD + ".git.merged_branches", return_value=["feature/1439-fresh"]),
         patch(_MOD + ".git.commit_sha", return_value="same-sha"),
         patch(_MOD + ".github.closed_pr_for_branch") as evidence,
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -1191,7 +1136,6 @@ def test_sweep_skips_branch_without_merge_evidence(
         patch(_MOD + ".git.merged_branches", return_value=["feature/77-stale-tip"]),
         patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
         patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -1221,7 +1165,6 @@ def test_sweep_deletes_straggler_with_commits_and_merge_evidence(tmp_path: Path)
         patch(_MOD + ".git.merged_branches", return_value=["feature/55-straggler"]),
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main([])
@@ -1230,7 +1173,7 @@ def test_sweep_deletes_straggler_with_commits_and_merge_evidence(tmp_path: Path)
     assert ("branch", "-D", "feature/55-straggler") in git_run_calls
 
 
-def test_explicit_target_cleanup_bypasses_sweep_guards() -> None:
+def test_explicit_target_cleanup_bypasses_sweep_guards(tmp_path: Path) -> None:
     """Issue #1445: the guards gate the ancestry sweep only — the
     just-merged PR branch keeps its existing explicit-target cleanup,
     which already has PR evidence by construction."""
@@ -1240,8 +1183,9 @@ def test_explicit_target_cleanup_bypasses_sweep_guards() -> None:
         git_run_calls.append(args)
 
     with (
-        patch(_MOD + "._finalize_specific_pr", return_value=0),
-        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.current_branch", return_value="develop"),
@@ -1253,10 +1197,177 @@ def test_explicit_target_cleanup_bypasses_sweep_guards() -> None:
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
-        patch(_MOD + ".subprocess.run", return_value=_validation_ok()),
     ):
         rc = main(["123"])
     assert rc == 0
     assert ("branch", "-D", "feature/7-foo") in git_run_calls
     sha.assert_not_called()
     evidence.assert_not_called()
+
+
+# -- stage functions (issue #1479) ---------------------------------------------
+
+
+def _stage_ctx(argv: list[str], root: Path | None = None) -> FinalizeContext:
+    return FinalizeContext(args=parse_args(argv), root=root or Path("/repo"))
+
+
+def test_stage_provenance_clean_passes() -> None:
+    ctx = _stage_ctx(["123"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_clean()) as mock_check:
+        _stage_provenance(ctx)
+    mock_check.assert_called_once_with("123")
+
+
+def test_stage_provenance_violation_raises(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_with_violation()),
+        pytest.raises(FinalizeError, match="provenance"),
+    ):
+        _stage_provenance(ctx)
+    err = capsys.readouterr().err
+    assert "provenance violation" in err.lower()
+    assert "closed" in err
+
+
+def test_stage_provenance_override_passes() -> None:
+    ctx = _stage_ctx(["123", "--allow-provenance-violation"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_with_violation()):
+        _stage_provenance(ctx)  # must not raise
+
+
+def test_stage_provenance_advisory_surfaced(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_with_advisory()):
+        _stage_provenance(ctx)
+    assert "advisory" in capsys.readouterr().err.lower()
+
+
+def test_stage_merge_uses_wait_and_merge() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_called_once_with("123", strategy="squash")
+    assert ctx.merged_branch == "feature/42-x"
+
+
+def test_stage_merge_abort_raises() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
+        pytest.raises(FinalizeError, match="is a draft"),
+    ):
+        _stage_merge(ctx)
+
+
+def test_stage_merge_already_merged_skips_engine() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_not_called()
+    assert ctx.merged_branch == "feature/42-x"
+
+
+def test_stage_merge_dry_run_skips_engine() -> None:
+    ctx = _stage_ctx(["123", "--dry-run"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_not_called()
+    assert ctx.merged_branch == "feature/42-x"
+
+
+def test_build_stages_with_pr() -> None:
+    names = [s.name for s in build_stages(include_pr=True)]
+    assert names == ["provenance", "merge", "cleanup", "validation", "cd-check"]
+
+
+def test_build_stages_without_pr() -> None:
+    names = [s.name for s in build_stages(include_pr=False)]
+    assert names == ["cleanup", "validation", "cd-check"]
+
+
+def test_build_stages_failure_modes() -> None:
+    modes = {s.name: s.mode for s in build_stages(include_pr=True)}
+    assert modes["provenance"] == "fail_fast"
+    assert modes["merge"] == "fail_fast"
+    assert modes["cleanup"] == "fail_fast"
+    # fail_defer preserves current semantics: a validation failure still
+    # runs the cd-check, and either failure exits 1.
+    assert modes["validation"] == "fail_defer"
+    assert modes["cd-check"] == "fail_defer"
+
+
+def test_stage_validation_streams_through_progress(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        _stage_validation(ctx)
+    (cmd,) = run.call_args.args
+    assert cmd == ("vrg-container-run", "--", "vrg-validate")
+
+
+def test_stage_validation_uses_uv_for_python(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        _stage_validation(ctx)
+    (cmd,) = run.call_args.args
+    assert cmd == ("vrg-container-run", "--", "uv", "run", "vrg-validate")
+
+
+def test_stage_validation_failure_raises(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    err = subprocess.CalledProcessError(1, ("vrg-container-run",))
+    with (
+        patch(_MOD + ".progress.run", side_effect=err),
+        pytest.raises(FinalizeError, match="validation failed"),
+    ):
+        _stage_validation(ctx)
+
+
+def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--dry-run"], root=tmp_path)
+    with patch(_MOD + ".progress.run") as run:
+        _stage_validation(ctx)
+    run.assert_not_called()
+
+
+def test_stage_cd_check_passes_when_clean(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + "._check_cd_workflow_status", return_value=None):
+        _stage_cd_check(ctx)  # must not raise
+
+
+def test_stage_cd_check_raises_on_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(
+            _MOD + "._check_cd_workflow_status",
+            return_value="CD workflow run 999 on develop (deadbee) ended with 'failure'.",
+        ),
+        pytest.raises(FinalizeError, match="CD workflow"),
+    ):
+        _stage_cd_check(ctx)
+    assert "CD workflow" in capsys.readouterr().err
+
+
+def test_stage_cd_check_dry_run_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--dry-run"], root=tmp_path)
+    with patch(_MOD + "._check_cd_workflow_status") as check:
+        _stage_cd_check(ctx)
+    check.assert_not_called()
