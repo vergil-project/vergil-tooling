@@ -171,6 +171,79 @@ def test_wait_for_checks_does_not_use_fail_fast() -> None:
     assert "--fail-fast" not in call_args
 
 
+def test_wait_for_checks_reresolves_head_while_polling() -> None:
+    """The head SHA is re-resolved each poll — update-branch can move it (#1490)."""
+
+    def registered(_repo: str, sha: str) -> bool:
+        return sha == "new"
+
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", side_effect=["old", "new"]) as mock_sha,
+        patch("vergil_tooling.lib.github._checks_registered", side_effect=registered) as mock_reg,
+        patch("vergil_tooling.lib.github.time.sleep"),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
+    assert mock_sha.call_count == 2
+    assert mock_reg.call_args[0] == ("owner/repo", "new")
+    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
+
+
+def test_wait_for_checks_restarts_watch_on_no_checks_reported() -> None:
+    """A watch killed by "no checks reported" (head moved mid-watch) restarts (#1490)."""
+    no_checks = github.GitHubAPIError(
+        1,
+        ("gh", "pr", "checks", "1", "--watch"),
+        None,
+        "no checks reported on the 'feature/x' branch",
+    )
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", side_effect=["old", "new"]),
+        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
+        patch("vergil_tooling.lib.github.time.sleep"),
+        patch("vergil_tooling.lib.github.run", side_effect=[no_checks, None]) as mock_run,
+    ):
+        github.wait_for_checks("https://github.com/pr/1")
+    assert mock_run.call_count == 2
+
+
+def test_wait_for_checks_propagates_other_watch_failures() -> None:
+    """Only the "no checks reported" watch failure is transient; the rest raise."""
+    boom = github.GitHubAPIError(1, ("gh",), None, "HTTP 401: Bad credentials")
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
+        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
+        patch("vergil_tooling.lib.github.run", side_effect=boom) as mock_run,
+        pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        github.wait_for_checks("https://github.com/pr/1")
+    mock_run.assert_called_once()
+
+
+def test_wait_for_checks_watch_restart_bounded_by_deadline() -> None:
+    """The no-checks restart shares the poll deadline — past it, the error raises (#1490)."""
+    no_checks = github.GitHubAPIError(
+        1,
+        ("gh", "pr", "checks", "1", "--watch"),
+        None,
+        "no checks reported on the 'feature/x' branch",
+    )
+    with (
+        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
+        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
+        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
+        patch("vergil_tooling.lib.github.time.monotonic", side_effect=[0.0, 61.0]),
+        patch("vergil_tooling.lib.github.time.sleep"),
+        patch("vergil_tooling.lib.github.run", side_effect=no_checks) as mock_run,
+        pytest.raises(github.GitHubAPIError, match="no checks reported"),
+    ):
+        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
+    mock_run.assert_called_once()
+
+
 def test_failed_check_names_returns_failing_checks() -> None:
     payload = json.dumps(
         [

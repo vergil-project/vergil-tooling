@@ -17,9 +17,12 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import retry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
@@ -385,6 +388,64 @@ def _checks_registered(repo: str, sha: str) -> bool:
     return int(result.stdout.strip()) > 0
 
 
+# gh pr checks exits 1 with this stderr when the current head has no
+# registered checks — transient right after the head moves, fatal only
+# once the registration deadline has passed.
+_NO_CHECKS_MARKER = "no checks reported"
+
+
+def _is_no_checks_error(exc: subprocess.CalledProcessError) -> bool:
+    """True if a watch failure means zero checks on the PR's current head."""
+    return _NO_CHECKS_MARKER in (exc.stderr or "").lower()
+
+
+def _poll_and_watch_checks(
+    pr: str,
+    watch: Callable[[], None],
+    *,
+    poll_interval: int,
+    poll_timeout: int,
+) -> None:
+    """Wait until checks register on the PR's *current* head, then run *watch*.
+
+    The head can move while waiting — ``update-branch`` or a push creates
+    a new head commit whose CI run takes seconds to register — so the SHA
+    is re-resolved on every poll rather than pinned once.  ``gh pr checks
+    --watch`` likewise re-resolves the head on every refresh and exits 1
+    with "no checks reported" the moment it sees a head with zero
+    registered checks; that failure is transient (head moved mid-watch),
+    so it re-enters the registration poll and restarts the watch instead
+    of raising (#1490).  All waiting shares one deadline; every other
+    watch failure propagates unchanged.
+    """
+    repo = current_repo()
+    deadline = time.monotonic() + poll_timeout
+
+    while True:
+        sha = head_sha(pr)
+        while not _checks_registered(repo, sha):
+            if time.monotonic() >= deadline:
+                raise GitHubAPIError(
+                    1,
+                    ("gh", "pr", "checks", pr, "--watch"),
+                    stderr=(
+                        f"no checks reported for {sha[:8]} after {poll_timeout}s"
+                        " — GitHub may be experiencing delays"
+                    ),
+                )
+            time.sleep(poll_interval)
+            sha = head_sha(pr)
+        try:
+            watch()
+        except subprocess.CalledProcessError as exc:
+            if not _is_no_checks_error(exc) or time.monotonic() >= deadline:
+                raise
+            print("Watch lost the checks (PR head likely moved) — re-polling...")
+            time.sleep(poll_interval)
+        else:
+            return
+
+
 def wait_for_checks(
     pr: str,
     *,
@@ -393,35 +454,20 @@ def wait_for_checks(
 ) -> None:
     """Block until all checks on *pr* reach a terminal state.
 
-    Resolves the PR's HEAD commit SHA and polls the GitHub REST API
-    until at least one check run exists for that commit.  Then hands
-    off to ``gh pr checks --watch`` which blocks until every check
-    completes.
+    Polls the GitHub REST API until at least one check run exists for
+    the PR's current head commit, then hands off to ``gh pr checks
+    --watch`` which blocks until every check completes.  Resilient to
+    the head moving mid-wait (see ``_poll_and_watch_checks``).
 
     Transient GitHub API errors (502/503/504/429) are retried
     automatically via the library-level retry wrapper.
     """
-    repo = current_repo()
-    sha = head_sha(pr)
-
-    deadline = time.monotonic() + poll_timeout
-    while not _checks_registered(repo, sha):
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(poll_interval)
-
-    if not _checks_registered(repo, sha):
-        cmd = ("gh", "pr", "checks", pr, "--watch")
-        raise GitHubAPIError(
-            1,
-            cmd,
-            stderr=(
-                f"no checks reported for {sha[:8]} after {poll_timeout}s"
-                " — GitHub may be experiencing delays"
-            ),
-        )
-
-    run("pr", "checks", pr, "--watch")
+    _poll_and_watch_checks(
+        pr,
+        lambda: run("pr", "checks", pr, "--watch"),
+        poll_interval=poll_interval,
+        poll_timeout=poll_timeout,
+    )
 
 
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
