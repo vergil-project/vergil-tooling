@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.6/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.4/">
+        <link rel="next" href="../v2.1.11/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.5 - VERGIL Tooling</title>
+        <title>2.1.12 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-215-2026-06-04" class="md-skip">
+        <a href="#release-2112-2026-06-06" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.5
+              2.1.12
             
           </span>
         </div>
@@ -894,10 +894,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.12/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.12
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -913,6 +940,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1090,19 +1148,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.5/" class="md-nav__link">
         
   
   
@@ -1118,7 +1167,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -7573,6 +7621,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -7588,7 +7655,35 @@
 
 
 
-<h1 id="release-215-2026-06-04">Release 2.1.5 (2026-06-04)<a class="headerlink" href="#release-215-2026-06-04" title="Permanent link">&para;</a></h1>
+<h1 id="release-2112-2026-06-06">Release 2.1.12 (2026-06-06)<a class="headerlink" href="#release-2112-2026-06-06" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>grant actions: read to the security job (#1473)</strong>
+ci-security.yml@v2.1.3 requests actions: read from its caller
+(codeql-action/upload-sarif needs it on private repositories). GitHub
+validates the request against the calling job's permissions at startup,
+so the security job must grant it before v2.1 is re-promoted to v2.1.3.
+The grant is backward-compatible with v2.1.2.</p>
+</li>
+<li>
+<p><strong>stream vrg-finalize-pr output through the progress session (#1471)</strong></p>
+</li>
+<li>fix(release): stream vrg-finalize-pr output through the progress session</li>
+</ul>
+<p>The close-finalize stage ran vrg-finalize-pr --cleanup-only with
+inherited stdout, a design that predates the progress framework. Under
+the RichRenderer, every raw line the child writes to the TTY advances
+the cursor beneath the rich.Live display, stranding stale copies of the
+completed-stage list on screen (the staircase of duplicated stage lines
+observed in the vergil-actions 2.1.3 release). The raw output also
+bypassed the run log entirely.</p>
+<p>Route the child through progress.run so its output streams into the
+live display's rolling window and the run log. progress.run gains a
+stdin passthrough so the call site can keep the subprocess.DEVNULL
+guarantee from issue #1448 (the child can never block on a terminal
+read). Failure handling is preserved: CalledProcessError carries the
+captured stderr into ReleaseError.detail.</p>
 
 
 
