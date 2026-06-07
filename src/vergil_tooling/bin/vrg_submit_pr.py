@@ -14,12 +14,20 @@ agent's own credentials would be rejected for.
 
 Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
+
+``--finalize`` chains straight into the ``vrg-finalize-pr``
+wait-and-merge flow after the PR is created (issue #1491) — for cases
+where the human has already decided to merge on green. The chain runs
+only after the PR exists, so a submit failure leaves no half-finalized
+state, and a finalize failure reports the created PR so the human can
+re-run ``vrg-finalize-pr`` alone.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -43,6 +51,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--title", default=None, help="PR title")
     parser.add_argument("--dry-run", action="store_true", help="Print without executing")
     parser.add_argument("--base", default=None, help="Override auto-detected target branch")
+    parser.add_argument(
+        "--finalize",
+        action="store_true",
+        help="After creating the PR, chain straight into vrg-finalize-pr "
+        "(wait for checks, merge, post-merge cleanup)",
+    )
     return parser.parse_args(argv)
 
 
@@ -61,6 +75,39 @@ def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
     finally:
         Path(tmp_path).unlink(missing_ok=True)
     return pr_url
+
+
+def _chain_finalize(pr_url: str) -> int:
+    """Hand off to ``vrg-finalize-pr`` right after PR creation (issue #1491).
+
+    Equivalent to running ``vrg-finalize-pr <pr-url>`` by hand: same
+    merge-strategy default, same post-merge cleanup. Runs as a subprocess
+    from the main worktree root because vrg-finalize-pr refuses to run
+    from a secondary worktree (it removes worktrees during cleanup) and
+    template mode chdir'd into one. The child inherits the TTY so its
+    live progress display and prompts behave exactly as a manual run.
+
+    A failure here never un-creates the PR — report the PR clearly so
+    the human can re-run vrg-finalize-pr alone.
+    """
+    main_root = git.main_worktree_root()
+    print()
+    print(f"--finalize: handing off to vrg-finalize-pr {pr_url}")
+    result = subprocess.run(  # noqa: S603
+        ("vrg-finalize-pr", pr_url),  # noqa: S607
+        cwd=main_root,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(
+            f"vrg-submit-pr: finalize failed (exit {result.returncode}); "
+            "the PR was created and is unaffected:\n"
+            f"  {pr_url}\n"
+            f"  Re-run finalization alone with: vrg-finalize-pr {pr_url}",
+            file=sys.stderr,
+        )
+        return result.returncode
+    return 0
 
 
 def _print_pr_watch(pr_url: str) -> None:
@@ -97,6 +144,8 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         print(f"=== PR Title ===\n{args.title}\n")
         print(f"=== Target Branch ===\n{target}\n")
         print(f"=== PR Body ===\n{pr_body}")
+        if args.finalize:
+            print("\n[dry-run] would chain into: vrg-finalize-pr <pr-url>")
         return 0
 
     print(f"Pushing branch '{branch}' to origin...")
@@ -106,6 +155,8 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
     print(f"PR created: {pr_url}")
     print(f"Done. PR URL: {pr_url}")
+    if args.finalize:
+        return _chain_finalize(pr_url)
     _print_pr_watch(pr_url)
     return 0
 
@@ -219,6 +270,8 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     print(f"=== Body Preview ===\n{pr_body}")
 
     if args.dry_run:
+        if args.finalize:
+            print("\n[dry-run] would chain into: vrg-finalize-pr <pr-url>")
         return 0
 
     try:
@@ -243,6 +296,8 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     pr_template.delete_template(root)
     print(f"PR created: {pr_url}")
     print(f"Done. PR URL: {pr_url}")
+    if args.finalize:
+        return _chain_finalize(pr_url)
     _print_pr_watch(pr_url)
     return 0
 

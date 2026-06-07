@@ -490,20 +490,8 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_update(args: argparse.Namespace) -> int:
-    name, identity, config, instance = _resolve_instance(args)
-
-    status = vm_status(instance)
-    if status != "Running":
-        effective = status or "Not Created"
-        print(
-            f"ERROR: VM '{instance}' is not running (status: {effective})",
-            file=sys.stderr,
-        )
-        return 1
-
-    tag = args.tag if args.tag else None
-    fallback = resolve_vergil_version(config, identity)
+def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
+    """Update vergil-tooling in one running VM, printing the version transition."""
     print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
     before = get_tooling_version(instance)
@@ -518,7 +506,111 @@ def _cmd_update(args: argparse.Namespace) -> int:
     elif after:
         print(f"  vergil-tooling: {after}")
 
+
+def _cmd_update(args: argparse.Namespace) -> int:
+    if args.all:
+        return _cmd_update_all(args)
+
+    name, identity, config, instance = _resolve_instance(args)
+
+    status = vm_status(instance)
+    if status != "Running":
+        effective = status or "Not Created"
+        print(
+            f"ERROR: VM '{instance}' is not running (status: {effective})",
+            file=sys.stderr,
+        )
+        return 1
+
+    tag = args.tag if args.tag else None
+    fallback = resolve_vergil_version(config, identity)
+    _update_instance(instance, name, tag, fallback)
+
     print("Update complete.")
+    return 0
+
+
+def _all_update_targets(
+    config: IdentityConfig, status: dict[str, str]
+) -> list[tuple[str, Identity, str]]:
+    """Enumerate (identity_name, identity, instance) for every existing owned VM.
+
+    Base VMs are matched by exact ``vm_instance``; dedicated VMs by the identity
+    tier of the instance name (orphaned ones included — they still run agents
+    that need current tooling). Lima instances owned by no configured identity
+    are ignored.
+    """
+    targets: list[tuple[str, Identity, str]] = []
+    for id_name, identity in config.identities.items():
+        if identity.vm_instance in status:
+            targets.append((id_name, identity, identity.vm_instance))
+        for inst in sorted(status):
+            try:
+                ident, org, repo = parse_instance_name(inst)
+            except ValueError:
+                continue
+            if ident == id_name and org is not None and repo is not None:
+                targets.append((id_name, identity, inst))
+    return targets
+
+
+def _cmd_update_all(args: argparse.Namespace) -> int:
+    """Update vergil-tooling in every existing VM owned by a configured identity.
+
+    Fail-deferred by design: every VM in the list is attempted even after one
+    fails; non-running VMs are skipped and reported; any failure makes the
+    final exit code non-zero — only after all attempts have completed.
+    """
+    if args.workspace or args.identity:
+        print(
+            "ERROR: --all cannot be combined with a workspace or --identity",
+            file=sys.stderr,
+        )
+        return 2
+
+    config_path = args.config if args.config else _default_config_path()
+    config = load_config(config_path)
+    status = {vm["name"]: vm["status"] for vm in list_vms()}
+
+    targets = _all_update_targets(config, status)
+    if not targets:
+        print("No VMs found.")
+        return 0
+
+    tag = args.tag if args.tag else None
+    updated: list[str] = []
+    skipped: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for id_name, identity, instance in targets:
+        vm_state = status[instance]
+        if vm_state != "Running":
+            print(f"Skipping VM '{instance}' (status: {vm_state or 'Not Created'})")
+            skipped.append(instance)
+            continue
+        try:
+            fallback = resolve_vergil_version(config, identity)
+            _update_instance(instance, id_name, tag, fallback)
+            updated.append(instance)
+        except subprocess.CalledProcessError as exc:
+            reason = f"exit status {exc.returncode}"
+            print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+            failed.append((instance, reason))
+        except SystemExit as exc:
+            # update_tooling/resolve_vergil_version abort via SystemExit after
+            # printing their own ERROR line; defer the failure like any other.
+            reason = f"aborted (exit {exc.code})"
+            print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
+            failed.append((instance, reason))
+
+    total = len(targets)
+    print(
+        f"Update complete: {len(updated)} updated, {len(skipped)} skipped, "
+        f"{len(failed)} failed (of {total} VMs)."
+    )
+    if failed:
+        names = ", ".join(f"'{inst}' ({reason})" for inst, reason in failed)
+        print(f"failed to update {len(failed)} of {total}: {names}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -1032,6 +1124,14 @@ def main(argv: list[str] | None = None) -> int:
     _add_workspace_arg(p_update)
     p_update.add_argument(
         "--tag", default="", help="Override version tag (default: tag from initial install)"
+    )
+    p_update.add_argument(
+        "--all",
+        action="store_true",
+        help=(
+            "Update every VM owned by a configured identity (fail-deferred: all VMs "
+            "are attempted even if one fails; non-running VMs are skipped and reported)"
+        ),
     )
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
