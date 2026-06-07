@@ -124,6 +124,17 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
     )
 
 
+def ghas_available(config: VergilConfig, *, visibility: str) -> bool:
+    """Resolve the GHAS posture for a repo.
+
+    A declared ``[project].ghas`` in ``vergil.toml`` wins; otherwise
+    GHAS is inferred as available exactly when the repo is not private.
+    """
+    if config.project.ghas is not None:
+        return config.project.ghas
+    return visibility != "private"
+
+
 def desired_security_settings(*, visibility: str) -> DesiredSecuritySettings:
     ghas_available = visibility != "private"
     return DesiredSecuritySettings(

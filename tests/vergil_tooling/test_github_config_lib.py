@@ -37,6 +37,7 @@ from vergil_tooling.lib.github_config import (
     desired_tag_protection_ruleset,
     fetch_actual_state,
     format_rules_delta,
+    ghas_available,
 )
 
 
@@ -324,6 +325,20 @@ def _vergil_config(
         publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[]),
     )
+
+
+def test_ghas_available_inferred_from_visibility() -> None:
+    cfg = _vergil_config()
+    assert ghas_available(cfg, visibility="public") is True
+    assert ghas_available(cfg, visibility="private") is False
+
+
+def test_ghas_available_declared_overrides_visibility() -> None:
+    cfg = _vergil_config()
+    cfg.project.ghas = True
+    assert ghas_available(cfg, visibility="private") is True
+    cfg.project.ghas = False
+    assert ghas_available(cfg, visibility="public") is False
 
 
 def test_compute_desired_state_has_three_rulesets() -> None:
