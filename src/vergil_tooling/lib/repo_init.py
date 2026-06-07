@@ -39,7 +39,7 @@ class RepoInitContext:
     integration_tests: bool = False
     publish_release: bool = False
     publish_docs: bool = True
-    vergil_version: str = "v2.0"
+    vergil_version: str = "v2.1"
     license_type: str = "GPL-3.0"
     initial_version: str = "0.1.0"
 
@@ -328,7 +328,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
         lines.extend(
             [
                 "  audit:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.0\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.1\n",
                 "    with:\n",
                 f"      language: {lang_yaml}\n",
                 f"      versions: '{versions_json}'\n",
@@ -341,7 +341,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     lines.extend(
         [
             "  quality:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.0\n",
+            "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n",
             "    with:\n",
             f"      language: {lang_yaml}\n",
             f"      versions: '{versions_json}'\n",
@@ -349,14 +349,33 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             f"      container-suffix: {suffix}\n",
             "\n",
             "  security:\n",
-            "    uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.0\n",
+            "    uses: vergil-project/vergil-actions/.github/workflows/ci-security.yml@v2.1\n",
             "    permissions:\n",
             "      contents: read\n",
             "      security-events: write\n",
+            "      # Requested by ci-security.yml@v2.1.3: codeql-action/upload-sarif\n",
+            "      # needs it on private repos. See vergil-project/vergil-actions#698.\n",
+            "      actions: read\n",
             "    with:\n",
             f"      language: {lang_yaml}\n",
             "      run-standards: ${{ inputs.run-release != 'false' }}\n",
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
+        ]
+    )
+
+    if ctx.visibility == "private":
+        lines.extend(
+            [
+                "      # Private repo without GHAS: scanners gate via exit codes,\n",
+                "      # SARIF is kept as build artifacts, and CodeQL is skipped.\n",
+                "      # See vergil-project/vergil-actions#693; to enable GHAS later\n",
+                "      # see docs/specs/2026-06-06-ghas-posture-design.md.\n",
+                "      upload-sarif: false\n",
+            ]
+        )
+
+    lines.extend(
+        [
             f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
         ]
@@ -370,7 +389,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             [
                 "\n",
                 "  test:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.0\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.1\n",
                 "    with:\n",
                 f"      language: {lang_yaml}\n",
                 f"      versions: '{versions_json}'\n",
@@ -385,7 +404,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "\n",
                 "  version:\n",
                 "    uses: vergil-project/vergil-actions/"
-                ".github/workflows/ci-version-bump.yml@v2.0\n",
+                ".github/workflows/ci-version-bump.yml@v2.1\n",
                 "    with:\n",
                 f"      language: {lang_yaml}\n",
                 "      run-release: ${{ inputs.run-release != 'false' }}\n",
@@ -426,7 +445,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         lines.extend(
             [
                 "  docs:\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.0\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/cd-docs.yml@v2.1\n",
                 "    permissions:\n",
                 "      contents: write\n",
             ]
@@ -440,7 +459,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
             [
                 "  release:\n",
                 "    if: github.ref == 'refs/heads/main'\n",
-                "    uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.0\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/cd-release.yml@v2.1\n",
                 "    with:\n",
                 f"      language: {suffix}\n",
                 f'      container-tag: "{tag}"\n',
@@ -646,7 +665,7 @@ def step_generate_config(ctx: RepoInitContext) -> None:
 
     ctx.vergil_version = prompt_free_text(
         "Vergil dependency version",
-        default=deps.get("vergil", "v2.0"),
+        default=deps.get("vergil", "v2.1"),
     )
 
     license_options = ["GPL-3.0", "MIT", "Apache-2.0", "none"]
