@@ -63,6 +63,7 @@ requires a terminal; root launches fail fast when stdin is not a TTY.
 | `--notes` | No | Additional notes for the PR |
 | `--base` | No | Override the auto-detected target branch |
 | `--dry-run` | No | Print PR body without executing |
+| `--finalize` | No | After creating the PR, chain straight into `vrg-finalize-pr` |
 
 ### Linkage Keywords
 
@@ -82,6 +83,9 @@ vrg-submit-pr \
   --issue 42 \
   --summary "Add new lint check for X" \
   --title "feat(lint): add new check for X"
+
+# Submit and merge-on-green in one step
+vrg-submit-pr --finalize
 ```
 
 ## Behavior
@@ -101,9 +105,32 @@ vrg-submit-pr \
    sessions, plus the PR URL — which can be passed straight to
    [`vrg-finalize-pr`](finalize-pr.md).
 
+## Chaining into finalize (`--finalize`)
+
+`--finalize` folds the manual two-command sequence
+(`vrg-submit-pr`, then `vrg-finalize-pr <pr>`) into one step: after
+the PR is created, the tool hands off to the
+[`vrg-finalize-pr`](finalize-pr.md) wait-and-merge flow from the main
+worktree root. Use it when the decision to merge-on-green has already
+been made at submit time — it bypasses the local audit loop, so the
+`/vergil:pr-watch` line is not printed.
+
+Semantics are identical to running `vrg-finalize-pr <pr-url>` by hand
+(same merge-strategy default, same post-merge cleanup), and the
+failure modes split cleanly:
+
+- A **submit failure** stops before finalize runs — no half-finalized
+  state.
+- A **finalize failure** leaves the created PR unaffected and prints
+  it clearly so you can re-run `vrg-finalize-pr <pr-url>` alone.
+
+Like the rest of the tool, `--finalize` is human-only — the agent
+identity gate runs before either mode.
+
 ## Exit Codes
 
 | Code | Meaning |
 | ---- | ------- |
-| 0 | PR created |
+| 0 | PR created (and, with `--finalize`, merged and cleaned up) |
 | 1 | Validation failure, declined confirmation, or no submittable worktree |
+| other | With `--finalize`: the PR was created but finalize failed — re-run `vrg-finalize-pr` alone |
