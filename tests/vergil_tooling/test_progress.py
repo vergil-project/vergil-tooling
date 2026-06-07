@@ -362,6 +362,16 @@ def test_run_check_false_returns_code() -> None:
     assert rc == 2
 
 
+def test_run_stdin_devnull_gives_child_eof() -> None:
+    """Issue #1470: ``stdin=subprocess.DEVNULL`` reaches the child, which
+    sees immediate EOF instead of inheriting (and potentially blocking on)
+    the parent's stdin."""
+    progress._session = None
+    code = "import sys; sys.exit(0 if sys.stdin.read() == '' else 1)"
+    rc = progress.run((sys.executable, "-c", code), check=False, stdin=subprocess.DEVNULL)
+    assert rc == 0
+
+
 def _args(**skips: bool) -> argparse.Namespace:
     return argparse.Namespace(output_window=5, output_format="plain", **skips)
 

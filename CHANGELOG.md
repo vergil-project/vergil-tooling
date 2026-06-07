@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.12] - 2026-06-06
+
+### Bug fixes
+
+- grant actions: read to the security job (#1473)
+- stream vrg-finalize-pr output through the progress session (#1471)
+
 ## [2.1.11] - 2026-06-06
 
 ### Bug fixes
