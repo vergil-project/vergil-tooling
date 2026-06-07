@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.15] - 2026-06-07
+
+### Bug fixes
+
+- make wait_for_checks resilient to PR head movement
+- read custom-title naming events and break slot collisions by recency
+
 ## [2.1.14] - 2026-06-07
 
 ### Features
