@@ -832,6 +832,8 @@
       
         
       
+        
+      
     
     
     
@@ -884,6 +886,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.16/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.16
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5455,6 +5485,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#chaining-into-finalize-finalize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chaining into finalize (--finalize)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -7890,6 +7931,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#chaining-into-finalize-finalize" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chaining into finalize (--finalize)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8007,6 +8059,11 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 <td>No</td>
 <td>Print PR body without executing</td>
 </tr>
+<tr>
+<td><code>--finalize</code></td>
+<td>No</td>
+<td>After creating the PR, chain straight into <code>vrg-finalize-pr</code></td>
+</tr>
 </tbody>
 </table>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
@@ -8023,6 +8080,9 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="c1"># Submit and merge-on-green in one step</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a>vrg-submit-pr<span class="w"> </span>--finalize
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
@@ -8043,6 +8103,25 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
    sessions, plus the PR URL — which can be passed straight to
    <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a>.</li>
 </ol>
+<h2 id="chaining-into-finalize-finalize">Chaining into finalize (<code>--finalize</code>)<a class="headerlink" href="#chaining-into-finalize-finalize" title="Permanent link">&para;</a></h2>
+<p><code>--finalize</code> folds the manual two-command sequence
+(<code>vrg-submit-pr</code>, then <code>vrg-finalize-pr &lt;pr&gt;</code>) into one step: after
+the PR is created, the tool hands off to the
+<a href="../finalize-pr/"><code>vrg-finalize-pr</code></a> wait-and-merge flow from the main
+worktree root. Use it when the decision to merge-on-green has already
+been made at submit time — it bypasses the local audit loop, so the
+<code>/vergil:pr-watch</code> line is not printed.</p>
+<p>Semantics are identical to running <code>vrg-finalize-pr &lt;pr-url&gt;</code> by hand
+(same merge-strategy default, same post-merge cleanup), and the
+failure modes split cleanly:</p>
+<ul>
+<li>A <strong>submit failure</strong> stops before finalize runs — no half-finalized
+  state.</li>
+<li>A <strong>finalize failure</strong> leaves the created PR unaffected and prints
+  it clearly so you can re-run <code>vrg-finalize-pr &lt;pr-url&gt;</code> alone.</li>
+</ul>
+<p>Like the rest of the tool, <code>--finalize</code> is human-only — the agent
+identity gate runs before either mode.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -8054,11 +8133,15 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>PR created</td>
+<td>PR created (and, with <code>--finalize</code>, merged and cleaned up)</td>
 </tr>
 <tr>
 <td>1</td>
 <td>Validation failure, declined confirmation, or no submittable worktree</td>
+</tr>
+<tr>
+<td>other</td>
+<td>With <code>--finalize</code>: the PR was created but finalize failed — re-run <code>vrg-finalize-pr</code> alone</td>
 </tr>
 </tbody>
 </table>
