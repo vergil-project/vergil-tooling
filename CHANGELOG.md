@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.16] - 2026-06-07
+
+### Bug fixes
+
+- replace FETCH_HEAD-dependent pull with fetch + ff-merge of remote-tracking ref (#1503)
+
+### Chores
+
+- ignore .claude/scheduled_tasks.lock runtime lock (#1504)
+
+### Features
+
+- add --finalize flag to chain straight into wait-and-merge (#1500)
+- add --all to vrg-vm update for bulk fail-deferred updates (#1502)
+
 ## [2.1.15] - 2026-06-07
 
 ### Bug fixes
