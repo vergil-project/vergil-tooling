@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.19/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.17/">
+        <link rel="next" href="../v2.1.14/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.18 - VERGIL Tooling</title>
+        <title>2.1.15 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1418-2026-05-05" class="md-skip">
+        <a href="#release-2115-2026-06-07" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.18
+              2.1.15
             
           </span>
         </div>
@@ -900,10 +900,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.15/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.15
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -919,6 +946,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3952,37 +4010,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.18
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.18/" class="md-nav__link">
         
   
   
@@ -3998,48 +4029,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7739,17 +7728,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -7767,16 +7745,18 @@
 
 
 
-<h1 id="release-1418-2026-05-05">Release 1.4.18 (2026-05-05)<a class="headerlink" href="#release-1418-2026-05-05" title="Permanent link">&para;</a></h1>
+<h1 id="release-2115-2026-06-07">Release 2.1.15 (2026-06-07)<a class="headerlink" href="#release-2115-2026-06-07" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>skip uv tool install when running in the standard-tooling repo itself</strong></li>
-<li><strong>resolve CI failures: mypy no-any-return and ruff format</strong></li>
+<li><strong>make wait_for_checks resilient to PR head movement</strong>
+wait_for_checks pinned the head SHA once and validated check registration for that single instant, then handed off to 'gh pr checks --watch', which re-resolves the PR head on every refresh and exits 1 with 'no checks reported' the moment it sees a head with zero registered checks. Any head movement after the guard passed — most commonly update-branch creating a merge commit whose CI run takes ~15s to register — killed the watch (issue 1490, observed on PR 1486).</li>
 </ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<p>Replace both duplicated wait loops (lib/github.py and lib/release/subprocess.py) with a shared engine that re-resolves the head SHA on every registration poll and treats a watch death by 'no checks reported' as transient — re-poll registration and restart the watch — bounded by the existing 180s deadline. All other watch failures propagate unchanged.</p>
 <ul>
-<li><strong>sweep post-1.4.17 dependency updates</strong></li>
+<li><strong>read custom-title naming events and break slot collisions by recency</strong>
+Claude Code (~2.1.16x) renamed the transcript naming event from agent-name/agentName to custom-title/customTitle. The session resolver only parsed the old type, so modern sessions were invisible to transcript-based name resolution, archiving silently no-opped on modern transcripts, and stale pre-rename transcripts squatted on slot names forever — after a VM kill, reconnection resumed the stale session instead of the current one.</li>
 </ul>
+<p>Rename _last_agent_name to _last_session_name and parse both event types, last naming event in file order wins. Emit custom-title when archiving so Claude's own resume picker shows the archived label. Break slot-name collisions by liveness first, then last-active recency, so a /clear rotation (which leaves the abandoned session id still claiming the slot name) deterministically resolves to the current id. Ref #1493.</p>
 
 
 
