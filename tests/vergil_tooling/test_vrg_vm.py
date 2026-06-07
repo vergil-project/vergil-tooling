@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -891,6 +892,224 @@ class TestUpdate:
         out = capsys.readouterr().out
         assert "vergil-tooling: v2.0.63" in out
         assert "→" not in out
+
+
+@pytest.fixture()
+def config_file_multi(tmp_path: Path) -> Path:
+    p = tmp_path / "identities-multi.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+
+        [identities.audit]
+        vm_instance = "audit-agent"
+        vergil = "v2.5"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    return p
+
+
+class TestUpdateAll:
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_updates_every_running_vm(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        assert mock_update.call_args_list == [
+            call("vergil-agent", None, fallback_tag="v2.0"),
+            call("vergil.acme.widgets", None, fallback_tag="v2.0"),
+        ]
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_continues_after_failure_and_exits_nonzero(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+            {"name": "vergil.acme.gadgets", "status": "Running"},
+        ]
+        mock_update.side_effect = [
+            subprocess.CalledProcessError(1, "uv tool install"),
+            None,
+            None,
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 1
+        assert mock_update.call_count == 3
+        err = capsys.readouterr().err
+        assert "failed to update 1 of 3" in err
+        assert "vergil-agent" in err
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_fail_deferred_catches_system_exit(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        mock_update.side_effect = [SystemExit(1), None]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 1
+        assert mock_update.call_count == 2
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_skips_non_running_vms(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Stopped"},
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        out = capsys.readouterr().out
+        assert "Skipping VM 'vergil.acme.widgets' (status: Stopped)" in out
+        assert "1 skipped" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_ignores_vms_of_unconfigured_identities(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "random-box", "status": "Running"},
+            {"name": "other.acme.widgets", "status": "Running"},
+            {"name": "two.tiers", "status": "Running"},  # unparseable instance name
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_resolves_fallback_tag_per_identity(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file_multi: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "audit-agent", "status": "Running"},
+        ]
+        result = main(["update", "--all", "--config", str(config_file_multi)])
+        assert result == 0
+        assert mock_update.call_args_list == [
+            call("vergil-agent", None, fallback_tag="v2.0"),
+            call("audit-agent", None, fallback_tag="v2.5"),
+        ]
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_explicit_tag_applies_to_every_vm(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        config_file: Path,
+    ) -> None:
+        mock_list.return_value = [
+            {"name": "vergil-agent", "status": "Running"},
+            {"name": "vergil.acme.widgets", "status": "Running"},
+        ]
+        result = main(["update", "--all", "--tag", "v2.1", "--config", str(config_file)])
+        assert result == 0
+        assert mock_update.call_args_list == [
+            call("vergil-agent", "v2.1", fallback_tag="v2.0"),
+            call("vergil.acme.widgets", "v2.1", fallback_tag="v2.0"),
+        ]
+
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_rejects_workspace_argument(
+        self,
+        _list: MagicMock,
+        mock_update: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        result = main(["update", "--all", "acme/widgets", "--config", str(config_file)])
+        assert result == 2
+        mock_update.assert_not_called()
+        assert "--all" in capsys.readouterr().err
+
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_rejects_identity_flag(
+        self,
+        _list: MagicMock,
+        mock_update: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        result = main(["update", "--all", "--identity", "vergil", "--config", str(config_file)])
+        assert result == 2
+        mock_update.assert_not_called()
+        assert "--all" in capsys.readouterr().err
+
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_no_vms_found(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_list.return_value = []
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        mock_update.assert_not_called()
+        assert "No VMs found" in capsys.readouterr().out
 
 
 class TestSessionStaleness:
