@@ -17,3 +17,12 @@ integration-tests = false
 
 [dependencies]
 vergil = "v2.1"
+
+# This repo dogfoods its own unreleased code: the cached dev image deliberately
+# skips `uv tool install` for the self-repo, so `vrg-validate` is not on PATH —
+# `uv run` activates the project venv instead. Declaring it here (rather than
+# only in CLAUDE.md) lets vrg-container-run resolve the correct command from the
+# target repo, so cross-repo agents validate this repo correctly regardless of
+# where their session started (issue #1433).
+[validation]
+container-command = "uv run vrg-validate"

@@ -7,11 +7,13 @@ from typing import cast
 from unittest.mock import patch
 
 from vergil_tooling.lib.config import (
+    DEFAULT_VALIDATION_COMMAND,
     CiConfig,
     ContainerConfig,
     MarkdownlintConfig,
     ProjectConfig,
     PublishConfig,
+    ValidationConfig,
     VergilConfig,
 )
 from vergil_tooling.lib.github_config import (
@@ -343,6 +345,7 @@ def _vergil_config(
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
         publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[]),
+        validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
 
 
@@ -1457,6 +1460,7 @@ def test_compute_desired_state_publish_release_true() -> None:
         ci=_ci(),
         publish=PublishConfig(release=True, docs=True, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[]),
+        validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
     state = compute_desired_state(config, visibility="public", is_org=True)
     assert state.publish.release is True
