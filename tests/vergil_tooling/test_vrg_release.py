@@ -1,8 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_release import main, parse_args
+from vergil_tooling.lib.release.context import ReleaseContext
+
+if TYPE_CHECKING:
+    import pytest
+
+    from vergil_tooling.lib.release.orchestrator import ReleaseState
 
 _MOD = "vergil_tooling.bin.vrg_release"
 
@@ -69,6 +77,42 @@ def test_main_returns_pipeline_exit_code() -> None:
         patch(_MOD + ".progress.run_pipeline", return_value=1),
     ):
         assert main([]) == 1
+
+
+def test_main_prints_consumer_refresh_message_after_pipeline(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    message = "Consumer refresh commands:\n\nuv tool install pkg@v2.1.0"
+
+    def fake_pipeline(state: ReleaseState, *args: object, **kwargs: object) -> int:
+        state.ctx = ReleaseContext(
+            repo="owner/repo",
+            version="2.1.0",
+            repo_root=Path("/tmp/repo"),  # noqa: S108
+            version_override=None,
+            consumer_refresh_message=message,
+        )
+        return 1
+
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", side_effect=fake_pipeline),
+    ):
+        assert main([]) == 1
+    captured = capsys.readouterr()
+    assert "Consumer refresh commands:" in captured.out
+    assert "uv tool install pkg@v2.1.0" in captured.out
+
+
+def test_main_prints_nothing_when_no_consumer_refresh_message(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".progress.run_pipeline", return_value=0),
+    ):
+        assert main([]) == 0
+    assert capsys.readouterr().out == ""
 
 
 def test_main_passes_version_override() -> None:

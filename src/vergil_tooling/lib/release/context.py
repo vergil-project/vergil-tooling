@@ -37,6 +37,8 @@ class ReleaseContext:
     develop_cd_run_id: str | None = None
     develop_cd_run_url: str | None = None
 
+    consumer_refresh_message: str | None = None
+
     promote: bool = True
 
 
