@@ -28,7 +28,7 @@ _REQUIRED_PROJECT_FIELDS = (
     "release-model",
 )
 
-_PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language")
+_PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language", "ghas")
 
 _KNOWN_SECTIONS = frozenset(
     {"project", "dependencies", "markdownlint", "ci", "publish", "container", "vm"},
@@ -55,6 +55,7 @@ class ProjectConfig:
     branching_model: str
     release_model: str
     primary_language: str | None
+    ghas: bool | None = None
 
 
 @dataclass
@@ -218,6 +219,11 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         )
         raw_lang = ""
 
+    raw_ghas = project_raw.get("ghas")
+    if raw_ghas is not None and not isinstance(raw_ghas, bool):
+        msg = f"{source}: [project].ghas must be a boolean"
+        raise ConfigError(msg)
+
     deps = raw.get("dependencies", {})
     if "vergil" not in deps:
         msg = f"{source}: [dependencies] must contain 'vergil'"
@@ -275,6 +281,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         branching_model=project_raw["branching-model"],
         release_model=project_raw["release-model"],
         primary_language=raw_lang or None,
+        ghas=raw_ghas,
     )
     return VergilConfig(
         project=project,

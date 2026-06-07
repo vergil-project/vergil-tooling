@@ -291,11 +291,11 @@ class TestRenderCiWorkflow:
         ctx.ci_versions = ["3.12", "3.13", "3.14"]
         ctx.release_model = "tagged-release"
         content = render_ci_workflow(ctx)
-        assert "ci-quality.yml@v2.0" in content
-        assert "ci-audit.yml@v2.0" in content
-        assert "ci-test.yml@v2.0" in content
+        assert "ci-quality.yml@v2.1" in content
+        assert "ci-audit.yml@v2.1" in content
+        assert "ci-test.yml@v2.1" in content
         assert "container-suffix: python" in content
-        assert "ci-version-bump.yml@v2.0" in content
+        assert "ci-version-bump.yml@v2.1" in content
         assert "run-codeql: false" not in content
 
     def test_no_language_workflow(self) -> None:
@@ -307,9 +307,9 @@ class TestRenderCiWorkflow:
         assert "run-codeql: false" in content
         assert "ci-audit.yml" not in content
         assert "ci-test.yml" not in content
-        assert "ci-quality.yml@v2.0" in content
-        assert "ci-security.yml@v2.0" in content
-        assert "ci-version-bump.yml@v2.0" in content
+        assert "ci-quality.yml@v2.1" in content
+        assert "ci-security.yml@v2.1" in content
+        assert "ci-version-bump.yml@v2.1" in content
         assert content.count("container-suffix: base") == 3
         assert content.count("container-tag: 'latest'") == 3
 
@@ -318,8 +318,8 @@ class TestRenderCiWorkflow:
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)
-        assert "ci-quality.yml@v2.0" in content
-        assert "ci-security.yml@v2.0" in content
+        assert "ci-quality.yml@v2.1" in content
+        assert "ci-security.yml@v2.1" in content
         assert "ci-audit.yml" not in content
         assert "ci-test.yml" not in content
         assert "version-bump" not in content
@@ -334,8 +334,8 @@ class TestRenderCiWorkflow:
         assert "run-codeql: false" in content
         assert "ci-audit.yml" not in content
         assert "ci-test.yml" not in content
-        assert "ci-quality.yml@v2.0" in content
-        assert "ci-security.yml@v2.0" in content
+        assert "ci-quality.yml@v2.1" in content
+        assert "ci-security.yml@v2.1" in content
 
     def test_no_version_bump_when_release_none(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -350,7 +350,32 @@ class TestRenderCiWorkflow:
         ctx.release_model = "none"
         ctx.integration_tests = True
         content = render_ci_workflow(ctx)
-        assert "ci-test.yml@v2.0" in content
+        assert "ci-test.yml@v2.1" in content
+
+    def test_private_repo_disables_sarif_upload(self) -> None:
+        ctx = RepoInitContext(org="logical-minds-foundry", name="test", visibility="private")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "upload-sarif: false" in content
+        assert "actions: read" in content
+
+    def test_public_repo_keeps_sarif_upload(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        content = render_ci_workflow(ctx)
+        assert "upload-sarif: false" not in content
+        assert "actions: read" in content
+
+    def test_pins_are_v2_1(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.12"]
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        assert "@v2.0" not in content
+        assert "ci-security.yml@v2.1" in content
 
 
 class TestContainerHelpers:
@@ -367,7 +392,7 @@ class TestRenderCdWorkflow:
         ctx.publish_docs = True
         ctx.publish_release = False
         content = render_cd_workflow(ctx)
-        assert "cd-docs.yml@v2.0" in content
+        assert "cd-docs.yml@v2.1" in content
         assert "cd-release" not in content
         assert "attestations: write" not in content
 
@@ -384,7 +409,7 @@ class TestRenderCdWorkflow:
         ctx.primary_language = "python"
         ctx.ci_versions = ["3.12", "3.13", "3.14"]
         content = render_cd_workflow(ctx)
-        assert "cd-release.yml@v2.0" in content
+        assert "cd-release.yml@v2.1" in content
         assert "if: github.ref == 'refs/heads/main'" in content
         assert "language: python" in content
         assert 'container-tag: "3.14"' in content
@@ -401,8 +426,8 @@ class TestRenderCdWorkflow:
         ctx.primary_language = "go"
         ctx.ci_versions = ["1.22"]
         content = render_cd_workflow(ctx)
-        assert "cd-docs.yml@v2.0" in content
-        assert "cd-release.yml@v2.0" in content
+        assert "cd-docs.yml@v2.1" in content
+        assert "cd-release.yml@v2.1" in content
         assert "language: go" in content
         assert 'container-tag: "latest"' in content
         assert "attestations: write" in content
@@ -743,7 +768,7 @@ class TestStepCiCdWorkflows:
 
         assert (tmp_path / ".github" / "workflows" / "cd.yml").exists()
         content = (tmp_path / ".github" / "workflows" / "cd.yml").read_text()
-        assert "cd-release.yml@v2.0" in content
+        assert "cd-release.yml@v2.1" in content
         assert "cd-docs" not in content
 
     def test_skips_cd_when_no_docs_or_release(self, tmp_path: Path) -> None:
