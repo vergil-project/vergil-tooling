@@ -7,6 +7,8 @@ against the actual GitHub API state to produce audit diffs.
 
 from __future__ import annotations
 
+import copy
+import json
 import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
@@ -644,6 +646,47 @@ class ConfigDiff:
         return len(self.items) == 0
 
 
+def _canonical_key(obj: object) -> str:
+    """Stable, order-independent sort key for a rule or check dict."""
+    return json.dumps(obj, sort_keys=True, default=str)
+
+
+def _canonicalize_rules(rules: Sequence[object]) -> list[object]:
+    """Normalize a ruleset's ``rules`` for order-independent comparison.
+
+    GitHub does not assign meaning to the order of rules within a ruleset,
+    nor to the order of contexts within a ``required_status_checks`` rule.
+    Comparing the raw lists with ``!=`` therefore reports spurious drift on
+    a pure reordering while a genuine added/removed required check is the
+    real concern (issue #1368).  Sorting both the outer rule list and the
+    nested check list makes the comparison reflect set membership: an
+    extra or missing required check always differs, a reordering never does.
+    """
+    canonical: list[object] = []
+    for rule in rules:
+        if not isinstance(rule, dict):
+            canonical.append(rule)
+            continue
+        rule_copy = copy.deepcopy(cast("dict[str, object]", rule))
+        params = rule_copy.get("parameters")
+        if isinstance(params, dict):
+            params_dict = cast("dict[str, object]", params)
+            checks = params_dict.get("required_status_checks")
+            if isinstance(checks, list):
+                params_dict["required_status_checks"] = sorted(
+                    cast("list[object]", checks), key=_canonical_key
+                )
+        canonical.append(rule_copy)
+    return sorted(canonical, key=_canonical_key)
+
+
+def _values_differ(prefix: str, desired: object, actual: object) -> bool:
+    """Compare two leaf values, using set semantics for ruleset rules."""
+    if prefix.endswith(".rules") and isinstance(desired, list) and isinstance(actual, list):
+        return _canonicalize_rules(desired) != _canonicalize_rules(actual)
+    return desired != actual
+
+
 def _diff_dataclass(
     prefix: str,
     desired: object,
@@ -655,7 +698,7 @@ def _diff_dataclass(
         if desired is None:
             skipped.append(prefix)
             return
-        if desired != actual:
+        if _values_differ(prefix, desired, actual):
             items.append(DiffItem(field=prefix, expected=desired, actual=actual))
         return
     for field_name in cast("dict[str, object]", desired.__dataclass_fields__):

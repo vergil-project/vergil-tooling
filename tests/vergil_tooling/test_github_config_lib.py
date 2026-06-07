@@ -21,6 +21,7 @@ from vergil_tooling.lib.github_config import (
     _apply_repo_settings,
     _apply_rulesets,
     _apply_security_settings,
+    _canonicalize_rules,
     _cleanup_classic_branch_protection,
     _fetch_vulnerability_alerts,
     _lang_has_check,
@@ -1011,6 +1012,73 @@ def test_diff_public_repo_has_no_security_skipped() -> None:
     diff = compute_diff(desired=state, actual=state)
     assert diff.is_compliant()
     assert not any(s.startswith("security.") for s in diff.skipped)
+
+
+# -- Issue #1368: required-status-check drift must never read as compliant ----
+
+
+def test_diff_detects_extra_required_check() -> None:
+    """A required check on the live ruleset but absent from desired is drift.
+
+    This is the issue #1368 scenario: release-model ``none`` drops
+    ``version / version-bump`` from desired, but the live ruleset still
+    requires it.  The audit must not report compliant.
+    """
+    desired = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual = compute_desired_state(
+        _vergil_config(release_model="none"), visibility="public", is_org=True
+    )
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).append({"context": "version / version-bump", "integration_id": 15368})
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()
+    assert any(d.field == "rulesets.CI gates.rules" for d in diff.items)
+
+
+def test_diff_detects_missing_required_check() -> None:
+    """A required check desired but absent from the live ruleset is drift."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).pop()
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert not diff.is_compliant()
+    assert any(d.field == "rulesets.CI gates.rules" for d in diff.items)
+
+
+def test_diff_ignores_required_check_ordering() -> None:
+    """Reordered-but-identical check sets are not drift (no false positive)."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual_gates = next(r for r in actual.rulesets if r.name == "CI gates")
+    _checks(actual_gates).reverse()
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert diff.is_compliant()
+
+
+def test_diff_ignores_rule_ordering() -> None:
+    """Reordered-but-identical rule lists are not drift (no false positive)."""
+    desired = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    actual_bp = next(r for r in actual.rulesets if r.name == "Branch protection")
+    actual_bp.rules.reverse()
+
+    diff = compute_diff(desired=desired, actual=actual)
+
+    assert diff.is_compliant()
+
+
+def test_canonicalize_rules_preserves_non_dict_entries() -> None:
+    """Non-dict rule entries are passed through unchanged before sorting."""
+    assert _canonicalize_rules(["z", "a"]) == ["a", "z"]
 
 
 # ---------------------------------------------------------------------------
