@@ -44,7 +44,10 @@ def test_close_and_finalize_streams_through_progress() -> None:
     """Issue #1470: the cleanup child must not inherit the TTY — raw writes
     under the live display strand stale frames on screen. Its output streams
     through the progress session (live display + run log) instead; stdin is
-    closed so the child can never block on a terminal read (issue #1448)."""
+    closed so the child can never block on a terminal read (issue #1448).
+    --output-format plain states the rendering contract explicitly: the
+    child is itself progress-aware (issue #1479) and two live displays
+    cannot nest."""
     ctx = _ctx()
     with (
         patch(_MOD + ".close_tracking_issue"),
@@ -52,7 +55,7 @@ def test_close_and_finalize_streams_through_progress() -> None:
     ):
         close_and_finalize(ctx)
     (cmd,) = run.call_args.args
-    assert cmd == ("vrg-finalize-pr", "--cleanup-only")
+    assert cmd == ("vrg-finalize-pr", "--cleanup-only", "--output-format", "plain")
     assert run.call_args.kwargs["stdin"] == subprocess.DEVNULL
 
 

@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=repo_root,
         promote=not args.no_promote,
     )
-    return progress.run_pipeline(
+    rc = progress.run_pipeline(
         state,
         build_stages(),
         command="vrg-release",
@@ -47,6 +47,13 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=repo_root,
     )
+    # The progress renderer collapses each finished stage to a one-line
+    # summary, which erases the consumer-refresh commands — the one piece
+    # of output the human must act on. Re-print them below the summary.
+    if state.ctx is not None and state.ctx.consumer_refresh_message:
+        print()
+        print(state.ctx.consumer_refresh_message)
+    return rc
 
 
 if __name__ == "__main__":

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.13] - 2026-06-07
+
+### Bug fixes
+
+- keep consumer-refresh commands visible after the summary (#1478)
+
+### Features
+
+- adopt the progress framework in vrg-finalize-pr (#1482)
+
 ## [2.1.12] - 2026-06-06
 
 ### Bug fixes
