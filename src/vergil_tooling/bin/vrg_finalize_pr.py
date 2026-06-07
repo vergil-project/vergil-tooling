@@ -28,8 +28,17 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from vergil_tooling.lib import config, git, github, pr_merge, pr_provenance, worktrees
+from vergil_tooling.lib import (
+    config,
+    git,
+    github,
+    pr_merge,
+    pr_provenance,
+    progress,
+    worktrees,
+)
 from vergil_tooling.lib.container_cache import clean_branch_images
+from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
 
 _CD_WORKFLOW_NAME = "CD"
@@ -295,6 +304,188 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         except pr_merge.MergeAbortError as exc:
             raise FinalizeAbort(str(exc)) from exc
     ctx.merged_branch = github.head_ref(args.pr)
+
+
+def _stage_cleanup(ctx: FinalizeContext) -> None:
+    """Switch to the target branch, pull, and prune merged branches,
+    worktrees, and remote-tracking references."""
+    args = ctx.args
+    root = ctx.root
+
+    try:
+        vergil_config = config.read_config(root)
+        model = vergil_config.project.branching_model
+    except FileNotFoundError:
+        model = ""
+    except config.ConfigError as exc:
+        raise FinalizeAbort(str(exc)) from exc
+
+    eternal = {"gh-pages"}
+    if model in _ETERNAL_BY_MODEL:
+        eternal.update(_ETERNAL_BY_MODEL[model])
+    else:
+        print("WARNING: branching_model not found; protecting develop and main.", file=sys.stderr)
+        eternal.update(("develop", "main"))
+
+    current = git.current_branch()
+    if current != args.target_branch:
+        print(f"Switching to {args.target_branch}...")
+        _run(["checkout", args.target_branch], dry_run=args.dry_run)
+    else:
+        print(f"Already on {args.target_branch}.")
+
+    print(f"Pulling latest from origin/{args.target_branch}...")
+    _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
+    _run(["pull", "--ff-only", "origin", args.target_branch], dry_run=args.dry_run)
+
+    deleted = ctx.deleted
+
+    # Explicit-target cleanup: the just-merged PR branch. The default
+    # squash strategy rewrites history onto the target, so the branch is
+    # never an ancestor and `git branch --merged` cannot see it — without
+    # this step the flagship flow would merge and then silently fail to
+    # clean up the very worktree it inferred the PR from.
+    if ctx.merged_branch and ctx.merged_branch not in eternal:
+        if git.read_output("branch", "--list", ctx.merged_branch):
+            print(f"Cleaning up merged PR branch {ctx.merged_branch}...")
+            if _delete_branch_and_worktree(ctx.merged_branch, root, dry_run=args.dry_run):
+                deleted.append(ctx.merged_branch)
+        else:
+            print(f"  Merged PR branch {ctx.merged_branch} has no local branch — skipping.")
+
+    # Ancestry sweep for stragglers. `git branch --merged` classifies a
+    # branch as merged when its tip is an *ancestor* of the target —
+    # which a branch just created from the target's tip satisfies
+    # trivially. That is the normal starting state of every new issue
+    # worktree, so an unguarded sweep races parallel agent sessions in
+    # their creation-to-first-commit window and deletes their branch and
+    # worktree out from under them. Two guards close the race
+    # (issue #1445); both gate the worktree removal exactly as strictly
+    # as the branch deletion, since they sit ahead of either action.
+    print("Checking for merged local branches...")
+    for branch in git.merged_branches(args.target_branch):
+        if branch in eternal or branch in deleted:
+            continue
+        # Guard 1 — skip zero-commit branches. A tip equal to the
+        # target's carries no merged work, so deleting it saves nothing;
+        # it is also exactly what an in-flight branch looks like before
+        # its first commit.
+        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
+            print(
+                f"  Skipping {branch}: tip matches {args.target_branch} "
+                "(zero-commit branch, nothing to clean up)"
+            )
+            continue
+        # Guard 2 — require merge evidence. Ancestry alone cannot
+        # distinguish a merged branch from one created off an older
+        # target tip; only sweep branches whose head has a closed or
+        # merged PR. The just-merged PR branch is handled by the
+        # explicit-target step above, which keeps its own behavior.
+        if github.closed_pr_for_branch(branch) is None:
+            print(f"  Skipping {branch}: no closed or merged PR for this branch")
+            continue
+        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+            deleted.append(branch)
+
+    print("Pruning stale remote-tracking references...")
+    if args.dry_run:
+        print("  [dry-run] git remote prune origin")
+    else:
+        git.run("remote", "prune", "origin")
+
+    # -- working-tree cleanliness gate (issue #472) ----------------------------
+    if not args.dry_run:
+        dirty = git.working_tree_status()
+        if dirty:
+            print(
+                f"ERROR: {args.target_branch} working tree is not clean.",
+                file=sys.stderr,
+            )
+            for line in dirty.splitlines():
+                print(f"  {line}", file=sys.stderr)
+            msg = (
+                f"{args.target_branch} working tree is not clean — "
+                "clean up these files before starting the next issue"
+            )
+            raise FinalizeAbort(msg)
+
+    # Replaces the old end-of-main summary block: the framework owns the
+    # run footer, so the branch/deleted/pruned details live here where
+    # they still reach the renderer and the run log.
+    print(
+        f"Cleanup complete: branch {args.target_branch}; "
+        f"deleted {' '.join(deleted) if deleted else '(none)'}; remotes pruned."
+    )
+
+
+def _stage_validation(ctx: FinalizeContext) -> None:
+    """Run canonical validation to catch problems on the target branch
+    before the next PR is created.
+
+    Streams through ``progress.run`` — a bare ``subprocess.run`` with
+    inherited stdout would write raw lines under the live display and
+    strand stale frames (issue #1470).
+    """
+    args = ctx.args
+    if args.dry_run:
+        print("  [dry-run] vrg-container-run -- [uv run] vrg-validate")
+        return
+    print("Running post-finalization validation via vrg-container-run...")
+    if (ctx.root / "pyproject.toml").is_file():
+        cmd: tuple[str, ...] = ("vrg-container-run", "--", "uv", "run", "vrg-validate")
+    else:
+        cmd = ("vrg-container-run", "--", "vrg-validate")
+    try:
+        progress.run(cmd)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"post-finalization validation failed (exit {exc.returncode}) — "
+            f"fix {args.target_branch} before creating the next PR"
+        )
+        raise FinalizeAbort(msg) from exc
+
+
+def _stage_cd_check(ctx: FinalizeContext) -> None:
+    """Docs-publish sanity check (issue #303). CD is async relative to the
+    merge that triggers it, so a failure doesn't block any PR — but it
+    means the site or release artifacts may be stale."""
+    args = ctx.args
+    if args.dry_run:
+        print("  [dry-run] check most recent CD workflow run")
+        return
+    failure = _check_cd_workflow_status(args.target_branch)
+    if failure is None:
+        return
+    print("ERROR: most recent CD workflow run did not succeed.", file=sys.stderr)
+    print(f"  {failure}", file=sys.stderr)
+    print(
+        "  CD workflow is async — investigate before the next merge so",
+        file=sys.stderr,
+    )
+    print("  the site doesn't drift further from develop.", file=sys.stderr)
+    raise FinalizeAbort("most recent CD workflow run did not succeed")
+
+
+def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
+    """Assemble the pipeline for the resolved mode.
+
+    provenance/merge run only when a PR was given or inferred; cleanup,
+    validation, and cd-check always run. validation and cd-check are
+    fail_defer so a validation failure still surfaces the CD status —
+    matching the pre-pipeline control flow.
+    """
+    common = (
+        Stage("cleanup", _stage_cleanup, "fail_fast"),
+        Stage("validation", _stage_validation, "fail_defer"),
+        Stage("cd-check", _stage_cd_check, "fail_defer"),
+    )
+    if not include_pr:
+        return common
+    return (
+        Stage("provenance", _stage_provenance, "fail_fast"),
+        Stage("merge", _stage_merge, "fail_fast"),
+        *common,
+    )
 
 
 def _finalize_specific_pr(args: argparse.Namespace) -> int:

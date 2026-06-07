@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from contextlib import contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
@@ -16,9 +17,12 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     _check_cd_workflow_status,
     _finalize_specific_pr,
+    _stage_cd_check,
     _stage_merge,
     _stage_provenance,
+    _stage_validation,
     _worktree_is_dirty,
+    build_stages,
     main,
     parse_args,
 )
@@ -1349,3 +1353,86 @@ def test_stage_merge_dry_run_skips_engine() -> None:
         _stage_merge(ctx)
     engine.assert_not_called()
     assert ctx.merged_branch == "feature/42-x"
+
+
+def test_build_stages_with_pr() -> None:
+    names = [s.name for s in build_stages(include_pr=True)]
+    assert names == ["provenance", "merge", "cleanup", "validation", "cd-check"]
+
+
+def test_build_stages_without_pr() -> None:
+    names = [s.name for s in build_stages(include_pr=False)]
+    assert names == ["cleanup", "validation", "cd-check"]
+
+
+def test_build_stages_failure_modes() -> None:
+    modes = {s.name: s.mode for s in build_stages(include_pr=True)}
+    assert modes["provenance"] == "fail_fast"
+    assert modes["merge"] == "fail_fast"
+    assert modes["cleanup"] == "fail_fast"
+    # fail_defer preserves current semantics: a validation failure still
+    # runs the cd-check, and either failure exits 1.
+    assert modes["validation"] == "fail_defer"
+    assert modes["cd-check"] == "fail_defer"
+
+
+def test_stage_validation_streams_through_progress(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        _stage_validation(ctx)
+    (cmd,) = run.call_args.args
+    assert cmd == ("vrg-container-run", "--", "vrg-validate")
+
+
+def test_stage_validation_uses_uv_for_python(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + ".progress.run", return_value=0) as run:
+        _stage_validation(ctx)
+    (cmd,) = run.call_args.args
+    assert cmd == ("vrg-container-run", "--", "uv", "run", "vrg-validate")
+
+
+def test_stage_validation_failure_raises(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    err = subprocess.CalledProcessError(1, ("vrg-container-run",))
+    with (
+        patch(_MOD + ".progress.run", side_effect=err),
+        pytest.raises(FinalizeAbort, match="validation failed"),
+    ):
+        _stage_validation(ctx)
+
+
+def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--dry-run"], root=tmp_path)
+    with patch(_MOD + ".progress.run") as run:
+        _stage_validation(ctx)
+    run.assert_not_called()
+
+
+def test_stage_cd_check_passes_when_clean(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with patch(_MOD + "._check_cd_workflow_status", return_value=None):
+        _stage_cd_check(ctx)  # must not raise
+
+
+def test_stage_cd_check_raises_on_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(
+            _MOD + "._check_cd_workflow_status",
+            return_value="CD workflow run 999 on develop (deadbee) ended with 'failure'.",
+        ),
+        pytest.raises(FinalizeAbort, match="CD workflow"),
+    ):
+        _stage_cd_check(ctx)
+    assert "CD workflow" in capsys.readouterr().err
+
+
+def test_stage_cd_check_dry_run_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--dry-run"], root=tmp_path)
+    with patch(_MOD + "._check_cd_workflow_status") as check:
+        _stage_cd_check(ctx)
+    check.assert_not_called()
