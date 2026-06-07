@@ -23,3 +23,4 @@ build/
 .worktrees/
 .vergil/
 .superpowers/
+.claude/scheduled_tasks.lock
