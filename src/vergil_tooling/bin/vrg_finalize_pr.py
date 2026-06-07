@@ -14,9 +14,17 @@ Three modes:
   merged local branches, and prune stale remote-tracking references.
   This is what ``vrg-release`` invokes (issue #1448).
 
-After validation succeeds, also checks the most recent CD workflow run
-on the target branch and fails if it did not succeed (issue #303 — docs
-publish is async and used to fail silently).
+Output renders through the stage-aware progress framework
+(issue #1479): standalone TTY runs get the live display with collapsed
+per-stage status lines and a run log at
+``.vergil/vrg-finalize-pr-<stamp>.log``; piped runs fall back to the
+plain renderer. ``vrg-release`` passes ``--output-format plain``
+explicitly because two live displays cannot nest (issue #1470).
+
+After cleanup succeeds, validation runs in the dev container, then the
+most recent CD workflow run on the target branch is checked and the
+command fails if it did not succeed (issue #303 — docs publish is async
+and used to fail silently).
 """
 
 from __future__ import annotations
@@ -25,11 +33,24 @@ import argparse
 import json
 import subprocess
 import sys
-from pathlib import Path
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import config, git, github, pr_merge, pr_provenance, worktrees
+from vergil_tooling.lib import (
+    config,
+    git,
+    github,
+    pr_merge,
+    pr_provenance,
+    progress,
+    worktrees,
+)
 from vergil_tooling.lib.container_cache import clean_branch_images
+from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _CD_WORKFLOW_NAME = "CD"
 
@@ -38,6 +59,24 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "library-release": ["develop", "main"],
     "application-promotion": ["develop", "release", "main"],
 }
+
+
+class FinalizeError(Exception):
+    """Stage failure with a human-readable reason.
+
+    Raised by stage functions to mark the stage failed; run_pipeline
+    records the message in the stage result and the final summary.
+    """
+
+
+@dataclass
+class FinalizeContext:
+    """State threaded through the pipeline stages."""
+
+    args: argparse.Namespace
+    root: Path
+    merged_branch: str | None = None
+    deleted: list[str] = field(default_factory=list)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -73,6 +112,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
+    progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
 
 
@@ -231,11 +271,9 @@ def _check_cd_workflow_status(target_branch: str) -> str | None:
     )
 
 
-def _finalize_specific_pr(args: argparse.Namespace) -> int:
-    """Run the pre-merge provenance check, then merge (or confirm merged).
-
-    Returns 0 to continue to cleanup, nonzero to abort.
-    """
+def _stage_provenance(ctx: FinalizeContext) -> None:
+    """Pre-merge provenance check (issue #1289)."""
+    args = ctx.args
     print(f"Checking provenance for PR {args.pr}...")
     result = pr_provenance.check_pr(args.pr)
 
@@ -254,18 +292,20 @@ def _finalize_specific_pr(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
         if not args.allow_provenance_violation:
-            print(
-                "\n  Aborting merge. Re-run with --allow-provenance-violation to\n"
-                "  override consciously — you hold every right, but the violation\n"
-                "  is in front of you.",
-                file=sys.stderr,
+            msg = (
+                "provenance violations found — re-run with "
+                "--allow-provenance-violation to override consciously"
             )
-            return 1
+            raise FinalizeError(msg)
         print(
             "  Overriding provenance violations per --allow-provenance-violation.",
             file=sys.stderr,
         )
 
+
+def _stage_merge(ctx: FinalizeContext) -> None:
+    """Merge the PR (or confirm it is already merged) and record its branch."""
+    args = ctx.args
     if github.pr_state(args.pr) == "MERGED":
         print(f"PR {args.pr} already merged.")
     elif args.dry_run:
@@ -274,46 +314,15 @@ def _finalize_specific_pr(args: argparse.Namespace) -> int:
         try:
             pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
         except pr_merge.MergeAbortError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
-
-    return 0
+            raise FinalizeError(str(exc)) from exc
+    ctx.merged_branch = github.head_ref(args.pr)
 
 
-def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-
-    if not git.is_main_worktree():
-        main_root = git.main_worktree_root()
-        print(
-            f"ERROR: vrg-finalize-pr must be run from the main worktree at {main_root},\n"
-            "  not from a secondary worktree. The script removes worktrees during cleanup\n"
-            "  and cannot safely do so when the calling shell's CWD is inside one.",
-            file=sys.stderr,
-        )
-        return 1
-
-    root = git.repo_root()
-
-    # --cleanup-only is the scriptable release path: no inference, no
-    # prompts, no stdin reads — args.pr stays None and only the cleanup
-    # below runs (issue #1448).
-    if args.pr is None and not args.cleanup_only:
-        try:
-            args.pr = _infer_pr(root, args.target_branch)
-        except SystemExit as exc:
-            if exc.code == 0:
-                return 0
-            raise
-
-    if args.pr is not None:
-        rc = _finalize_specific_pr(args)
-        if rc != 0:
-            return rc
-
-    merged_branch: str | None = None
-    if args.pr is not None:
-        merged_branch = github.head_ref(args.pr)
+def _stage_cleanup(ctx: FinalizeContext) -> None:
+    """Switch to the target branch, pull, and prune merged branches,
+    worktrees, and remote-tracking references."""
+    args = ctx.args
+    root = ctx.root
 
     try:
         vergil_config = config.read_config(root)
@@ -321,8 +330,7 @@ def main(argv: list[str] | None = None) -> int:
     except FileNotFoundError:
         model = ""
     except config.ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
+        raise FinalizeError(str(exc)) from exc
 
     eternal = {"gh-pages"}
     if model in _ETERNAL_BY_MODEL:
@@ -342,20 +350,20 @@ def main(argv: list[str] | None = None) -> int:
     _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
     _run(["pull", "--ff-only", "origin", args.target_branch], dry_run=args.dry_run)
 
-    deleted: list[str] = []
+    deleted = ctx.deleted
 
     # Explicit-target cleanup: the just-merged PR branch. The default
     # squash strategy rewrites history onto the target, so the branch is
     # never an ancestor and `git branch --merged` cannot see it — without
     # this step the flagship flow would merge and then silently fail to
     # clean up the very worktree it inferred the PR from.
-    if merged_branch and merged_branch not in eternal:
-        if git.read_output("branch", "--list", merged_branch):
-            print(f"Cleaning up merged PR branch {merged_branch}...")
-            if _delete_branch_and_worktree(merged_branch, root, dry_run=args.dry_run):
-                deleted.append(merged_branch)
+    if ctx.merged_branch and ctx.merged_branch not in eternal:
+        if git.read_output("branch", "--list", ctx.merged_branch):
+            print(f"Cleaning up merged PR branch {ctx.merged_branch}...")
+            if _delete_branch_and_worktree(ctx.merged_branch, root, dry_run=args.dry_run):
+                deleted.append(ctx.merged_branch)
         else:
-            print(f"  Merged PR branch {merged_branch} has no local branch — skipping.")
+            print(f"  Merged PR branch {ctx.merged_branch} has no local branch — skipping.")
 
     # Ancestry sweep for stragglers. `git branch --merged` classifies a
     # branch as merged when its tip is an *ancestor* of the target —
@@ -401,76 +409,135 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dry_run:
         dirty = git.working_tree_status()
         if dirty:
-            print()
             print(
                 f"ERROR: {args.target_branch} working tree is not clean.",
                 file=sys.stderr,
             )
             for line in dirty.splitlines():
                 print(f"  {line}", file=sys.stderr)
-            print(
-                "\n  Clean up these files before starting the next issue.",
-                file=sys.stderr,
+            msg = (
+                f"{args.target_branch} working tree is not clean — "
+                "clean up these files before starting the next issue"
             )
-            return 1
+            raise FinalizeError(msg)
 
-    # -- post-finalization validation ------------------------------------------
-    # Run canonical validation to catch problems on the target branch before
-    # the next PR is created.  Failures are reported as warnings — the
-    # finalization itself already succeeded.
+    # Replaces the old end-of-main summary block: the framework owns the
+    # run footer, so the branch/deleted/pruned details live here where
+    # they still reach the renderer and the run log.
+    print(
+        f"Cleanup complete: branch {args.target_branch}; "
+        f"deleted {' '.join(deleted) if deleted else '(none)'}; remotes pruned."
+    )
 
-    validation_failed = False
-    if not args.dry_run:
-        print()
-        print("Running post-finalization validation via vrg-container-run...")
-        repo_root = Path(git.repo_root())
-        if (repo_root / "pyproject.toml").is_file():
-            cmd: tuple[str, ...] = ("vrg-container-run", "--", "uv", "run", "vrg-validate")
-        else:
-            cmd = ("vrg-container-run", "--", "vrg-validate")
 
-        result = subprocess.run(cmd, check=False)  # noqa: S603
-        if result.returncode != 0:
-            validation_failed = True
-    else:
+def _stage_validation(ctx: FinalizeContext) -> None:
+    """Run canonical validation to catch problems on the target branch
+    before the next PR is created.
+
+    Streams through ``progress.run`` — a bare ``subprocess.run`` with
+    inherited stdout would write raw lines under the live display and
+    strand stale frames (issue #1470).
+    """
+    args = ctx.args
+    if args.dry_run:
         print("  [dry-run] vrg-container-run -- [uv run] vrg-validate")
+        return
+    print("Running post-finalization validation via vrg-container-run...")
+    if (ctx.root / "pyproject.toml").is_file():
+        cmd: tuple[str, ...] = ("vrg-container-run", "--", "uv", "run", "vrg-validate")
+    else:
+        cmd = ("vrg-container-run", "--", "vrg-validate")
+    try:
+        progress.run(cmd)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"post-finalization validation failed (exit {exc.returncode}) — "
+            f"fix {args.target_branch} before creating the next PR"
+        )
+        raise FinalizeError(msg) from exc
 
-    # Docs-publish sanity check (issue #303). Runs after validation
-    # so a real validation failure stays the headline; a docs failure
-    # is a softer warning since docs publishing is async and doesn't
-    # block subsequent merges.
-    docs_failure: str | None = None
-    if not args.dry_run:
-        docs_failure = _check_cd_workflow_status(args.target_branch)
 
-    print()
-    print("Finalization complete.")
-    print(f"  Branch: {args.target_branch}")
-    print(f"  Deleted: {' '.join(deleted) if deleted else '(none)'}")
-    print("  Remotes: pruned")
+def _stage_cd_check(ctx: FinalizeContext) -> None:
+    """Docs-publish sanity check (issue #303). CD is async relative to the
+    merge that triggers it, so a failure doesn't block any PR — but it
+    means the site or release artifacts may be stale."""
+    args = ctx.args
+    if args.dry_run:
+        print("  [dry-run] check most recent CD workflow run")
+        return
+    failure = _check_cd_workflow_status(args.target_branch)
+    if failure is None:
+        return
+    print("ERROR: most recent CD workflow run did not succeed.", file=sys.stderr)
+    print(f"  {failure}", file=sys.stderr)
+    print(
+        "  CD workflow is async — investigate before the next merge so",
+        file=sys.stderr,
+    )
+    print("  the site doesn't drift further from develop.", file=sys.stderr)
+    raise FinalizeError("most recent CD workflow run did not succeed")
 
-    if validation_failed:
-        print()
-        print("ERROR: post-finalization validation failed.", file=sys.stderr)
-        print(f"  The {args.target_branch} branch has issues that should be", file=sys.stderr)
-        print("  fixed before creating the next PR.", file=sys.stderr)
-        return 1
 
-    if docs_failure is not None:
-        print()
+def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
+    """Assemble the pipeline for the resolved mode.
+
+    provenance/merge run only when a PR was given or inferred; cleanup,
+    validation, and cd-check always run. validation and cd-check are
+    fail_defer so a validation failure still surfaces the CD status —
+    matching the pre-pipeline control flow.
+    """
+    common = (
+        Stage("cleanup", _stage_cleanup, "fail_fast"),
+        Stage("validation", _stage_validation, "fail_defer"),
+        Stage("cd-check", _stage_cd_check, "fail_defer"),
+    )
+    if not include_pr:
+        return common
+    return (
+        Stage("provenance", _stage_provenance, "fail_fast"),
+        Stage("merge", _stage_merge, "fail_fast"),
+        *common,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+
+    if not git.is_main_worktree():
+        main_root = git.main_worktree_root()
         print(
-            "ERROR: most recent CD workflow run did not succeed.",
+            f"ERROR: vrg-finalize-pr must be run from the main worktree at {main_root},\n"
+            "  not from a secondary worktree. The script removes worktrees during cleanup\n"
+            "  and cannot safely do so when the calling shell's CWD is inside one.",
             file=sys.stderr,
         )
-        print(f"  {docs_failure}", file=sys.stderr)
-        print(
-            "  CD workflow is async — investigate before the next merge so",
-            file=sys.stderr,
-        )
-        print("  the site doesn't drift further from develop.", file=sys.stderr)
         return 1
 
-    return 0
+    root = git.repo_root()
+
+    # --cleanup-only is the scriptable release path: no inference, no
+    # prompts, no stdin reads — args.pr stays None and only the
+    # cleanup/validation/cd-check stages run (issue #1448).
+    if args.pr is None and not args.cleanup_only:
+        try:
+            args.pr = _infer_pr(root, args.target_branch)
+        except SystemExit as exc:
+            if exc.code == 0:
+                return 0
+            raise
+
+    # Inference and its prompts above need the real TTY; everything
+    # below runs under the progress pipeline, which owns stdout/stderr
+    # (issue #1479).
+    ctx = FinalizeContext(args=args, root=root)
+    return progress.run_pipeline(
+        ctx,
+        build_stages(include_pr=args.pr is not None),
+        command="vrg-finalize-pr",
+        label="vrg-finalize-pr",
+        args=args,
+        repo_root=root,
+    )
 
 
 if __name__ == "__main__":
