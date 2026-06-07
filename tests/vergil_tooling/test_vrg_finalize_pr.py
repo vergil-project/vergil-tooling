@@ -12,8 +12,12 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_finalize_pr import (
+    FinalizeAbort,
+    FinalizeContext,
     _check_cd_workflow_status,
     _finalize_specific_pr,
+    _stage_merge,
+    _stage_provenance,
     _worktree_is_dirty,
     main,
     parse_args,
@@ -1260,3 +1264,88 @@ def test_explicit_target_cleanup_bypasses_sweep_guards() -> None:
     assert ("branch", "-D", "feature/7-foo") in git_run_calls
     sha.assert_not_called()
     evidence.assert_not_called()
+
+
+# -- stage functions (issue #1479) ---------------------------------------------
+
+
+def _stage_ctx(argv: list[str], root: Path | None = None) -> FinalizeContext:
+    return FinalizeContext(args=parse_args(argv), root=root or Path("/repo"))
+
+
+def test_stage_provenance_clean_passes() -> None:
+    ctx = _stage_ctx(["123"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_clean()) as mock_check:
+        _stage_provenance(ctx)
+    mock_check.assert_called_once_with("123")
+
+
+def test_stage_provenance_violation_raises(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".pr_provenance.check_pr", return_value=_with_violation()),
+        pytest.raises(FinalizeAbort, match="provenance"),
+    ):
+        _stage_provenance(ctx)
+    err = capsys.readouterr().err
+    assert "provenance violation" in err.lower()
+    assert "closed" in err
+
+
+def test_stage_provenance_override_passes() -> None:
+    ctx = _stage_ctx(["123", "--allow-provenance-violation"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_with_violation()):
+        _stage_provenance(ctx)  # must not raise
+
+
+def test_stage_provenance_advisory_surfaced(capsys: pytest.CaptureFixture[str]) -> None:
+    ctx = _stage_ctx(["123"])
+    with patch(_MOD + ".pr_provenance.check_pr", return_value=_with_advisory()):
+        _stage_provenance(ctx)
+    assert "advisory" in capsys.readouterr().err.lower()
+
+
+def test_stage_merge_uses_wait_and_merge() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_called_once_with("123", strategy="squash")
+    assert ctx.merged_branch == "feature/42-x"
+
+
+def test_stage_merge_abort_raises() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
+        pytest.raises(FinalizeAbort, match="is a draft"),
+    ):
+        _stage_merge(ctx)
+
+
+def test_stage_merge_already_merged_skips_engine() -> None:
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_not_called()
+    assert ctx.merged_branch == "feature/42-x"
+
+
+def test_stage_merge_dry_run_skips_engine() -> None:
+    ctx = _stage_ctx(["123", "--dry-run"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_not_called()
+    assert ctx.merged_branch == "feature/42-x"

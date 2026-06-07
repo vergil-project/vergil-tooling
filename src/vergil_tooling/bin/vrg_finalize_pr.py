@@ -25,6 +25,7 @@ import argparse
 import json
 import subprocess
 import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from vergil_tooling.lib import config, git, github, pr_merge, pr_provenance, worktrees
@@ -38,6 +39,24 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "library-release": ["develop", "main"],
     "application-promotion": ["develop", "release", "main"],
 }
+
+
+class FinalizeAbort(Exception):
+    """Stage failure with a human-readable reason.
+
+    Raised by stage functions to mark the stage failed; run_pipeline
+    records the message in the stage result and the final summary.
+    """
+
+
+@dataclass
+class FinalizeContext:
+    """State threaded through the pipeline stages."""
+
+    args: argparse.Namespace
+    root: Path
+    merged_branch: str | None = None
+    deleted: list[str] = field(default_factory=list)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -229,6 +248,53 @@ def _check_cd_workflow_status(target_branch: str) -> str | None:
         f"{target_branch} ({sha}) ended with conclusion '{conclusion}'.\n"
         f"  {run.get('url') or ''}"
     )
+
+
+def _stage_provenance(ctx: FinalizeContext) -> None:
+    """Pre-merge provenance check (issue #1289)."""
+    args = ctx.args
+    print(f"Checking provenance for PR {args.pr}...")
+    result = pr_provenance.check_pr(args.pr)
+
+    for adv in result.advisories:
+        print(
+            f"  ADVISORY: {adv.login} ({adv.role.value}) performed '{adv.action}' "
+            "— permitted but advisory.",
+            file=sys.stderr,
+        )
+
+    if result.violations:
+        print(f"ERROR: PR {args.pr} has provenance violations:", file=sys.stderr)
+        for v in result.violations:
+            print(
+                f"  {v.login} ({v.role.value}) performed forbidden action '{v.action}'.",
+                file=sys.stderr,
+            )
+        if not args.allow_provenance_violation:
+            msg = (
+                "provenance violations found — re-run with "
+                "--allow-provenance-violation to override consciously"
+            )
+            raise FinalizeAbort(msg)
+        print(
+            "  Overriding provenance violations per --allow-provenance-violation.",
+            file=sys.stderr,
+        )
+
+
+def _stage_merge(ctx: FinalizeContext) -> None:
+    """Merge the PR (or confirm it is already merged) and record its branch."""
+    args = ctx.args
+    if github.pr_state(args.pr) == "MERGED":
+        print(f"PR {args.pr} already merged.")
+    elif args.dry_run:
+        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{args.strategy})")
+    else:
+        try:
+            pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
+        except pr_merge.MergeAbortError as exc:
+            raise FinalizeAbort(str(exc)) from exc
+    ctx.merged_branch = github.head_ref(args.pr)
 
 
 def _finalize_specific_pr(args: argparse.Namespace) -> int:
