@@ -6,13 +6,7 @@ import subprocess
 import time
 
 from vergil_tooling.lib import progress, retry
-from vergil_tooling.lib.github import (
-    GitHubAPIError,
-    _checks_registered,
-    _gh_env,
-    current_repo,
-    head_sha,
-)
+from vergil_tooling.lib.github import _gh_env, _poll_and_watch_checks
 
 _POLL_INTERVAL_SECS = 5
 _POLL_TIMEOUT_SECS = 180
@@ -44,27 +38,17 @@ def _stream_with_retry(cmd: tuple[str, ...]) -> None:
 
 
 def wait_for_checks(pr: str) -> None:
-    """Block until CI checks on *pr* pass, streaming watch output."""
-    repo = current_repo()
-    sha = head_sha(pr)
+    """Block until CI checks on *pr* pass, streaming watch output.
 
-    deadline = time.monotonic() + _POLL_TIMEOUT_SECS
-    while not _checks_registered(repo, sha):
-        if time.monotonic() >= deadline:
-            break
-        time.sleep(_POLL_INTERVAL_SECS)
-
-    if not _checks_registered(repo, sha):
-        raise GitHubAPIError(
-            1,
-            ("gh", "pr", "checks", pr, "--watch"),
-            stderr=(
-                f"no checks reported for {sha[:8]} after {_POLL_TIMEOUT_SECS}s"
-                " — GitHub may be experiencing delays"
-            ),
-        )
-
-    _stream_with_retry(("gh", "pr", "checks", pr, "--watch"))  # noqa: S607
+    Delegates to the shared poll-and-watch engine — resilient to the PR
+    head moving mid-wait (#1490) — with the streaming watch runner.
+    """
+    _poll_and_watch_checks(
+        pr,
+        lambda: _stream_with_retry(("gh", "pr", "checks", pr, "--watch")),  # noqa: S607
+        poll_interval=_POLL_INTERVAL_SECS,
+        poll_timeout=_POLL_TIMEOUT_SECS,
+    )
 
 
 def watch_workflow(repo: str, run_id: str, *, check_status: bool = True) -> None:
