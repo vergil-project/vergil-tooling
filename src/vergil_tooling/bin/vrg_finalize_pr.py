@@ -14,9 +14,17 @@ Three modes:
   merged local branches, and prune stale remote-tracking references.
   This is what ``vrg-release`` invokes (issue #1448).
 
-After validation succeeds, also checks the most recent CD workflow run
-on the target branch and fails if it did not succeed (issue #303 — docs
-publish is async and used to fail silently).
+Output renders through the stage-aware progress framework
+(issue #1479): standalone TTY runs get the live display with collapsed
+per-stage status lines and a run log at
+``.vergil/vrg-finalize-pr-<stamp>.log``; piped runs fall back to the
+plain renderer. ``vrg-release`` passes ``--output-format plain``
+explicitly because two live displays cannot nest (issue #1470).
+
+After cleanup succeeds, validation runs in the dev container, then the
+most recent CD workflow run on the target branch is checked and the
+command fails if it did not succeed (issue #303 — docs publish is async
+and used to fail silently).
 """
 
 from __future__ import annotations
@@ -26,7 +34,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     config,
@@ -41,6 +49,9 @@ from vergil_tooling.lib.container_cache import clean_branch_images
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 _CD_WORKFLOW_NAME = "CD"
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
@@ -50,7 +61,7 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
 }
 
 
-class FinalizeAbort(Exception):
+class FinalizeError(Exception):
     """Stage failure with a human-readable reason.
 
     Raised by stage functions to mark the stage failed; run_pipeline
@@ -101,6 +112,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
+    progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
 
 
@@ -284,7 +296,7 @@ def _stage_provenance(ctx: FinalizeContext) -> None:
                 "provenance violations found — re-run with "
                 "--allow-provenance-violation to override consciously"
             )
-            raise FinalizeAbort(msg)
+            raise FinalizeError(msg)
         print(
             "  Overriding provenance violations per --allow-provenance-violation.",
             file=sys.stderr,
@@ -302,7 +314,7 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         try:
             pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
         except pr_merge.MergeAbortError as exc:
-            raise FinalizeAbort(str(exc)) from exc
+            raise FinalizeError(str(exc)) from exc
     ctx.merged_branch = github.head_ref(args.pr)
 
 
@@ -318,7 +330,7 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
     except FileNotFoundError:
         model = ""
     except config.ConfigError as exc:
-        raise FinalizeAbort(str(exc)) from exc
+        raise FinalizeError(str(exc)) from exc
 
     eternal = {"gh-pages"}
     if model in _ETERNAL_BY_MODEL:
@@ -407,7 +419,7 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
                 f"{args.target_branch} working tree is not clean — "
                 "clean up these files before starting the next issue"
             )
-            raise FinalizeAbort(msg)
+            raise FinalizeError(msg)
 
     # Replaces the old end-of-main summary block: the framework owns the
     # run footer, so the branch/deleted/pruned details live here where
@@ -442,7 +454,7 @@ def _stage_validation(ctx: FinalizeContext) -> None:
             f"post-finalization validation failed (exit {exc.returncode}) — "
             f"fix {args.target_branch} before creating the next PR"
         )
-        raise FinalizeAbort(msg) from exc
+        raise FinalizeError(msg) from exc
 
 
 def _stage_cd_check(ctx: FinalizeContext) -> None:
@@ -463,7 +475,7 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
         file=sys.stderr,
     )
     print("  the site doesn't drift further from develop.", file=sys.stderr)
-    raise FinalizeAbort("most recent CD workflow run did not succeed")
+    raise FinalizeError("most recent CD workflow run did not succeed")
 
 
 def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
@@ -488,55 +500,6 @@ def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
     )
 
 
-def _finalize_specific_pr(args: argparse.Namespace) -> int:
-    """Run the pre-merge provenance check, then merge (or confirm merged).
-
-    Returns 0 to continue to cleanup, nonzero to abort.
-    """
-    print(f"Checking provenance for PR {args.pr}...")
-    result = pr_provenance.check_pr(args.pr)
-
-    for adv in result.advisories:
-        print(
-            f"  ADVISORY: {adv.login} ({adv.role.value}) performed '{adv.action}' "
-            "— permitted but advisory.",
-            file=sys.stderr,
-        )
-
-    if result.violations:
-        print(f"ERROR: PR {args.pr} has provenance violations:", file=sys.stderr)
-        for v in result.violations:
-            print(
-                f"  {v.login} ({v.role.value}) performed forbidden action '{v.action}'.",
-                file=sys.stderr,
-            )
-        if not args.allow_provenance_violation:
-            print(
-                "\n  Aborting merge. Re-run with --allow-provenance-violation to\n"
-                "  override consciously — you hold every right, but the violation\n"
-                "  is in front of you.",
-                file=sys.stderr,
-            )
-            return 1
-        print(
-            "  Overriding provenance violations per --allow-provenance-violation.",
-            file=sys.stderr,
-        )
-
-    if github.pr_state(args.pr) == "MERGED":
-        print(f"PR {args.pr} already merged.")
-    elif args.dry_run:
-        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{args.strategy})")
-    else:
-        try:
-            pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
-        except pr_merge.MergeAbortError as exc:
-            print(f"ERROR: {exc}", file=sys.stderr)
-            return 1
-
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -553,8 +516,8 @@ def main(argv: list[str] | None = None) -> int:
     root = git.repo_root()
 
     # --cleanup-only is the scriptable release path: no inference, no
-    # prompts, no stdin reads — args.pr stays None and only the cleanup
-    # below runs (issue #1448).
+    # prompts, no stdin reads — args.pr stays None and only the
+    # cleanup/validation/cd-check stages run (issue #1448).
     if args.pr is None and not args.cleanup_only:
         try:
             args.pr = _infer_pr(root, args.target_branch)
@@ -563,171 +526,18 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             raise
 
-    if args.pr is not None:
-        rc = _finalize_specific_pr(args)
-        if rc != 0:
-            return rc
-
-    merged_branch: str | None = None
-    if args.pr is not None:
-        merged_branch = github.head_ref(args.pr)
-
-    try:
-        vergil_config = config.read_config(root)
-        model = vergil_config.project.branching_model
-    except FileNotFoundError:
-        model = ""
-    except config.ConfigError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-    eternal = {"gh-pages"}
-    if model in _ETERNAL_BY_MODEL:
-        eternal.update(_ETERNAL_BY_MODEL[model])
-    else:
-        print("WARNING: branching_model not found; protecting develop and main.", file=sys.stderr)
-        eternal.update(("develop", "main"))
-
-    current = git.current_branch()
-    if current != args.target_branch:
-        print(f"Switching to {args.target_branch}...")
-        _run(["checkout", args.target_branch], dry_run=args.dry_run)
-    else:
-        print(f"Already on {args.target_branch}.")
-
-    print(f"Pulling latest from origin/{args.target_branch}...")
-    _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
-    _run(["pull", "--ff-only", "origin", args.target_branch], dry_run=args.dry_run)
-
-    deleted: list[str] = []
-
-    # Explicit-target cleanup: the just-merged PR branch. The default
-    # squash strategy rewrites history onto the target, so the branch is
-    # never an ancestor and `git branch --merged` cannot see it — without
-    # this step the flagship flow would merge and then silently fail to
-    # clean up the very worktree it inferred the PR from.
-    if merged_branch and merged_branch not in eternal:
-        if git.read_output("branch", "--list", merged_branch):
-            print(f"Cleaning up merged PR branch {merged_branch}...")
-            if _delete_branch_and_worktree(merged_branch, root, dry_run=args.dry_run):
-                deleted.append(merged_branch)
-        else:
-            print(f"  Merged PR branch {merged_branch} has no local branch — skipping.")
-
-    # Ancestry sweep for stragglers. `git branch --merged` classifies a
-    # branch as merged when its tip is an *ancestor* of the target —
-    # which a branch just created from the target's tip satisfies
-    # trivially. That is the normal starting state of every new issue
-    # worktree, so an unguarded sweep races parallel agent sessions in
-    # their creation-to-first-commit window and deletes their branch and
-    # worktree out from under them. Two guards close the race
-    # (issue #1445); both gate the worktree removal exactly as strictly
-    # as the branch deletion, since they sit ahead of either action.
-    print("Checking for merged local branches...")
-    for branch in git.merged_branches(args.target_branch):
-        if branch in eternal or branch in deleted:
-            continue
-        # Guard 1 — skip zero-commit branches. A tip equal to the
-        # target's carries no merged work, so deleting it saves nothing;
-        # it is also exactly what an in-flight branch looks like before
-        # its first commit.
-        if git.commit_sha(branch) == git.commit_sha(args.target_branch):
-            print(
-                f"  Skipping {branch}: tip matches {args.target_branch} "
-                "(zero-commit branch, nothing to clean up)"
-            )
-            continue
-        # Guard 2 — require merge evidence. Ancestry alone cannot
-        # distinguish a merged branch from one created off an older
-        # target tip; only sweep branches whose head has a closed or
-        # merged PR. The just-merged PR branch is handled by the
-        # explicit-target step above, which keeps its own behavior.
-        if github.closed_pr_for_branch(branch) is None:
-            print(f"  Skipping {branch}: no closed or merged PR for this branch")
-            continue
-        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
-            deleted.append(branch)
-
-    print("Pruning stale remote-tracking references...")
-    if args.dry_run:
-        print("  [dry-run] git remote prune origin")
-    else:
-        git.run("remote", "prune", "origin")
-
-    # -- working-tree cleanliness gate (issue #472) ----------------------------
-    if not args.dry_run:
-        dirty = git.working_tree_status()
-        if dirty:
-            print()
-            print(
-                f"ERROR: {args.target_branch} working tree is not clean.",
-                file=sys.stderr,
-            )
-            for line in dirty.splitlines():
-                print(f"  {line}", file=sys.stderr)
-            print(
-                "\n  Clean up these files before starting the next issue.",
-                file=sys.stderr,
-            )
-            return 1
-
-    # -- post-finalization validation ------------------------------------------
-    # Run canonical validation to catch problems on the target branch before
-    # the next PR is created.  Failures are reported as warnings — the
-    # finalization itself already succeeded.
-
-    validation_failed = False
-    if not args.dry_run:
-        print()
-        print("Running post-finalization validation via vrg-container-run...")
-        repo_root = Path(git.repo_root())
-        if (repo_root / "pyproject.toml").is_file():
-            cmd: tuple[str, ...] = ("vrg-container-run", "--", "uv", "run", "vrg-validate")
-        else:
-            cmd = ("vrg-container-run", "--", "vrg-validate")
-
-        result = subprocess.run(cmd, check=False)  # noqa: S603
-        if result.returncode != 0:
-            validation_failed = True
-    else:
-        print("  [dry-run] vrg-container-run -- [uv run] vrg-validate")
-
-    # Docs-publish sanity check (issue #303). Runs after validation
-    # so a real validation failure stays the headline; a docs failure
-    # is a softer warning since docs publishing is async and doesn't
-    # block subsequent merges.
-    docs_failure: str | None = None
-    if not args.dry_run:
-        docs_failure = _check_cd_workflow_status(args.target_branch)
-
-    print()
-    print("Finalization complete.")
-    print(f"  Branch: {args.target_branch}")
-    print(f"  Deleted: {' '.join(deleted) if deleted else '(none)'}")
-    print("  Remotes: pruned")
-
-    if validation_failed:
-        print()
-        print("ERROR: post-finalization validation failed.", file=sys.stderr)
-        print(f"  The {args.target_branch} branch has issues that should be", file=sys.stderr)
-        print("  fixed before creating the next PR.", file=sys.stderr)
-        return 1
-
-    if docs_failure is not None:
-        print()
-        print(
-            "ERROR: most recent CD workflow run did not succeed.",
-            file=sys.stderr,
-        )
-        print(f"  {docs_failure}", file=sys.stderr)
-        print(
-            "  CD workflow is async — investigate before the next merge so",
-            file=sys.stderr,
-        )
-        print("  the site doesn't drift further from develop.", file=sys.stderr)
-        return 1
-
-    return 0
+    # Inference and its prompts above need the real TTY; everything
+    # below runs under the progress pipeline, which owns stdout/stderr
+    # (issue #1479).
+    ctx = FinalizeContext(args=args, root=root)
+    return progress.run_pipeline(
+        ctx,
+        build_stages(include_pr=args.pr is not None),
+        command="vrg-finalize-pr",
+        label="vrg-finalize-pr",
+        args=args,
+        repo_root=root,
+    )
 
 
 if __name__ == "__main__":
