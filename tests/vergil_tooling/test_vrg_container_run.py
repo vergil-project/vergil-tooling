@@ -369,6 +369,107 @@ def test_registry_image_uses_pull_always(tmp_path: Path) -> None:
     assert "--pull=always" in args
 
 
+# -- validation-command override ([validation] in vergil.toml) ----------------
+
+
+def test_validate_command_rewritten_by_override(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.validation_container_command",
+            return_value="uv run vrg-validate",
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "vrg-validate"])
+    args = mock_exec.call_args[0][1]
+    assert args[-3:] == ["uv", "run", "vrg-validate"]
+
+
+def test_validate_override_preserves_trailing_args(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.validation_container_command",
+            return_value="uv run vrg-validate",
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "vrg-validate", "--check", "common"])
+    args = mock_exec.call_args[0][1]
+    assert args[-5:] == ["uv", "run", "vrg-validate", "--check", "common"]
+
+
+def test_validate_override_printed(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.validation_container_command",
+            return_value="uv run vrg-validate",
+        ),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp"),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "vrg-validate"])
+    assert "Command:  uv run vrg-validate" in capsys.readouterr().out
+
+
+def test_non_validate_command_not_rewritten(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.validation_container_command",
+            return_value="uv run vrg-validate",
+        ) as mock_override,
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "echo", "hi"])
+    args = mock_exec.call_args[0][1]
+    assert args[-2:] == ["echo", "hi"]
+    mock_override.assert_not_called()
+
+
+def test_validate_default_no_override_passthrough(tmp_path: Path) -> None:
+    # No vergil.toml in tmp_path: validation_container_command falls back to the
+    # default "vrg-validate", so the command is unchanged (real-helper path).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="img:1"),
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp") as mock_exec,
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "vrg-validate"])
+    args = mock_exec.call_args[0][1]
+    assert args[-1] == "vrg-validate"
+
+
 def test_python_routes_through_cache(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}
