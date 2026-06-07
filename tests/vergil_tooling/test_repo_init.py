@@ -353,9 +353,7 @@ class TestRenderCiWorkflow:
         assert "ci-test.yml@v2.1" in content
 
     def test_private_repo_disables_sarif_upload(self) -> None:
-        ctx = RepoInitContext(
-            org="logical-minds-foundry", name="test", visibility="private"
-        )
+        ctx = RepoInitContext(org="logical-minds-foundry", name="test", visibility="private")
         ctx.ci_versions = ["latest"]
         ctx.release_model = "none"
         content = render_ci_workflow(ctx)

@@ -742,9 +742,7 @@ def test_project_ghas_non_bool_raises(tmp_path: Path) -> None:
         read_config(tmp_path)
 
 
-def test_project_ghas_is_recognized_key(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_project_ghas_is_recognized_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line="ghas = true"))
     read_config(tmp_path)
     assert "unrecognized key 'ghas'" not in capsys.readouterr().err
