@@ -78,7 +78,7 @@ def test_archive_session_append_oserror_is_swallowed(
     projects.mkdir(parents=True)
     (projects / "adir.jsonl").mkdir()  # a directory -> open("a") raises OSError
     monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
-    monkeypatch.setattr(r, "_last_agent_name", lambda _t: "vergil:01:p")
+    monkeypatch.setattr(r, "_last_session_name", lambda _t: "vergil:01:p")
     r._archive_session("adir", "2026-05-30T14:23:07Z")  # must not raise
 
 
@@ -91,7 +91,7 @@ def test_archive_session_appends_archived_name(
     t.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n')
     monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
     r._archive_session("s1", "2026-05-30T14:23:07Z")
-    assert r._last_agent_name(t) == "archived@2026-05-30T14:23:07Z@vergil:01:p"
+    assert r._last_session_name(t) == "archived@2026-05-30T14:23:07Z@vergil:01:p"
 
 
 def test_archive_session_missing_transcript_is_noop(
@@ -102,10 +102,10 @@ def test_archive_session_missing_transcript_is_noop(
     r._archive_session("ghost", "2026-05-30T14:23:07Z")  # must not raise
 
 
-# --- _last_agent_name ---
+# --- _last_session_name ---
 
 
-def test_last_agent_name_last_wins(tmp_path: Path) -> None:
+def test_last_session_name_last_wins(tmp_path: Path) -> None:
     f = tmp_path / "s.jsonl"
     f.write_text(
         "\n".join(
@@ -118,30 +118,104 @@ def test_last_agent_name_last_wins(tmp_path: Path) -> None:
             ]
         )
     )
-    assert r._last_agent_name(f) == "id:02:b"
+    assert r._last_session_name(f) == "id:02:b"
 
 
-def test_last_agent_name_skips_malformed_json(tmp_path: Path) -> None:
+def test_last_session_name_skips_malformed_json(tmp_path: Path) -> None:
     f = tmp_path / "s.jsonl"
     f.write_text('{"type":"agent-name", BROKEN "agentName":"x"}\n')
-    assert r._last_agent_name(f) is None
+    assert r._last_session_name(f) is None
 
 
-def test_last_agent_name_ignores_non_string_value(tmp_path: Path) -> None:
+def test_last_session_name_ignores_non_string_value(tmp_path: Path) -> None:
     f = tmp_path / "s.jsonl"
     f.write_text('{"type":"agent-name","agentName":123}\n')
-    assert r._last_agent_name(f) is None
+    assert r._last_session_name(f) is None
 
 
-def test_last_agent_name_missing_file_returns_none(tmp_path: Path) -> None:
-    assert r._last_agent_name(tmp_path / "nope.jsonl") is None
+def test_last_session_name_missing_file_returns_none(tmp_path: Path) -> None:
+    assert r._last_session_name(tmp_path / "nope.jsonl") is None
 
 
-def test_last_agent_name_ignores_other_type_with_token(tmp_path: Path) -> None:
+def test_last_session_name_ignores_other_type_with_token(tmp_path: Path) -> None:
     # line carries the "agent-name" substring but is not an agent-name entry
     f = tmp_path / "s.jsonl"
     f.write_text('{"type":"user","agent-name":"not really"}\n')
-    assert r._last_agent_name(f) is None
+    assert r._last_session_name(f) is None
+
+
+# --- custom-title naming events (issue #1493) ---
+
+
+def test_last_session_name_reads_custom_title(tmp_path: Path) -> None:
+    # Claude Code >= 2.1.16x records session names as custom-title events.
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"custom-title","customTitle":"id:01:a","sessionId":"s"}\n')
+    assert r._last_session_name(f) == "id:01:a"
+
+
+def test_last_session_name_mixed_event_types_last_wins(tmp_path: Path) -> None:
+    # A transcript spanning the Claude rename carries both event types; the
+    # last naming event in file order wins regardless of type.
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"agent-name","agentName":"id:01:a","sessionId":"s"}\n'
+        '{"type":"custom-title","customTitle":"id:02:b","sessionId":"s"}\n'
+    )
+    assert r._last_session_name(f) == "id:02:b"
+    f.write_text(
+        '{"type":"custom-title","customTitle":"id:02:b","sessionId":"s"}\n'
+        '{"type":"agent-name","agentName":"id:03:c","sessionId":"s"}\n'
+    )
+    assert r._last_session_name(f) == "id:03:c"
+
+
+def test_last_session_name_ignores_non_string_custom_title(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"custom-title","customTitle":123}\n')
+    assert r._last_session_name(f) is None
+
+
+def test_last_session_name_ignores_non_string_type(tmp_path: Path) -> None:
+    # a non-string (unhashable) "type" carrying the token must not crash
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":["agent-name"],"agentName":"id:01:a"}\n')
+    assert r._last_session_name(f) is None
+
+
+def test_last_session_name_ignores_other_type_with_custom_title_token(
+    tmp_path: Path,
+) -> None:
+    # line carries the "custom-title" substring but is not a custom-title entry
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"user","custom-title":"not really"}\n')
+    assert r._last_session_name(f) is None
+
+
+def test_name_by_session_reads_custom_title(tmp_path: Path) -> None:
+    slug = tmp_path / "slug"
+    slug.mkdir()
+    (slug / "s1.jsonl").write_text(
+        '{"type":"custom-title","customTitle":"id:01:a","sessionId":"s1"}\n'
+    )
+    assert r.name_by_session(tmp_path) == {"s1": "id:01:a"}
+
+
+def test_archive_session_archives_custom_title_named_transcript(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Archiving must work on transcripts named only via custom-title events
+    # (previously a silent no-op) and must append a custom-title event so
+    # Claude's own resume picker shows the archived label too.
+    projects = tmp_path / "projects" / "slug"
+    projects.mkdir(parents=True)
+    t = projects / "s1.jsonl"
+    t.write_text('{"type":"custom-title","customTitle":"vergil:01:p","sessionId":"s1"}\n')
+    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
+    r._archive_session("s1", "2026-06-07T00:00:00Z")
+    assert r._last_session_name(t) == "archived@2026-06-07T00:00:00Z@vergil:01:p"
+    appended = json.loads(t.read_text().splitlines()[-1])
+    assert appended["type"] == "custom-title"
 
 
 def test_claude_dir_points_at_dot_claude() -> None:
