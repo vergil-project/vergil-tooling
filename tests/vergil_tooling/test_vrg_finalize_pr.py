@@ -163,6 +163,44 @@ def test_main_library_release(tmp_path: Path) -> None:
     mock_run.assert_any_call("branch", "-D", "feature/x")
 
 
+def test_main_cleanup_syncs_target_without_pull(tmp_path: Path) -> None:
+    """Cleanup must fetch then ff-merge the remote-tracking ref — never
+    `pull`, whose FETCH_HEAD dependence races concurrent fetches
+    (issue #1499)."""
+    _make_profile(tmp_path, "library-release")
+    git_run_calls: list[tuple[str, ...]] = []
+
+    def capture_git_run(*args: str) -> None:
+        git_run_calls.append(args)
+
+    with (
+        _sweep_guards_pass(),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(
+            "vergil_tooling.bin.vrg_finalize_pr.git.merged_branches",
+            return_value=["feature/x", "develop"],
+        ),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main([])
+
+    assert result == 0
+    fetch_idx = next(
+        i
+        for i, c in enumerate(git_run_calls)
+        if c == ("fetch", "--tags", "--force", "origin", "develop")
+    )
+    merge_idx = next(
+        i for i, c in enumerate(git_run_calls) if c == ("merge", "--ff-only", "origin/develop")
+    )
+    assert fetch_idx < merge_idx
+    assert not any(c[0] == "pull" for c in git_run_calls)
+
+
 def test_main_already_on_target(tmp_path: Path) -> None:
     _make_profile(tmp_path, "library-release")
     with (

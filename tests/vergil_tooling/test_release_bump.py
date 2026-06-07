@@ -118,7 +118,10 @@ def test_back_merge_waits_and_merges() -> None:
     )
 
 
-def test_back_merge_pulls_develop_after_merge() -> None:
+def test_back_merge_syncs_develop_after_merge() -> None:
+    """The final develop sync must fetch then ff-merge the remote-tracking
+    ref — never `pull`, whose FETCH_HEAD dependence races concurrent
+    fetches (issue #1499)."""
     ctx = _ctx()
     git_run_calls: list[tuple[str, ...]] = []
 
@@ -139,6 +142,9 @@ def test_back_merge_pulls_develop_after_merge() -> None:
     develop_checkout_idx = next(
         i for i, c in enumerate(git_run_calls) if c == ("checkout", "develop")
     )
-    pull_idx = next(i for i, c in enumerate(git_run_calls) if c[:2] == ("pull", "--ff-only"))
-    assert git_run_calls[pull_idx] == ("pull", "--ff-only", "origin", "develop")
-    assert pull_idx > develop_checkout_idx
+    fetch_idx = next(i for i, c in enumerate(git_run_calls) if c == ("fetch", "origin", "develop"))
+    merge_idx = next(
+        i for i, c in enumerate(git_run_calls) if c == ("merge", "--ff-only", "origin/develop")
+    )
+    assert develop_checkout_idx < fetch_idx < merge_idx
+    assert not any(c[0] == "pull" for c in git_run_calls)
