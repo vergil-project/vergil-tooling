@@ -259,6 +259,81 @@ def test_list_rows_attaches_last_active() -> None:
     assert rows[0].last_active == 5.0
 
 
+# --- recency-aware slot collisions (issue #1493) ---
+
+
+def test_build_slots_recent_idle_wins_collision() -> None:
+    # /clear rotates the session id, so both the abandoned and the current id
+    # claim the slot. With neither live, the most recently active must win.
+    name_by_session = {"old": "vergil:01:p", "new": "vergil:01:p"}
+    slots = build_slots(
+        "vergil",
+        "p",
+        name_by_session,
+        active_sessions=set(),
+        last_active={"old": 1000.0, "new": 2000.0},
+    )
+    assert slots[1].session_id == "new"
+
+
+def test_build_slots_recent_idle_wins_collision_either_order() -> None:
+    name_by_session = {"new": "vergil:01:p", "old": "vergil:01:p"}
+    slots = build_slots(
+        "vergil",
+        "p",
+        name_by_session,
+        active_sessions=set(),
+        last_active={"old": 1000.0, "new": 2000.0},
+    )
+    assert slots[1].session_id == "new"
+
+
+def test_build_slots_known_age_beats_unknown_in_collision() -> None:
+    name_by_session = {"unknown": "vergil:01:p", "known": "vergil:01:p"}
+    slots = build_slots(
+        "vergil",
+        "p",
+        name_by_session,
+        active_sessions=set(),
+        last_active={"known": 1000.0},
+    )
+    assert slots[1].session_id == "known"
+
+
+def test_build_slots_unknown_age_keeps_incumbent_in_collision() -> None:
+    name_by_session = {"known": "vergil:01:p", "unknown": "vergil:01:p"}
+    slots = build_slots(
+        "vergil",
+        "p",
+        name_by_session,
+        active_sessions=set(),
+        last_active={"known": 1000.0},
+    )
+    assert slots[1].session_id == "known"
+
+
+def test_build_slots_active_beats_recent_idle() -> None:
+    # Liveness still dominates recency.
+    name_by_session = {"idle": "vergil:01:p", "live": "vergil:01:p"}
+    slots = build_slots(
+        "vergil",
+        "p",
+        name_by_session,
+        active_sessions={"live"},
+        last_active={"idle": 9999.0, "live": 1.0},
+    )
+    assert slots[1] == Slot(1, "live", active=True, last_active=1.0)
+
+
+def test_list_rows_recent_idle_wins_duplicate() -> None:
+    rows = list_rows(
+        {"old": "vergil:01:p", "new": "vergil:01:p"},
+        active_sessions=set(),
+        last_active={"old": 1000.0, "new": 2000.0},
+    )
+    assert rows == [SessionRow("vergil", 1, "p", "new", active=False, last_active=2000.0)]
+
+
 DAY = 86400.0
 
 
