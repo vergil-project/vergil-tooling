@@ -697,3 +697,52 @@ class TestParseVmStanza:
     def test_read_config_no_vm_stanza_is_none(self, tmp_path: Path) -> None:
         (tmp_path / "vergil.toml").write_text(_VALID_TOML)
         assert read_config(tmp_path).vm is None
+
+
+# -- [project] ghas key -------------------------------------------------------
+
+_GHAS_TOML_TEMPLATE = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+{ghas_line}
+
+[dependencies]
+vergil = "v2.1"
+
+[ci]
+versions = ["3.14"]
+"""
+
+
+def test_project_ghas_absent_is_none(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line=""))
+    cfg = read_config(tmp_path)
+    assert cfg.project.ghas is None
+
+
+def test_project_ghas_true(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line="ghas = true"))
+    cfg = read_config(tmp_path)
+    assert cfg.project.ghas is True
+
+
+def test_project_ghas_false(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line="ghas = false"))
+    cfg = read_config(tmp_path)
+    assert cfg.project.ghas is False
+
+
+def test_project_ghas_non_bool_raises(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line='ghas = "yes"'))
+    with pytest.raises(ConfigError, match=r"\[project\].ghas must be a boolean"):
+        read_config(tmp_path)
+
+
+def test_project_ghas_is_recognized_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line="ghas = true"))
+    read_config(tmp_path)
+    assert "unrecognized key 'ghas'" not in capsys.readouterr().err

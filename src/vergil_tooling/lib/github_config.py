@@ -124,11 +124,21 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
     )
 
 
-def desired_security_settings(*, visibility: str) -> DesiredSecuritySettings:
-    ghas_available = visibility != "private"
+def ghas_available(config: VergilConfig, *, visibility: str) -> bool:
+    """Resolve the GHAS posture for a repo.
+
+    A declared ``[project].ghas`` in ``vergil.toml`` wins; otherwise
+    GHAS is inferred as available exactly when the repo is not private.
+    """
+    if config.project.ghas is not None:
+        return config.project.ghas
+    return visibility != "private"
+
+
+def desired_security_settings(*, ghas: bool) -> DesiredSecuritySettings:
     return DesiredSecuritySettings(
-        secret_scanning="enabled" if ghas_available else None,  # noqa: S106
-        secret_scanning_push_protection="enabled" if ghas_available else None,  # noqa: S106
+        secret_scanning="enabled" if ghas else None,  # noqa: S106
+        secret_scanning_push_protection="enabled" if ghas else None,  # noqa: S106
         vulnerability_alerts=False,
         dependabot_security_updates="disabled",
     )
@@ -243,6 +253,8 @@ def _lang_has_check(language: str | None, check: str) -> bool:
 def desired_ci_gates_ruleset(
     project: ProjectConfig,
     ci: CiConfig,
+    *,
+    ghas: bool,
 ) -> DesiredRuleset:
     """Derive the CI gates ruleset from project identity and CI config."""
     checks: list[dict[str, object]] = []
@@ -257,11 +269,15 @@ def desired_ci_gates_ruleset(
     # GHAS check runs — created by GitHub Advanced Security (app 57789)
     # when workflows upload SARIF via codeql-action/upload-sarif.  These
     # gate on whether the PR introduces new alerts in changed lines.
-    checks.append(_make_ghas_check("Trivy"))
-    checks.append(_make_ghas_check("Semgrep OSS"))
+    # Without GHAS the check runs can never materialize, so requiring
+    # them would block merges forever; the trivy/semgrep jobs still gate
+    # on findings via scanner exit codes.
+    if ghas:
+        checks.append(_make_ghas_check("Trivy"))
+        checks.append(_make_ghas_check("Semgrep OSS"))
 
-    # CodeQL for supported languages
-    if lang in _CODEQL_SUPPORTED_LANGUAGES:
+    # CodeQL for supported languages — requires GHAS-backed code scanning
+    if ghas and lang in _CODEQL_SUPPORTED_LANGUAGES:
         checks.append(_make_check("security / codeql"))
         checks.append(_make_ghas_check("CodeQL"))
 
@@ -308,11 +324,12 @@ def compute_desired_state(
     config: VergilConfig, *, visibility: str, is_org: bool, app_mode: bool = False
 ) -> DesiredState:
     """Compute the full desired GitHub configuration from a repo's VergilConfig."""
+    ghas = ghas_available(config, visibility=visibility)
     rulesets: list[DesiredRuleset] = []
 
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
-    rulesets.append(desired_ci_gates_ruleset(config.project, config.ci))
+    rulesets.append(desired_ci_gates_ruleset(config.project, config.ci, ghas=ghas))
 
     if app_mode:
         for rs in rulesets:
@@ -325,7 +342,7 @@ def compute_desired_state(
 
     return DesiredState(
         repo_settings=desired_repo_settings(visibility=visibility, is_org=is_org),
-        security=desired_security_settings(visibility=visibility),
+        security=desired_security_settings(ghas=ghas),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
         publish=publish,

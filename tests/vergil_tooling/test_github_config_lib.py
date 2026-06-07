@@ -37,6 +37,7 @@ from vergil_tooling.lib.github_config import (
     desired_tag_protection_ruleset,
     fetch_actual_state,
     format_rules_delta,
+    ghas_available,
 )
 
 
@@ -74,16 +75,16 @@ def test_desired_repo_settings_new_hardcoded_values() -> None:
     assert s.web_commit_signoff_required is True
 
 
-def test_desired_security_settings_public() -> None:
-    s = desired_security_settings(visibility="public")
+def test_desired_security_settings_with_ghas() -> None:
+    s = desired_security_settings(ghas=True)
     assert s.secret_scanning == "enabled"  # noqa: S105
     assert s.secret_scanning_push_protection == "enabled"  # noqa: S105
     assert s.vulnerability_alerts is False
     assert s.dependabot_security_updates == "disabled"
 
 
-def test_desired_security_settings_private_skips_ghas_features() -> None:
-    s = desired_security_settings(visibility="private")
+def test_desired_security_settings_without_ghas_skips_ghas_features() -> None:
+    s = desired_security_settings(ghas=False)
     assert s.secret_scanning is None
     assert s.secret_scanning_push_protection is None
     assert s.vulnerability_alerts is False
@@ -207,7 +208,7 @@ def _checks(ruleset: DesiredRuleset) -> list[dict[str, object]]:
 
 
 def test_ci_gates_structure() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci())
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     assert r.name == "CI gates"
     assert r.target == "branch"
     assert r.enforcement == "active"
@@ -216,14 +217,14 @@ def test_ci_gates_structure() -> None:
 
 
 def test_ci_gates_strict_policy() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci())
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     status_rule = next(rule for rule in r.rules if rule["type"] == "required_status_checks")
     params = cast("dict[str, object]", status_rule["parameters"])
     assert params["strict_required_status_checks_policy"] is True
 
 
 def test_ci_gates_always_includes_common_and_security() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci())
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     check_names = _check_names(r)
     assert "quality / common" in check_names
     assert "security / trivy" in check_names
@@ -234,7 +235,7 @@ def test_ci_gates_always_includes_common_and_security() -> None:
 
 
 def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
-    r = desired_ci_gates_ruleset(_project(), _ci())
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     checks = _checks(r)
     ghas_names = ("Trivy", "Semgrep OSS", "CodeQL")
     ghas_checks = {c["context"]: c["integration_id"] for c in checks if c["context"] in ghas_names}
@@ -242,22 +243,40 @@ def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
 
 
 def test_ci_gates_codeql_for_supported_language() -> None:
-    r = desired_ci_gates_ruleset(_project(language="python"), _ci())
+    r = desired_ci_gates_ruleset(_project(language="python"), _ci(), ghas=True)
     names = _check_names(r)
     assert "security / codeql" in names
     assert "CodeQL" in names
 
 
 def test_ci_gates_no_codeql_without_language() -> None:
-    r = desired_ci_gates_ruleset(_project(language=None), _ci())
+    r = desired_ci_gates_ruleset(_project(language=None), _ci(), ghas=True)
     names = _check_names(r)
     assert "security / codeql" not in names
     assert "CodeQL" not in names
 
 
+def test_ci_gates_without_ghas_drops_alert_checks() -> None:
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    names = _check_names(r)
+    assert "Trivy" not in names
+    assert "Semgrep OSS" not in names
+    assert "security / codeql" not in names
+    assert "CodeQL" not in names
+    assert "security / trivy" in names
+    assert "security / semgrep" in names
+    assert "security / standards" in names
+    assert "quality / common" in names
+
+
+def test_ci_gates_without_ghas_has_no_ghas_integration_checks() -> None:
+    r = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    assert all(c["integration_id"] != 57789 for c in _checks(r))
+
+
 def test_ci_gates_versioned_checks_per_version() -> None:
     ci = _ci(versions=["3.12", "3.13", "3.14"])
-    r = desired_ci_gates_ruleset(_project(), ci)
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
     names = _check_names(r)
     assert "quality / lint / 3.12" in names
     assert "quality / lint / 3.13" in names
@@ -269,7 +288,7 @@ def test_ci_gates_versioned_checks_per_version() -> None:
 
 def test_ci_gates_integration_tests_when_enabled() -> None:
     ci = _ci(versions=["3.12", "3.13"], integration_tests=True)
-    r = desired_ci_gates_ruleset(_project(), ci)
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
     names = _check_names(r)
     assert "test / integration / 3.12" in names
     assert "test / integration / 3.13" in names
@@ -277,23 +296,23 @@ def test_ci_gates_integration_tests_when_enabled() -> None:
 
 def test_ci_gates_no_integration_tests_when_disabled() -> None:
     ci = _ci(versions=["3.12"], integration_tests=False)
-    r = desired_ci_gates_ruleset(_project(), ci)
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
     names = _check_names(r)
     assert not any("test / integration" in n for n in names)
 
 
 def test_ci_gates_release_version_bump_present() -> None:
-    r = desired_ci_gates_ruleset(_project(release_model="tagged-release"), _ci())
+    r = desired_ci_gates_ruleset(_project(release_model="tagged-release"), _ci(), ghas=True)
     assert "version / version-bump" in _check_names(r)
 
 
 def test_ci_gates_no_release_when_none() -> None:
-    r = desired_ci_gates_ruleset(_project(release_model="none"), _ci())
+    r = desired_ci_gates_ruleset(_project(release_model="none"), _ci(), ghas=True)
     assert "version / version-bump" not in _check_names(r)
 
 
 def test_ci_gates_no_language_has_no_versioned_checks() -> None:
-    r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]))
+    r = desired_ci_gates_ruleset(_project(language=None), _ci(versions=["latest"]), ghas=True)
     names = _check_names(r)
     assert "quality / common" in names
     assert not any("quality / lint" in n for n in names)
@@ -326,6 +345,20 @@ def _vergil_config(
     )
 
 
+def test_ghas_available_inferred_from_visibility() -> None:
+    cfg = _vergil_config()
+    assert ghas_available(cfg, visibility="public") is True
+    assert ghas_available(cfg, visibility="private") is False
+
+
+def test_ghas_available_declared_overrides_visibility() -> None:
+    cfg = _vergil_config()
+    cfg.project.ghas = True
+    assert ghas_available(cfg, visibility="private") is True
+    cfg.project.ghas = False
+    assert ghas_available(cfg, visibility="public") is False
+
+
 def test_compute_desired_state_has_three_rulesets() -> None:
     state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
     assert len(state.rulesets) == 3
@@ -333,6 +366,26 @@ def test_compute_desired_state_has_three_rulesets() -> None:
     assert "Branch protection" in names
     assert "Tag protection" in names
     assert "CI gates" in names
+
+
+def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    names = _check_names(gates)
+    assert "Trivy" not in names
+    assert "security / trivy" in names
+
+
+def test_compute_desired_state_private_with_declared_ghas_keeps_full_posture() -> None:
+    cfg = _vergil_config()
+    cfg.project.ghas = True
+    state = compute_desired_state(cfg, visibility="private", is_org=True)
+    assert state.security.secret_scanning == "enabled"  # noqa: S105
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    names = _check_names(gates)
+    assert "Trivy" in names
+    assert "Semgrep OSS" in names
+    assert "security / codeql" in names
 
 
 def test_compute_desired_state_includes_repo_settings() -> None:
