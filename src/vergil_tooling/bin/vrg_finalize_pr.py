@@ -10,7 +10,7 @@ Three modes:
   run the cleanup. Requires a real terminal on both stdin and stdout.
 - ``vrg-finalize-pr --cleanup-only`` — non-interactive release path:
   skip inference and merge entirely, never read stdin, and run only the
-  cleanup: switch to the target branch, fast-forward pull, delete
+  cleanup: switch to the target branch, fast-forward sync, delete
   merged local branches, and prune stale remote-tracking references.
   This is what ``vrg-release`` invokes (issue #1448).
 
@@ -196,7 +196,7 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
     if not pairs:
         confirmed = prompt_yes_no(
             f"No open PRs found in worktrees. Run cleanup only (switch to "
-            f"{target_branch}, pull, prune branches/worktrees)?",
+            f"{target_branch}, sync, prune branches/worktrees)?",
             default=False,
         )
         if not confirmed:
@@ -319,7 +319,7 @@ def _stage_merge(ctx: FinalizeContext) -> None:
 
 
 def _stage_cleanup(ctx: FinalizeContext) -> None:
-    """Switch to the target branch, pull, and prune merged branches,
+    """Switch to the target branch, sync, and prune merged branches,
     worktrees, and remote-tracking references."""
     args = ctx.args
     root = ctx.root
@@ -348,7 +348,11 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
 
     print(f"Pulling latest from origin/{args.target_branch}...")
     _run(["fetch", "--tags", "--force", "origin", args.target_branch], dry_run=args.dry_run)
-    _run(["pull", "--ff-only", "origin", args.target_branch], dry_run=args.dry_run)
+    # ff-merge the remote-tracking ref instead of `pull`: FETCH_HEAD is
+    # written non-atomically, so a `pull` racing a concurrent fetch can
+    # see two merge candidates and abort (issue #1499). The
+    # remote-tracking ref is updated atomically.
+    _run(["merge", "--ff-only", f"origin/{args.target_branch}"], dry_run=args.dry_run)
 
     deleted = ctx.deleted
 
