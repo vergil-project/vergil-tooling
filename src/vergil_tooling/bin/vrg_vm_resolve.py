@@ -52,23 +52,38 @@ def _project_slug(cwd: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in cwd)
 
 
-def _last_agent_name(transcript: Path) -> str | None:
-    """Return the last ``agent-name`` value in a transcript, or ``None``."""
+# Transcript event types that carry a session name, mapped to their value
+# field. Claude Code originally wrote ``agent-name`` events and renamed them
+# to ``custom-title`` (~2.1.16x); both forms must be read.
+_NAME_EVENT_FIELDS = {"agent-name": "agentName", "custom-title": "customTitle"}
+
+
+def _last_session_name(transcript: Path) -> str | None:
+    """Return the last session-name value in a transcript, or ``None``.
+
+    The last naming event in file order wins, regardless of which of the two
+    event types (``agent-name`` or ``custom-title``) carries it.
+    """
     last: str | None = None
     try:
         with transcript.open() as fh:
             for raw in fh:
                 line = raw.strip()
-                if not line or '"agent-name"' not in line:
+                if not line or ('"agent-name"' not in line and '"custom-title"' not in line):
                     continue
                 try:
                     entry = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if entry.get("type") == "agent-name":
-                    value = entry.get("agentName")
-                    if isinstance(value, str):
-                        last = value
+                event_type = entry.get("type")
+                if not isinstance(event_type, str):
+                    continue
+                field = _NAME_EVENT_FIELDS.get(event_type)
+                if field is None:
+                    continue
+                value = entry.get(field)
+                if isinstance(value, str):
+                    last = value
     except OSError:
         return None
     return last
@@ -85,7 +100,7 @@ def name_by_session(projects_dir: Path, slug: str | None = None) -> dict[str, st
         return result
     pattern = f"{slug}/*.jsonl" if slug is not None else "*/*.jsonl"
     for transcript in sorted(projects_dir.glob(pattern)):
-        name = _last_agent_name(transcript)
+        name = _last_session_name(transcript)
         if name is not None:
             result[transcript.stem] = name
     return result
@@ -221,9 +236,9 @@ def roster_names(roster: list[dict[str, object]]) -> dict[str, str]:
     """Map session id to its roster ``name`` (authoritative for live sessions).
 
     The roster records each live session's current name directly, so a session
-    that has not yet written an ``agent-name`` event to its transcript — e.g. a
-    freshly created session with no turns, hence no transcript at all — is still
-    named here. Transcript names, by contrast, only cover sessions that have run.
+    that has not yet written a naming event to its transcript — e.g. a freshly
+    created session with no turns, hence no transcript at all — is still named
+    here. Transcript names, by contrast, only cover sessions that have run.
     """
     out: dict[str, str] = {}
     for entry in roster:
@@ -255,14 +270,18 @@ def _read_state(
 
 
 def _archive_session(session_id: str, timestamp: str) -> None:
-    """Relabel a cold session by appending an archived ``agent-name`` entry."""
+    """Relabel a cold session by appending an archived ``custom-title`` entry.
+
+    ``custom-title`` is the event type current Claude Code writes, so the
+    archived label also shows up in Claude's own resume picker.
+    """
     transcript = projects_glob(_claude_dir() / "projects", session_id)
-    current = _last_agent_name(transcript)
+    current = _last_session_name(transcript)
     if current is None:
         return
     entry = {
-        "type": "agent-name",
-        "agentName": make_archived_name(current, timestamp),
+        "type": "custom-title",
+        "customTitle": make_archived_name(current, timestamp),
         "sessionId": session_id,
     }
     try:

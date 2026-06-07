@@ -123,12 +123,33 @@ class SessionRow:
     last_active: float | None = None  # epoch seconds; None when age is unknown
 
 
+def _displaces(
+    existing_active: bool,
+    existing_last_active: float | None,
+    active: bool,
+    last_active: float | None,
+) -> bool:
+    """True if a new claimant beats the existing holder of a name collision.
+
+    Liveness dominates: a live session always beats a dead one. Between
+    claimants of equal liveness the more recently active wins — a ``/clear``
+    rotation leaves the abandoned session id still claiming the slot name,
+    and recency is what picks the current id over it. Unknown ages and exact
+    ties keep the incumbent.
+    """
+    if active != existing_active:
+        return active
+    if last_active is None:
+        return False
+    return existing_last_active is None or last_active > existing_last_active
+
+
 def _merge_slot(
     slots: dict[int, Slot], slot: int, session_id: str, active: bool, last_active: float | None
 ) -> None:
-    """Insert/replace a slot, letting an active session win a slot collision."""
+    """Insert/replace a slot: liveness wins a collision, then recency."""
     existing = slots.get(slot)
-    if existing is None or (active and not existing.active):
+    if existing is None or _displaces(existing.active, existing.last_active, active, last_active):
         slots[slot] = Slot(slot, session_id, active, last_active)
 
 
@@ -141,11 +162,12 @@ def build_slots(
 ) -> dict[int, Slot]:
     """Build the slot map for one ``identity`` + ``path``.
 
-    ``name_by_session`` maps session id to its current name (last ``agent-name``
+    ``name_by_session`` maps session id to its current name (last naming event
     per transcript). ``active_sessions`` is the set of session ids with a live
     roster entry. ``last_active`` optionally maps session id to epoch seconds.
     Names that do not parse, or that belong to another identity or path, are
-    ignored. On a slot collision an active session wins.
+    ignored. On a slot collision an active session wins, then the most
+    recently active.
     """
     la = last_active or {}
     slots: dict[int, Slot] = {}
@@ -167,8 +189,9 @@ def list_rows(
 ) -> list[SessionRow]:
     """All named sessions as sorted rows, deduped per (identity, slot, path).
 
-    On a duplicate (identity, slot, path) an active session wins. Rows are
-    sorted by identity, then slot, then path for stable display.
+    On a duplicate (identity, slot, path) an active session wins, then the
+    most recently active. Rows are sorted by identity, then slot, then path
+    for stable display.
     """
     la = last_active or {}
     best: dict[tuple[str, int, str], SessionRow] = {}
@@ -180,7 +203,9 @@ def list_rows(
         active = session_id in active_sessions
         key = (identity, slot, path)
         existing = best.get(key)
-        if existing is None or (active and not existing.active):
+        if existing is None or _displaces(
+            existing.active, existing.last_active, active, la.get(session_id)
+        ):
             best[key] = SessionRow(identity, slot, path, session_id, active, la.get(session_id))
     return sorted(best.values(), key=lambda r: (r.identity, r.slot, r.path))
 
