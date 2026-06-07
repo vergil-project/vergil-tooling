@@ -38,3 +38,22 @@ def test_consumer_refresh_none(capsys: pytest.CaptureFixture[str]) -> None:
         consumer_refresh(ctx)
     captured = capsys.readouterr()
     assert "no consumer-refresh" in captured.out.lower()
+
+
+def test_consumer_refresh_stores_message_on_ctx() -> None:
+    ctx = _ctx()
+    with patch(_MOD + ".config.read_config") as mock_config:
+        mock_config.return_value.publish.consumer_refresh = "uv tool install pkg@v<VERSION>"
+        consumer_refresh(ctx)
+    assert ctx.consumer_refresh_message is not None
+    assert "Consumer refresh commands:" in ctx.consumer_refresh_message
+    assert "uv tool install pkg@v2.1.0" in ctx.consumer_refresh_message
+
+
+def test_consumer_refresh_none_stores_notice_on_ctx() -> None:
+    ctx = _ctx()
+    with patch(_MOD + ".config.read_config") as mock_config:
+        mock_config.return_value.publish.consumer_refresh = None
+        consumer_refresh(ctx)
+    assert ctx.consumer_refresh_message is not None
+    assert "no consumer-refresh" in ctx.consumer_refresh_message.lower()
