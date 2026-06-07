@@ -107,9 +107,16 @@ formatters, or other tools outside of `vrg-validate`. If a tool is not
 invoked by `vrg-validate`, it is not part of the validation pipeline.
 <!-- vergil:template:claude-md:end -->
 
-> **Note:** This repository uses
-> `vrg-container-run -- uv run vrg-validate` because it runs its own
-> unreleased code rather than the pre-installed version.
+> **Note:** The command above works as-is here, even though this repo
+> dogfoods its own unreleased code (the cached dev image deliberately
+> skips `uv tool install`, so `vrg-validate` is not on `PATH` and must be
+> run via `uv run`). This repo declares a `[validation]` override in
+> `vergil.toml` (`container-command = "uv run vrg-validate"`), and
+> `vrg-container-run` reads it from the target repo at execution time, so
+> `vrg-container-run -- vrg-validate` is transparently expanded to
+> `vrg-container-run -- uv run vrg-validate`. The override lives in
+> `vergil.toml` (not just here) so cross-repo agents pick it up regardless
+> of which `CLAUDE.md` their session loaded (issues #1430, #1433).
 
 ## Identity modes and PR submission
 
@@ -177,9 +184,11 @@ above.
 Testing is split across two tiers with increasing scope and cost:
 
 **Tier 1 — Local pre-commit (seconds):** The single entry point
-`vrg-container-run -- uv run vrg-validate` runs everything
+`vrg-container-run -- vrg-validate` runs everything
 (lint, typecheck, tests, audit, common checks) inside one dev
-container.
+container. (Here that transparently expands to `uv run vrg-validate`
+via the `[validation]` override in `vergil.toml` — see
+[Validation](#validation).)
 
 **Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Python 3.12,
 all quality checks, security scanners (CodeQL, Trivy, Semgrep), standards
@@ -211,7 +220,8 @@ Dev container images are maintained in
 cd ../vergil-docker && docker/build.sh
 
 # Run the full validation pipeline in one container
-vrg-container-run -- uv run vrg-validate
+# (the [validation] override in vergil.toml expands this to `uv run vrg-validate`)
+vrg-container-run -- vrg-validate
 ```
 
 ## Architecture
