@@ -238,8 +238,11 @@ def test_main_remote_config_error_exits_one_without_traceback(
     assert result == 1
     mock_audit.assert_not_called()
     err = capsys.readouterr().err
-    assert "ERROR:" in err
+    # The actionable message reaches stderr, emitted cleanly (no traceback).
+    # Assert on substance, not the prefix: emit_error formats differ between
+    # interactive (`ERROR: ...`) and CI (`::error ::...`) environments.
     assert "--config" in err
+    assert "Traceback" not in err
 
 
 def test_apply_returns_one_when_local_issues_remain() -> None:
