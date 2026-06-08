@@ -125,6 +125,14 @@ Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
 `src/vergil_tooling/lib/identity_mode.py`). Agent sessions run as
 `user` or `audit`.
 
+To query the resolved role, use `vrg-whoami` — never infer identity
+from `VRG_IDENTITY_MODE` alone. That env var is only the first of five
+fallback steps (env var → mode file → `app.pem` → `VRG_APP_ID` →
+human); an unset value means "fall through," not "default to human."
+`vrg-whoami --mode` emits a single token for scripting, and
+`vrg-whoami --explain` reports the resolving signal and warns when
+signals disagree.
+
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
@@ -248,6 +256,9 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
+- **`vrg-whoami`** — Canonical identity-mode resolver (`--mode` for a
+  scripting token, `--explain` to report the resolving signal and warn
+  on signal disagreement)
 - **`vrg-container-run`** — Run arbitrary commands inside a dev container
 - **`vrg-container-test`** — Run repo test suite inside a dev container
 

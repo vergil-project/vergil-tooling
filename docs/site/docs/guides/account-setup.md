@@ -271,6 +271,15 @@ Notes:
   from the shell profile. It selects the identity-aware allowlists
   at runtime; it is a soft-gate ergonomic, not the security boundary
   (the App credential is).
+- **Query identity with `vrg-whoami`, never a single environment
+  variable.** `VRG_IDENTITY_MODE` is only the first of five fallback
+  steps (env var → mode file → `app.pem` → `VRG_APP_ID` → human); an
+  unset value means "fall through," not "default to human." Ask the
+  authoritative resolver instead: `vrg-whoami` prints the resolved role,
+  `vrg-whoami --mode` emits a single token for scripting
+  (`export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"`), and
+  `vrg-whoami --explain` reports which signal resolved and warns when
+  signals disagree.
 
 ## Verification checklist
 
