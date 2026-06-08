@@ -253,7 +253,11 @@ def main(argv: list[str] | None = None) -> int:
         print("GitHub config compliant, nothing to apply.")
     else:
         print(f"  Applying to {repo}...")
-        removed = _apply_repo(repo, config)
+        try:
+            removed = _apply_repo(repo, config)
+        except RuntimeError as exc:
+            emit_error(str(exc))
+            return 1
         if removed:
             print(f"  {repo}: applied (legacy protection removed: {', '.join(removed)})")
         else:
