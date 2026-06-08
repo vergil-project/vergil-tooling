@@ -202,7 +202,17 @@ def _preflight_target(target: Target) -> int:
             file=sys.stderr,
         )
         return 1
-    if vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild":
+    # The spec fingerprint is stamped inside the guest (/etc/vergil/vm-spec.fingerprint)
+    # and is only readable over `limactl shell` while the VM runs. A stopped VM cannot
+    # be fingerprinted, so the drift gate can only run when already Running — checking it
+    # against a stopped VM always reads needs-rebuild, which made every stopped dedicated
+    # VM un-startable and falsely demanded a rebuild. For start (VM stopped) the check is
+    # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
+    # "drift only while running" contract.
+    if (
+        status == "Running"
+        and vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild"
+    ):
         print(
             f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
             f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
@@ -286,6 +296,32 @@ def _st_start(state: _LifecycleState) -> None:
     start_vm(state.target.instance, timeout=state.timeout)
 
 
+class SpecDriftError(RuntimeError):
+    """Raised by the post-start spec-check stage when a freshly-started VM's
+    stamped fingerprint no longer matches its composed spec. Carried as a warn:
+    surfaced as a non-fatal ⚠ in the pipeline summary, never aborts the start.
+    """
+
+
+def _st_spec_check(state: _LifecycleState) -> None:
+    # Post-start drift check. The fingerprint lives inside the guest and is only
+    # readable now that it is up — the check _preflight_target cannot perform
+    # against a stopped VM. Warn-mode: a drifted VM is already running and usable,
+    # so we tell the user to rebuild rather than refusing. Base boxes carry no
+    # per-repo spec and are skipped.
+    target = state.target
+    if not target.spec.dedicated:
+        return
+    if vm_spec_status(target.instance, target.fingerprint) != "needs-rebuild":
+        return
+    workspace = f"{target.org}/{target.repo}"
+    msg = (
+        f"VM '{target.instance}' no longer meets {workspace}'s spec — "
+        f"rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}"
+    )
+    raise SpecDriftError(msg)
+
+
 def _st_link_config(state: _LifecycleState) -> None:
     link_claude_dirs(state.target.instance, Path.home() / ".claude")
 
@@ -339,6 +375,10 @@ def _create_stages() -> list[Stage]:
 def _start_stages() -> list[Stage]:
     return [
         Stage("start", _st_start, mode="fail_fast"),
+        # Verify the just-booted guest against its composed spec. Non-fatal and
+        # placed immediately after start so a drift warning surfaces before the
+        # credential/config work, without blocking a usable VM from coming up.
+        Stage("spec-check", _st_spec_check, mode="warn"),
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
         Stage("update-tooling", _st_update_tooling, mode="warn"),
