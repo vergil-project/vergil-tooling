@@ -11,13 +11,16 @@ process CWD (the worktree).
 from __future__ import annotations
 
 import time
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.await_file import atomic_write
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.pr_workflow.transport import Transport
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _DIR = ".vergil"
 _FILE = "pr-workflow.json"

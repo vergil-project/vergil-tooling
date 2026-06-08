@@ -6,7 +6,7 @@ when it lands; it must pass this suite unchanged.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -14,24 +14,32 @@ import pytest
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.pr_workflow.transport import Transport
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
+
+    from vergil_tooling.lib.pr_workflow.transport import Transport
 
 _NOW = "2026-06-08T00:00:00Z"
 
 # Each factory takes a tmp_path and returns a Transport whose poll loop will not
 # actually sleep (poll_interval 0); time.sleep is patched per test where needed.
-_FACTORIES: list[Callable[["Path"], Transport]] = [
+_FACTORIES: list[Callable[[Path], Transport]] = [
     lambda root: LocalFileTransport(root, poll_interval=0.0),
 ]
 
 
 def _state(owner: str):
     state = engine.init_state(
-        issue="1534", branch="b", base="origin/develop", mode="paired",
-        head_sha="h0", base_sha="b0", user_token="u-1", now=_NOW,
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="paired",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
     )
     state.owner = owner
     return state
@@ -75,6 +83,8 @@ def test_wait_until_owner_raises_on_error_state(transport: Transport) -> None:
     state = _state("audit")
     state.error = {"by": "audit", "at": _NOW, "reason": "boom"}
     transport.write(state)
-    with patch("vergil_tooling.lib.pr_workflow.local_transport.time.sleep"):
-        with pytest.raises(WorkflowError, match="counterpart reported an error"):
-            transport.wait_until_owner("user", timeout=5.0)
+    with (
+        patch("vergil_tooling.lib.pr_workflow.local_transport.time.sleep"),
+        pytest.raises(WorkflowError, match="counterpart reported an error"),
+    ):
+        transport.wait_until_owner("user", timeout=5.0)

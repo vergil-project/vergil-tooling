@@ -29,8 +29,17 @@ STATUSES = (
 CHECK_STATUSES = ("pass", "fail", "escalate")
 
 _REQUIRED = (
-    "issue", "branch", "base", "mode", "owner", "status", "round",
-    "created_at", "updated_at", "participants", "git",
+    "issue",
+    "branch",
+    "base",
+    "mode",
+    "owner",
+    "status",
+    "round",
+    "created_at",
+    "updated_at",
+    "participants",
+    "git",
 )
 
 

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.bin import vrg_pr_workflow as cli
 from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
-from vergil_tooling.lib.pr_workflow.transport import Transport
 
 if TYPE_CHECKING:
     import pytest
@@ -17,14 +18,18 @@ if TYPE_CHECKING:
 _NOW = "2026-06-08T00:00:00Z"
 
 
-class FakeTransport(Transport):
-    """In-memory transport whose waits resolve immediately by flipping owner."""
+class FakeTransport(LocalFileTransport):
+    """In-memory transport whose waits resolve immediately by flipping owner.
+
+    Subclasses LocalFileTransport so it satisfies the CLI's typed parameter; the
+    state store and git facts are stubbed in memory.
+    """
 
     def __init__(self) -> None:
+        super().__init__(Path())
         self.state: WorkflowState | None = None
+        self.staged: WorkflowState | None = None  # yielded by wait_until_present
         self.writes: list[WorkflowState] = []
-        self.base = "origin/develop"
-        self.worktree_root = None  # settings.max_rounds is not exercised here
 
     def read(self) -> WorkflowState | None:
         return self.state
@@ -36,6 +41,8 @@ class FakeTransport(Transport):
         self.writes.append(WorkflowState.from_json(state.to_json()))
 
     def wait_until_present(self, *, timeout: float) -> WorkflowState:
+        if self.state is None:
+            self.state = self.staged
         assert self.state is not None
         return self.state
 
@@ -57,7 +64,9 @@ def _args(**kw: object) -> argparse.Namespace:
     return ns
 
 
-def test_next_user_init_paired_writes_audit_then_waits(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_next_user_init_paired_writes_audit_then_waits(
+    monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     monkeypatch.setattr(cli.git, "current_branch", lambda: "feature/1534-x")
     transport = FakeTransport()
     rc = cli._next_user(_args(as_role="user", issue="1534", no_audit=False), transport)
@@ -70,8 +79,14 @@ def test_next_user_init_paired_writes_audit_then_waits(monkeypatch: pytest.Monke
 def test_next_audit_first_call_acks_and_returns_review_directive(capsys) -> None:
     transport = FakeTransport()
     transport.state = engine.init_state(
-        issue="1534", branch="b", base="origin/develop", mode="paired",
-        head_sha="h0", base_sha="b0", user_token="u-1", now=_NOW,
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="paired",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
     )
     rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
     assert rc == 0
@@ -83,9 +98,53 @@ def test_next_audit_first_call_acks_and_returns_review_directive(capsys) -> None
 def test_next_audit_solo_exits_clean(capsys) -> None:
     transport = FakeTransport()
     transport.state = engine.init_state(
-        issue="1534", branch="b", base="origin/develop", mode="solo",
-        head_sha="h0", base_sha="b0", user_token="u-1", now=_NOW,
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="solo",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
     )
     rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["reason"] == "solo"
+
+
+def test_next_user_resume_waits_when_not_owner(capsys) -> None:
+    transport = FakeTransport()
+    transport.state = engine.init_state(
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="paired",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
+    )  # owner audit
+    rc = cli._next_user(_args(as_role="user"), transport)  # no issue -> resume path
+    assert rc == 0
+    # owner was not user -> the wait flipped it to user -> report-ready directive.
+    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "report-ready"
+
+
+def test_next_audit_waits_for_absent_file_and_skips_ack_when_present(capsys) -> None:
+    transport = FakeTransport()
+    staged = engine.init_state(
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="paired",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
+    )
+    engine.audit_ack(staged, issue="1534", audit_token="a-1", now=_NOW)  # audit already present
+    transport.staged = staged  # read() is None first; wait_until_present yields this
+    rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
+    assert rc == 0
+    assert not transport.writes  # no new ack write; audit already present
+    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-review"

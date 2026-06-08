@@ -8,9 +8,12 @@ own optional knobs). Falls back to the default when the file or key is absent.
 from __future__ import annotations
 
 import tomllib
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _DEFAULT_MAX_ROUNDS = 10
 

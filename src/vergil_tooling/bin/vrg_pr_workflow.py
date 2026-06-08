@@ -12,13 +12,17 @@ import argparse
 import json
 import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
 from vergil_tooling.lib.pr_workflow import engine, settings
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 # Short for the startup handshake (register or fail); long for steady-state work.
 _SHORT_TIMEOUT = 30.0
@@ -26,7 +30,7 @@ _LONG_TIMEOUT = 86400.0
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _token(prefix: str) -> str:
@@ -37,7 +41,7 @@ def _emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2))
 
 
-def _require_state(transport: LocalFileTransport):
+def _require_state(transport: LocalFileTransport) -> WorkflowState:
     state = transport.read()
     if state is None:
         raise WorkflowError("no workflow file; run `vrg-pr-workflow next --as user` first")
@@ -86,7 +90,9 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     if state is None:
         state = transport.wait_until_present(timeout=_SHORT_TIMEOUT)
     if state.mode == "solo":
-        _emit({"done": True, "reason": "solo", "note": "workflow running --no-audit; nothing to do"})
+        _emit(
+            {"done": True, "reason": "solo", "note": "workflow running --no-audit; nothing to do"}
+        )
         return 0
     if state.participants.get("audit") is None:
         if not args.issue:
@@ -101,8 +107,13 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = _require_state(transport)
     engine.apply_report_ready(
-        state, title=args.title, summary=args.summary, notes=args.notes,
-        linkage=args.linkage, head_sha=transport.head_sha(), now=_now(),
+        state,
+        title=args.title,
+        summary=args.summary,
+        notes=args.notes,
+        linkage=args.linkage,
+        head_sha=transport.head_sha(),
+        now=_now(),
     )
     transport.write(state)
     _emit({"ok": True, "status": state.status, "owner": state.owner})
@@ -130,7 +141,10 @@ def cmd_submit_review(args: argparse.Namespace, transport: LocalFileTransport) -
     except (OSError, json.JSONDecodeError) as exc:
         raise WorkflowError(f"cannot read review payload {args.payload!r}: {exc}") from exc
     engine.apply_review(
-        state, checks=payload.get("checks"), head_sha=transport.head_sha(), now=_now(),
+        state,
+        checks=payload.get("checks"),
+        head_sha=transport.head_sha(),
+        now=_now(),
     )
     transport.write(state)
     _emit({"ok": True, "status": state.status, "owner": state.owner})

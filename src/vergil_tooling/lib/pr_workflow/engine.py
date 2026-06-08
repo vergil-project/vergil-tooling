@@ -97,7 +97,13 @@ def apply_report_ready(
         state.owner = "audit"
     state.updated_at = now
     state.history.append(
-        {"round": state.round, "at": now, "actor": "user", "action": "report-ready", "head_sha": head_sha}
+        {
+            "round": state.round,
+            "at": now,
+            "actor": "user",
+            "action": "report-ready",
+            "head_sha": head_sha,
+        }
     )
     return state
 
@@ -122,7 +128,11 @@ def apply_report_fixes(
     state.round += 1
     state.updated_at = now
     entry: dict[str, Any] = {
-        "round": state.round, "at": now, "actor": "user", "action": "report-fixes", "head_sha": head_sha,
+        "round": state.round,
+        "at": now,
+        "actor": "user",
+        "action": "report-fixes",
+        "head_sha": head_sha,
     }
     if note:
         entry["note"] = note
@@ -133,7 +143,9 @@ def apply_report_fixes(
         state.escalation = {
             "by": "user",
             "check": None,
-            "reason": f"runaway-round cap reached: round {state.round} exceeds max_rounds={max_rounds}",
+            "reason": (
+                f"runaway-round cap reached: round {state.round} exceeds max_rounds={max_rounds}"
+            ),
             "raised_at": now,
         }
         return state
@@ -199,14 +211,22 @@ def apply_review(
         state.owner = "human"
         escalated = next(c for c in checks if c.get("status") == "escalate")
         state.escalation = {
-            "by": "audit", "check": escalated["id"],
-            "reason": escalated.get("reason", ""), "raised_at": now,
+            "by": "audit",
+            "check": escalated["id"],
+            "reason": escalated.get("reason", ""),
+            "raised_at": now,
         }
     else:
         state.owner = "user"
     state.updated_at = now
     state.history.append(
-        {"round": state.round, "at": now, "actor": "audit", "action": "submit-review", "rollup": status}
+        {
+            "round": state.round,
+            "at": now,
+            "actor": "audit",
+            "action": "submit-review",
+            "rollup": status,
+        }
     )
     return state
 
@@ -237,7 +257,11 @@ def apply_resolve(
     state.escalation = None
     state.updated_at = now
     entry: dict[str, Any] = {
-        "round": state.round, "at": now, "actor": "human", "action": "resolve", "to": to_role,
+        "round": state.round,
+        "at": now,
+        "actor": "human",
+        "action": "resolve",
+        "to": to_role,
     }
     if note:
         entry["note"] = note

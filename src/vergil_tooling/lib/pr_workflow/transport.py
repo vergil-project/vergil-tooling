@@ -10,8 +10,10 @@ behind the interface — never in the engine.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.pr_workflow.state import WorkflowState
+if TYPE_CHECKING:
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
 class Transport(ABC):

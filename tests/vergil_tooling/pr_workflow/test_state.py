@@ -19,7 +19,10 @@ def _minimal() -> WorkflowState:
         round=0,
         created_at="2026-06-08T15:00:00Z",
         updated_at="2026-06-08T15:00:00Z",
-        participants={"user": {"token": "u-1", "present_at": "2026-06-08T15:00:00Z"}, "audit": None},
+        participants={
+            "user": {"token": "u-1", "present_at": "2026-06-08T15:00:00Z"},
+            "audit": None,
+        },
         git={"base_sha": "b0", "head_sha": "h0", "last_reviewed_sha": None},
     )
 
@@ -33,9 +36,24 @@ def test_roundtrip_through_json_preserves_fields() -> None:
 def test_to_dict_has_stable_top_level_keys() -> None:
     keys = set(_minimal().to_dict())
     assert keys == {
-        "schema_version", "issue", "branch", "base", "phase", "mode", "owner",
-        "status", "round", "created_at", "updated_at", "participants",
-        "pr_metadata", "git", "checks", "escalation", "error", "history",
+        "schema_version",
+        "issue",
+        "branch",
+        "base",
+        "phase",
+        "mode",
+        "owner",
+        "status",
+        "round",
+        "created_at",
+        "updated_at",
+        "participants",
+        "pr_metadata",
+        "git",
+        "checks",
+        "escalation",
+        "error",
+        "history",
     }
 
 
@@ -55,6 +73,20 @@ def test_validate_rejects_bad_owner() -> None:
     state = _minimal()
     state.owner = "nobody"
     with pytest.raises(WorkflowError, match="invalid owner"):
+        state.validate()
+
+
+def test_validate_rejects_bad_mode() -> None:
+    state = _minimal()
+    state.mode = "bogus"
+    with pytest.raises(WorkflowError, match="invalid mode"):
+        state.validate()
+
+
+def test_validate_rejects_bad_status() -> None:
+    state = _minimal()
+    state.status = "bogus"
+    with pytest.raises(WorkflowError, match="invalid status"):
         state.validate()
 
 
