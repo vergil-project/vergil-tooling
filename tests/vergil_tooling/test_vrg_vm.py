@@ -1857,6 +1857,19 @@ class TestPreflight:
     def test_dedicated_drift_aborts(self, _status: MagicMock, _spec: MagicMock) -> None:
         assert _preflight_target(_target(dedicated=True)) == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    def test_dedicated_stopped_defers_spec_check(
+        self, _status: MagicMock, mock_spec: MagicMock
+    ) -> None:
+        # A stopped guest's fingerprint lives at /etc/vergil/vm-spec.fingerprint
+        # and is only readable over `limactl shell` while the VM runs. The drift
+        # gate therefore cannot run pre-start; it must not block start (else every
+        # stopped dedicated VM is un-startable and falsely told to rebuild). The
+        # post-start spec-check stage performs the real check once the VM is up.
+        assert _preflight_target(_target(dedicated=True)) == 0
+        mock_spec.assert_not_called()
+
     @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
     def test_dedicated_ok_passes(self, _status: MagicMock, _spec: MagicMock) -> None:
@@ -2177,12 +2190,22 @@ class TestLifecycleStages:
         stages = _start_stages()
         assert [s.name for s in stages] == [
             "start",
+            "spec-check",
             "credentials",
             "copy-config",
             "update-tooling",
         ]
-        assert stages[-1].mode == "warn"
-        assert all(s.mode == "fail_fast" for s in stages[:-1])
+        modes = {s.name: s.mode for s in stages}
+        # spec-check verifies the freshly-booted guest's fingerprint; it is
+        # non-fatal (warn) so a drifted-but-running VM stays usable, and it sits
+        # immediately after start so the warning surfaces before later work.
+        assert modes == {
+            "start": "fail_fast",
+            "spec-check": "warn",
+            "credentials": "fail_fast",
+            "copy-config": "fail_fast",
+            "update-tooling": "warn",
+        }
 
     def test_rebuild_stage_order_and_modes(self) -> None:
         from vergil_tooling.bin.vrg_vm import _rebuild_stages
@@ -2233,6 +2256,40 @@ class TestLifecycleStages:
             call.stop_vm("vergil-agent"),
             call.start_vm("vergil-agent", timeout="45m"),
         ]
+
+
+class TestSpecCheckStage:
+    """The post-start drift check: now the guest is up, its stamped fingerprint
+    is finally readable. Warn-mode — it raises to surface a non-fatal ⚠, never
+    aborts the start, and is skipped entirely for non-dedicated (base) targets."""
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
+    def test_warns_on_drift(self, _spec: MagicMock) -> None:
+        from vergil_tooling.bin.vrg_vm import (
+            SpecDriftError,
+            _LifecycleState,
+            _st_spec_check,
+        )
+
+        with pytest.raises(SpecDriftError) as exc:
+            _st_spec_check(_LifecycleState(target=_target(dedicated=True)))
+        # The warning must carry the actionable rebuild command.
+        assert "rebuild" in str(exc.value).lower()
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
+    def test_silent_when_in_spec(self, _spec: MagicMock) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_spec_check
+
+        # In spec -> no raise (stage records "ok").
+        _st_spec_check(_LifecycleState(target=_target(dedicated=True)))
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status")
+    def test_skips_base_target(self, mock_spec: MagicMock) -> None:
+        from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_spec_check
+
+        # A base (non-dedicated) box carries no per-repo spec to drift from.
+        _st_spec_check(_LifecycleState(target=_target(dedicated=False)))
+        mock_spec.assert_not_called()
 
 
 class TestRunLifecycle:

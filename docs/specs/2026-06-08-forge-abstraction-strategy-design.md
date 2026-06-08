@@ -64,6 +64,48 @@ functionality it depends on, not the convenience of possible commercial
 adopters. Moving to a non-profit-governed forge — and supporting that
 non-profit — is that priority made concrete.
 
+## Strategic Driver: Paywalled Security as a Barrier to Entry
+
+**(This case — data.)** GitHub's advanced security features — secret
+scanning, push protection, and CodeQL code scanning — are free on public
+repositories but paid on private ones. Since the April 2025 unbundling of
+GitHub Advanced Security, the relevant products are **GitHub Secret
+Protection at $19 per active committer per month** and **GitHub Code
+Security at $30 per active committer per month**, billed monthly and
+de-duplicated to one license per committer across the whole
+account.[^ghas-pricing] An "active committer" is anyone who has pushed to
+a feature-enabled repo in the trailing 90 days.
+
+**(Judgment.)** The absolute cost is small for a funded individual — a
+single committer enabling both products is ~$49/month, and the tooling's
+security posture strictly needs only the $19 Secret Protection tier. That
+is not the concern. The concern is structural: a per-committer subscription
+on *baseline security hygiene* is a real barrier to entry for the small,
+unfunded open-source teams this project exists to serve. The project is
+built to contribute to the commons, not to be viable only for developers
+with a comfortable salary; gating secret scanning and push protection
+behind a recurring per-head fee is in direct tension with that mission.
+This is a concrete, present-day data point — not a hypothetical —
+reinforcing the move toward a non-profit-governed, open forge.
+
+**(Open question — carried as a risk.)** It does not automatically follow
+that Forgejo/Codeberg *solve* this. They may not offer equivalent secret
+scanning / push protection / code scanning at all, or only in a paid tier.
+If these capabilities turn out to be available *only* as proprietary
+pay-as-you-go services — on any provider — then the right response is not
+to switch which commercial provider we depend on, but to prefer an
+open-source implementation of the capability itself. Whether the forge
+migration actually recovers this functionality, and at what cost, must be
+researched before the migration is treated as the answer to the
+security-cost problem (see Section 3 research gaps).
+
+**(Near-term posture.)** For now this repository stays private with
+advanced security disabled and parked — the cost buys nothing while the
+code is pre-release. The zero-cost practical fix is to make the repository
+public once it is ready to expose, at which point all three features are
+free; that is a per-repo readiness decision, independent of the strategic
+forge direction above.
+
 ## Foundational Principles
 
 1. **Independence is the goal, not a specific forge.** "Self-hosted"
@@ -175,6 +217,11 @@ Each is labeled by confidence.
 were the thinnest in the automated pass and were gap-filled by direct
 source reads; they warrant deeper validation before any CI port begins.
 `git-pkgs/forge` is pre-1.0 and should not be treated as stable.
+Additionally, **whether Forgejo/Codeberg provide equivalent advanced
+security** (secret scanning, push protection, code scanning) — and on what
+licensing terms — was not researched and is an open question (see
+*Strategic Driver: Paywalled Security as a Barrier to Entry*); the forge
+migration cannot be assumed to recover this functionality until verified.
 
 ## Section 4: Abstraction Architecture
 
@@ -391,6 +438,7 @@ Sequenced so each phase delivers standalone value and can pause between.
 | Forgejo Actions incompatibilities discovered mid-port | Validated spike (Phase 0) decouples git/PR/audit migration from CI; CI gaps do not block the move |
 | GitHub-only features (rulesets, Projects v2) have no Forgejo equivalent | Capability flags + graceful degradation; the merge-safety core uses only LCD primitives |
 | Hosted-vs-self-hosted Forgejo (Codeberg) auth/rate-limit differences | Same adapter, different config; validate Codeberg as a distinct deployment of the Forgejo adapter |
+| Forgejo/Codeberg may not offer equivalent advanced security (secret scanning, push protection, code scanning), or only in a paid tier | Open research question before relying on the migration to recover the capability; if such tooling is proprietary pay-as-you-go everywhere, prefer an open-source implementation over provider dependence |
 
 ## References
 
@@ -407,3 +455,4 @@ Sequenced so each phase delivers standalone value and can pause between.
 [^auth-forgejo]: Forgejo branch protection — <https://forgejo.org/docs/latest/user/protection/>
 [^gov-lwn]: LWN: the Gitea/Forgejo fork — <https://lwn.net/Articles/963095/>
 [^gov-fork]: Forgejo: Forking Forward — <https://forgejo.org/2024-02-forking-forward/>
+[^ghas-pricing]: GitHub Advanced Security license billing — <https://docs.github.com/en/billing/concepts/product-billing/github-advanced-security> (Secret Protection $19 and Code Security $30 per active committer per month; one license per committer across the account; active = pushed within the trailing 90 days).
