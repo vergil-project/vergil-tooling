@@ -62,40 +62,90 @@ def _load_local_config(path: str) -> VergilConfig:
     return _parse_raw_config(raw, source=path)
 
 
+# Canonical config branches, in resolution order: the released/stable branch
+# first, then the integration branch as a bootstrap fallback.
+_CONFIG_REFS = ("main", "develop")
+
+
 def _is_not_found(exc: github.GitHubAPIError) -> bool:
     """Return True when a GitHub API error is an HTTP 404 (Not Found)."""
     return "404" in (exc.stderr or "") or "404" in (exc.stdout or "")
 
 
-def _fetch_remote_config(repo: str) -> VergilConfig:
-    """Fetch and parse vergil.toml from a remote repo."""
-    try:
-        content_data = github.read_json(
-            "api",
-            f"repos/{repo}/contents/vergil.toml",
-        )
-    except github.GitHubAPIError as exc:
-        if not _is_not_found(exc):
-            raise
-        msg = (
-            f"vergil.toml could not be fetched from {repo} via the GitHub API "
-            f"(HTTP 404). It is read from the repository's default branch — confirm "
-            f"the file exists there (a repo whose default branch is still 'main' but "
-            f"whose vergil.toml only lives on 'develop' will hit this), that the repo "
-            f"exists, and that your credentials have access. To apply from a local "
-            f"copy instead, pass --config <path/to/vergil.toml>."
-        )
-        raise RuntimeError(msg) from exc
+def _decode_config(
+    repo: str, ref: str, content_data: dict[str, object] | list[object]
+) -> VergilConfig:
+    """Decode a GitHub contents API response into a VergilConfig."""
     if not isinstance(content_data, dict):
-        msg = f"Unexpected response fetching config from {repo}"
+        msg = f"Unexpected response fetching config from {repo}@{ref}"
         raise RuntimeError(msg)
     content = content_data.get("content")
     if not isinstance(content, str):
-        msg = f"No content field in config response from {repo}"
+        msg = f"No content field in config response from {repo}@{ref}"
         raise RuntimeError(msg)
     raw_bytes = base64.b64decode(content)
     raw = tomllib.loads(raw_bytes.decode())
-    return _parse_raw_config(raw, source=f"{repo}:vergil.toml")
+    return _parse_raw_config(raw, source=f"{repo}@{ref}:vergil.toml")
+
+
+def _fetch_config_from_ref(repo: str, ref: str) -> VergilConfig | None:
+    """Fetch and parse vergil.toml from a specific branch of a remote repo.
+
+    Returns ``None`` when the file is absent on that branch (HTTP 404).
+    Non-404 API errors propagate unchanged.
+    """
+    try:
+        content_data = github.read_json(
+            "api",
+            f"repos/{repo}/contents/vergil.toml?ref={ref}",
+        )
+    except github.GitHubAPIError as exc:
+        if _is_not_found(exc):
+            return None
+        raise
+    return _decode_config(repo, ref, content_data)
+
+
+def _load_cwd_config() -> VergilConfig | None:
+    """Load vergil.toml from the current working directory, or None if absent."""
+    path = Path.cwd() / "vergil.toml"
+    if not path.exists():
+        return None
+    return _load_local_config(str(path))
+
+
+def _resolve_config(repo: str) -> VergilConfig:
+    """Resolve the canonical vergil.toml for ``repo``.
+
+    Resolution order: the ``main`` branch, then ``develop``, then the local
+    working-directory copy when the cwd is a checkout of ``repo``. The remote
+    branches are the canonical source; the local fallback makes bootstrapping
+    ergonomic — run ``apply`` from the repo root before the file has landed on
+    any canonical branch — and is safe under the trust model: agents may *write*
+    vergil.toml, but only a human runs ``apply`` and owns that action, so the
+    local copy can never be applied without human oversight. The fallback is
+    gated on the cwd matching the target repo so a ``--repo other/repo`` run can
+    never apply the current directory's unrelated config.
+    """
+    for ref in _CONFIG_REFS:
+        config = _fetch_config_from_ref(repo, ref)
+        if config is not None:
+            return config
+    cwd_is_repo = _cwd_matches_repo(repo)
+    if cwd_is_repo:
+        local = _load_cwd_config()
+        if local is not None:
+            return local
+    locations = "the 'main' and 'develop' branches"
+    if cwd_is_repo:
+        locations += " and the current directory"
+    msg = (
+        f"vergil.toml could not be resolved for {repo}: it is absent from "
+        f"{locations}. Confirm the file exists on a canonical branch or in this "
+        f"checkout, that the repo exists, and that your credentials have access. "
+        f"To apply from a specific file, pass --config <path/to/vergil.toml>."
+    )
+    raise RuntimeError(msg)
 
 
 def _audit_repo(repo: str, config: VergilConfig) -> ConfigDiff:
@@ -184,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
 
     repo = _resolve_repo(args)
     try:
-        config = _load_local_config(args.config) if args.config else _fetch_remote_config(repo)
+        config = _load_local_config(args.config) if args.config else _resolve_config(repo)
     except RuntimeError as exc:
         emit_error(str(exc))
         return 1
