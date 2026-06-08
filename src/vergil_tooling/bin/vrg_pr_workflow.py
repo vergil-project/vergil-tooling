@@ -1,0 +1,231 @@
+"""Drive the local pre-PR workflow: the oracle CLI.
+
+Both agent skills reduce to ``vrg-pr-workflow next --as <role>``; the directive
+names the report verb to call next. The oracle owns every write, snapshots git
+itself, and blocks until it is the caller's turn. See
+docs/specs/2026-06-08-pr-workflow-oracle-design.md.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+
+from vergil_tooling.lib import git
+from vergil_tooling.lib.pr_workflow import engine, settings
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+# Short for the startup handshake (register or fail); long for steady-state work.
+_SHORT_TIMEOUT = 30.0
+_LONG_TIMEOUT = 86400.0
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _token(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _emit(payload: dict[str, object]) -> None:
+    print(json.dumps(payload, indent=2))
+
+
+def _require_state(transport: LocalFileTransport):
+    state = transport.read()
+    if state is None:
+        raise WorkflowError("no workflow file; run `vrg-pr-workflow next --as user` first")
+    return state
+
+
+def cmd_next(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    if args.as_role == "user":
+        return _next_user(args, transport)
+    return _next_audit(args, transport)
+
+
+def _next_user(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = transport.read()
+    if state is None:
+        if not args.issue:
+            raise WorkflowError("the first `next --as user` must pass --issue to initialize")
+        mode = "solo" if args.no_audit else "paired"
+        state = engine.init_state(
+            issue=args.issue,
+            branch=git.current_branch(),
+            base=transport.base,
+            mode=mode,
+            head_sha=transport.head_sha(),
+            base_sha=transport.merge_base(),
+            user_token=_token("u"),
+            now=_now(),
+        )
+        transport.write(state)
+        if mode == "paired":
+            state = transport.wait_until_owner("user", timeout=_SHORT_TIMEOUT)
+    else:
+        if args.issue and str(args.issue) != state.issue:
+            raise WorkflowError(
+                f"stale workflow file for issue #{state.issue}; you passed #{args.issue}. "
+                "Delete .vergil/pr-workflow.json to start fresh."
+            )
+        if state.owner != "user":
+            state = transport.wait_until_owner("user", timeout=_LONG_TIMEOUT)
+    _emit(engine.directive_for(state, "user"))
+    return 0
+
+
+def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = transport.read()
+    if state is None:
+        state = transport.wait_until_present(timeout=_SHORT_TIMEOUT)
+    if state.mode == "solo":
+        _emit({"done": True, "reason": "solo", "note": "workflow running --no-audit; nothing to do"})
+        return 0
+    if state.participants.get("audit") is None:
+        if not args.issue:
+            raise WorkflowError("the first `next --as audit` must pass --issue")
+        engine.audit_ack(state, issue=args.issue, audit_token=_token("a"), now=_now())
+        transport.write(state)
+    state = transport.wait_until_owner("audit", timeout=_LONG_TIMEOUT)
+    _emit(engine.directive_for(state, "audit"))
+    return 0
+
+
+def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_report_ready(
+        state, title=args.title, summary=args.summary, notes=args.notes,
+        linkage=args.linkage, head_sha=transport.head_sha(), now=_now(),
+    )
+    transport.write(state)
+    _emit({"ok": True, "status": state.status, "owner": state.owner})
+    return 0
+
+
+def cmd_report_fixes(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_report_fixes(
+        state,
+        head_sha=transport.head_sha(),
+        note=args.note,
+        now=_now(),
+        max_rounds=settings.max_rounds(transport.worktree_root),
+    )
+    transport.write(state)
+    _emit({"ok": True, "round": state.round, "owner": state.owner})
+    return 0
+
+
+def cmd_submit_review(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    try:
+        payload = json.loads(Path(args.payload).read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowError(f"cannot read review payload {args.payload!r}: {exc}") from exc
+    engine.apply_review(
+        state, checks=payload.get("checks"), head_sha=transport.head_sha(), now=_now(),
+    )
+    transport.write(state)
+    _emit({"ok": True, "status": state.status, "owner": state.owner})
+    return 0
+
+
+def cmd_escalate(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_escalate(state, by=args.as_role, reason=args.reason, now=_now())
+    transport.write(state)
+    _emit({"ok": True, "owner": state.owner})
+    return 0
+
+
+def cmd_abort(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_error(state, by=args.as_role, reason=args.reason, now=_now())
+    transport.write(state)
+    _emit({"ok": True, "status": state.status})
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_resolve(state, to_role=args.to, note=args.note, now=_now())
+    transport.write(state)
+    _emit({"ok": True, "owner": state.owner})
+    return 0
+
+
+def cmd_status(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = transport.read()
+    if state is None:
+        _emit({"exists": False})
+        return 0
+    print(state.to_json())
+    return 0
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Drive the local pre-PR workflow oracle.")
+    parser.add_argument("--base", default="origin/develop", help="Base ref for the delta")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_next = sub.add_parser("next", help="Block until your turn, then print the next directive")
+    p_next.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
+    p_next.add_argument("--issue", help="Issue number (required on the first call)")
+    p_next.add_argument("--no-audit", action="store_true", help="Solo mode: skip the local audit")
+    p_next.set_defaults(func=cmd_next)
+
+    p_ready = sub.add_parser("report-ready", help="USER: initial done-signal with PR metadata")
+    p_ready.add_argument("--title", required=True)
+    p_ready.add_argument("--summary", required=True)
+    p_ready.add_argument("--notes", required=True)
+    p_ready.add_argument("--linkage", default="Ref")
+    p_ready.set_defaults(func=cmd_report_ready)
+
+    p_fixes = sub.add_parser("report-fixes", help="USER: report fixes for the last findings")
+    p_fixes.add_argument("--note", default=None)
+    p_fixes.set_defaults(func=cmd_report_fixes)
+
+    p_review = sub.add_parser("submit-review", help="AUDIT: submit the judgment ledger")
+    p_review.add_argument("--payload", required=True, help="Path to a review.v1 JSON file")
+    p_review.set_defaults(func=cmd_submit_review)
+
+    p_esc = sub.add_parser("escalate", help="Hand control to the human")
+    p_esc.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
+    p_esc.add_argument("--reason", required=True)
+    p_esc.set_defaults(func=cmd_escalate)
+
+    p_abort = sub.add_parser("abort", help="Record a terminal error (graceful give-up)")
+    p_abort.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
+    p_abort.add_argument("--reason", required=True)
+    p_abort.set_defaults(func=cmd_abort)
+
+    p_res = sub.add_parser("resolve", help="HUMAN: hand control back to an agent")
+    p_res.add_argument("--to", required=True, choices=["user", "audit"])
+    p_res.add_argument("--note", default=None)
+    p_res.set_defaults(func=cmd_resolve)
+
+    p_status = sub.add_parser("status", help="Print the current workflow state")
+    p_status.set_defaults(func=cmd_status)
+
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    transport = LocalFileTransport(git.repo_root(), base=args.base)
+    try:
+        return int(args.func(args, transport))
+    except WorkflowError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
