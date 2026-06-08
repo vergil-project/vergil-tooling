@@ -14,8 +14,10 @@ import pytest
 from vergil_tooling.bin.vrg_github_repo_config import (
     _apply_repo,
     _audit_repo,
-    _fetch_remote_config,
+    _fetch_config_from_ref,
+    _load_cwd_config,
     _load_local_config,
+    _resolve_config,
     _resolve_repo,
     main,
     parse_args,
@@ -30,6 +32,7 @@ from vergil_tooling.lib.config import (
     ValidationConfig,
     VergilConfig,
 )
+from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
 # -- Argument parsing ---------------------------------------------------------
@@ -134,7 +137,7 @@ def test_audit_both_compliant_returns_zero() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         assert main(["audit", "--repo", "o/r"]) == 0
 
@@ -145,7 +148,7 @@ def test_audit_local_noncompliant_returns_one() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         assert main(["audit", "--repo", "o/r"]) == 1
 
@@ -156,7 +159,7 @@ def test_audit_github_noncompliant_returns_one() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         assert main(["audit", "--repo", "o/r"]) == 1
 
@@ -167,7 +170,7 @@ def test_diff_always_returns_zero() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         assert main(["diff", "--repo", "o/r"]) == 0
 
@@ -178,7 +181,7 @@ def test_audit_runs_local_checks_first(capsys: pytest.CaptureFixture[str]) -> No
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -196,7 +199,7 @@ def test_apply_all_compliant_does_nothing() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
         patch(f"{_MODULE}._apply_repo") as mock_apply,
     ):
         result = main(["apply", "--repo", "o/r"])
@@ -210,12 +213,36 @@ def test_apply_github_noncompliant_applies() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
         patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
     ):
         result = main(["apply", "--repo", "o/r"])
     assert result == 0
     mock_apply.assert_called_once()
+
+
+def test_main_remote_config_error_exits_one_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(
+            f"{_MODULE}._resolve_config",
+            side_effect=RuntimeError("vergil.toml not found on default branch; pass --config"),
+        ),
+        patch(f"{_MODULE}._audit_repo") as mock_audit,
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 1
+    mock_audit.assert_not_called()
+    err = capsys.readouterr().err
+    # The actionable message reaches stderr, emitted cleanly (no traceback).
+    # Assert on substance, not the prefix: emit_error formats differ between
+    # interactive (`ERROR: ...`) and CI (`::error ::...`) environments.
+    assert "--config" in err
+    assert "Traceback" not in err
 
 
 def test_apply_returns_one_when_local_issues_remain() -> None:
@@ -224,7 +251,7 @@ def test_apply_returns_one_when_local_issues_remain() -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_noncompliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["apply", "--repo", "o/r"])
     assert result == 1
@@ -236,7 +263,7 @@ def test_apply_reports_legacy_protection_removed(capsys: pytest.CaptureFixture[s
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
         patch(f"{_MODULE}._apply_repo", return_value=["main", "develop"]),
     ):
         main(["apply", "--repo", "o/r"])
@@ -257,7 +284,7 @@ def test_audit_prints_skipped_fields(capsys: pytest.CaptureFixture[str]) -> None
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["audit", "--repo", "o/r"])
     assert result == 0
@@ -273,7 +300,7 @@ def test_audit_compliant_public_repo_no_skipped(capsys: pytest.CaptureFixture[st
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -289,7 +316,7 @@ def test_audit_non_security_skipped_fields_not_printed(
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -323,42 +350,163 @@ def test_config_flag_bypasses_remote_fetch(tmp_path: Path) -> None:
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config") as mock_remote,
+        patch(f"{_MODULE}._resolve_config") as mock_remote,
     ):
         result = main(["audit", "--repo", "o/r", "--config", str(p)])
     assert result == 0
     mock_remote.assert_not_called()
 
 
-# -- _fetch_remote_config ----------------------------------------------------
+# -- _fetch_config_from_ref --------------------------------------------------
 
 
-def test_fetch_remote_config_success() -> None:
+def _not_found_error() -> GitHubAPIError:
+    return GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/vergil.toml?ref=main"),
+        '{"message":"Not Found","status":"404"}',
+        "gh: Not Found (HTTP 404)",
+    )
+
+
+def test_fetch_config_from_ref_success() -> None:
     import base64
 
     encoded = base64.b64encode(_VALID_TOML).decode()
-    with patch(
-        f"{_MODULE}.github.read_json",
-        return_value={"content": encoded},
-    ):
-        cfg = _fetch_remote_config("o/r")
+    with patch(f"{_MODULE}.github.read_json", return_value={"content": encoded}):
+        cfg = _fetch_config_from_ref("o/r", "main")
+    assert cfg is not None
     assert cfg.project.primary_language == "python"
 
 
-def test_fetch_remote_config_non_dict_response() -> None:
+def test_fetch_config_from_ref_not_found_returns_none() -> None:
+    with patch(f"{_MODULE}.github.read_json", side_effect=_not_found_error()):
+        assert _fetch_config_from_ref("o/r", "main") is None
+
+
+def test_fetch_config_from_ref_other_api_error_propagates() -> None:
+    server_error = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/vergil.toml?ref=main"),
+        '{"message":"Server Error","status":"500"}',
+        "gh: Server Error (HTTP 500)",
+    )
+    with (
+        patch(f"{_MODULE}.github.read_json", side_effect=server_error),
+        pytest.raises(GitHubAPIError),
+    ):
+        _fetch_config_from_ref("o/r", "main")
+
+
+def test_fetch_config_from_ref_non_dict_response() -> None:
     with (
         patch(f"{_MODULE}.github.read_json", return_value=[]),
         pytest.raises(RuntimeError, match="Unexpected response"),
     ):
-        _fetch_remote_config("o/r")
+        _fetch_config_from_ref("o/r", "main")
 
 
-def test_fetch_remote_config_no_content_field() -> None:
+def test_fetch_config_from_ref_no_content_field() -> None:
     with (
         patch(f"{_MODULE}.github.read_json", return_value={"encoding": "base64"}),
         pytest.raises(RuntimeError, match="No content field"),
     ):
-        _fetch_remote_config("o/r")
+        _fetch_config_from_ref("o/r", "main")
+
+
+# -- _resolve_config (main -> develop -> local cwd) --------------------------
+
+
+def _by_ref(results: dict[str, object]):
+    """Build a _fetch_config_from_ref side_effect from a ref->result mapping."""
+
+    def _fake(_repo: str, ref: str) -> object:
+        return results[ref]
+
+    return _fake
+
+
+def test_resolve_config_prefers_main() -> None:
+    cfg = _make_config()
+    with patch(
+        f"{_MODULE}._fetch_config_from_ref",
+        side_effect=_by_ref({"main": cfg, "develop": None}),
+    ) as mock_fetch:
+        result = _resolve_config("o/r")
+    assert result is cfg
+    # develop is not consulted once main resolves.
+    assert mock_fetch.call_count == 1
+
+
+def test_resolve_config_falls_back_to_develop() -> None:
+    cfg = _make_config()
+    with patch(
+        f"{_MODULE}._fetch_config_from_ref",
+        side_effect=_by_ref({"main": None, "develop": cfg}),
+    ) as mock_fetch:
+        result = _resolve_config("o/r")
+    assert result is cfg
+    assert mock_fetch.call_count == 2
+
+
+def test_resolve_config_falls_back_to_local_when_cwd_matches() -> None:
+    cfg = _make_config()
+    with (
+        patch(
+            f"{_MODULE}._fetch_config_from_ref",
+            side_effect=_by_ref({"main": None, "develop": None}),
+        ),
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}._load_cwd_config", return_value=cfg) as mock_local,
+    ):
+        result = _resolve_config("o/r")
+    assert result is cfg
+    mock_local.assert_called_once()
+
+
+def test_resolve_config_no_local_fallback_when_cwd_mismatch() -> None:
+    with (
+        patch(
+            f"{_MODULE}._fetch_config_from_ref",
+            side_effect=_by_ref({"main": None, "develop": None}),
+        ),
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
+        patch(f"{_MODULE}._load_cwd_config") as mock_local,
+        pytest.raises(RuntimeError, match="--config"),
+    ):
+        _resolve_config("o/r")
+    mock_local.assert_not_called()
+
+
+def test_load_cwd_config_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "vergil.toml").write_bytes(_VALID_TOML)
+    monkeypatch.chdir(tmp_path)
+    cfg = _load_cwd_config()
+    assert cfg is not None
+    assert cfg.project.primary_language == "python"
+
+
+def test_load_cwd_config_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert _load_cwd_config() is None
+
+
+def test_resolve_config_errors_when_absent_everywhere() -> None:
+    with (
+        patch(
+            f"{_MODULE}._fetch_config_from_ref",
+            side_effect=_by_ref({"main": None, "develop": None}),
+        ),
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}._load_cwd_config", return_value=None),
+        pytest.raises(RuntimeError) as excinfo,
+    ):
+        _resolve_config("o/r")
+    message = str(excinfo.value)
+    assert "o/r" in message
+    assert "main" in message
+    assert "develop" in message
+    assert "--config" in message
 
 
 # -- _load_local_config -------------------------------------------------------
@@ -431,7 +579,7 @@ def test_audit_skips_local_checks_on_repo_mismatch(
         patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
         patch(f"{_MODULE}.audit_local_config") as mock_local,
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["audit", "--repo", "other/repo"])
     mock_local.assert_not_called()
@@ -445,7 +593,7 @@ def test_audit_repo_mismatch_prints_warning_to_stderr(
         patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
         patch(f"{_MODULE}.audit_local_config"),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "other/repo"])
     captured = capsys.readouterr()
@@ -460,7 +608,7 @@ def test_audit_repo_mismatch_reports_local_skipped(
         patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
         patch(f"{_MODULE}.audit_local_config"),
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "other/repo"])
     output = capsys.readouterr().out
@@ -472,7 +620,7 @@ def test_apply_skips_local_on_repo_mismatch() -> None:
         patch(f"{_MODULE}.github.current_repo", return_value="local/repo"),
         patch(f"{_MODULE}.audit_local_config") as mock_local,
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
         patch(f"{_MODULE}._apply_repo", return_value=[]) as mock_apply,
     ):
         result = main(["apply", "--repo", "other/repo"])
@@ -486,7 +634,7 @@ def test_audit_runs_local_when_repo_matches_cwd() -> None:
         patch(f"{_MODULE}.github.current_repo", return_value="o/r"),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()) as mock_local,
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["audit", "--repo", "o/r"])
     mock_local.assert_called_once()
@@ -536,7 +684,7 @@ def test_print_diff_shows_delta_for_rules_mismatch(
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -611,7 +759,7 @@ def test_print_diff_falls_back_for_rules_without_status_checks(
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -630,7 +778,7 @@ def test_print_diff_falls_back_for_non_rules_field(
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         main(["audit", "--repo", "o/r"])
     output = capsys.readouterr().out
@@ -650,7 +798,7 @@ def test_audit_skips_local_when_cwd_origin_unavailable() -> None:
         ),
         patch(f"{_MODULE}.audit_local_config") as mock_local,
         patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["audit", "--repo", "other/repo"])
     mock_local.assert_not_called()
@@ -674,7 +822,7 @@ def test_audit_prints_skipped_bypass_actors(capsys: pytest.CaptureFixture[str]) 
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
         patch(f"{_MODULE}._audit_repo", return_value=diff),
         patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
-        patch(f"{_MODULE}._fetch_remote_config"),
+        patch(f"{_MODULE}._resolve_config"),
     ):
         result = main(["audit", "--repo", "o/r"])
     assert result == 0
