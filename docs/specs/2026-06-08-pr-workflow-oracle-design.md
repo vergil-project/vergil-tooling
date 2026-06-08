@@ -330,7 +330,8 @@ instruction.
 | `report-fixes [--note]` | USER | Verify HEAD moved, snapshot it, `owner→audit`, bump round. |
 | `submit-review --payload review.json` | AUDIT | Validate payload vs `review.v1`, update ledger, **roll up** → set owner/status, record `last_reviewed_sha`. |
 | `escalate --reason …` | USER, AUDIT | `owner→human`, set `escalation`, status=escalated. |
-| `resolve --to user\|audit [--note]` | HUMAN | Hand control back to an agent. **Rejected unless `vrg-whoami --mode == human`** (§8.3). |
+| `abort --as <role> --reason …` | USER, AUDIT | Record a terminal `error` (graceful give-up, §9); the counterpart's `next` detects it and stops. |
+| `resolve --to user\|audit [--note]` | HUMAN | Hand control back to an agent. **Rejected unless `vrg-whoami --mode == human`** (§8.3; enforcement lands in Phase 3). |
 | `status` | anyone | Read-only pretty-print. No write. |
 
 The verbs no longer take an issue argument — there is one workflow file per worktree
@@ -467,7 +468,8 @@ human is watching the two sessions.
   (seconds — register or fail). Steady-state waits are **long / effectively
   indefinite** (real work takes minutes to hours), under human supervision.
 - **Crash propagation (best-effort).** On a *graceful* give-up (a caught exception),
-  the agent records a terminal `error: { by, at, reason }` and `status: error`; the
+  the agent records a terminal `error: { by, at, reason }` and `status: error` via the
+  `abort` verb; the
   counterpart sees it on its next poll and stops with a complementary exception. On
   a *hard* death (VM dies, `kill -9`) the agent writes nothing, so the counterpart
   cannot be signaled and falls back to the long timeout plus the supervising human.
@@ -532,10 +534,12 @@ lands as its own plan and PR.
 ### Phase 1 — Engine core
 
 The state schema; the engine (state machine, rollup, directive generation, startup
-handshake, `--no-audit`); the transport interface; `LocalFileTransport`; the shared
+handshake, `--no-audit`, the runaway-round cap, and the `abort`/`error` writer);
+the transport interface; `LocalFileTransport`; the shared
 transport **contract test**; and the end-to-end subprocess test. Delivers a fully
 tested `vrg-pr-workflow` mechanism with **no** agent/skill wiring — driven entirely
-by tests.
+by tests. The actor is selected by CLI flag in this phase; human-identity
+*enforcement* of human-only verbs (§8.3) is deferred to Phase 3.
 
 ### Phase 2 — Judgment registry
 
@@ -546,8 +550,9 @@ into the Phase 1 engine.
 ### Phase 3 — Integration
 
 Rewrite `vergil:implement` and `vergil:audit` to the dumb loop; wire `vrg-submit-pr`
-to read `pr_metadata` and attach the final JSON to the issue. Delivers the wired,
-end-to-end local workflow.
+to read `pr_metadata` and attach the final JSON to the issue; and add identity
+enforcement — human-only verbs gated on `vrg-whoami --mode == human` (§8.3) plus the
+identity-misread warning (§9). Delivers the wired, end-to-end local workflow.
 
 **Deferred across all phases:** `GitHubTransport` and the `pr-watch` rewrite; the
 exception/suppression check as a deterministic `vrg-validate` gate (its own work);

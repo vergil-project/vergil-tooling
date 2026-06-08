@@ -717,6 +717,28 @@ def test_report_fixes_bumps_round_and_hands_to_audit() -> None:
     assert state.git["head_sha"] == "h2"
 
 
+def test_report_fixes_escalates_when_round_cap_exceeded() -> None:
+    state = _paired_owned_by_user()
+    engine.apply_report_ready(state, title="t", summary="s", notes="n", linkage="Ref", head_sha="h1", now=_NOW)
+    checks = _all_checks("pass")
+    checks[0] = {"id": checks[0]["id"], "status": "fail",
+                 "findings": [{"file": "x.py", "line": 1, "severity": "warning", "note": "fix"}]}
+    engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
+    engine.apply_report_fixes(state, head_sha="h2", note=None, now=_NOW, max_rounds=1)
+    assert state.round == 1
+    assert state.owner == "human"
+    assert state.status == "escalated"
+    assert "runaway-round cap" in state.escalation["reason"]
+
+
+def test_apply_error_records_terminal_error() -> None:
+    state = _paired_owned_by_user()
+    engine.apply_error(state, by="audit", reason="cannot proceed", now=_NOW)
+    assert state.status == "error"
+    assert state.error == {"by": "audit", "at": _NOW, "reason": "cannot proceed"}
+    assert state.history[-1]["action"] == "abort"
+
+
 def test_escalate_hands_to_human() -> None:
     state = _paired_owned_by_user()
     engine.apply_escalate(state, by="user", reason="stuck", now=_NOW)
@@ -778,17 +800,23 @@ def apply_report_ready(
 
 
 def apply_report_fixes(
-    state: WorkflowState, *, head_sha: str, note: str | None, now: str
+    state: WorkflowState,
+    *,
+    head_sha: str,
+    note: str | None,
+    now: str,
+    max_rounds: int = 10,
 ) -> WorkflowState:
     """USER reports it addressed findings. Requires a genuinely new HEAD so an
-    empty round cannot loop."""
+    empty round cannot loop. When the new round exceeds ``max_rounds`` the
+    workflow auto-escalates to the human instead of looping forever (the
+    runaway-round cap, spec §9). ``max_rounds`` is supplied by the CLI from
+    ``settings.max_rounds``; the default keeps the engine usable standalone."""
     _require_owner(state, "user")
     if head_sha == state.git.get("last_reviewed_sha"):
         raise WorkflowError("no new commits since the last review; nothing to re-review")
     state.git["head_sha"] = head_sha
     state.round += 1
-    state.status = "reviewing"
-    state.owner = "audit"
     state.updated_at = now
     entry: dict[str, Any] = {
         "round": state.round, "at": now, "actor": "user", "action": "report-fixes", "head_sha": head_sha,
@@ -796,6 +824,30 @@ def apply_report_fixes(
     if note:
         entry["note"] = note
     state.history.append(entry)
+    if state.round > max_rounds:
+        state.owner = "human"
+        state.status = "escalated"
+        state.escalation = {
+            "by": "user",
+            "check": None,
+            "reason": f"runaway-round cap reached: round {state.round} exceeds max_rounds={max_rounds}",
+            "raised_at": now,
+        }
+        return state
+    state.status = "reviewing"
+    state.owner = "audit"
+    return state
+
+
+def apply_error(state: WorkflowState, *, by: str, reason: str, now: str) -> WorkflowState:
+    """Record a terminal error (a graceful give-up). The counterpart's wait
+    detects ``state.error`` and stops with a complementary exception (spec §9)."""
+    state.status = "error"
+    state.error = {"by": by, "at": now, "reason": reason}
+    state.updated_at = now
+    state.history.append(
+        {"round": state.round, "at": now, "actor": by, "action": "abort", "reason": reason}
+    )
     return state
 
 
@@ -893,14 +945,14 @@ def apply_resolve(
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_engine_reports.py -q`
-Expected: PASS (13 passed).
+Expected: PASS (15 passed).
 
 - [ ] **Step 5: Commit**
 
 ```bash
 vrg-git add src/vergil_tooling/lib/pr_workflow/engine.py tests/vergil_tooling/pr_workflow/test_engine_reports.py
-vrg-commit --type feat --scope prw --message "add engine report, review, rollup, escalate, and resolve" \
-  --body "report-ready (paired -> audit, solo -> approved), report-fixes (requires new HEAD, bumps round), apply_review (validates the payload against the registry, rolls up to owner/status, records the cursor), escalate, and resolve."
+vrg-commit --type feat --scope prw --message "add engine report, review, rollup, escalate, resolve, and abort" \
+  --body "report-ready (paired -> audit, solo -> approved), report-fixes (requires new HEAD, bumps round, auto-escalates on the runaway-round cap), apply_review (validates against the registry, rolls up to owner/status, records the cursor), escalate, resolve, and apply_error (terminal error for graceful give-up / crash propagation)."
 ```
 
 ---
@@ -1458,6 +1510,111 @@ vrg-commit --type test --scope prw --message "add the shared transport contract 
 
 ---
 
+## Task 8b: The `pr-workflow` settings reader (runaway-round cap)
+
+**Files:**
+- Create: `src/vergil_tooling/lib/pr_workflow/settings.py`
+- Test: `tests/vergil_tooling/pr_workflow/test_settings.py`
+
+The CLI reads the configurable runaway-round cap from `vergil.toml` and passes it
+into `apply_report_fixes`. A small dedicated reader (the structured `VergilConfig`
+dataclass does not model a `[pr-workflow]` stanza) with a graceful default.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/vergil_tooling/pr_workflow/test_settings.py`:
+
+```python
+"""Tests for vergil_tooling.lib.pr_workflow.settings."""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import pytest
+
+from vergil_tooling.lib.pr_workflow import settings
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+def test_default_when_no_vergil_toml(tmp_path: Path) -> None:
+    assert settings.max_rounds(tmp_path) == 10
+
+
+def test_default_when_key_absent(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[project]\nname = 'x'\n")
+    assert settings.max_rounds(tmp_path) == 10
+
+
+def test_reads_configured_cap(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[pr-workflow]\nmax-rounds = 3\n")
+    assert settings.max_rounds(tmp_path) == 3
+
+
+def test_rejects_non_positive_cap(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[pr-workflow]\nmax-rounds = 0\n")
+    with pytest.raises(WorkflowError, match="max-rounds"):
+        settings.max_rounds(tmp_path)
+```
+
+- [ ] **Step 2: Run the test to verify it fails**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_settings.py -q`
+Expected: FAIL — `ModuleNotFoundError: ...settings`.
+
+- [ ] **Step 3: Implement `settings.py`**
+
+Create `src/vergil_tooling/lib/pr_workflow/settings.py`:
+
+```python
+"""Per-repo settings for the PR workflow oracle, read from vergil.toml.
+
+A small dedicated reader: the structured VergilConfig dataclass does not model a
+[pr-workflow] stanza, and this keeps the dependency one-way (the oracle reads its
+own optional knobs). Falls back to the default when the file or key is absent.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from pathlib import Path
+
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+
+_DEFAULT_MAX_ROUNDS = 10
+
+
+def max_rounds(worktree_root: Path) -> int:
+    """Return ``[pr-workflow].max-rounds`` from vergil.toml, or the default (10)."""
+    path = worktree_root / "vergil.toml"
+    if not path.is_file():
+        return _DEFAULT_MAX_ROUNDS
+    with path.open("rb") as handle:
+        data = tomllib.load(handle)
+    value = data.get("pr-workflow", {}).get("max-rounds", _DEFAULT_MAX_ROUNDS)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise WorkflowError(f"[pr-workflow].max-rounds must be a positive integer, got {value!r}")
+    return value
+```
+
+- [ ] **Step 4: Run the test to verify it passes**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_settings.py -q`
+Expected: PASS (4 passed).
+
+- [ ] **Step 5: Commit**
+
+```bash
+vrg-git add src/vergil_tooling/lib/pr_workflow/settings.py tests/vergil_tooling/pr_workflow/test_settings.py
+vrg-commit --type feat --scope prw --message "add the pr-workflow settings reader" \
+  --body "settings.max_rounds reads [pr-workflow].max-rounds from vergil.toml with a default of 10; rejects non-positive values. Feeds the engine's runaway-round cap."
+```
+
+---
+
 ## Task 9: The `vrg-pr-workflow` CLI
 
 **Files:**
@@ -1488,7 +1645,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow import engine, settings
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
@@ -1541,8 +1698,14 @@ def _next_user(args: argparse.Namespace, transport: LocalFileTransport) -> int:
         transport.write(state)
         if mode == "paired":
             state = transport.wait_until_owner("user", timeout=_SHORT_TIMEOUT)
-    elif state.owner != "user":
-        state = transport.wait_until_owner("user", timeout=_LONG_TIMEOUT)
+    else:
+        if args.issue and str(args.issue) != state.issue:
+            raise WorkflowError(
+                f"stale workflow file for issue #{state.issue}; you passed #{args.issue}. "
+                "Delete .vergil/pr-workflow.json to start fresh."
+            )
+        if state.owner != "user":
+            state = transport.wait_until_owner("user", timeout=_LONG_TIMEOUT)
     _emit(engine.directive_for(state, "user"))
     return 0
 
@@ -1577,9 +1740,23 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
 
 def cmd_report_fixes(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = _require_state(transport)
-    engine.apply_report_fixes(state, head_sha=transport.head_sha(), note=args.note, now=_now())
+    engine.apply_report_fixes(
+        state,
+        head_sha=transport.head_sha(),
+        note=args.note,
+        now=_now(),
+        max_rounds=settings.max_rounds(transport.worktree_root),
+    )
     transport.write(state)
     _emit({"ok": True, "round": state.round, "owner": state.owner})
+    return 0
+
+
+def cmd_abort(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    state = _require_state(transport)
+    engine.apply_error(state, by=args.as_role, reason=args.reason, now=_now())
+    transport.write(state)
+    _emit({"ok": True, "status": state.status})
     return 0
 
 
@@ -1653,6 +1830,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_esc.add_argument("--reason", required=True)
     p_esc.set_defaults(func=cmd_escalate)
 
+    p_abort = sub.add_parser("abort", help="Record a terminal error (graceful give-up)")
+    p_abort.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
+    p_abort.add_argument("--reason", required=True)
+    p_abort.set_defaults(func=cmd_abort)
+
     p_res = sub.add_parser("resolve", help="HUMAN: hand control back to an agent")
     p_res.add_argument("--to", required=True, choices=["user", "audit"])
     p_res.add_argument("--note", default=None)
@@ -1689,14 +1871,14 @@ vrg-pr-workflow = "vergil_tooling.bin.vrg_pr_workflow:main"
 - [ ] **Step 3: Verify the CLI module imports and shows help**
 
 Run: `vrg-container-run -- uv run python -m vergil_tooling.bin.vrg_pr_workflow --help`
-Expected: argparse help listing the subcommands (`next`, `report-ready`, `report-fixes`, `submit-review`, `escalate`, `resolve`, `status`). Exit 0.
+Expected: argparse help listing the subcommands (`next`, `report-ready`, `report-fixes`, `submit-review`, `escalate`, `abort`, `resolve`, `status`). Exit 0.
 
 - [ ] **Step 4: Commit**
 
 ```bash
 vrg-git add src/vergil_tooling/bin/vrg_pr_workflow.py pyproject.toml
 vrg-commit --type feat --scope prw --message "add the vrg-pr-workflow CLI" \
-  --body "Wire the verbs (next/report-ready/report-fixes/submit-review/escalate/resolve/status) to the engine and LocalFileTransport, with the startup handshake, solo short-circuit, and the short/long timeout regimes. Register the console script."
+  --body "Wire the verbs (next/report-ready/report-fixes/submit-review/escalate/abort/resolve/status) to the engine and LocalFileTransport, with the startup handshake, solo short-circuit, the short/long timeout regimes, the USER-side stale-file refusal, and the runaway-round cap fed from settings.max_rounds. Register the console script."
 ```
 
 ---
@@ -1922,6 +2104,157 @@ vrg-commit --type test --scope prw --message "add deterministic paired-flow inte
 
 ---
 
+## Task 11b: CLI handshake orchestration, stale-file, and abort coverage
+
+**Files:**
+- Create: `tests/vergil_tooling/pr_workflow/test_cli_orchestration.py`
+- Modify: `tests/vergil_tooling/pr_workflow/test_cli_e2e.py`
+
+The solo CLI path is subprocess-tested (Task 10); the *paired* `_next_user` /
+`_next_audit` ack-and-wait glue is not. This task covers it deterministically with
+a fake transport whose wait methods return immediately (no threads, no blocking),
+plus subprocess coverage for the USER stale-file refusal and the `abort` writer.
+
+- [ ] **Step 1: Write the failing orchestration test**
+
+Create `tests/vergil_tooling/pr_workflow/test_cli_orchestration.py`:
+
+```python
+"""Deterministic tests for the paired CLI handshake glue (no real blocking)."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from typing import TYPE_CHECKING
+
+from vergil_tooling.bin import vrg_pr_workflow as cli
+from vergil_tooling.lib.pr_workflow import engine
+from vergil_tooling.lib.pr_workflow.state import WorkflowState
+from vergil_tooling.lib.pr_workflow.transport import Transport
+
+if TYPE_CHECKING:
+    import pytest
+
+_NOW = "2026-06-08T00:00:00Z"
+
+
+class FakeTransport(Transport):
+    """In-memory transport whose waits resolve immediately by flipping owner."""
+
+    def __init__(self) -> None:
+        self.state: WorkflowState | None = None
+        self.writes: list[WorkflowState] = []
+        self.base = "origin/develop"
+        self.worktree_root = None  # settings.max_rounds is not exercised here
+
+    def read(self) -> WorkflowState | None:
+        return self.state
+
+    def write(self, state: WorkflowState) -> None:
+        snapshot = WorkflowState.from_json(state.to_json())
+        self.state = snapshot
+        self.writes.append(snapshot)
+
+    def wait_until_present(self, *, timeout: float) -> WorkflowState:
+        assert self.state is not None
+        return self.state
+
+    def wait_until_owner(self, role: str, *, timeout: float) -> WorkflowState:
+        assert self.state is not None
+        self.state.owner = role  # simulate the counterpart handing the turn over
+        return self.state
+
+    def head_sha(self) -> str:
+        return "h0"
+
+    def merge_base(self) -> str:
+        return "b0"
+
+
+def _args(**kw: object) -> argparse.Namespace:
+    ns = argparse.Namespace(issue=None, no_audit=False)
+    ns.__dict__.update(kw)
+    return ns
+
+
+def test_next_user_init_paired_writes_audit_then_waits(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    monkeypatch.setattr(cli.git, "current_branch", lambda: "feature/1534-x")
+    transport = FakeTransport()
+    rc = cli._next_user(_args(as_role="user", issue="1534", no_audit=False), transport)
+    assert rc == 0
+    assert transport.writes[0].owner == "audit"  # init handed to audit for the handshake
+    directive = json.loads(capsys.readouterr().out)
+    assert directive["then"]["verb"] == "report-ready"  # wait flipped back to user
+
+
+def test_next_audit_first_call_acks_and_returns_review_directive(capsys) -> None:
+    transport = FakeTransport()
+    transport.state = engine.init_state(
+        issue="1534", branch="b", base="origin/develop", mode="paired",
+        head_sha="h0", base_sha="b0", user_token="u-1", now=_NOW,
+    )
+    rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
+    assert rc == 0
+    assert any(w.participants.get("audit") for w in transport.writes)  # ack recorded
+    directive = json.loads(capsys.readouterr().out)
+    assert directive["then"]["verb"] == "submit-review"
+
+
+def test_next_audit_solo_exits_clean(capsys) -> None:
+    transport = FakeTransport()
+    transport.state = engine.init_state(
+        issue="1534", branch="b", base="origin/develop", mode="solo",
+        head_sha="h0", base_sha="b0", user_token="u-1", now=_NOW,
+    )
+    rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["reason"] == "solo"
+```
+
+- [ ] **Step 2: Run it to verify it fails, then passes**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_cli_orchestration.py -q`
+Expected: PASS (3 passed) once Task 9 is implemented — this test exercises the existing CLI functions, so it should pass directly against the Task 9 code. If it fails, the failure pinpoints a handshake-glue bug to fix in `vrg_pr_workflow.py` before proceeding.
+
+- [ ] **Step 3: Add stale-file and abort subprocess tests**
+
+Append to `tests/vergil_tooling/pr_workflow/test_cli_e2e.py`:
+
+```python
+def test_user_next_rejects_stale_different_issue(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _run(repo, "next", "--as", "user", "--issue", "1534", "--no-audit")
+    out = _run(repo, "next", "--as", "user", "--issue", "9999")
+    assert out.returncode == 1
+    assert "stale workflow file" in out.stderr
+
+
+def test_abort_records_terminal_error(tmp_path: Path) -> None:
+    repo = _init_repo(tmp_path)
+    _run(repo, "next", "--as", "user", "--issue", "1534", "--no-audit")
+    out = _run(repo, "abort", "--as", "user", "--reason", "giving up")
+    assert out.returncode == 0
+    state = json.loads((repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["status"] == "error"
+    assert state["error"]["reason"] == "giving up"
+```
+
+- [ ] **Step 4: Run the e2e suite**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_cli_e2e.py tests/vergil_tooling/pr_workflow/test_cli_orchestration.py -q`
+Expected: PASS (9 passed — 4 original e2e + 2 new e2e + 3 orchestration).
+
+- [ ] **Step 5: Commit**
+
+```bash
+vrg-git add tests/vergil_tooling/pr_workflow/test_cli_orchestration.py tests/vergil_tooling/pr_workflow/test_cli_e2e.py
+vrg-commit --type test --scope prw --message "cover the paired CLI handshake, stale-file refusal, and abort" \
+  --body "Deterministic orchestration tests for _next_user/_next_audit via a fake transport (no blocking), plus subprocess tests for the USER stale-different-issue refusal and the abort terminal-error writer."
+```
+
+---
+
 ## Task 12: Full validation and Phase 1 wrap
 
 **Files:** none (verification only).
@@ -1960,14 +2293,17 @@ Phase 1 is complete when `vrg-container-run -- vrg-validate` is green and `vrg-p
 - Transport interface (§3.2) → Task 6.
 - `LocalFileTransport` with SHA-256 polling, no mtime (§9) → Task 7.
 - Shared transport contract test (§10) → Task 8.
-- End-to-end subprocess test (§10) → Tasks 10–11 (solo via subprocess; paired via deterministic integration — rationale documented in Task 11).
+- End-to-end subprocess test (§10) → Tasks 10–11 (solo via subprocess; paired via deterministic integration — rationale documented in Task 11) + the paired CLI handshake glue via a fake transport (Task 11b).
 - Ownership invariant + bootstrap/ack exceptions (§8.3) → `_require_owner` (Task 3) + tests (Task 4).
-- Two timeout regimes + best-effort crash propagation (§9) → CLI `_SHORT_TIMEOUT`/`_LONG_TIMEOUT` (Task 9) + `wait_until_owner` error-state propagation (Tasks 7–8).
+- Two timeout regimes (§9) → CLI `_SHORT_TIMEOUT`/`_LONG_TIMEOUT` (Task 9), orchestration-tested (Task 11b).
+- Crash propagation (§9) — both halves: writer `engine.apply_error` + `abort` verb (Tasks 4, 9) and detection via `wait_until_owner` error-state propagation (Tasks 7–8); abort e2e (Task 11b).
+- Runaway-round cap (§9) → `settings.max_rounds` from `vergil.toml` (Task 8b) feeding `apply_report_fixes`' cap branch (Task 4), wired in the CLI (Task 9).
+- USER-side stale-file refusal (§9) → `_next_user` issue check (Task 9), e2e-tested (Task 11b).
 - `--no-audit` solo with recorded skip and clean audit exit (§6.2) → init `mode: solo` history entry (Task 3), solo `report-ready → approved` (Task 4), audit-on-solo exit (Tasks 9–10).
 - Judgment-only registry of six check IDs (§5) → Task 2.
 
-Deliberately deferred (noted in the header, consistent with §12): check prompts (Phase 2); skill rewrites + `vrg-submit-pr` integration (Phase 3); human-identity enforcement of human-only verbs (Phase 3 — Phase 1 selects the actor by flag); `GitHubTransport`.
+Deliberately deferred (noted in the header, consistent with §12): check prompts (Phase 2); skill rewrites + `vrg-submit-pr` integration (Phase 3); human-identity *enforcement* of human-only verbs and the identity-misread warning (Phase 3 — Phase 1 selects the actor by flag); `GitHubTransport`.
 
 **Placeholder scan:** No TBD/TODO; every code step contains complete, runnable code; every test step contains real assertions.
 
-**Type/name consistency:** `WorkflowState` (`to_json`/`from_json`/`to_dict`/`from_dict`/`validate`); engine `init_state`, `audit_ack`, `apply_report_ready`, `apply_report_fixes`, `rollup_status`, `apply_review`, `apply_escalate`, `apply_resolve`, `directive_for`, `_require_owner`, `_validate_review`; `registry.check_ids`; `Transport`/`LocalFileTransport` `read`/`write`/`wait_until_present`/`wait_until_owner`/`head_sha`/`merge_base` — all referenced names match their definitions across tasks. CLI verb→function map and `pyproject` entry are consistent.
+**Type/name consistency:** `WorkflowState` (`to_json`/`from_json`/`to_dict`/`from_dict`/`validate`); engine `init_state`, `audit_ack`, `apply_report_ready`, `apply_report_fixes` (with `max_rounds`), `apply_error`, `rollup_status`, `apply_review`, `apply_escalate`, `apply_resolve`, `directive_for`, `_require_owner`, `_validate_review`; `registry.check_ids`; `settings.max_rounds`; `Transport`/`LocalFileTransport` `read`/`write`/`wait_until_present`/`wait_until_owner`/`head_sha`/`merge_base`; CLI verbs `next`/`report-ready`/`report-fixes`/`submit-review`/`escalate`/`abort`/`resolve`/`status` mapping to `cmd_*`/`_next_*` — all referenced names match their definitions across tasks. `pyproject` entry is consistent.
