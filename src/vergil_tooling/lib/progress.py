@@ -229,6 +229,20 @@ _STATUS_STYLES: dict[str, str] = {
 }
 
 
+def _tail_line(line: str) -> Text:
+    """One rolling-window line, forced to a single physical row.
+
+    The auto-window budgets *logical* lines (``_visible_window``), but Rich's
+    LiveRender measures *physical* rows. A streamed line wider than the console
+    (e.g. a CI-check row ending in a ~95-char job URL) would wrap to two rows,
+    pushing the live block past the viewport; Rich then ellipsis-crops it to the
+    full viewport height, and a full-viewport block scrolls on every repaint,
+    leaving duplicated top rows behind. ``no_wrap`` + ellipsis keeps one logical
+    line to one physical row so the budget holds and the block never overflows.
+    """
+    return Text.from_ansi(f"   {line}", style="dim", no_wrap=True, overflow="ellipsis")
+
+
 class RichRenderer:
     """Live TTY display: completed stages collapse to one line, the active stage
     shows a spinner plus a rolling window of its last N output lines.
@@ -271,12 +285,14 @@ class RichRenderer:
     def _renderable(self) -> Group:
         parts: list[Text | Spinner] = list(self._completed)
         if self._active is not None:
-            parts.append(Spinner("dots", text=Text(f" {self._active}")))
+            parts.append(
+                Spinner("dots", text=Text(f" {self._active}", no_wrap=True, overflow="ellipsis"))
+            )
             if self._window is None:
                 visible = list(self._tail)[-self._visible_window() :]
-                parts.extend(Text.from_ansi(f"   {line}", style="dim") for line in visible)
+                parts.extend(_tail_line(line) for line in visible)
             elif self._window > 0:
-                parts.extend(Text.from_ansi(f"   {line}", style="dim") for line in self._tail)
+                parts.extend(_tail_line(line) for line in self._tail)
         return Group(*parts)
 
     def start_stage(self, name: str) -> None:
@@ -292,7 +308,14 @@ class RichRenderer:
         self._live.update(self._renderable())
 
     def end_stage(self, result: StageResult) -> None:
-        self._completed.append(Text(_status_line(result), style=_STATUS_STYLES[result.status]))
+        self._completed.append(
+            Text(
+                _status_line(result),
+                style=_STATUS_STYLES[result.status],
+                no_wrap=True,
+                overflow="ellipsis",
+            )
+        )
         self._active = None
         self._tail.clear()
         self._live.update(self._renderable())
