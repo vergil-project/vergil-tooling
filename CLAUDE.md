@@ -137,9 +137,13 @@ signals disagree.
 finalization are human actions. The PR handoff is:
 
 1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
-   and `summary` fields (optional: `linkage`, `notes`). If `linkage`
-   is present it must be `Ref` — GitHub auto-close keywords
-   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues
+   `summary`, and `notes` — all required and non-empty; `read_template`
+   and `write_template` reject a missing or blank field. Multi-line
+   prose must use a YAML literal block (`|`); folded scalars (`>`) are
+   rejected because the minimal parser cannot fold them. `linkage` is
+   optional and defaults to `Ref`; if present it must be `Ref` — GitHub
+   auto-close keywords (`Closes`/`Fixes`/`Resolves`) are banned
+   repo-wide because issues
    stay open until post-merge workflows succeed. Both
    `pr_template.write_template()` and `vrg-submit-pr` reject any
    other value.

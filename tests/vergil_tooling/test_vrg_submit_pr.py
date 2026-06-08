@@ -314,7 +314,8 @@ class TestTemplateMode:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
         (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nlinkage: Ref\n"
+            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\n"
+            "notes: Verified locally\nlinkage: Ref\n"
         )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
@@ -333,7 +334,7 @@ class TestTemplateMode:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
         (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\n"
+            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nnotes: Verified locally\n"
         )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
@@ -358,7 +359,9 @@ class TestTemplateMode:
     ) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -382,7 +385,7 @@ class TestTemplateMode:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
         (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nlinkage: Closes\n"
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\nlinkage: Closes\n"
         )
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -413,7 +416,9 @@ class TestTemplateMode:
     def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -429,7 +434,9 @@ class TestTemplateMode:
     def test_template_aborts_on_eof(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -451,7 +458,9 @@ class TestTemplateMode:
     def test_template_ensures_pushed(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -488,7 +497,9 @@ class TestTemplateMode:
     ) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -740,7 +751,9 @@ class TestFinalizeFlag:
     def test_template_mode_chains_into_finalize(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -763,7 +776,9 @@ class TestFinalizeFlag:
     def test_template_mode_decline_never_reaches_finalize(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -779,7 +794,9 @@ class TestFinalizeFlag:
     ) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
-        (vergil / "pr-template.yml").write_text("issue: 42\ntitle: fix\nsummary: Fix\n")
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
