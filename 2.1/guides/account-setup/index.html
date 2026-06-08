@@ -836,6 +836,8 @@
       
         
       
+        
+      
     
     
     
@@ -888,6 +890,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.18/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.18
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -8480,6 +8510,15 @@ VM. The dual-identity model uses one stanza per role.</p>
   from the shell profile. It selects the identity-aware allowlists
   at runtime; it is a soft-gate ergonomic, not the security boundary
   (the App credential is).</li>
+<li><strong>Query identity with <code>vrg-whoami</code>, never a single environment
+  variable.</strong> <code>VRG_IDENTITY_MODE</code> is only the first of five fallback
+  steps (env var → mode file → <code>app.pem</code> → <code>VRG_APP_ID</code> → human); an
+  unset value means "fall through," not "default to human." Ask the
+  authoritative resolver instead: <code>vrg-whoami</code> prints the resolved role,
+  <code>vrg-whoami --mode</code> emits a single token for scripting
+  (<code>export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"</code>), and
+  <code>vrg-whoami --explain</code> reports which signal resolved and warns when
+  signals disagree.</li>
 </ul>
 <h2 id="verification-checklist">Verification checklist<a class="headerlink" href="#verification-checklist" title="Permanent link">&para;</a></h2>
 <p>After both Apps are registered, installed, and configured:</p>
