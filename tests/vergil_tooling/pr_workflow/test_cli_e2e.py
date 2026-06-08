@@ -1,12 +1,14 @@
 """End-to-end tests driving the vrg-pr-workflow CLI in-process via cli.main().
 
 In-process (not subprocess) so coverage is measured: each call exercises
-parse_args, main, the cmd_* dispatch, and the real-git head_sha/merge_base.
+parse_args, main, the cmd_* dispatch, identity resolution, and the real-git
+head_sha/merge_base. The role is resolved from VRG_IDENTITY_MODE (no --as flag).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -43,8 +45,9 @@ def _init_repo(tmp_path: Path) -> Path:
     return repo
 
 
-def _run(monkeypatch: pytest.MonkeyPatch, repo: Path, *args: str) -> int:
+def _run(monkeypatch: pytest.MonkeyPatch, repo: Path, *args: str, identity: str = "user") -> int:
     monkeypatch.chdir(repo)
+    monkeypatch.setenv("VRG_IDENTITY_MODE", identity)
     return cli.main(["--base", "develop", *args])
 
 
@@ -69,7 +72,7 @@ def _seed(repo: Path, *, owner: str, status: str, last_reviewed: str | None = No
 def test_solo_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     repo = _init_repo(tmp_path)
 
-    assert _run(monkeypatch, repo, "next", "--as", "user", "--issue", "1534", "--no-audit") == 0
+    assert _run(monkeypatch, repo, "next", "--issue", "1534", "--no-audit") == 0
     assert json.loads(capsys.readouterr().out)["then"]["verb"] == "report-ready"
 
     assert (
@@ -88,7 +91,7 @@ def test_solo_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
     )
     assert json.loads(capsys.readouterr().out)["status"] == "approved"
 
-    assert _run(monkeypatch, repo, "next", "--as", "user") == 0
+    assert _run(monkeypatch, repo, "next") == 0
     assert json.loads(capsys.readouterr().out) == {
         "done": True,
         "reason": "approved",
@@ -104,9 +107,9 @@ def test_audit_on_solo_file_exits_clean(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     repo = _init_repo(tmp_path)
-    _run(monkeypatch, repo, "next", "--as", "user", "--issue", "1534", "--no-audit")
+    _run(monkeypatch, repo, "next", "--issue", "1534", "--no-audit")
     capsys.readouterr()
-    assert _run(monkeypatch, repo, "next", "--as", "audit", "--issue", "1534") == 0
+    assert _run(monkeypatch, repo, "next", "--issue", "1534", identity="audit") == 0
     assert json.loads(capsys.readouterr().out)["reason"] == "solo"
 
 
@@ -114,8 +117,14 @@ def test_first_user_next_without_issue_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     repo = _init_repo(tmp_path)
-    assert _run(monkeypatch, repo, "next", "--as", "user") == 1
+    assert _run(monkeypatch, repo, "next") == 1
     assert "must pass --issue" in capsys.readouterr().err
+
+
+def test_next_as_human_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    repo = _init_repo(tmp_path)
+    assert _run(monkeypatch, repo, "next", "--issue", "1534", identity="human") == 1
+    assert "USER or AUDIT agent" in capsys.readouterr().err
 
 
 def test_submit_check_with_bad_payload_errors(
@@ -131,9 +140,9 @@ def test_user_next_rejects_stale_different_issue(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     repo = _init_repo(tmp_path)
-    _run(monkeypatch, repo, "next", "--as", "user", "--issue", "1534", "--no-audit")
+    _run(monkeypatch, repo, "next", "--issue", "1534", "--no-audit")
     capsys.readouterr()
-    assert _run(monkeypatch, repo, "next", "--as", "user", "--issue", "9999") == 1
+    assert _run(monkeypatch, repo, "next", "--issue", "9999") == 1
     assert "stale workflow file" in capsys.readouterr().err
 
 
@@ -142,10 +151,11 @@ def test_abort_records_terminal_error(
 ) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="user", status="implementing")
-    assert _run(monkeypatch, repo, "abort", "--as", "user", "--reason", "giving up") == 0
+    assert _run(monkeypatch, repo, "abort", "--reason", "giving up") == 0
     state = json.loads((repo / ".vergil" / "pr-workflow.json").read_text())
     assert state["status"] == "error"
     assert state["error"]["reason"] == "giving up"
+    assert state["error"]["by"] == "user"
 
 
 def test_submit_check_full_round_approves(
@@ -161,7 +171,7 @@ def test_submit_check_full_round_approves(
         assert _run(monkeypatch, repo, "submit-check", "--payload", str(payload)) == 0
         out = json.loads(capsys.readouterr().out)
         if i < len(ids) - 1:
-            assert out["owner"] == "audit"  # round not complete yet
+            assert out["owner"] == "audit"
             assert out["pending"] == ids[i + 1]
     assert out["status"] == "approved"
     assert out["owner"] == "user"
@@ -180,15 +190,29 @@ def test_report_fixes_hands_back_to_audit(
 def test_escalate_hands_to_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="user", status="implementing")
-    assert _run(monkeypatch, repo, "escalate", "--as", "user", "--reason", "stuck") == 0
+    assert _run(monkeypatch, repo, "escalate", "--reason", "stuck") == 0
     assert json.loads(capsys.readouterr().out)["owner"] == "human"
 
 
-def test_resolve_hands_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+def test_resolve_hands_back_as_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="human", status="escalated")
-    assert _run(monkeypatch, repo, "resolve", "--to", "user", "--note", "go ahead") == 0
+    assert (
+        _run(monkeypatch, repo, "resolve", "--to", "user", "--note", "go ahead", identity="human")
+        == 0
+    )
     assert json.loads(capsys.readouterr().out)["owner"] == "user"
+
+
+def test_resolve_rejected_for_non_human(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    _seed(repo, owner="human", status="escalated")
+    assert _run(monkeypatch, repo, "resolve", "--to", "user", identity="user") == 1
+    assert "human-only" in capsys.readouterr().err
 
 
 def test_status_reports_absence_then_presence(
@@ -200,34 +224,6 @@ def test_status_reports_absence_then_presence(
     _seed(repo, owner="user", status="implementing")
     assert _run(monkeypatch, repo, "status") == 0
     assert json.loads(capsys.readouterr().out)["issue"] == "1534"
-
-
-def test_console_entry_point_runs_as_subprocess(tmp_path: Path) -> None:
-    # Smoke test that the installed module entry point works end-to-end (not
-    # counted toward coverage, which is measured in-process above).
-    repo = _init_repo(tmp_path)
-    import sys
-
-    out = subprocess.run(
-        (
-            sys.executable,
-            "-m",
-            "vergil_tooling.bin.vrg_pr_workflow",
-            "--base",
-            "develop",
-            "next",
-            "--as",
-            "user",
-            "--issue",
-            "1534",
-            "--no-audit",
-        ),
-        cwd=repo,
-        capture_output=True,
-        text=True,
-    )
-    assert out.returncode == 0, out.stderr
-    assert json.loads(out.stdout)["then"]["verb"] == "report-ready"
 
 
 def test_verb_without_workflow_errors(
@@ -244,5 +240,32 @@ def test_audit_next_without_issue_errors(
 ) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="audit", status="reviewing")
-    assert _run(monkeypatch, repo, "next", "--as", "audit") == 1
+    assert _run(monkeypatch, repo, "next", identity="audit") == 1
     assert "must pass --issue" in capsys.readouterr().err
+
+
+def test_console_entry_point_runs_as_subprocess(tmp_path: Path) -> None:
+    # Smoke test that the installed module entry point works end-to-end (not
+    # counted toward coverage, which is measured in-process above).
+    repo = _init_repo(tmp_path)
+    import sys
+
+    out = subprocess.run(
+        (
+            sys.executable,
+            "-m",
+            "vergil_tooling.bin.vrg_pr_workflow",
+            "--base",
+            "develop",
+            "next",
+            "--issue",
+            "1534",
+            "--no-audit",
+        ),
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "VRG_IDENTITY_MODE": "user"},
+    )
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout)["then"]["verb"] == "report-ready"

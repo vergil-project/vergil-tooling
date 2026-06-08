@@ -16,7 +16,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, identity_mode
+from vergil_tooling.lib.identity_mode import IdentityMode
 from vergil_tooling.lib.pr_workflow import engine, registry, settings
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -44,12 +45,35 @@ def _emit(payload: dict[str, object]) -> None:
 def _require_state(transport: LocalFileTransport) -> WorkflowState:
     state = transport.read()
     if state is None:
-        raise WorkflowError("no workflow file; run `vrg-pr-workflow next --as user` first")
+        raise WorkflowError("no workflow file; run `vrg-pr-workflow next` first")
     return state
 
 
+def _agent_role() -> str:
+    """Resolve the calling agent's role (``user``/``audit``) from the identity
+    mode — the CLI detects it the same way the agent does, so no `--as` flag."""
+    mode = identity_mode.current_mode()
+    if mode is IdentityMode.USER:
+        return "user"
+    if mode is IdentityMode.AUDIT:
+        return "audit"
+    raise WorkflowError(
+        f"this command runs as the USER or AUDIT agent, but the resolved identity "
+        f"is {mode.value!r}; check `vrg-whoami --explain`"
+    )
+
+
+def _require_human() -> None:
+    mode = identity_mode.current_mode()
+    if mode is not IdentityMode.HUMAN:
+        raise WorkflowError(
+            f"this command is human-only, but the resolved identity is {mode.value!r}; "
+            "run it from a human-identity (host) shell"
+        )
+
+
 def cmd_next(args: argparse.Namespace, transport: LocalFileTransport) -> int:
-    if args.as_role == "user":
+    if _agent_role() == "user":
         return _next_user(args, transport)
     return _next_audit(args, transport)
 
@@ -164,22 +188,25 @@ def cmd_submit_check(args: argparse.Namespace, transport: LocalFileTransport) ->
 
 
 def cmd_escalate(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    by = _agent_role()
     state = _require_state(transport)
-    engine.apply_escalate(state, by=args.as_role, reason=args.reason, now=_now())
+    engine.apply_escalate(state, by=by, reason=args.reason, now=_now())
     transport.write(state)
     _emit({"ok": True, "owner": state.owner})
     return 0
 
 
 def cmd_abort(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    by = _agent_role()
     state = _require_state(transport)
-    engine.apply_error(state, by=args.as_role, reason=args.reason, now=_now())
+    engine.apply_error(state, by=by, reason=args.reason, now=_now())
     transport.write(state)
     _emit({"ok": True, "status": state.status})
     return 0
 
 
 def cmd_resolve(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    _require_human()
     state = _require_state(transport)
     engine.apply_resolve(state, to_role=args.to, note=args.note, now=_now())
     transport.write(state)
@@ -202,7 +229,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_next = sub.add_parser("next", help="Block until your turn, then print the next directive")
-    p_next.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
     p_next.add_argument("--issue", help="Issue number (required on the first call)")
     p_next.add_argument("--no-audit", action="store_true", help="Solo mode: skip the local audit")
     p_next.set_defaults(func=cmd_next)
@@ -223,12 +249,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_check.set_defaults(func=cmd_submit_check)
 
     p_esc = sub.add_parser("escalate", help="Hand control to the human")
-    p_esc.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
     p_esc.add_argument("--reason", required=True)
     p_esc.set_defaults(func=cmd_escalate)
 
     p_abort = sub.add_parser("abort", help="Record a terminal error (graceful give-up)")
-    p_abort.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
     p_abort.add_argument("--reason", required=True)
     p_abort.set_defaults(func=cmd_abort)
 

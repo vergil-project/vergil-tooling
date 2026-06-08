@@ -89,7 +89,7 @@ The system splits along one line: a transport-agnostic **engine** and a pluggabl
    `lib/await_file.py`.
 
 3. **Two identical, dumb skills** — `vergil:implement` (USER) and `vergil:audit`
-   (AUDIT) both collapse to: *call `vrg-pr-workflow next --as <role>`, do what it
+   (AUDIT) both collapse to: *call `vrg-pr-workflow next`, do what it
    says, report back through the verb it names, repeat until done.* No workflow
    branching in prose. Role comes from `vrg-whoami`, never a guessed flag.
 
@@ -326,13 +326,13 @@ instruction.
 
 | Verb | Who | What the oracle does |
 |---|---|---|
-| `next --as <role> [--no-audit]` | USER, AUDIT | Block (SHA poll). First-ever call as USER: **init/takeover** the file and run the startup handshake (§8.1). Return a Directive or DONE. |
+| `next [--no-audit]` | USER, AUDIT | Block (SHA poll). Role resolved from `vrg-whoami` (no `--as` flag). First-ever call as USER: **init/takeover** the file and run the startup handshake (§8.1). Return a Directive or DONE. |
 | `report-ready --title --summary --notes [--linkage]` | USER | Snapshot HEAD, write `pr_metadata`, `owner→audit`. (Initial done signal.) |
 | `report-fixes [--note]` | USER | Verify HEAD moved, snapshot it, `owner→audit`, bump round. |
 | `submit-check --payload check.json` | AUDIT | Validate one check vs `check.v1`, record it. Once every registry check has a result for the round, **roll up** → set owner/status, record `last_reviewed_sha`. |
 | `escalate --reason …` | USER, AUDIT | `owner→human`, set `escalation`, status=escalated. |
-| `abort --as <role> --reason …` | USER, AUDIT | Record a terminal `error` (graceful give-up, §9); the counterpart's `next` detects it and stops. |
-| `resolve --to user\|audit [--note]` | HUMAN | Hand control back to an agent. **Rejected unless `vrg-whoami --mode == human`** (§8.3; enforcement lands in Phase 3). |
+| `abort --reason …` | USER, AUDIT | Record a terminal `error` (graceful give-up, §9); the counterpart's `next` detects it and stops. Role resolved from `vrg-whoami`. |
+| `resolve --to user\|audit [--note]` | HUMAN | Hand control back to an agent. **Rejected unless `vrg-whoami --mode == human`** (§8.3, enforced). |
 | `status` | anyone | Read-only pretty-print. No write. |
 
 The verbs no longer take an issue argument — there is one workflow file per worktree
@@ -546,8 +546,9 @@ handshake, `--no-audit`, the runaway-round cap, and the `abort`/`error` writer);
 the transport interface; `LocalFileTransport`; the shared
 transport **contract test**; and the end-to-end subprocess test. Delivers a fully
 tested `vrg-pr-workflow` mechanism with **no** agent/skill wiring — driven entirely
-by tests. The actor is selected by CLI flag in this phase; human-identity
-*enforcement* of human-only verbs (§8.3) is deferred to Phase 3.
+by tests. The role is resolved from `vrg-whoami` (no `--as` flag), and human-only
+verbs are gated on a human identity (§8.3) — folded forward from Phase 3 so the
+skills never restate their own identity.
 
 ### Phase 2 — Judgment registry
 
@@ -558,10 +559,11 @@ actual audits, pluggable into the Phase 1 per-check engine loop.
 
 ### Phase 3 — Integration
 
-Rewrite `vergil:implement` and `vergil:audit` to the dumb loop; wire `vrg-submit-pr`
-to read `pr_metadata` and attach the final JSON to the issue; and add identity
-enforcement — human-only verbs gated on `vrg-whoami --mode == human` (§8.3) plus the
-identity-misread warning (§9). Delivers the wired, end-to-end local workflow.
+Rewrite `vergil:implement` and `vergil:audit` to the dumb loop. (`vrg-submit-pr`
+reading `pr_metadata` from the state file, and role resolution from `vrg-whoami`,
+landed early on the Phase 1 branch since the skills depend on them.) Remaining:
+attach the final JSON to the issue on submit, and the identity-misread warning (§9).
+Delivers the wired, end-to-end local workflow.
 
 **Deferred across all phases:** `GitHubTransport` and the `pr-watch` rewrite; the
 exception/suppression check as a deterministic `vrg-validate` gate (its own work);
