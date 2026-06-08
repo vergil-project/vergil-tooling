@@ -330,6 +330,47 @@ class TestTemplateMode:
         assert "fix: bug" in out
         assert "#42" in out
 
+    def test_state_file_dry_run_previews_metadata(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Template mode reads pr_metadata from the workflow state file."""
+        from vergil_tooling.lib.pr_workflow import engine
+        from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+        now = "2026-06-08T00:00:00Z"
+        state = engine.init_state(
+            issue="1534",
+            branch="feature/1534-x",
+            base="develop",
+            mode="solo",
+            head_sha="h0",
+            base_sha="b0",
+            user_token="u-1",
+            now=now,
+        )
+        engine.apply_report_ready(
+            state,
+            title="feat: oracle",
+            summary="did it",
+            notes="n",
+            linkage="Ref",
+            head_sha="h0",
+            now=now,
+        )
+        LocalFileTransport(tmp_path, base="develop").write(state)
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/1534-x",
+            ),
+        ):
+            result = main(["--dry-run"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "feat: oracle" in out
+        assert "#1534" in out
+
     def test_template_creates_pr_on_confirm(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
         vergil.mkdir()
@@ -394,18 +435,18 @@ class TestTemplateMode:
             result = main([])
         assert result == 1
         err = capsys.readouterr().err
-        assert "pr-template.yml" in err
+        assert "linkage" in err.lower()
         assert "Ref" in err
 
     def test_template_belt_and_suspenders_linkage_check(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        """Even if read_template returns a bad linkage, template mode rejects it."""
+        """Even if the fields carry a bad linkage, template mode rejects it."""
         fields = {"issue": "42", "title": "fix", "summary": "Fix", "linkage": "Closes"}
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
-            patch(_MOD + ".pr_template.read_template", return_value=fields),
+            patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         ):
             result = main([])
         assert result == 1
@@ -536,7 +577,7 @@ class TestRootLaunch:
             patch(_MOD + ".git.repo_root", return_value="/repo"),
             patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
             patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
-            patch(_MOD + ".pr_template.read_template", return_value=fields),
+            patch(_MOD + ".submission.read_pr_fields", return_value=fields),
             patch(_MOD + ".os.chdir") as chdir,
             patch(_MOD + ".git.current_branch", return_value="feature/7-foo"),
         ):
@@ -551,7 +592,7 @@ class TestRootLaunch:
             patch(_MOD + ".git.repo_root", return_value="/repo"),
             patch(_MOD + ".worktrees.require_tty"),  # pytest stdin is not a TTY
             patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
-            patch(_MOD + ".pr_template.read_template", side_effect=FileNotFoundError("x")),
+            patch(_MOD + ".submission.read_pr_fields", side_effect=FileNotFoundError("x")),
             pytest.raises(SystemExit, match="no submittable worktrees"),
         ):
             main(["--dry-run"])
@@ -578,7 +619,7 @@ class TestRootLaunch:
             patch(_MOD + ".git.repo_root", return_value="/repo"),
             patch(_MOD + ".worktrees.require_tty"),
             patch(_MOD + ".worktrees.list_worktrees", return_value=wts),
-            patch(_MOD + ".pr_template.read_template", return_value=fields),
+            patch(_MOD + ".submission.read_pr_fields", return_value=fields),
             patch(
                 "vergil_tooling.lib.worktrees.prompt_choice",
                 return_value="issue-8-bar — issue 8: Bar title",

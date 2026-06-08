@@ -1,9 +1,10 @@
 """PR submission wrapper that constructs standards-compliant PR bodies.
 
 Supports two modes:
-- **Template mode** (no CLI args): reads ``.vergil/pr-template.yml``,
-  shows a summary, prompts for confirmation, pushes the branch, and
-  creates the PR.
+- **Template mode** (no CLI args): reads the PR workflow state file
+  (``.vergil/pr-workflow.json``), falling back to the legacy
+  ``.vergil/pr-template.yml``; shows a summary, prompts for
+  confirmation, pushes the branch, and creates the PR.
 - **CLI argument mode** (args provided): existing direct invocation
   for human emergency use.
 
@@ -35,6 +36,8 @@ from pathlib import Path
 from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
+from vergil_tooling.lib.pr_workflow import submission
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -164,8 +167,10 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
 def _choose_submit_worktree(root: Path) -> Path:
     """At the repo root, pick the template-ready worktree to submit from.
 
-    Candidates are worktrees containing a valid ``.vergil/pr-template.yml``
-    — the agent-written signal that the issue is ready for submission.
+    Candidates are worktrees with submittable PR fields — a valid
+    ``.vergil/pr-workflow.json`` (with PR metadata) or the legacy
+    ``.vergil/pr-template.yml`` — the agent-written signal that the issue
+    is ready for submission.
     One candidate is auto-picked (the existing y/N preview still
     confirms); several prompt a menu; none is an error that names each
     skipped worktree and why.
@@ -180,11 +185,13 @@ def _choose_submit_worktree(root: Path) -> Path:
     skipped: list[str] = []
     for wt in worktrees.list_worktrees(root):
         try:
-            fields = pr_template.read_template(wt.path)
+            fields = submission.read_pr_fields(wt.path)
         except FileNotFoundError:
-            skipped.append(f"{wt.path.name}: no .vergil/pr-template.yml — not ready")
+            skipped.append(
+                f"{wt.path.name}: no .vergil/pr-workflow.json or pr-template.yml — not ready"
+            )
             continue
-        except pr_template.TemplateError as exc:
+        except (pr_template.TemplateError, WorkflowError) as exc:
             skipped.append(f"{wt.path.name}: {exc}")
             continue
         ready.append((wt, fields))
@@ -222,19 +229,18 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         os.chdir(wt_path)
         root = wt_path
 
-    template_path = root / ".vergil" / "pr-template.yml"
     try:
-        fields = pr_template.read_template(root)
+        fields = submission.read_pr_fields(root)
     except FileNotFoundError:
         print(
-            "vrg-submit-pr: No .vergil/pr-template.yml found and no CLI arguments provided.\n"
-            "  Either provide --issue, --summary, and --title, or ensure the agent\n"
-            "  has written a PR template file.",
+            "vrg-submit-pr: No .vergil/pr-workflow.json or .vergil/pr-template.yml found,\n"
+            "  and no CLI arguments provided. Either provide --issue, --summary, and\n"
+            "  --title, or ensure the agent has run the workflow through to approval.",
             file=sys.stderr,
         )
         return 1
-    except pr_template.TemplateError as exc:
-        print(f"vrg-submit-pr: invalid PR template at {template_path}:\n  {exc}", file=sys.stderr)
+    except (pr_template.TemplateError, WorkflowError) as exc:
+        print(f"vrg-submit-pr: cannot read PR submission fields:\n  {exc}", file=sys.stderr)
         return 1
 
     issue_ref = resolve_issue_ref(fields["issue"])
@@ -249,8 +255,8 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # never reach the PR regardless of how the fields were obtained.
     if linkage not in ALLOWED_LINKAGES:
         print(
-            f"vrg-submit-pr: linkage '{linkage}' in {template_path} is not allowed; "
-            f"use: {', '.join(ALLOWED_LINKAGES)}.",
+            f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
+            f"allowed; use: {', '.join(ALLOWED_LINKAGES)}.",
             file=sys.stderr,
         )
         return 1
@@ -293,7 +299,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
-    pr_template.delete_template(root)
+    submission.delete_submission(root)
     print(f"PR created: {pr_url}")
     print(f"Done. PR URL: {pr_url}")
     if args.finalize:
