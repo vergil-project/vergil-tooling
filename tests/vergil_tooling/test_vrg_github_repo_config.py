@@ -245,6 +245,31 @@ def test_main_remote_config_error_exits_one_without_traceback(
     assert "Traceback" not in err
 
 
+def test_apply_surfaces_actionable_forking_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_noncompliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(
+            f"{_MODULE}._apply_repo",
+            side_effect=RuntimeError(
+                "o/r: cannot set 'allow_forking' because the organization disallows "
+                "forking private repositories. Enable the org-level setting "
+                "'members_can_fork_private_repositories'."
+            ),
+        ),
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 1
+    err = capsys.readouterr().err
+    assert "members_can_fork_private_repositories" in err
+    assert "Traceback" not in err
+
+
 def test_apply_returns_one_when_local_issues_remain() -> None:
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),

@@ -6,6 +6,8 @@ import subprocess
 from typing import cast
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.lib.config import (
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
@@ -16,6 +18,7 @@ from vergil_tooling.lib.config import (
     ValidationConfig,
     VergilConfig,
 )
+from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     DesiredRuleset,
     FetchResult,
@@ -45,7 +48,7 @@ from vergil_tooling.lib.github_config import (
 
 
 def test_desired_repo_settings_are_fixed() -> None:
-    s = desired_repo_settings(visibility="public", is_org=True)
+    s = desired_repo_settings(is_org=True)
     assert s.default_branch == "develop"
     assert s.allow_auto_merge is False
     assert s.delete_branch_on_merge is True
@@ -57,18 +60,15 @@ def test_desired_repo_settings_are_fixed() -> None:
     assert s.has_wiki is True
 
 
-def test_desired_repo_settings_public_org_omits_forking() -> None:
-    s = desired_repo_settings(visibility="public", is_org=True)
-    assert s.allow_forking is None
-
-
-def test_desired_repo_settings_private_disallows_forking() -> None:
-    s = desired_repo_settings(visibility="private", is_org=True)
-    assert s.allow_forking is False
+def test_desired_repo_settings_org_repo_allows_forking() -> None:
+    # The tooling requires forkable repos, so org repos declare forking enabled
+    # regardless of visibility (public or private).
+    s = desired_repo_settings(is_org=True)
+    assert s.allow_forking is True
 
 
 def test_desired_repo_settings_new_hardcoded_values() -> None:
-    s = desired_repo_settings(visibility="public", is_org=True)
+    s = desired_repo_settings(is_org=True)
     assert s.allow_update_branch is True
     assert s.has_downloads is False
     assert s.merge_commit_title == "MERGE_MESSAGE"
@@ -1090,7 +1090,7 @@ def test_canonicalize_rules_preserves_non_dict_entries() -> None:
 
 
 def test_apply_repo_settings_calls_write_json() -> None:
-    settings = desired_repo_settings(visibility="public", is_org=True)
+    settings = desired_repo_settings(is_org=True)
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     mock_write.assert_called_once()
@@ -1103,11 +1103,11 @@ def test_apply_repo_settings_calls_write_json() -> None:
 
 
 def test_apply_repo_settings_includes_new_fields() -> None:
-    settings = desired_repo_settings(visibility="public", is_org=True)
+    settings = desired_repo_settings(is_org=True)
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
-    assert "allow_forking" not in body
+    assert body["allow_forking"] is True
     assert body["allow_update_branch"] is True
     assert body["has_downloads"] is False
     assert body["merge_commit_title"] == "MERGE_MESSAGE"
@@ -1473,19 +1473,12 @@ def test_compute_desired_state_publish_release_true() -> None:
 
 
 def test_desired_repo_settings_user_repo_allow_forking_is_none() -> None:
-    s = desired_repo_settings(visibility="public", is_org=False)
+    s = desired_repo_settings(is_org=False)
     assert s.allow_forking is None
-
-
-def test_desired_repo_settings_org_repo_allow_forking_set() -> None:
-    s = desired_repo_settings(visibility="public", is_org=True)
-    assert s.allow_forking is None
-    s2 = desired_repo_settings(visibility="private", is_org=True)
-    assert s2.allow_forking is False
 
 
 def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
-    settings = desired_repo_settings(visibility="public", is_org=False)
+    settings = desired_repo_settings(is_org=False)
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
@@ -1493,11 +1486,50 @@ def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
 
 
 def test_apply_repo_settings_includes_allow_forking_for_private_org() -> None:
-    settings = desired_repo_settings(visibility="private", is_org=True)
+    settings = desired_repo_settings(is_org=True)
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
-    assert body["allow_forking"] is False
+    assert body["allow_forking"] is True
+
+
+def _private_forking_error() -> GitHubAPIError:
+    return GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r", "-X", "PATCH", "--input", "-"),
+        '{"message":"This organization does not allow private repository forking","status":"422"}',
+        "gh: This organization does not allow private repository forking (HTTP 422)",
+    )
+
+
+def test_apply_repo_settings_raises_actionable_error_on_private_forking_422() -> None:
+    settings = desired_repo_settings(is_org=True)
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.write_json",
+            side_effect=_private_forking_error(),
+        ),
+        pytest.raises(RuntimeError, match="members_can_fork_private_repositories"),
+    ):
+        _apply_repo_settings("o/r", settings)
+
+
+def test_apply_repo_settings_propagates_unrelated_api_error() -> None:
+    settings = desired_repo_settings(is_org=True)
+    unrelated = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r"),
+        '{"message":"Server Error","status":"500"}',
+        "gh: Server Error (HTTP 500)",
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.github_config.github.write_json",
+            side_effect=unrelated,
+        ),
+        pytest.raises(GitHubAPIError),
+    ):
+        _apply_repo_settings("o/r", settings)
 
 
 def test_diff_skips_allow_forking_when_desired_is_none() -> None:

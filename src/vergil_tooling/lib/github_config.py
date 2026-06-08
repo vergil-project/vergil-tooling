@@ -104,7 +104,7 @@ _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
 }
 
 
-def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettings:
+def desired_repo_settings(*, is_org: bool) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         allow_auto_merge=False,
@@ -115,7 +115,12 @@ def desired_repo_settings(*, visibility: str, is_org: bool) -> DesiredRepoSettin
         has_issues=True,
         has_projects=True,
         has_wiki=True,
-        allow_forking=False if (is_org and visibility == "private") else None,
+        # The tooling requires repos to be forkable, so org repos (public and
+        # private) declare forking enabled. Private repos additionally depend on
+        # the org-level ``members_can_fork_private_repositories`` flag, which the
+        # tool cannot yet manage (vergil-tooling#1268). User-owned repos are left
+        # unmanaged (vergil-tooling#666).
+        allow_forking=True if is_org else None,
         allow_update_branch=True,
         has_downloads=False,
         merge_commit_title="MERGE_MESSAGE",
@@ -343,7 +348,7 @@ def compute_desired_state(
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(visibility=visibility, is_org=is_org),
+        repo_settings=desired_repo_settings(is_org=is_org),
         security=desired_security_settings(ghas=ghas),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
@@ -767,6 +772,28 @@ def compute_diff(*, desired: DesiredState, actual: DesiredState) -> ConfigDiff:
 # ---------------------------------------------------------------------------
 
 
+_PRIVATE_FORKING_DENIED = "does not allow private repository forking"
+
+_PRIVATE_FORKING_HELP = (
+    "{repo}: cannot apply repository settings because the organization disallows "
+    "forking private repositories. The tooling requires repos to be forkable. "
+    "Enable the org-level setting 'members_can_fork_private_repositories' "
+    "(Settings > Member privileges > Repository forking), then re-run. Org-level "
+    "enforcement is tracked in vergil-tooling#1268."
+)
+
+
+def _is_private_forking_error(exc: github.GitHubAPIError) -> bool:
+    """True when a settings PATCH was rejected for the org-level fork policy.
+
+    GitHub returns 422 with this message when ``allow_forking`` is included in a
+    private repo's settings PATCH while the org disallows private forking — even
+    when the value is ``False``.
+    """
+    blob = f"{exc.stderr or ''}\n{exc.stdout or ''}"
+    return _PRIVATE_FORKING_DENIED in blob
+
+
 def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
     body: dict[str, object] = {
         "default_branch": settings.default_branch,
@@ -788,7 +815,12 @@ def _apply_repo_settings(repo: str, settings: DesiredRepoSettings) -> None:
     }
     if settings.allow_forking is not None:
         body["allow_forking"] = settings.allow_forking
-    github.write_json("PATCH", f"repos/{repo}", body)
+    try:
+        github.write_json("PATCH", f"repos/{repo}", body)
+    except github.GitHubAPIError as exc:
+        if "allow_forking" in body and _is_private_forking_error(exc):
+            raise RuntimeError(_PRIVATE_FORKING_HELP.format(repo=repo)) from exc
+        raise
 
 
 def _apply_security_settings(repo: str, security: DesiredSecuritySettings) -> None:
