@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.60/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.58/">
+        <link rel="next" href="../v2.1.18/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.59 - VERGIL Tooling</title>
+        <title>2.1.19 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2059-2026-05-26" class="md-skip">
+        <a href="#release-2119-2026-06-08" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.59
+              2.1.19
             
           </span>
         </div>
@@ -908,10 +908,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.19/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.19
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -927,6 +954,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2056,37 +2125,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.59
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.59/" class="md-nav__link">
         
   
   
@@ -2102,37 +2144,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7848,6 +7859,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -7865,11 +7887,31 @@
 
 
 
-<h1 id="release-2059-2026-05-26">Release 2.0.59 (2026-05-26)<a class="headerlink" href="#release-2059-2026-05-26" title="Permanent link">&para;</a></h1>
+<h1 id="release-2119-2026-06-08">Release 2.1.19 (2026-06-08)<a class="headerlink" href="#release-2119-2026-06-08" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>detect containers via /proc/1/mountinfo overlay check</strong>
-The /.dockerenv file is Docker-specific and does not exist under nerdctl/containerd, causing vrg-validate to reject valid containers. Add a /proc/1/mountinfo overlay-root fallback that works for any OCI runtime, and drop the unused ST_IN_DEV_CONTAINER env var. Ref #1170</li>
+<li><strong>defer spec-drift check to post-start so stopped VMs can start (#1536)</strong>
+<code>vrg-vm start</code> could not start any stopped dedicated VM: it aborted with a
+spurious "no longer meets spec / Rebuild it" error while <code>vrg-vm list</code>
+reported SPEC: ok for the same VM.</li>
+</ul>
+<p>The spec fingerprint is stamped inside the guest
+(/etc/vergil/vm-spec.fingerprint) and is only readable over <code>limactl shell</code>
+while the VM runs. _preflight_target ran the drift check as a pre-start gate,
+so against a stopped VM the shell failed, the fingerprint read as None, and
+vm_spec_status returned needs-rebuild — making every stopped dedicated VM
+un-startable and recommending a destructive rebuild of a healthy VM.
+<code>vrg-vm list</code> was unaffected because it only evaluates drift for running VMs.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>capture paywalled security cost as a migration driver (#1531)</strong>
+Record GitHub Advanced Security pricing (Secret Protection $19, Code Security $30 per active committer/month) as a strategic driver for the forge migration: negligible for a funded individual but a real barrier to entry for the small open-source teams the project serves. Add the open research question of whether Forgejo/Codeberg offer equivalent security at all, the near-term posture (stay private, park security, go public when ready), and a billing-docs footnote. Ref #1530.</p>
+</li>
+<li>
+<p><strong>add Vergil GUI vision &amp; feasibility study (#1532) (#1537)</strong>
+North-star vision and feasibility assessment for a Tauri-based desktop GUI that thin-orchestrates the existing vrg-* CLIs, limactl/Lima sandboxes, and the #1521 forge abstraction. Captures the window-management motivation, per-component feasibility ratings, and a value-first v1/vNext/Later roadmap. Strategy artifact, not an implementation plan.</p>
+</li>
 </ul>
 
 
