@@ -24,6 +24,7 @@ from vergil_tooling.lib.github_config import (
     fetch_actual_state,
     format_rules_delta,
 )
+from vergil_tooling.lib.output import emit_error
 from vergil_tooling.lib.repo_config import audit_local_config
 
 
@@ -61,12 +62,30 @@ def _load_local_config(path: str) -> VergilConfig:
     return _parse_raw_config(raw, source=path)
 
 
+def _is_not_found(exc: github.GitHubAPIError) -> bool:
+    """Return True when a GitHub API error is an HTTP 404 (Not Found)."""
+    return "404" in (exc.stderr or "") or "404" in (exc.stdout or "")
+
+
 def _fetch_remote_config(repo: str) -> VergilConfig:
     """Fetch and parse vergil.toml from a remote repo."""
-    content_data = github.read_json(
-        "api",
-        f"repos/{repo}/contents/vergil.toml",
-    )
+    try:
+        content_data = github.read_json(
+            "api",
+            f"repos/{repo}/contents/vergil.toml",
+        )
+    except github.GitHubAPIError as exc:
+        if not _is_not_found(exc):
+            raise
+        msg = (
+            f"vergil.toml could not be fetched from {repo} via the GitHub API "
+            f"(HTTP 404). It is read from the repository's default branch — confirm "
+            f"the file exists there (a repo whose default branch is still 'main' but "
+            f"whose vergil.toml only lives on 'develop' will hit this), that the repo "
+            f"exists, and that your credentials have access. To apply from a local "
+            f"copy instead, pass --config <path/to/vergil.toml>."
+        )
+        raise RuntimeError(msg) from exc
     if not isinstance(content_data, dict):
         msg = f"Unexpected response fetching config from {repo}"
         raise RuntimeError(msg)
@@ -164,7 +183,11 @@ def main(argv: list[str] | None = None) -> int:
         all_compliant = False
 
     repo = _resolve_repo(args)
-    config = _load_local_config(args.config) if args.config else _fetch_remote_config(repo)
+    try:
+        config = _load_local_config(args.config) if args.config else _fetch_remote_config(repo)
+    except RuntimeError as exc:
+        emit_error(str(exc))
+        return 1
 
     github_diff = _audit_repo(repo, config)
     _print_diff(repo, github_diff)

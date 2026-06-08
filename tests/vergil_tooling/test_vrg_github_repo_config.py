@@ -30,6 +30,7 @@ from vergil_tooling.lib.config import (
     ValidationConfig,
     VergilConfig,
 )
+from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 
 # -- Argument parsing ---------------------------------------------------------
@@ -218,6 +219,27 @@ def test_apply_github_noncompliant_applies() -> None:
     mock_apply.assert_called_once()
 
 
+def test_main_remote_config_error_exits_one_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(
+            f"{_MODULE}._fetch_remote_config",
+            side_effect=RuntimeError("vergil.toml not found on default branch; pass --config"),
+        ),
+        patch(f"{_MODULE}._audit_repo") as mock_audit,
+    ):
+        result = main(["apply", "--repo", "o/r"])
+    assert result == 1
+    mock_audit.assert_not_called()
+    err = capsys.readouterr().err
+    assert "ERROR:" in err
+    assert "--config" in err
+
+
 def test_apply_returns_one_when_local_issues_remain() -> None:
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
@@ -357,6 +379,42 @@ def test_fetch_remote_config_no_content_field() -> None:
     with (
         patch(f"{_MODULE}.github.read_json", return_value={"encoding": "base64"}),
         pytest.raises(RuntimeError, match="No content field"),
+    ):
+        _fetch_remote_config("o/r")
+
+
+def _not_found_error() -> GitHubAPIError:
+    return GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/vergil.toml"),
+        '{"message":"Not Found","status":"404"}',
+        "gh: Not Found (HTTP 404)",
+    )
+
+
+def test_fetch_remote_config_not_found_raises_actionable_error() -> None:
+    with (
+        patch(f"{_MODULE}.github.read_json", side_effect=_not_found_error()),
+        pytest.raises(RuntimeError) as excinfo,
+    ):
+        _fetch_remote_config("o/r")
+    message = str(excinfo.value)
+    # Names the repo, explains the default-branch cause, and points to --config.
+    assert "o/r" in message
+    assert "default branch" in message
+    assert "--config" in message
+
+
+def test_fetch_remote_config_other_api_error_propagates() -> None:
+    server_error = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/contents/vergil.toml"),
+        '{"message":"Server Error","status":"500"}',
+        "gh: Server Error (HTTP 500)",
+    )
+    with (
+        patch(f"{_MODULE}.github.read_json", side_effect=server_error),
+        pytest.raises(GitHubAPIError),
     ):
         _fetch_remote_config("o/r")
 
