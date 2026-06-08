@@ -275,6 +275,53 @@ def test_rich_renderer_auto_buffers_only_up_to_cap() -> None:
     r.close()
 
 
+def _physical_height(r: progress.RichRenderer) -> int:
+    """Rows the current renderable actually occupies, after wrapping."""
+    lines = r._console.render_lines(r._renderable(), r._console.options, pad=False)
+    return len(lines)
+
+
+def test_rich_renderer_long_lines_do_not_overflow_viewport() -> None:
+    """Regression (#1517): streamed lines longer than the console width — e.g.
+    CI-check rows ending in ~95-char job URLs — must not wrap to multiple
+    physical rows.
+
+    The auto-window budgets *logical* lines, but Rich's LiveRender measures
+    *physical* rows. Wrapped lines push the live block past the viewport, Rich
+    ellipsis-crops it to the full viewport height, and a full-viewport block
+    scrolls the terminal on every repaint — leaking duplicated top rows (the
+    repeated ``✓ audit`` lines seen in vrg-release)."""
+    height = 30
+    out = io.StringIO()
+    r = progress.RichRenderer(out, window=None, force_terminal=True, width=100, height=height)
+    for name in ("audit", "preflight", "prepare", "merge-release", "confirm-main"):
+        r.end_stage(StageResult(name, "ok", 3.3))
+    r.start_stage("back-merge-bump")
+    long = (
+        "quality / typecheck / 3.14\tpass\t25s\t"
+        "https://github.com/vergil-project/vergil-tooling/actions/runs/27133407446/job/80079745066"
+    )
+    for _ in range(200):  # saturate the tail with would-be-wrapping lines
+        r.stage_line(long)
+    # Each line occupies exactly one row, so the block stays within the viewport
+    # and Rich never has to crop/scroll it.
+    expected_rows = len(r._completed) + 1 + min(r._visible_window(), len(r._tail))
+    assert _physical_height(r) == expected_rows
+    assert _physical_height(r) <= height
+    r.close()
+
+
+def test_rich_renderer_completed_status_line_does_not_wrap() -> None:
+    """A completed-stage line with a long error must occupy one physical row,
+    not wrap and inflate the block height (#1517)."""
+    out = io.StringIO()
+    r = progress.RichRenderer(out, window=None, force_terminal=True, width=60, height=24)
+    r.end_stage(StageResult("build-images", "failed", 4.0, "x" * 200))
+    r.start_stage("next")
+    assert _physical_height(r) == len(r._completed) + 1  # completed row + spinner
+    r.close()
+
+
 class _FakeRenderer:
     def __init__(self) -> None:
         self.lines: list[str] = []
