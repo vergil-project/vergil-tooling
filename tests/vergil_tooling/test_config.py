@@ -8,15 +8,18 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.config import (
+    DEFAULT_VALIDATION_COMMAND,
     CiConfig,
     ConfigError,
     ContainerConfig,
     MarkdownlintConfig,
+    ValidationConfig,
     VmStanza,
     _warn_unrecognized_keys,
     container_env_prefixes,
     parse_vm_stanza,
     read_config,
+    validation_container_command,
     vrg_install_tag,
 )
 
@@ -590,6 +593,70 @@ def test_container_env_prefixes_no_file(tmp_path: Path) -> None:
 def test_container_env_prefixes_no_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     assert container_env_prefixes(tmp_path) == []
+
+
+# -- [validation] section -----------------------------------------------------
+
+_VALIDATION_TOML = _VALID_TOML + '[validation]\ncontainer-command = "uv run vrg-validate"\n'
+
+
+def test_read_config_validation_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALIDATION_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.validation == ValidationConfig(container_command="uv run vrg-validate")
+
+
+def test_read_config_no_validation_section_defaults(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.validation == ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND)
+
+
+def test_read_config_validation_missing_container_command(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[validation]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[validation\].*container-command"):
+        read_config(tmp_path)
+
+
+def test_read_config_validation_command_not_string(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[validation]\ncontainer-command = 42\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[validation\]\.container-command must be a non-empty"):
+        read_config(tmp_path)
+
+
+def test_read_config_validation_command_empty(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[validation]\ncontainer-command = "   "\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[validation\]\.container-command must be a non-empty"):
+        read_config(tmp_path)
+
+
+def test_warns_unrecognized_validation_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _VALIDATION_TOML + "foo = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'foo' in [validation]" in capsys.readouterr().err
+
+
+# -- validation_container_command convenience function ------------------------
+
+
+def test_validation_container_command_with_override(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALIDATION_TOML)
+    assert validation_container_command(tmp_path) == "uv run vrg-validate"
+
+
+def test_validation_container_command_no_file(tmp_path: Path) -> None:
+    assert validation_container_command(tmp_path) == DEFAULT_VALIDATION_COMMAND
+
+
+def test_validation_container_command_no_section(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    assert validation_container_command(tmp_path) == DEFAULT_VALIDATION_COMMAND
 
 
 # -- [vm] cascade (issue #99) -------------------------------------------------

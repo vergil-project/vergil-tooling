@@ -9,10 +9,16 @@ arguments after ``--``.
 from __future__ import annotations
 
 import os
+import shlex
 import sys
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.config import container_env_prefixes
+from vergil_tooling.lib.config import (
+    DEFAULT_VALIDATION_COMMAND,
+    container_env_prefixes,
+    validation_container_command,
+)
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     build_container_args,
@@ -22,7 +28,17 @@ from vergil_tooling.lib.container import (
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 _VALID_PREFIXES = {"dev", "prod"}
+
+# When the in-container command is the validation entry point, rewrite it using
+# the target repo's [validation].container-command override (issue #1433). This
+# lets the fleet-wide `vrg-container-run -- vrg-validate` keep working in repos
+# that need a different activation (e.g. the self-repo's "uv run vrg-validate"),
+# regardless of which repo the invoking agent's session started in.
+_VALIDATION_ENTRY = DEFAULT_VALIDATION_COMMAND
 
 _USAGE = """\
 usage: vrg-container-run [--prefix <dev|prod>] [--] <command> [args...]
@@ -47,6 +63,20 @@ examples:
   vrg-container-run -- uv run pytest tests/
   DOCKER_DEV_IMAGE=custom:img vrg-container-run -- make build
 """
+
+
+def _apply_validation_override(command: list[str], repo_root: Path) -> list[str]:
+    """Rewrite a ``vrg-validate`` invocation per the repo's override.
+
+    Only the validation entry point is rewritten; any other command passes
+    through unchanged. Trailing arguments (e.g. ``--check common``) are
+    preserved. The default override is ``vrg-validate`` itself, so repos
+    without a ``[validation]`` section are left untouched.
+    """
+    if not command or command[0] != _VALIDATION_ENTRY:
+        return command
+    override = validation_container_command(repo_root)
+    return shlex.split(override) + command[1:]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -84,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = detect_runtime()
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
+    command = _apply_validation_override(command, repo_root)
 
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:

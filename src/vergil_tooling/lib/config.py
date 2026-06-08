@@ -13,6 +13,13 @@ if TYPE_CHECKING:
 
 CONFIG_FILE = "vergil.toml"
 
+# The default in-container validation entry point. Repos may override this in
+# [validation].container-command (e.g. the self-repo, which activates its local
+# dev version via "uv run vrg-validate"). vrg-container-run resolves the
+# override from the target repo so cross-repo agents pick it up at execution
+# time, independent of which CLAUDE.md their session loaded (issue #1433).
+DEFAULT_VALIDATION_COMMAND = "vrg-validate"
+
 _ENUMS: dict[str, set[str]] = {
     "repository-type": {"library", "application", "infrastructure", "tooling", "documentation"},
     "versioning-scheme": {"library", "semver", "application", "none"},
@@ -31,7 +38,7 @@ _REQUIRED_PROJECT_FIELDS = (
 _PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language", "ghas")
 
 _KNOWN_SECTIONS = frozenset(
-    {"project", "dependencies", "markdownlint", "ci", "publish", "container", "vm"},
+    {"project", "dependencies", "markdownlint", "ci", "publish", "container", "validation", "vm"},
 )
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
@@ -41,6 +48,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "ci": frozenset({"versions", "integration-tests"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
     "container": frozenset({"env-prefixes"}),
+    "validation": frozenset({"container-command"}),
 }
 
 
@@ -82,6 +90,11 @@ class ContainerConfig:
 
 
 @dataclass
+class ValidationConfig:
+    container_command: str
+
+
+@dataclass
 class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
@@ -89,6 +102,7 @@ class VergilConfig:
     ci: CiConfig
     publish: PublishConfig
     container: ContainerConfig
+    validation: ValidationConfig
     vm: VmStanza | None = None
 
 
@@ -275,6 +289,19 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     else:
         container = ContainerConfig(env_prefixes=[])
 
+    validation_raw = raw.get("validation")
+    if validation_raw is not None:
+        container_command = validation_raw.get("container-command")
+        if container_command is None:
+            msg = f"{source}: [validation] missing required field 'container-command'"
+            raise ConfigError(msg)
+        if not isinstance(container_command, str) or not container_command.strip():
+            msg = f"{source}: [validation].container-command must be a non-empty string"
+            raise ConfigError(msg)
+        validation = ValidationConfig(container_command=container_command)
+    else:
+        validation = ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND)
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -290,6 +317,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         ci=ci,
         publish=publish,
         container=container,
+        validation=validation,
         vm=parse_vm_stanza(raw, source),
     )
 
@@ -330,3 +358,17 @@ def container_env_prefixes(repo_root: Path) -> list[str]:
     except FileNotFoundError:
         return []
     return cfg.container.env_prefixes
+
+
+def validation_container_command(repo_root: Path) -> str:
+    """Return ``[validation].container-command`` from vergil.toml.
+
+    Falls back to :data:`DEFAULT_VALIDATION_COMMAND` (``"vrg-validate"``) when
+    the repo declares no override or has no ``vergil.toml``. ``ConfigError``
+    from a malformed config propagates, matching :func:`container_env_prefixes`.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return DEFAULT_VALIDATION_COMMAND
+    return cfg.validation.container_command

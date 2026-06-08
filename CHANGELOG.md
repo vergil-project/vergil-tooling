@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.17] - 2026-06-08
+
+### Bug fixes
+
+- compare ruleset required checks by set, not list order (#1509)
+
+### CI
+
+- add build-only docs verification job to ci.yml (#1508)
+
+### Features
+
+- resolve validation command from target repo's vergil.toml (#1510)
+- resolve vergil.toml from main, then develop, then local (#1512)
+
 ## [2.1.16] - 2026-06-07
 
 ### Bug fixes
