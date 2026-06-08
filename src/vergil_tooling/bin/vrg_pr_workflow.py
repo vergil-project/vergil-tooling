@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.pr_workflow import engine, settings
+from vergil_tooling.lib.pr_workflow import engine, registry, settings
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
@@ -100,7 +100,9 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
         engine.audit_ack(state, issue=args.issue, audit_token=_token("a"), now=_now())
         transport.write(state)
     state = transport.wait_until_owner("audit", timeout=_LONG_TIMEOUT)
-    _emit(engine.directive_for(state, "audit"))
+    directive = engine.directive_for(state, "audit")
+    directive["prompt"] = registry.check_prompt(directive["check"])
+    _emit(directive)
     return 0
 
 

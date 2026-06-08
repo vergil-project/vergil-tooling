@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.bin import vrg_pr_workflow as cli
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+from vergil_tooling.lib.pr_workflow.registry import check_ids, check_prompt
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 if TYPE_CHECKING:
@@ -148,3 +149,22 @@ def test_next_audit_waits_for_absent_file_and_skips_ack_when_present(capsys) -> 
     assert rc == 0
     assert not transport.writes  # no new ack write; audit already present
     assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-check"
+
+
+def test_next_audit_directive_inlines_the_current_check_prompt(capsys) -> None:
+    transport = FakeTransport()
+    transport.state = engine.init_state(
+        issue="1534",
+        branch="b",
+        base="origin/develop",
+        mode="paired",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=_NOW,
+    )
+    cli._next_audit(_args(as_role="audit", issue="1534"), transport)
+    directive = json.loads(capsys.readouterr().out)
+    first = check_ids()[0]
+    assert directive["check"] == first
+    assert directive["prompt"] == check_prompt(first)
