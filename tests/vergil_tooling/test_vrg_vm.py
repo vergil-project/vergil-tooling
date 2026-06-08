@@ -815,6 +815,62 @@ class TestList:
         assert result == 0
         mock_shell.assert_not_called()
 
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=1700000000.0)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_workspace_column_fits_long_paths(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        _age: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A workspace longer than the historical 36-char column must render in
+        # full and must not shove STATE / LAST ACTIVE out of alignment.
+        long_path = "logical-minds-foundry/mq-cluster-tooling"  # 40 chars
+        assert len(long_path) > 36
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {
+                        "identity": "vergil",
+                        "slot": 1,
+                        "path": "vergil-project/vm",
+                        "sessionId": "s1",
+                        "state": "active",
+                        "lastActive": 1748000000.0,
+                    },
+                    {
+                        "identity": "vergil-user",
+                        "slot": 1,
+                        "path": long_path,
+                        "sessionId": "s2",
+                        "state": "idle",
+                        "lastActive": 1748000000.0,
+                    },
+                ]
+            )
+        )
+        mock_names.return_value = {
+            "s1": "vergil:01:vergil-project/vm",
+            "s2": "vergil-user:01:" + long_path,
+        }
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        out = capsys.readouterr().out
+        lines = [line for line in out.splitlines() if line.strip()]
+        header = lines[0]
+        state_col = header.index("STATE")
+        # The full long path is rendered, never truncated.
+        assert long_path in out
+        # STATE begins at the same offset on every data row (header + divider
+        # are lines[0] and lines[1]; data rows follow).
+        for row in lines[2:]:
+            assert row[state_col:].startswith(("active", "idle"))
+
 
 class TestUpdate:
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
