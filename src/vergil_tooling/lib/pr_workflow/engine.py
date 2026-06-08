@@ -177,39 +177,70 @@ def rollup_status(checks: list[dict[str, Any]]) -> str:
     return "approved"
 
 
-def _validate_review(checks: Any) -> None:
-    if not isinstance(checks, list) or not checks:
-        raise WorkflowError("review payload must contain a non-empty 'checks' list")
-    known = set(registry.check_ids())
-    seen: set[str] = set()
-    for entry in checks:
-        cid = entry.get("id") if isinstance(entry, dict) else None
-        if cid not in known:
-            raise WorkflowError(f"unknown check id {cid!r}; known checks: {sorted(known)}")
-        if entry.get("status") not in CHECK_STATUSES:
-            raise WorkflowError(f"check {cid!r} has invalid status {entry.get('status')!r}")
-        seen.add(cid)
-    missing = known - seen
-    if missing:
-        raise WorkflowError(f"review is missing checks: {sorted(missing)}")
+def next_pending_check(state: WorkflowState) -> str | None:
+    """Return the first registry check not yet evaluated for the current round,
+    or None once every check has a result for ``state.round``.
+
+    The CLI hands these out one at a time so the audit agent's working set stays
+    bounded to a single check prompt and a single result per round-trip — robust
+    as the number (or complexity) of checks grows."""
+    by_id = {c["id"]: c for c in state.checks}
+    for cid in registry.check_ids():
+        entry = by_id.get(cid)
+        if entry is None or entry.get("round") != state.round:
+            return cid
+    return None
 
 
-def apply_review(
-    state: WorkflowState, *, checks: list[dict[str, Any]], head_sha: str, now: str
+def apply_check(
+    state: WorkflowState,
+    *,
+    check_id: str,
+    status: str,
+    findings: list[dict[str, Any]] | None,
+    reason: str | None,
+    head_sha: str,
+    now: str,
 ) -> WorkflowState:
-    """AUDIT submits its judgments. The oracle validates, stamps the round onto
-    each check, records the cursor, and rolls up to the next owner/status."""
+    """AUDIT submits one check's judgment. Once every check has a result for the
+    current round, the oracle rolls the ledger up to the next owner/status."""
     _require_owner(state, "audit")
-    _validate_review(checks)
-    for entry in checks:
-        entry["round"] = state.round
-    state.checks = checks
-    status = rollup_status(checks)
-    state.status = status
+    if check_id not in registry.check_ids():
+        known = sorted(registry.check_ids())
+        raise WorkflowError(f"unknown check id {check_id!r}; known checks: {known}")
+    if status not in CHECK_STATUSES:
+        raise WorkflowError(f"check {check_id!r} has invalid status {status!r}")
+    entry: dict[str, Any] = {"id": check_id, "status": status, "round": state.round}
+    if findings:
+        entry["findings"] = findings
+    if reason:
+        entry["reason"] = reason
+    by_id = {c["id"]: c for c in state.checks}
+    by_id[check_id] = entry
+    state.checks = [by_id[cid] for cid in registry.check_ids() if cid in by_id]
+    state.updated_at = now
+    state.history.append(
+        {
+            "round": state.round,
+            "at": now,
+            "actor": "audit",
+            "action": "submit-check",
+            "check": check_id,
+            "status": status,
+        }
+    )
+    if next_pending_check(state) is None:
+        _complete_review(state, head_sha=head_sha, now=now)
+    return state
+
+
+def _complete_review(state: WorkflowState, *, head_sha: str, now: str) -> None:
+    rollup = rollup_status(state.checks)
+    state.status = rollup
     state.git["last_reviewed_sha"] = head_sha
-    if status == "escalated":
+    if rollup == "escalated":
         state.owner = "human"
-        escalated = next(c for c in checks if c.get("status") == "escalate")
+        escalated = next(c for c in state.checks if c.get("status") == "escalate")
         state.escalation = {
             "by": "audit",
             "check": escalated["id"],
@@ -218,17 +249,15 @@ def apply_review(
         }
     else:
         state.owner = "user"
-    state.updated_at = now
     state.history.append(
         {
             "round": state.round,
             "at": now,
             "actor": "audit",
-            "action": "submit-review",
-            "rollup": status,
+            "action": "review-complete",
+            "rollup": rollup,
         }
     )
-    return state
 
 
 def apply_escalate(state: WorkflowState, *, by: str, reason: str, now: str) -> WorkflowState:
@@ -276,6 +305,7 @@ def directive_for(state: WorkflowState, role: str) -> dict[str, Any]:
     if role == "user":
         return _user_directive(state)
     if role == "audit":
+        check_id = next_pending_check(state)
         since = state.git.get("last_reviewed_sha")
         head = state.git["head_sha"]
         rng = f"{state.base}..{head}"
@@ -284,14 +314,14 @@ def directive_for(state: WorkflowState, role: str) -> dict[str, Any]:
             "phase": state.phase,
             "role": "audit",
             "round": state.round,
+            "check": check_id,
             "do": (
-                f"Review the cumulative delta {rng}; focus on commits since {focus}. "
-                "Run the judgment checks listed below."
+                f"Review the cumulative delta {rng} (focus since {focus}) for the "
+                f"'{check_id}' check only, then report its result."
             ),
-            "checks": list(registry.check_ids()),
             "range": rng,
             "since": since,
-            "then": {"verb": "submit-review", "schema": "review.v1"},
+            "then": {"verb": "submit-check", "schema": "check.v1"},
         }
     raise WorkflowError(f"unknown role {role!r}")
 

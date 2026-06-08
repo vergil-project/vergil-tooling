@@ -2,6 +2,17 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Amendment (post-implementation):** During Phase 2 planning the review mechanism
+> changed from **all-at-once** (`submit-review` taking all six checks in one payload,
+> `review.v1`) to **per-check, CLI-sequenced** (`submit-check` taking one check at a
+> time, `check.v1`; the oracle hands out one check per `next` and rolls up on the
+> last). This keeps the audit agent's working set bounded to one prompt + one result.
+> The code, tests, and the design spec reflect the per-check model — **the spec
+> (§6–§8) is authoritative.** The task code blocks below still show the original
+> `submit-review`/`review.v1`; read them as the engine/transport/CLI skeleton, with
+> `submit-review`→`submit-check`, `apply_review`→`apply_check` + `next_pending_check`,
+> and the all-at-once review test driving one `apply_check` per check.
+
 **Goal:** Build a fully tested `vrg-pr-workflow` oracle — state model, state-machine engine, a pluggable transport interface, the `LocalFileTransport`, and the CLI — with no agent/skill wiring, driven entirely by tests.
 
 **Architecture:** A transport-agnostic **engine** (pure functions over a `WorkflowState` dataclass: init, handshake, reports, rollup, directives) sits behind a **transport interface**. `LocalFileTransport` serializes state to `.vergil/pr-workflow.json` via the existing `atomic_write` + SHA-256 poll primitives and snapshots git facts via `lib/git.py`. A thin `vrg-pr-workflow` CLI wires verbs (`next`, `report-ready`, `report-fixes`, `submit-review`, `escalate`, `resolve`, `status`) to engine + transport.

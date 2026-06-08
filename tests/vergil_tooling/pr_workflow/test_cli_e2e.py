@@ -118,13 +118,13 @@ def test_first_user_next_without_issue_errors(
     assert "must pass --issue" in capsys.readouterr().err
 
 
-def test_submit_review_with_bad_payload_errors(
+def test_submit_check_with_bad_payload_errors(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="audit", status="reviewing")
-    assert _run(monkeypatch, repo, "submit-review", "--payload", str(repo / "missing.json")) == 1
-    assert "review payload" in capsys.readouterr().err
+    assert _run(monkeypatch, repo, "submit-check", "--payload", str(repo / "missing.json")) == 1
+    assert "check payload" in capsys.readouterr().err
 
 
 def test_user_next_rejects_stale_different_issue(
@@ -148,19 +148,24 @@ def test_abort_records_terminal_error(
     assert state["error"]["reason"] == "giving up"
 
 
-def test_submit_review_success_approves(
+def test_submit_check_full_round_approves(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
     repo = _init_repo(tmp_path)
     _seed(repo, owner="audit", status="reviewing")
-    payload = repo / "review.json"
-    payload.write_text(
-        json.dumps({"checks": [{"id": cid, "status": "pass"} for cid in check_ids()]})
-    )
-    assert _run(monkeypatch, repo, "submit-review", "--payload", str(payload)) == 0
-    out = json.loads(capsys.readouterr().out)
+    payload = repo / "check.json"
+    ids = check_ids()
+    out: dict = {}
+    for i, cid in enumerate(ids):
+        payload.write_text(json.dumps({"id": cid, "status": "pass"}))
+        assert _run(monkeypatch, repo, "submit-check", "--payload", str(payload)) == 0
+        out = json.loads(capsys.readouterr().out)
+        if i < len(ids) - 1:
+            assert out["owner"] == "audit"  # round not complete yet
+            assert out["pending"] == ids[i + 1]
     assert out["status"] == "approved"
     assert out["owner"] == "user"
+    assert out["pending"] is None
 
 
 def test_report_fixes_hands_back_to_audit(

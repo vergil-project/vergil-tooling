@@ -1,7 +1,7 @@
 """Deterministic integration of the paired loop over engine + LocalFileTransport.
 
-Drives both roles' state transitions directly (no blocking waits), proving the
-full handshake -> changes -> fixes -> approve cycle and the recorded history.
+Drives both roles' transitions directly (no blocking waits), proving the full
+handshake -> per-check review -> changes -> fixes -> approve cycle.
 """
 
 from __future__ import annotations
@@ -20,14 +20,37 @@ if TYPE_CHECKING:
 _NOW = "2026-06-08T00:00:00Z"
 
 
-def _all(status: str) -> list[dict]:
-    return [{"id": cid, "status": status} for cid in check_ids()]
-
-
 def _reload(transport: LocalFileTransport) -> WorkflowState:
     state = transport.read()
     assert state is not None
     return state
+
+
+def _review_round(transport: LocalFileTransport, *, fail: str | None, head_sha: str) -> None:
+    """AUDIT runs all checks one at a time, persisting after each (per-check loop)."""
+    for cid in check_ids():
+        state = _reload(transport)
+        if cid == fail:
+            engine.apply_check(
+                state,
+                check_id=cid,
+                status="fail",
+                findings=[{"file": "feature.py", "line": 1, "severity": "warning", "note": "x"}],
+                reason=None,
+                head_sha=head_sha,
+                now=_NOW,
+            )
+        else:
+            engine.apply_check(
+                state,
+                check_id=cid,
+                status="pass",
+                findings=None,
+                reason=None,
+                head_sha=head_sha,
+                now=_NOW,
+            )
+        transport.write(state)
 
 
 def test_paired_full_cycle(tmp_path: Path) -> None:
@@ -65,23 +88,8 @@ def test_paired_full_cycle(tmp_path: Path) -> None:
     )
     transport.write(state)
 
-    # AUDIT review with one failure -> changes-requested, owner user.
-    state = _reload(transport)
-    checks = _all("pass")
-    checks[3] = {
-        "id": checks[3]["id"],
-        "status": "fail",
-        "findings": [
-            {
-                "file": "feature.py",
-                "line": 1,
-                "severity": "warning",
-                "note": "commit message overstates the change",
-            }
-        ],
-    }
-    engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
-    transport.write(state)
+    # AUDIT per-check review with one failure -> changes-requested, owner user.
+    _review_round(transport, fail=check_ids()[3], head_sha="h1")
     assert _reload(transport).status == "changes-requested"
 
     # USER fixes -> round 1, owner audit.
@@ -91,21 +99,20 @@ def test_paired_full_cycle(tmp_path: Path) -> None:
     assert _reload(transport).round == 1
 
     # AUDIT re-review, all pass -> approved, owner user.
-    state = _reload(transport)
-    engine.apply_review(state, checks=_all("pass"), head_sha="h2", now=_NOW)
-    transport.write(state)
+    _review_round(transport, fail=None, head_sha="h2")
 
     final = _reload(transport)
     assert final.status == "approved"
     assert final.owner == "user"
     assert engine.directive_for(final, "user")["done"] is True
 
-    actions = [h["action"] for h in final.history]
-    assert actions == [
+    # Milestone history (ignoring the per-check submit-check entries).
+    milestones = [h["action"] for h in final.history if h["action"] != "submit-check"]
+    assert milestones == [
         "init",
         "ack",
         "report-ready",
-        "submit-review",
+        "review-complete",
         "report-fixes",
-        "submit-review",
+        "review-complete",
     ]

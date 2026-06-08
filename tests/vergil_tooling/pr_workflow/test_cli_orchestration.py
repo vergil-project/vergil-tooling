@@ -92,7 +92,7 @@ def test_next_audit_first_call_acks_and_returns_review_directive(capsys) -> None
     assert rc == 0
     assert any(w.participants.get("audit") for w in transport.writes)  # ack recorded
     directive = json.loads(capsys.readouterr().out)
-    assert directive["then"]["verb"] == "submit-review"
+    assert directive["then"]["verb"] == "submit-check"
 
 
 def test_next_audit_solo_exits_clean(capsys) -> None:
@@ -147,4 +147,4 @@ def test_next_audit_waits_for_absent_file_and_skips_ack_when_present(capsys) -> 
     rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
     assert rc == 0
     assert not transport.writes  # no new ack write; audit already present
-    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-review"
+    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-check"

@@ -241,7 +241,8 @@ file (§3.1): one branch per worktree means one workflow. Gitignored scratch.
   "history": [                      // append-only; the audit trail attached to the issue
     { "round": 0, "at": "…", "actor": "user",  "action": "init", "mode": "paired" },
     { "round": 1, "at": "…", "actor": "user",  "action": "report-ready", "head_sha": "…" },
-    { "round": 1, "at": "…", "actor": "audit", "action": "submit-review", "rollup": "changes" },
+    { "round": 1, "at": "…", "actor": "audit", "action": "submit-check", "check": "commit-message-fidelity", "status": "fail" },
+    { "round": 1, "at": "…", "actor": "audit", "action": "review-complete", "rollup": "changes" },
     { "round": 2, "at": "…", "actor": "user",  "action": "report-fixes", "head_sha": "a1b2c3" }
   ]
 }
@@ -276,8 +277,8 @@ check_id  ->  { prompt, output_instructions }
   prompt; the engine iterates the registry and needs no change.
 - The oracle **never evaluates a check itself.** There is no Python-side check path.
   The oracle only routes the judgments the agent reports.
-- Each prompt is authored so its specified output maps **1:1** into the `review.v1`
-  per-check entry (§7), so landing the result in the state file costs minimal token
+- Each prompt is authored so its specified output maps **1:1** into a `check.v1`
+  payload (§7), so landing the result in the state file costs minimal token
   processing. This mirrors Diogenes' "read the compiled prompt, produce JSON that
   matches the schema" contract.
 
@@ -328,7 +329,7 @@ instruction.
 | `next --as <role> [--no-audit]` | USER, AUDIT | Block (SHA poll). First-ever call as USER: **init/takeover** the file and run the startup handshake (§8.1). Return a Directive or DONE. |
 | `report-ready --title --summary --notes [--linkage]` | USER | Snapshot HEAD, write `pr_metadata`, `owner→audit`. (Initial done signal.) |
 | `report-fixes [--note]` | USER | Verify HEAD moved, snapshot it, `owner→audit`, bump round. |
-| `submit-review --payload review.json` | AUDIT | Validate payload vs `review.v1`, update ledger, **roll up** → set owner/status, record `last_reviewed_sha`. |
+| `submit-check --payload check.json` | AUDIT | Validate one check vs `check.v1`, record it. Once every registry check has a result for the round, **roll up** → set owner/status, record `last_reviewed_sha`. |
 | `escalate --reason …` | USER, AUDIT | `owner→human`, set `escalation`, status=escalated. |
 | `abort --as <role> --reason …` | USER, AUDIT | Record a terminal `error` (graceful give-up, §9); the counterpart's `next` detects it and stops. |
 | `resolve --to user\|audit [--note]` | HUMAN | Hand control back to an agent. **Rejected unless `vrg-whoami --mode == human`** (§8.3; enforcement lands in Phase 3). |
@@ -340,12 +341,13 @@ The verbs no longer take an issue argument — there is one workflow file per wo
 ### 6.1 The directive (`next`'s stdout)
 
 ```jsonc
-// AUDIT, mid-flow:
+// AUDIT, mid-flow — ONE check per round-trip (the oracle sequences the six):
 { "phase":"local", "role":"audit", "round":2,
-  "do":"Review cumulative delta origin/develop..a1b2c3; focus on commits since 9f8e7d. Run the judgment checks below.",
-  "checks":["commit-message-fidelity","scope-coherence", "..."],
+  "do":"Review cumulative delta origin/develop..a1b2c3 (focus since 9f8e7d) for the 'commit-message-fidelity' check only, then report its result.",
+  "check":"commit-message-fidelity",
+  // (Phase 2 adds the check's prompt text inline here)
   "range":"origin/develop..a1b2c3", "since":"9f8e7d",
-  "then": { "verb":"submit-review", "schema":"review.v1" } }
+  "then": { "verb":"submit-check", "schema":"check.v1" } }
 
 // USER, changes round:
 { "phase":"local", "role":"user", "round":2,
@@ -362,8 +364,11 @@ The verbs no longer take an issue argument — there is one workflow file per wo
 { "done":true, "reason":"approved", "next_human_action":"run vrg-submit-pr" }
 ```
 
-The directive points AUDIT at the registry's check prompts; each prompt specifies
-its own output shape so the assembled `review.v1` payload needs minimal massaging.
+The directive hands AUDIT **one** check at a time (Phase 2 inlines that check's
+prompt). Each prompt specifies its own output shape so the `check.v1` payload needs
+minimal massaging. Sequencing one check per round-trip keeps the audit agent's
+working set bounded to a single prompt and a single result — robust as the number
+and complexity of checks grow, and resilient to compaction.
 
 ### 6.2 `--no-audit` (solo mode)
 
@@ -386,10 +391,12 @@ loop, never the merge gate.
 
 - **`pr-metadata.v1`** — `{ title, summary, notes, linkage? }`. Validated on
   `report-ready`.
-- **`review.v1`** — `{ checks: [ { id, status: pass|fail|escalate,
-  findings?: [ { file, line, severity, note } ], reason? } ] }`. Validated on
-  `submit-review`. Unknown or missing check ids, or a bad status enum, are rejected
-  so the model retries (validation at the call layer, Diogenes-style).
+- **`check.v1`** — `{ id, status: pass|fail|escalate,
+  findings?: [ { file, line, severity, note } ], reason? }`. Validated on each
+  `submit-check` (one check per call). An unknown check id or a bad status enum is
+  rejected so the model retries (validation at the call layer, Diogenes-style). The
+  oracle tracks which checks have a result for the current round and rolls up once
+  all are in.
 
 ## 8. State machine and transitions
 
@@ -399,8 +406,8 @@ init (USER first `next`)
   └─ paired → mode=paired, owner=audit, wait for AUDIT ack (§8.1)
        AUDIT acks (writes presence, flips owner→user) → USER implements
        USER ──report-ready──▶ owner=audit
-       AUDIT next → runs judgment checks on base..HEAD → submit-review{checks}
-         oracle rolls up the ledger:
+       AUDIT: next → one check → submit-check, looping over base..HEAD
+              (one check per round-trip); on the last check the oracle rolls up:
            any escalate → owner=human, status=escalated, notify    ─┐
            else any fail → owner=user, status=changes-requested      │
            else all pass → status=approved, owner=user → "tell human │
@@ -411,8 +418,8 @@ init (USER first `next`)
                                           HUMAN resolves → resolve --to user|audit
 ```
 
-Rollup rule, applied on every `submit-review`: **any `escalate` → human; else any
-`fail` → user; else all `pass` → approved.**
+Rollup rule, applied when a review round completes (the last `submit-check`):
+**any `escalate` → human; else any `fail` → user; else all `pass` → approved.**
 
 ### 8.1 Startup handshake (paired mode)
 
@@ -483,7 +490,7 @@ human is watching the two sessions.
   if the file records a *different* issue it is treated as stale → refuse and tell
   the human to delete it (the revert path: `rm .vergil/pr-workflow.json` and
   restart).
-- **Malformed report** — `submit-review`/`report-ready` payloads are validated
+- **Malformed report** — `submit-check`/`report-ready` payloads are validated
   against their schemas; rejection is non-zero so the model retries.
 - **No new commits on `report-fixes`** — the oracle verifies HEAD actually moved
   since `last_reviewed_sha`; if not, it rejects ("nothing to review") to prevent
@@ -505,7 +512,8 @@ human is watching the two sessions.
 - **Handshake** — paired ack flips owner and unblocks USER; short-timeout no-show
   raises; issue-mismatch raises; solo mode skips the handshake; AUDIT-on-solo exits
   cleanly; graceful give-up writes terminal `error` and the counterpart stops.
-- **Schema** — good and bad `review.v1` and `pr-metadata.v1` payloads.
+- **Schema** — good and bad `check.v1` and `pr-metadata.v1` payloads; per-check
+  round accumulation and rollup-on-last.
 - **End-to-end** — subprocess `vrg-pr-workflow` against a temporary git repo through
   the full happy path (init → handshake → report-ready → review(changes) →
   report-fixes → review(approve) → DONE), the solo path, and the escalation path;
@@ -543,9 +551,10 @@ by tests. The actor is selected by CLI flag in this phase; human-identity
 
 ### Phase 2 — Judgment registry
 
-The six seed check prompts and the registry that holds them, authored so each
-prompt's output maps 1:1 into `review.v1`. Delivers the actual audits, pluggable
-into the Phase 1 engine.
+The six seed check prompts (package data, loaded via `importlib.resources`) and the
+registry that holds them, authored so each prompt's output maps 1:1 into `check.v1`,
+plus inlining the current check's prompt into the audit directive. Delivers the
+actual audits, pluggable into the Phase 1 per-check engine loop.
 
 ### Phase 3 — Integration
 

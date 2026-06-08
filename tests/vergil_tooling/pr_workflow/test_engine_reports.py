@@ -9,6 +9,7 @@ from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.registry import check_ids
 
 _NOW = "2026-06-08T00:00:00Z"
+_FINDING = {"file": "x.py", "line": 1, "severity": "warning", "note": "fix"}
 
 
 def _paired_owned_by_user() -> engine.WorkflowState:
@@ -26,20 +27,6 @@ def _paired_owned_by_user() -> engine.WorkflowState:
     return state
 
 
-def _all_checks(status: str) -> list[dict]:
-    return [{"id": cid, "status": status} for cid in check_ids()]
-
-
-def _failing_checks() -> list[dict]:
-    checks = _all_checks("pass")
-    checks[0] = {
-        "id": checks[0]["id"],
-        "status": "fail",
-        "findings": [{"file": "x.py", "line": 1, "severity": "warning", "note": "fix"}],
-    }
-    return checks
-
-
 def _ready(state: engine.WorkflowState, head_sha: str = "h1") -> None:
     engine.apply_report_ready(
         state,
@@ -50,6 +37,47 @@ def _ready(state: engine.WorkflowState, head_sha: str = "h1") -> None:
         head_sha=head_sha,
         now=_NOW,
     )
+
+
+def _run_review(
+    state: engine.WorkflowState,
+    *,
+    fail: str | None = None,
+    escalate: str | None = None,
+    head_sha: str = "h1",
+) -> None:
+    """Drive a full per-check review round; all pass unless one is fail/escalate."""
+    for cid in check_ids():
+        if cid == fail:
+            engine.apply_check(
+                state,
+                check_id=cid,
+                status="fail",
+                findings=[dict(_FINDING)],
+                reason=None,
+                head_sha=head_sha,
+                now=_NOW,
+            )
+        elif cid == escalate:
+            engine.apply_check(
+                state,
+                check_id=cid,
+                status="escalate",
+                findings=None,
+                reason="needs a human",
+                head_sha=head_sha,
+                now=_NOW,
+            )
+        else:
+            engine.apply_check(
+                state,
+                check_id=cid,
+                status="pass",
+                findings=None,
+                reason=None,
+                head_sha=head_sha,
+                now=_NOW,
+            )
 
 
 def test_report_ready_paired_hands_to_audit() -> None:
@@ -87,16 +115,33 @@ def test_report_ready_rejects_out_of_turn() -> None:
 def test_review_all_pass_approves_and_hands_to_user() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    engine.apply_review(state, checks=_all_checks("pass"), head_sha="h1", now=_NOW)
+    _run_review(state)
     assert state.status == "approved"
     assert state.owner == "user"
     assert state.git["last_reviewed_sha"] == "h1"
 
 
+def test_partial_round_stays_with_audit() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    engine.apply_check(
+        state,
+        check_id=check_ids()[0],
+        status="pass",
+        findings=None,
+        reason=None,
+        head_sha="h1",
+        now=_NOW,
+    )
+    assert state.owner == "audit"  # round not complete
+    assert state.status == "reviewing"
+    assert engine.next_pending_check(state) == check_ids()[1]
+
+
 def test_review_with_a_fail_requests_changes() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    engine.apply_review(state, checks=_failing_checks(), head_sha="h1", now=_NOW)
+    _run_review(state, fail=check_ids()[0])
     assert state.status == "changes-requested"
     assert state.owner == "user"
 
@@ -104,54 +149,88 @@ def test_review_with_a_fail_requests_changes() -> None:
 def test_review_with_an_escalate_goes_to_human() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    checks = _all_checks("pass")
-    checks[1] = {"id": checks[1]["id"], "status": "escalate", "reason": "needs a human"}
-    engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
+    _run_review(state, escalate=check_ids()[1])
     assert state.status == "escalated"
     assert state.owner == "human"
     esc = state.escalation
     assert esc is not None
-    assert esc["check"] == checks[1]["id"]
+    assert esc["check"] == check_ids()[1]
 
 
-def test_review_rejects_unknown_check_id() -> None:
+def test_apply_check_rejects_unknown_check_id() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    checks = [*_all_checks("pass"), {"id": "made-up", "status": "pass"}]
     with pytest.raises(WorkflowError, match="unknown check"):
-        engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
+        engine.apply_check(
+            state,
+            check_id="made-up",
+            status="pass",
+            findings=None,
+            reason=None,
+            head_sha="h1",
+            now=_NOW,
+        )
 
 
-def test_review_rejects_missing_check() -> None:
+def test_apply_check_rejects_invalid_status() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    checks = _all_checks("pass")[:-1]  # drop one
-    with pytest.raises(WorkflowError, match="missing checks"):
-        engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
+    with pytest.raises(WorkflowError, match="invalid status"):
+        engine.apply_check(
+            state,
+            check_id=check_ids()[0],
+            status="bogus",
+            findings=None,
+            reason=None,
+            head_sha="h1",
+            now=_NOW,
+        )
+
+
+def test_apply_check_rejects_out_of_turn() -> None:
+    state = _paired_owned_by_user()  # owner user, not audit
+    with pytest.raises(WorkflowError, match="out-of-turn"):
+        engine.apply_check(
+            state,
+            check_id=check_ids()[0],
+            status="pass",
+            findings=None,
+            reason=None,
+            head_sha="h1",
+            now=_NOW,
+        )
+
+
+def test_next_pending_check_is_none_once_round_complete() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    _run_review(state)
+    assert engine.next_pending_check(state) is None
 
 
 def test_report_fixes_requires_new_commits() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    engine.apply_review(state, checks=_failing_checks(), head_sha="h1", now=_NOW)
+    _run_review(state, fail=check_ids()[0])  # owner user, last_reviewed h1
     with pytest.raises(WorkflowError, match="no new commits"):
         engine.apply_report_fixes(state, head_sha="h1", note=None, now=_NOW)
 
 
-def test_report_fixes_bumps_round_and_hands_to_audit() -> None:
+def test_report_fixes_bumps_round_and_reopens_all_checks() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    engine.apply_review(state, checks=_failing_checks(), head_sha="h1", now=_NOW)
+    _run_review(state, fail=check_ids()[0])
     engine.apply_report_fixes(state, head_sha="h2", note="addressed", now=_NOW)
     assert state.round == 1
     assert state.owner == "audit"
     assert state.git["head_sha"] == "h2"
+    assert engine.next_pending_check(state) == check_ids()[0]  # all reopen for the new round
 
 
 def test_report_fixes_escalates_when_round_cap_exceeded() -> None:
     state = _paired_owned_by_user()
     _ready(state)
-    engine.apply_review(state, checks=_failing_checks(), head_sha="h1", now=_NOW)
+    _run_review(state, fail=check_ids()[0])
     state.round = 1  # already used the one permitted fix round (max_rounds=1)
     engine.apply_report_fixes(state, head_sha="h2", note=None, now=_NOW, max_rounds=1)
     assert state.round == 2
@@ -192,22 +271,6 @@ def test_resolve_rejected_when_not_escalated() -> None:
     state = _paired_owned_by_user()
     with pytest.raises(WorkflowError, match="not awaiting the human"):
         engine.apply_resolve(state, to_role="user", note=None, now=_NOW)
-
-
-def test_review_rejects_empty_checks() -> None:
-    state = _paired_owned_by_user()
-    _ready(state)
-    with pytest.raises(WorkflowError, match="non-empty"):
-        engine.apply_review(state, checks=[], head_sha="h1", now=_NOW)
-
-
-def test_review_rejects_invalid_check_status() -> None:
-    state = _paired_owned_by_user()
-    _ready(state)
-    checks = _all_checks("pass")
-    checks[0] = {"id": checks[0]["id"], "status": "bogus"}
-    with pytest.raises(WorkflowError, match="invalid status"):
-        engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
 
 
 def test_resolve_rejects_invalid_to_role() -> None:

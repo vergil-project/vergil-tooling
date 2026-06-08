@@ -134,20 +134,30 @@ def cmd_report_fixes(args: argparse.Namespace, transport: LocalFileTransport) ->
     return 0
 
 
-def cmd_submit_review(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+def cmd_submit_check(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = _require_state(transport)
     try:
         payload = json.loads(Path(args.payload).read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise WorkflowError(f"cannot read review payload {args.payload!r}: {exc}") from exc
-    engine.apply_review(
+        raise WorkflowError(f"cannot read check payload {args.payload!r}: {exc}") from exc
+    engine.apply_check(
         state,
-        checks=payload.get("checks"),
+        check_id=payload.get("id"),
+        status=payload.get("status"),
+        findings=payload.get("findings"),
+        reason=payload.get("reason"),
         head_sha=transport.head_sha(),
         now=_now(),
     )
     transport.write(state)
-    _emit({"ok": True, "status": state.status, "owner": state.owner})
+    _emit(
+        {
+            "ok": True,
+            "status": state.status,
+            "owner": state.owner,
+            "pending": engine.next_pending_check(state),
+        }
+    )
     return 0
 
 
@@ -206,9 +216,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_fixes.add_argument("--note", default=None)
     p_fixes.set_defaults(func=cmd_report_fixes)
 
-    p_review = sub.add_parser("submit-review", help="AUDIT: submit the judgment ledger")
-    p_review.add_argument("--payload", required=True, help="Path to a review.v1 JSON file")
-    p_review.set_defaults(func=cmd_submit_review)
+    p_check = sub.add_parser("submit-check", help="AUDIT: submit one check's result")
+    p_check.add_argument("--payload", required=True, help="Path to a check.v1 JSON file")
+    p_check.set_defaults(func=cmd_submit_check)
 
     p_esc = sub.add_parser("escalate", help="Hand control to the human")
     p_esc.add_argument("--as", dest="as_role", required=True, choices=["user", "audit"])
