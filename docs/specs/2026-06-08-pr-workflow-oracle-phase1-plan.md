@@ -724,8 +724,9 @@ def test_report_fixes_escalates_when_round_cap_exceeded() -> None:
     checks[0] = {"id": checks[0]["id"], "status": "fail",
                  "findings": [{"file": "x.py", "line": 1, "severity": "warning", "note": "fix"}]}
     engine.apply_review(state, checks=checks, head_sha="h1", now=_NOW)
+    state.round = 1  # already used the one permitted fix round (max_rounds=1)
     engine.apply_report_fixes(state, head_sha="h2", note=None, now=_NOW, max_rounds=1)
-    assert state.round == 1
+    assert state.round == 2
     assert state.owner == "human"
     assert state.status == "escalated"
     assert "runaway-round cap" in state.escalation["reason"]

@@ -1,0 +1,303 @@
+"""The transport-agnostic state machine.
+
+Pure functions over a WorkflowState: they mutate the passed state in place and
+return it (the oracle loads a fresh state per CLI call, so there is no aliasing
+across calls). All wall-clock and git facts are passed in as arguments, keeping
+every function deterministic and unit-testable.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from vergil_tooling.lib.pr_workflow import registry
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.state import CHECK_STATUSES, MODES, WorkflowState
+
+
+def init_state(
+    *,
+    issue: str,
+    branch: str,
+    base: str,
+    mode: str,
+    head_sha: str,
+    base_sha: str,
+    user_token: str,
+    now: str,
+) -> WorkflowState:
+    """Create a fresh workflow. Paired starts owned by AUDIT (handshake
+    rendezvous); solo starts owned by USER and skips the handshake."""
+    if mode not in MODES:
+        raise WorkflowError(f"invalid mode {mode!r}; must be one of {MODES}")
+    owner = "user" if mode == "solo" else "audit"
+    return WorkflowState(
+        issue=str(issue),
+        branch=branch,
+        base=base,
+        mode=mode,
+        owner=owner,
+        status="implementing",
+        round=0,
+        created_at=now,
+        updated_at=now,
+        participants={
+            "user": {"token": user_token, "present_at": now},
+            "audit": None,
+        },
+        git={"base_sha": base_sha, "head_sha": head_sha, "last_reviewed_sha": None},
+        history=[{"round": 0, "at": now, "actor": "user", "action": "init", "mode": mode}],
+    )
+
+
+def audit_ack(state: WorkflowState, *, issue: str, audit_token: str, now: str) -> WorkflowState:
+    """AUDIT confirms presence: it records its token and hands the turn back to
+    USER. AUDIT is the current owner here, so this is an owner write."""
+    if state.mode == "solo":
+        raise WorkflowError("cannot audit a solo (--no-audit) workflow")
+    if str(issue) != state.issue:
+        msg = (
+            f"issue mismatch: workflow file is for #{state.issue}, "
+            f"you asked to audit #{issue} — are both sessions in the same worktree?"
+        )
+        raise WorkflowError(msg)
+    state.participants["audit"] = {"token": audit_token, "present_at": now}
+    state.owner = "user"
+    state.updated_at = now
+    state.history.append({"round": state.round, "at": now, "actor": "audit", "action": "ack"})
+    return state
+
+
+def _require_owner(state: WorkflowState, role: str) -> None:
+    if state.owner != role:
+        msg = f"out-of-turn: {role} cannot write while owner is {state.owner!r}"
+        raise WorkflowError(msg)
+
+
+def apply_report_ready(
+    state: WorkflowState,
+    *,
+    title: str,
+    summary: str,
+    notes: str,
+    linkage: str,
+    head_sha: str,
+    now: str,
+) -> WorkflowState:
+    """USER's initial done-signal. In paired mode it hands the turn to AUDIT; in
+    solo mode there is no audit, so it goes straight to approved."""
+    _require_owner(state, "user")
+    state.pr_metadata = {"title": title, "summary": summary, "notes": notes, "linkage": linkage}
+    state.git["head_sha"] = head_sha
+    if state.mode == "solo":
+        state.status = "approved"
+        state.owner = "user"
+    else:
+        state.status = "reviewing"
+        state.owner = "audit"
+    state.updated_at = now
+    state.history.append(
+        {"round": state.round, "at": now, "actor": "user", "action": "report-ready", "head_sha": head_sha}
+    )
+    return state
+
+
+def apply_report_fixes(
+    state: WorkflowState,
+    *,
+    head_sha: str,
+    note: str | None,
+    now: str,
+    max_rounds: int = 10,
+) -> WorkflowState:
+    """USER reports it addressed findings. Requires a genuinely new HEAD so an
+    empty round cannot loop. When the new round exceeds ``max_rounds`` the
+    workflow auto-escalates to the human instead of looping forever (the
+    runaway-round cap, spec §9). ``max_rounds`` is supplied by the CLI from
+    ``settings.max_rounds``; the default keeps the engine usable standalone."""
+    _require_owner(state, "user")
+    if head_sha == state.git.get("last_reviewed_sha"):
+        raise WorkflowError("no new commits since the last review; nothing to re-review")
+    state.git["head_sha"] = head_sha
+    state.round += 1
+    state.updated_at = now
+    entry: dict[str, Any] = {
+        "round": state.round, "at": now, "actor": "user", "action": "report-fixes", "head_sha": head_sha,
+    }
+    if note:
+        entry["note"] = note
+    state.history.append(entry)
+    if state.round > max_rounds:
+        state.owner = "human"
+        state.status = "escalated"
+        state.escalation = {
+            "by": "user",
+            "check": None,
+            "reason": f"runaway-round cap reached: round {state.round} exceeds max_rounds={max_rounds}",
+            "raised_at": now,
+        }
+        return state
+    state.status = "reviewing"
+    state.owner = "audit"
+    return state
+
+
+def apply_error(state: WorkflowState, *, by: str, reason: str, now: str) -> WorkflowState:
+    """Record a terminal error (a graceful give-up). The counterpart's wait
+    detects ``state.error`` and stops with a complementary exception (spec §9)."""
+    state.status = "error"
+    state.error = {"by": by, "at": now, "reason": reason}
+    state.updated_at = now
+    state.history.append(
+        {"round": state.round, "at": now, "actor": by, "action": "abort", "reason": reason}
+    )
+    return state
+
+
+def rollup_status(checks: list[dict[str, Any]]) -> str:
+    """Roll a check ledger up to a workflow status: any escalate -> escalated;
+    else any fail -> changes-requested; else approved."""
+    statuses = [c.get("status") for c in checks]
+    if "escalate" in statuses:
+        return "escalated"
+    if "fail" in statuses:
+        return "changes-requested"
+    return "approved"
+
+
+def _validate_review(checks: Any) -> None:
+    if not isinstance(checks, list) or not checks:
+        raise WorkflowError("review payload must contain a non-empty 'checks' list")
+    known = set(registry.check_ids())
+    seen: set[str] = set()
+    for entry in checks:
+        cid = entry.get("id") if isinstance(entry, dict) else None
+        if cid not in known:
+            raise WorkflowError(f"unknown check id {cid!r}; known checks: {sorted(known)}")
+        if entry.get("status") not in CHECK_STATUSES:
+            raise WorkflowError(f"check {cid!r} has invalid status {entry.get('status')!r}")
+        seen.add(cid)
+    missing = known - seen
+    if missing:
+        raise WorkflowError(f"review is missing checks: {sorted(missing)}")
+
+
+def apply_review(
+    state: WorkflowState, *, checks: list[dict[str, Any]], head_sha: str, now: str
+) -> WorkflowState:
+    """AUDIT submits its judgments. The oracle validates, stamps the round onto
+    each check, records the cursor, and rolls up to the next owner/status."""
+    _require_owner(state, "audit")
+    _validate_review(checks)
+    for entry in checks:
+        entry["round"] = state.round
+    state.checks = checks
+    status = rollup_status(checks)
+    state.status = status
+    state.git["last_reviewed_sha"] = head_sha
+    if status == "escalated":
+        state.owner = "human"
+        escalated = next(c for c in checks if c.get("status") == "escalate")
+        state.escalation = {
+            "by": "audit", "check": escalated["id"],
+            "reason": escalated.get("reason", ""), "raised_at": now,
+        }
+    else:
+        state.owner = "user"
+    state.updated_at = now
+    state.history.append(
+        {"round": state.round, "at": now, "actor": "audit", "action": "submit-review", "rollup": status}
+    )
+    return state
+
+
+def apply_escalate(state: WorkflowState, *, by: str, reason: str, now: str) -> WorkflowState:
+    """USER or AUDIT escalates to the human. The escalator must hold the turn."""
+    _require_owner(state, by)
+    state.owner = "human"
+    state.status = "escalated"
+    state.escalation = {"by": by, "reason": reason, "raised_at": now}
+    state.updated_at = now
+    state.history.append(
+        {"round": state.round, "at": now, "actor": by, "action": "escalate", "reason": reason}
+    )
+    return state
+
+
+def apply_resolve(
+    state: WorkflowState, *, to_role: str, note: str | None, now: str
+) -> WorkflowState:
+    """The human hands control back to an agent after an escalation."""
+    if state.owner != "human":
+        raise WorkflowError("cannot resolve: the workflow is not awaiting the human")
+    if to_role not in ("user", "audit"):
+        raise WorkflowError(f"invalid --to {to_role!r}; must be 'user' or 'audit'")
+    state.owner = to_role
+    state.status = "implementing" if to_role == "user" else "reviewing"
+    state.escalation = None
+    state.updated_at = now
+    entry: dict[str, Any] = {
+        "round": state.round, "at": now, "actor": "human", "action": "resolve", "to": to_role,
+    }
+    if note:
+        entry["note"] = note
+    state.history.append(entry)
+    return state
+
+
+def directive_for(state: WorkflowState, role: str) -> dict[str, Any]:
+    """Return the single instruction the given role should act on next, or a
+    DONE marker. Assumes it is already this role's turn (the transport blocks
+    until then)."""
+    if role == "user":
+        return _user_directive(state)
+    if role == "audit":
+        since = state.git.get("last_reviewed_sha")
+        head = state.git["head_sha"]
+        rng = f"{state.base}..{head}"
+        focus = since or state.git["base_sha"]
+        return {
+            "phase": state.phase,
+            "role": "audit",
+            "round": state.round,
+            "do": (
+                f"Review the cumulative delta {rng}; focus on commits since {focus}. "
+                "Run the judgment checks listed below."
+            ),
+            "checks": list(registry.check_ids()),
+            "range": rng,
+            "since": since,
+            "then": {"verb": "submit-review", "schema": "review.v1"},
+        }
+    raise WorkflowError(f"unknown role {role!r}")
+
+
+def _user_directive(state: WorkflowState) -> dict[str, Any]:
+    if state.status == "approved":
+        return {"done": True, "reason": "approved", "next_human_action": "run vrg-submit-pr"}
+    if state.pr_metadata is None:
+        return {
+            "phase": state.phase,
+            "role": "user",
+            "round": state.round,
+            "do": (
+                f"Implement issue #{state.issue} on branch {state.branch}. "
+                "Validate green. Then report PR metadata."
+            ),
+            "then": {"verb": "report-ready", "schema": "pr-metadata.v1"},
+        }
+    if state.status == "changes-requested":
+        findings: list[dict[str, Any]] = []
+        for entry in state.checks:
+            if entry.get("status") == "fail":
+                for finding in entry.get("findings", []):
+                    findings.append({"check": entry["id"], **finding})
+        return {
+            "phase": state.phase,
+            "role": "user",
+            "round": state.round,
+            "do": "Address these findings, commit fixes, validate green, then report.",
+            "findings": findings,
+            "then": {"verb": "report-fixes"},
+        }
+    raise WorkflowError(f"no user directive for status {state.status!r}")
