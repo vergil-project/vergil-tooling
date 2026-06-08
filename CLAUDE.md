@@ -125,13 +125,25 @@ Identity-aware tools (`vrg-git`, `vrg-gh`, `vrg-submit-pr`) read
 `src/vergil_tooling/lib/identity_mode.py`). Agent sessions run as
 `user` or `audit`.
 
+To query the resolved role, use `vrg-whoami` — never infer identity
+from `VRG_IDENTITY_MODE` alone. That env var is only the first of five
+fallback steps (env var → mode file → `app.pem` → `VRG_APP_ID` →
+human); an unset value means "fall through," not "default to human."
+`vrg-whoami --mode` emits a single token for scripting, and
+`vrg-whoami --explain` reports the resolving signal and warns when
+signals disagree.
+
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
 1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
-   and `summary` fields (optional: `linkage`, `notes`). If `linkage`
-   is present it must be `Ref` — GitHub auto-close keywords
-   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues
+   `summary`, and `notes` — all required and non-empty; `read_template`
+   and `write_template` reject a missing or blank field. Multi-line
+   prose must use a YAML literal block (`|`); folded scalars (`>`) are
+   rejected because the minimal parser cannot fold them. `linkage` is
+   optional and defaults to `Ref`; if present it must be `Ref` — GitHub
+   auto-close keywords (`Closes`/`Fixes`/`Resolves`) are banned
+   repo-wide because issues
    stay open until post-merge workflows succeed. Both
    `pr_template.write_template()` and `vrg-submit-pr` reject any
    other value.
@@ -244,6 +256,9 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
+- **`vrg-whoami`** — Canonical identity-mode resolver (`--mode` for a
+  scripting token, `--explain` to report the resolving signal and warn
+  on signal disagreement)
 - **`vrg-container-run`** — Run arbitrary commands inside a dev container
 - **`vrg-container-test`** — Run repo test suite inside a dev container
 

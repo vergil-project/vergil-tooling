@@ -11,9 +11,13 @@ if TYPE_CHECKING:
 
 from vergil_tooling.lib.identity_mode import (
     IdentityMode,
+    Resolution,
+    Signal,
+    SignalReading,
     current_mode,
     is_agent,
     is_human,
+    resolve,
 )
 
 
@@ -134,3 +138,84 @@ class TestIsHuman:
     def test_agent_is_not_human(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         assert is_human() is False
+
+
+def _signal(resolution: Resolution, signal: Signal) -> SignalReading:
+    """Return the reading for ``signal`` from a Resolution."""
+    return next(r for r in resolution.readings if r.signal is signal)
+
+
+class TestResolve:
+    def test_resolved_by_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "audit")
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.AUDIT
+        assert resolution.resolved_by is Signal.ENV_VAR
+
+    def test_resolved_by_mode_file(self, tmp_path: Path) -> None:
+        _write_mode_file(tmp_path, "user\n")
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.USER
+        assert resolution.resolved_by is Signal.MODE_FILE
+
+    def test_resolved_by_app_key(self, tmp_path: Path) -> None:
+        _write_app_key(tmp_path)
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.USER
+        assert resolution.resolved_by is Signal.APP_KEY
+
+    def test_resolved_by_app_id(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_APP_ID", "12345")
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.USER
+        assert resolution.resolved_by is Signal.APP_ID
+
+    def test_resolved_by_default(self) -> None:
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.HUMAN
+        assert resolution.resolved_by is Signal.DEFAULT
+
+    def test_unparseable_env_falls_through_to_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "garbage")
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.HUMAN
+        assert resolution.resolved_by is Signal.DEFAULT
+        env_reading = _signal(resolution, Signal.ENV_VAR)
+        assert env_reading.present is True
+        assert env_reading.implied is None
+
+    def test_readings_record_every_signal(self) -> None:
+        resolution = resolve()
+        seen = {r.signal for r in resolution.readings}
+        assert seen == {Signal.ENV_VAR, Signal.MODE_FILE, Signal.APP_KEY, Signal.APP_ID}
+
+
+class TestResolveDisagreement:
+    def test_agreeing_signals_do_not_disagree(self, tmp_path: Path) -> None:
+        # mode file and app.pem both imply USER — consistent.
+        _write_mode_file(tmp_path, "user\n")
+        _write_app_key(tmp_path)
+        assert resolve().disagreement is False
+
+    def test_env_human_vs_app_key_user_disagrees(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "human")
+        _write_app_key(tmp_path)
+        resolution = resolve()
+        assert resolution.mode == IdentityMode.HUMAN  # env still wins
+        assert resolution.resolved_by is Signal.ENV_VAR
+        assert resolution.disagreement is True
+
+    def test_env_user_vs_mode_file_audit_disagrees(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        _write_mode_file(tmp_path, "audit\n")
+        assert resolve().disagreement is True
+
+    def test_single_signal_does_not_disagree(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        assert resolve().disagreement is False

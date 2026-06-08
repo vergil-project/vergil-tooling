@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.18] - 2026-06-08
+
+### Bug fixes
+
+- stop wrapped lines from overflowing the live viewport (#1518)
+- require forking on org repos; clear error on org fork denial (#1524)
+- require non-empty issue/title/summary/notes; reject folded scalars (#1525)
+
+### Documentation
+
+- add forge abstraction strategy (Forgejo/Codeberg) (#1522)
+
+### Features
+
+- add vrg-whoami identity-mode resolver CLI (#1526)
+
 ## [2.1.17] - 2026-06-08
 
 ### Bug fixes

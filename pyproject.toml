@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.17"
+version = "2.1.18"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -52,6 +52,7 @@ vrg-validate = "vergil_tooling.bin.vrg_validate:main"
 vrg-version = "vergil_tooling.bin.vrg_version:main"
 vrg-version-divergence = "vergil_tooling.bin.vrg_version_divergence:main"
 vrg-wait-until-green = "vergil_tooling.bin.vrg_wait_until_green:main"
+vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
