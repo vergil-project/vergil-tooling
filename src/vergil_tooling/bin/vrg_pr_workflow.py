@@ -1,8 +1,8 @@
 """Drive the local pre-PR workflow: the oracle CLI.
 
-Both agent skills reduce to ``vrg-pr-workflow next --as <role>``; the directive
-names the report verb to call next. The oracle owns every write, snapshots git
-itself, and blocks until it is the caller's turn. See
+Both agent skills reduce to ``vrg-pr-workflow next`` (role resolved from
+``vrg-whoami``); the directive names the report verb to call next. The oracle owns
+every write, snapshots git itself, and blocks until it is the caller's turn. See
 docs/specs/2026-06-08-pr-workflow-oracle-design.md.
 """
 
@@ -82,7 +82,7 @@ def _next_user(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = transport.read()
     if state is None:
         if not args.issue:
-            raise WorkflowError("the first `next --as user` must pass --issue to initialize")
+            raise WorkflowError("the first `next` (as USER) must pass --issue to initialize")
         mode = "solo" if args.no_audit else "paired"
         state = engine.init_state(
             issue=args.issue,
@@ -118,9 +118,12 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
             {"done": True, "reason": "solo", "note": "workflow running --no-audit; nothing to do"}
         )
         return 0
+    if state.status == "approved":
+        _emit({"done": True, "reason": "approved", "note": "review complete; the USER will submit"})
+        return 0
     if state.participants.get("audit") is None:
         if not args.issue:
-            raise WorkflowError("the first `next --as audit` must pass --issue")
+            raise WorkflowError("the first `next` (as AUDIT) must pass --issue")
         engine.audit_ack(state, issue=args.issue, audit_token=_token("a"), now=_now())
         transport.write(state)
     state = transport.wait_until_owner("audit", timeout=_LONG_TIMEOUT)

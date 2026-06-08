@@ -244,6 +244,17 @@ def test_audit_next_without_issue_errors(
     assert "must pass --issue" in capsys.readouterr().err
 
 
+def test_audit_next_is_done_when_approved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    _seed(repo, owner="user", status="approved")
+    assert _run(monkeypatch, repo, "next", identity="audit") == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["done"] is True
+    assert out["reason"] == "approved"
+
+
 def test_console_entry_point_runs_as_subprocess(tmp_path: Path) -> None:
     # Smoke test that the installed module entry point works end-to-end (not
     # counted toward coverage, which is measured in-process above).
