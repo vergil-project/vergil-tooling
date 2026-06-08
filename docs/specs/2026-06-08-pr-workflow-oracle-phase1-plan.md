@@ -2153,9 +2153,10 @@ class FakeTransport(Transport):
         return self.state
 
     def write(self, state: WorkflowState) -> None:
-        snapshot = WorkflowState.from_json(state.to_json())
-        self.state = snapshot
-        self.writes.append(snapshot)
+        # Independent copies: the writes log is a historical record that later
+        # in-place mutations of self.state must not retroactively alter.
+        self.state = WorkflowState.from_json(state.to_json())
+        self.writes.append(WorkflowState.from_json(state.to_json()))
 
     def wait_until_present(self, *, timeout: float) -> WorkflowState:
         assert self.state is not None
