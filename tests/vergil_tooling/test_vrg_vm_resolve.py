@@ -370,7 +370,8 @@ def test_resolve_resume(
 ) -> None:
     monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
     assert _resolve("id", "p") == 0
-    assert capture_exec == [["claude", "--resume", "s1"]]
+    # -n is re-asserted on resume so Claude restores the prompt-box title.
+    assert capture_exec == [["claude", "--resume", "s1", "-n", "id:01:p"]]
     assert "Resuming session id:01:p" in capsys.readouterr().err
 
 
@@ -426,7 +427,7 @@ def test_resolve_warn_prompt_resume(
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
     assert _resolve("vergil", "p") == 0
-    assert capture_exec == [["claude", "--resume", "s1"]]
+    assert capture_exec == [["claude", "--resume", "s1", "-n", "vergil:01:p"]]
     assert "Resuming session vergil:01:p" in capsys.readouterr().err
 
 
@@ -692,7 +693,8 @@ def test_resolve_resumes_session_under_current_slug(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
 ) -> None:
     # Regression guard: a session whose transcript lives under the current cwd's
-    # slug is still resumable after scoping.
+    # slug is still resumable after scoping. Its name lives in a legacy
+    # ``agent-name`` event, so resume must re-assert -n to restore the title.
     claude = tmp_path / ".claude"
     projects = claude / "projects"
     (projects / "-work-tool").mkdir(parents=True)
@@ -703,4 +705,4 @@ def test_resolve_resumes_session_under_current_slug(
     monkeypatch.setattr(r, "_claude_dir", lambda: claude)
     monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
     assert _resolve("id", "tool") == 0
-    assert capture_exec == [["claude", "--resume", "good"]]
+    assert capture_exec == [["claude", "--resume", "good", "-n", "id:01:tool"]]
