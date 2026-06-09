@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.20] - 2026-06-09
+
+### Bug fixes
+
+- size sessions WORKSPACE column to longest path (#1542)
+- accept --identity/--config in any argument position (#1546)
+- re-assert -n on session resume so Claude restores the prompt-box title (#1548)
+
 ## [2.1.19] - 2026-06-08
 
 ### Bug fixes
