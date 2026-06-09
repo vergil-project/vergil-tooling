@@ -1,8 +1,24 @@
-# Design: `vrg-worktree-status`
+# Design: worktree hygiene — status command + squash-merge-aware finalize sweep
 
 - **Issue:** [#1552](https://github.com/vergil-project/vergil-tooling/issues/1552)
 - **Date:** 2026-06-09
 - **Status:** Approved (brainstorm)
+
+## Overview
+
+Two coupled deliverables addressing worktree hygiene:
+
+1. **`vrg-worktree-status`** — a read-only command that lists every
+   canonical `.worktrees/` worktree with its derived lifecycle state,
+   so removable cruft is visible at a glance.
+2. **Squash-merge-aware `vrg-finalize-pr` straggler sweep** — fixes the
+   structural bug that orphaned the cruft in the first place: the
+   sweep's candidate set comes from `git branch --merged`, which is
+   blind to squash-merged branches.
+
+They share one source of truth — `classify_worktree` — so what status
+*flags* as cruft and what finalize *removes* are computed by the same
+pure function.
 
 ## Purpose
 
@@ -19,10 +35,10 @@ work.
 
 ## Non-goals
 
-- **Not a cleanup tool.** Status observes; `vrg-finalize-pr` acts.
-  There is no `--prune`/`--clean`. This keeps a single home for
-  worktree removal (and for the squash-merge-aware logic being fixed
-  there separately).
+- **`vrg-worktree-status` is not a cleanup tool.** Status observes;
+  `vrg-finalize-pr` acts. There is no `--prune`/`--clean` on the status
+  command — worktree removal stays in one home (the finalize sweep,
+  fixed below).
 - No `--json`, no non-zero exit on cruft, no offline/`--no-remote`
   fast path in v1. Each is easy to add later if a concrete need
   appears (YAGNI).
@@ -116,11 +132,83 @@ issue-1470-finalize-tty-stream    feature/1470-finalize-tty-stream  #1471  merge
 
 Always exits 0.
 
+## Fix: squash-merge-aware `vrg-finalize-pr` straggler sweep
+
+### The bug
+
+`_stage_cleanup` in `bin/vrg_finalize_pr.py` enumerates straggler
+candidates with `git.merged_branches(target)` — i.e.
+`git branch --merged develop`. A squash merge rewrites the branch's
+work onto the target as a single new commit, so the feature-branch tip
+is never an ancestor of the target and `git branch --merged` never
+lists it. Squash is the default feature-PR strategy, so the sweep is
+blind to the common case. The only branch ever cleaned is the explicit
+just-merged PR branch (`ctx.merged_branch`), which is set only by the
+`merge` stage — so PRs merged outside `vrg-finalize-pr <PR>` (web/`gh`
+merge, or the release `--cleanup-only` path) leave their worktree and
+branch orphaned, and no later finalize run sweeps them up.
+
+The bug is the **candidate set**, not the guard.
+`github.closed_pr_for_branch` already returns merged *or* closed PRs
+and is exactly the right merge-evidence test — it just never sees
+squash-merged branches.
+
+### The change
+
+Widen the candidate set to the **union** of:
+
+1. ancestry-merged branches (`git branch --merged` — existing; catches
+   merge-commit/rebase merges and branches whose worktree is already
+   gone), and
+2. branches checked out in canonical `.worktrees/` worktrees
+   (`worktrees.list_worktrees` — new; catches squash-merged worktree
+   branches),
+
+deduped. Every candidate passes through the **existing, unchanged
+guards**:
+
+- **eternal-branch guard** — never touch `develop`/`main`/etc.
+- **zero-commit guard** — tip == target → skip (in-flight/just-created
+  branch with no work).
+- **PR-merge-evidence guard** — `closed_pr_for_branch` is None → skip
+  (no merged/closed PR yet: open-PR or no-PR branches).
+- **dirty guard** (in `_delete_branch_and_worktree`) — uncommitted
+  changes → skip.
+
+This only *widens what is considered*, never *loosens what is
+deleted*: the guards that decide removal are untouched, including the
+parallel-agent race guards from #1445.
+
+### Shared removability decision
+
+The worktree-branch arm of the sweep consumes `classify_worktree`
+(the same pure function backing `vrg-worktree-status`) to decide
+removability: a worktree is swept only when its state is `merged` or
+`closed` and it is not dirty. This guarantees `vrg-worktree-status`'s
+"cruft" verdict and `vrg-finalize-pr`'s removal set are identical by
+construction. The non-worktree ancestry arm keeps its current
+guard-based path (there is no worktree to classify).
+
+### Safety check against today's state
+
+Applied to the 10 current worktrees, the guards keep all live work:
+#1534 and #1547 (open PRs → no closed/merged PR → skipped), #1543 (no
+PR → skipped). Only the 7 with merged PRs, commits ahead, and clean
+trees are swept. The 7 stragglers are intentionally being left in
+place as a live integration test: after this fix ships, the next
+`vrg-finalize-pr` run should clean exactly those 7 and nothing else.
+
 ## Testing
 
 - **Unit** (`classify_worktree`): one case per state, the
   `dirty` overlay on a `merged` worktree, and the
   `pr_lookup_failed` → `unknown` path. These need no git/gh.
-- **Integration** (best effort): drive the bin against a temporary
-  repo with a couple of synthetic worktrees to cover signal gathering
-  and rendering; otherwise covered manually.
+- **Unit** (sweep candidate set): the union/dedup of ancestry-merged
+  and worktree branches, and that each guard (eternal, zero-commit,
+  no-merge-evidence, dirty) excludes the right candidates — using
+  fakes for the git/gh boundaries.
+- **Integration** (best effort): drive `vrg-worktree-status` against a
+  temporary repo with synthetic worktrees to cover signal gathering
+  and rendering; otherwise covered manually. The end-to-end finalize
+  behavior is covered by the live 7-straggler integration test
+  described above.
