@@ -9,11 +9,13 @@ them would surprise the user. Issue #315.
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.repo_init import prompt_choice
 
 
@@ -23,6 +25,124 @@ class Worktree:
 
     path: Path
     branch: str
+
+
+class WorktreeState(StrEnum):
+    """Lifecycle state of a canonical worktree, derived from PR + local signals."""
+
+    OPEN_PR = "open-pr"
+    NO_PR = "no-pr"
+    DRAFT = "draft"
+    MERGED = "merged"
+    CLOSED = "closed"
+    UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class WorktreeStatus:
+    """A worktree's derived lifecycle state and the signals behind it."""
+
+    worktree: Worktree
+    state: WorktreeState
+    pr_number: int | None
+    ahead: int
+    dirty: bool
+    detail: str | None = None
+
+    @property
+    def removable(self) -> bool:
+        """True when the worktree is finished cruft safe to delete.
+
+        Merged or closed PRs are removable — unless the tree is dirty,
+        in which case there is uncommitted work to rescue first.
+        """
+        return self.state in (WorktreeState.MERGED, WorktreeState.CLOSED) and not self.dirty
+
+
+def classify_worktree(
+    worktree: Worktree,
+    *,
+    pr_number: int | None,
+    pr_state: str | None,
+    pr_lookup_failed: bool,
+    ahead: int,
+    dirty: bool,
+    detail: str | None = None,
+) -> WorktreeStatus:
+    """Map already-gathered signals to a WorktreeStatus. Pure: no I/O.
+
+    A failed PR lookup yields UNKNOWN with *detail* — never a silent
+    downgrade to NO_PR, which would mislabel real work as stalled.
+    """
+    if pr_lookup_failed:
+        state = WorktreeState.UNKNOWN
+    elif pr_state == "OPEN":
+        state = WorktreeState.OPEN_PR
+    elif pr_state == "MERGED":
+        state = WorktreeState.MERGED
+    elif pr_state == "CLOSED":
+        state = WorktreeState.CLOSED
+    elif ahead > 0:
+        state = WorktreeState.NO_PR
+    else:
+        state = WorktreeState.DRAFT
+    return WorktreeStatus(
+        worktree=worktree,
+        state=state,
+        pr_number=pr_number,
+        ahead=ahead,
+        dirty=dirty,
+        detail=detail,
+    )
+
+
+def _resolve_pr_state(branch: str) -> tuple[int | None, str | None]:
+    """Resolve ``(pr_number, pr_state)`` for *branch*.
+
+    An open PR wins; otherwise the most recent closed/merged PR (whose
+    ``MERGED`` vs ``CLOSED`` state is read explicitly); otherwise
+    ``(None, None)`` for a branch with no PR.
+    """
+    open_pr = github.pr_for_branch(branch)
+    if open_pr is not None:
+        return int(open_pr["number"]), "OPEN"
+    closed = github.closed_pr_for_branch(branch)
+    if closed is not None:
+        return int(closed["number"]), github.pr_state(closed["number"])
+    return None, None
+
+
+def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus:
+    """Gather local + remote signals for *worktree* and classify it.
+
+    The single source of truth shared by ``vrg-worktree-status`` and the
+    ``vrg-finalize-pr`` straggler sweep. A failed ``gh`` PR lookup is
+    surfaced as ``UNKNOWN`` with the captured reason — never a silent
+    failure that would misclassify the worktree.
+    """
+    ahead = git.commits_ahead(target, worktree.branch)
+    dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
+    try:
+        pr_number, pr_state = _resolve_pr_state(worktree.branch)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or str(exc)).strip()
+        return classify_worktree(
+            worktree,
+            pr_number=None,
+            pr_state=None,
+            pr_lookup_failed=True,
+            ahead=ahead,
+            dirty=dirty,
+            detail=detail,
+        )
+    return classify_worktree(
+        worktree,
+        pr_number=pr_number,
+        pr_state=pr_state,
+        pr_lookup_failed=False,
+        ahead=ahead,
+        dirty=dirty,
+    )
 
 
 def list_worktrees(repo_root: Path) -> list[Worktree]:

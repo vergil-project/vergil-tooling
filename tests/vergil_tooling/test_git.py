@@ -272,3 +272,9 @@ class TestReadOutputRemoteCredentialInjection:
             git.read_output(subcmd)
         _, kwargs = mock_run.call_args
         assert "env" not in kwargs or kwargs.get("env") is None
+
+
+def test_commits_ahead_parses_rev_list_count() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="3") as ro:
+        assert git.commits_ahead("develop", "feature/x") == 3
+    ro.assert_called_once_with("rev-list", "--count", "develop..feature/x")
