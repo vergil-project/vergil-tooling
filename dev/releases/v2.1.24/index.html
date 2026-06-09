@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.3/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.1/">
+        <link rel="next" href="../v2.1.23/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.2 - VERGIL Tooling</title>
+        <title>2.1.24 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-212-2026-06-04" class="md-skip">
+        <a href="#release-2124-2026-06-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.2
+              2.1.24
             
           </span>
         </div>
@@ -918,10 +918,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.24/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.24
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -937,6 +964,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1534,37 +1592,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.2
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.2/" class="md-nav__link">
         
   
   
@@ -1580,48 +1611,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -7999,21 +7988,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -8037,77 +8015,25 @@
 
 
 
-<h1 id="release-212-2026-06-04">Release 2.1.2 (2026-06-04)<a class="headerlink" href="#release-212-2026-06-04" title="Permanent link">&para;</a></h1>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<h1 id="release-2124-2026-06-09">Release 2.1.24 (2026-06-09)<a class="headerlink" href="#release-2124-2026-06-09" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>normalize identities.toml keys to vergil-<role> (#1370)</strong>
-Identity keys become vergil-user/vergil-audit so the key equals the vm_instance base. App credential names (<username>-vergil-<role>), vm_instance values, and VRG_IDENTITY_MODE role values are unchanged. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>document list observability columns (#1370)</strong>
-list --help defines AGENTS (harness instances) vs HUMANS (open human-held interactive shells; a count of shells, not people) and the SPEC states (ok/NEEDS-REBUILD/not-created/orphaned/under). Tracks vergil-vm#99.</p>
-</li>
+<li><strong>patient, heartbeating handshake waits; audit acks from state (#1573)</strong></li>
+<li>fix(pr-workflow): make the agent handshake waits patient and heartbeating (#1572)</li>
 </ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<p>The audit's bootstrap wait used a 30s timeout, so it failed before the implement session was ready; and a long silent block reads as a hang. Make all agent-to-agent waits use the long timeout and emit a periodic stderr heartbeat naming what they wait on, so the watching human sees the loop is alive (transparency is the oversight model). Threads an optional waiting_for through the Transport ABC and the local transport.</p>
 <ul>
-<li>
-<p><strong>parse repo [vm] cascade in vergil.toml (#1370)</strong>
-Add VmStanza/RoleOverlay and parse_vm_stanza for the [vm] + [vm.<role>] cascade; allow the [vm] section in the config allow-list with key validation delegated to the stanza parser. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>parse nested host-override tables in identities.toml (#1370)</strong>
-Identity gains an overrides map keyed by (org, repo), populated from nested [identities.<id>.<org>.<repo>] tables; org-level scalars and scalar identity fields are skipped. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add compose_vm_spec five-tier overlay (#1370)</strong>
-ComposedSpec + compose_vm_spec overlay base -&gt; repo [vm] -&gt; [vm.<role>] -&gt; host override; packages union, scalars last-wins. The under flag measures a host override against the REPO-declared floor (tiers 3+4), not the base, so overriding below base on a repo with no [vm] is not flagged. Shared _apply_overlay helper. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add reversible -- instance-name codec (#1370)</strong>
-instance_name/parse_instance_name use -- as the tier delimiter so identity/org/repo round-trip exactly; bare identity denotes the base box. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add composed-spec fingerprint (#1370)</strong>
-spec_fingerprint hashes the declaration (footprint + sorted package set + provision-hook content hash, path fallback + stale_days), excluding derived under/dedicated; order-independent for packages. Drives the rebuild/drift gate. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>thread profile packages/hook/fingerprint into create_vm (#1370)</strong>
-create_vm gains packages/provision_hook/fingerprint kwargs, passed to the template via --set=.param.*; base creates (params None) emit no extra --set, keeping behaviour unchanged. Tests mock Path.home to avoid host-dir side effects. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add fingerprint read + drift status (#1370)</strong>
-read_fingerprint reads /etc/vergil/vm-spec.fingerprint (None when absent or empty); vm_spec_status compares against the expected composed fingerprint -&gt; ok | needs-rebuild. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add _resolve_target base-vs-dedicated resolution (#1370)</strong>
-VergilConfig.vm surfaces the parsed [vm] stanza. _resolve_target: no workspace -&gt; base VM; a spec'd repo -&gt; dedicated instance with composed footprint, packages, provision hook (content-hashed into the fingerprint), and instance name. A repo without vergil.toml resolves to base. Per-command CLI positionals land with their command wiring in later tasks. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>build dedicated VMs from the composed spec (#1370)</strong>
-create/rebuild route through _resolve_target and a shared _create_from_target: dedicated boxes pass composed footprint + packages + provision hook + fingerprint; the base path is unchanged. create/rebuild accept the <org>/<repo> positional. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add session/start abort gate, tunable staleness, under-warning (#1370)</strong>
-session/start preflight a dedicated target: missing -&gt; abort with create; drift -&gt; abort with rebuild; below-declared host override -&gt; loud warning (sovereign, not blocked). Staleness uses the composed stale_days. _workspace_org_repo keeps the 1-level/'.' session convention on base while exact org/repo drives dedicated. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>route stop/restart/destroy/update through the resolved instance (#1370)</strong>
-All lifecycle commands accept the optional <org>/<repo> positional. _resolve_instance names the dedicated instance directly (no vergil.toml read), so an orphaned VM whose repo dropped its [vm] is still reachable by destroy. Subsumes Plan 3 Task 4. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>add process-tree AGENTS/HUMANS occupancy (#1370)</strong>
-vm_occupancy runs an in-VM classifier that walks each logind user tty/pty session's subtree for claude, counting agent vs human sessions directly (no subtraction); returns (0,0) on failure. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>discover dedicated VMs and orphans (#1370)</strong>
-discover_dedicated reconciles <identity>--* instances with spec-bearing repos under projects_dir: present / orphaned (instance without a usable spec) / not-created (spec without instance). Uses read_config's directory signature. Tracks vergil-vm#99.</p>
-</li>
-<li>
-<p><strong>rewrite list with footprint, occupancy, and SPEC columns (#1370)</strong>
-Default list view shows IDENTITY/SCOPE/STATUS/CPUS/MEM/DISK/AGENTS/HUMANS/SPEC: composed footprint, process-tree occupancy for running VMs, and SPEC states ok/NEEDS-REBUILD/not-created/orphaned plus the under flag. Shared _with_provision_hash means the drift check content-hashes the hook the same way the build did, so hooked repos do not falsely read NEEDS-REBUILD. --sessions unchanged. Tracks vergil-vm#99.</p>
-</li>
+<li>fix(pr-workflow): let the audit ack from state so it needs no issue number (#1572)</li>
 </ul>
+<p>The audit is launched against the worktree path the implement session hands off, so it should not require --issue. Take the issue from the workflow state when --issue is omitted; update the e2e test to assert the audit acks and gets a review directive rather than erroring.</p>
+<ul>
+<li>test(pr-workflow): stop the suite sleeping/hanging on real-time waits (#1572)</li>
+</ul>
+<p>The oracle's poll interval (1s) and patient timeout (24h) are now env-overridable and read at call time; a pr_workflow conftest fixture sets a 0 poll and a short timeout so CLI-driven waits never sleep on real time. Previously any test that hit a wait which did not resolve on the first read blocked for the timeout — seconds each, or an effective hang under the patient timeout — pushing the suite past 30 minutes. The full suite now runs in ~4.5s. Also reseed the audit-next-without-issue e2e test so its wait resolves, and cover the ack-from-state path at the orchestration level.</p>
+<ul>
+<li>chore(pr-workflow): remove scratch timing files accidentally committed (#1572)</li>
+</ul>
+<p>Drop .dur.txt and .prw.txt, throwaway pytest-timing captures that should never have been staged.</p>
 
 
 
