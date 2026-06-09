@@ -132,9 +132,12 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
         _emit({"done": True, "reason": "approved", "note": "review complete; the USER will submit"})
         return 0
     if state.participants.get("audit") is None:
-        if not args.issue:
-            raise WorkflowError("the first `next` (as AUDIT) must pass --issue")
-        engine.audit_ack(state, issue=args.issue, audit_token=_token("a"), now=_now())
+        # The audit is launched against the worktree (it cd's into the path the
+        # implement session handed off), so it need not know the issue number —
+        # take it from the state when --issue is omitted (issue #1572).
+        engine.audit_ack(
+            state, issue=args.issue or state.issue, audit_token=_token("a"), now=_now()
+        )
         transport.write(state)
     state = transport.wait_until_owner(
         "audit", timeout=_LONG_TIMEOUT, waiting_for="the user to report ready (your review turn)"

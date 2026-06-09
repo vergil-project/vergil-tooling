@@ -278,13 +278,15 @@ def test_verb_without_workflow_errors(
     assert "no workflow file" in capsys.readouterr().err
 
 
-def test_audit_next_without_issue_errors(
+def test_audit_next_without_issue_acks_from_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
+    """The audit is launched against the worktree (no issue number needed); it
+    acks using the issue recorded in the state (issue #1572)."""
     repo = _init_repo(tmp_path)
     _seed(repo, owner="audit", status="reviewing")
-    assert _run(monkeypatch, repo, "next", identity="audit") == 1
-    assert "must pass --issue" in capsys.readouterr().err
+    assert _run(monkeypatch, repo, "next", identity="audit") == 0
+    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-check"
 
 
 def test_audit_next_is_done_when_approved(
