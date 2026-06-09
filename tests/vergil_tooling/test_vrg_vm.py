@@ -80,6 +80,27 @@ def config_file_model(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
+def config_file_two(tmp_path: Path) -> Path:
+    """Two identities so identity-selection tests can assert a non-default choice."""
+    p = tmp_path / "identities-two.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+
+        [identities.audit]
+        vm_instance = "audit-agent"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    return p
+
+
+@pytest.fixture()
 def config_file_top_model(tmp_path: Path) -> Path:
     p = tmp_path / "identities-top-model.toml"
     p.write_text(
@@ -476,6 +497,17 @@ class TestStop:
         assert result == 0
         mock_stop.assert_called_once_with("vergil-agent")
 
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    def test_global_identity_and_config_before_subcommand(
+        self, mock_stop: MagicMock, config_file_two: Path
+    ) -> None:
+        # --identity/--config are accepted globally (before the subcommand) for
+        # every verb, not just session — and the global value is honored, not
+        # clobbered by the subparser's default.
+        result = main(["--identity", "audit", "--config", str(config_file_two), "stop"])
+        assert result == 0
+        mock_stop.assert_called_once_with("audit-agent")
+
 
 class TestRestart:
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -814,6 +846,62 @@ class TestList:
         result = main(["list", "--sessions", "--config", str(config_file)])
         assert result == 0
         mock_shell.assert_not_called()
+
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=1700000000.0)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_workspace_column_fits_long_paths(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        _age: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A workspace longer than the historical 36-char column must render in
+        # full and must not shove STATE / LAST ACTIVE out of alignment.
+        long_path = "logical-minds-foundry/mq-cluster-tooling"  # 40 chars
+        assert len(long_path) > 36
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {
+                        "identity": "vergil",
+                        "slot": 1,
+                        "path": "vergil-project/vm",
+                        "sessionId": "s1",
+                        "state": "active",
+                        "lastActive": 1748000000.0,
+                    },
+                    {
+                        "identity": "vergil-user",
+                        "slot": 1,
+                        "path": long_path,
+                        "sessionId": "s2",
+                        "state": "idle",
+                        "lastActive": 1748000000.0,
+                    },
+                ]
+            )
+        )
+        mock_names.return_value = {
+            "s1": "vergil:01:vergil-project/vm",
+            "s2": "vergil-user:01:" + long_path,
+        }
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        out = capsys.readouterr().out
+        lines = [line for line in out.splitlines() if line.strip()]
+        header = lines[0]
+        state_col = header.index("STATE")
+        # The full long path is rendered, never truncated.
+        assert long_path in out
+        # STATE begins at the same offset on every data row (header + divider
+        # are lines[0] and lines[1]; data rows follow).
+        for row in lines[2:]:
+            assert row[state_col:].startswith(("active", "idle"))
 
 
 class TestUpdate:
@@ -1278,6 +1366,100 @@ class TestSession:
         inner = self._inner(mock_exec)
         assert "exec bash" in inner
         assert "vrg-vm-resolve-session" not in inner
+
+    def test_session_identity_after_workspace(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # Regression: --identity placed AFTER the workspace positional used to be
+        # swallowed by the REMAINDER `cmd` and handed to the guest shell as a raw
+        # `exec --identity ...`. It must now parse as the option.
+        main(["session", "--config", str(config_file_two), "vergil-tooling", "--identity", "audit"])
+        cmd = mock_exec.call_args[0][1]
+        assert "audit-agent" in cmd
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session --identity audit" in inner
+        assert "exec --identity" not in inner
+
+    def test_session_identity_before_subcommand(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # --identity placed BEFORE the subcommand (global) is honored.
+        main(["--identity", "audit", "session", "--config", str(config_file_two), "vergil-tooling"])
+        assert "audit-agent" in mock_exec.call_args[0][1]
+
+    def test_session_identity_between_subcommand_and_workspace(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # The historically-only-accepted slot must keep working.
+        main(["session", "--identity", "audit", "--config", str(config_file_two), "vergil-tooling"])
+        assert "audit-agent" in mock_exec.call_args[0][1]
+
+    def test_session_passthrough_unknown_flag_after_dashdash(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # Arbitrary claude flags pass through when placed after '--', regardless
+        # of leading dashes (nargs="*" captures everything past the separator).
+        main(
+            [
+                "session",
+                "--config",
+                str(config_file),
+                "vergil-tooling",
+                "--",
+                "claude",
+                "--dangerously-skip-permissions",
+            ]
+        )
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session" in inner
+        assert "-- --dangerously-skip-permissions" in inner
+
+    def test_session_unknown_flag_without_dashdash_errors(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        _exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # Without '--', an unknown flag is a clear argparse error rather than being
+        # silently swallowed and mis-executed (the old REMAINDER failure mode).
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "session",
+                    "--config",
+                    str(config_file),
+                    "vergil-tooling",
+                    "claude",
+                    "--dangerously-skip-permissions",
+                ]
+            )
 
     def test_session_slot_passed_to_resolver(
         self,
