@@ -27,7 +27,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
 )
 from vergil_tooling.lib.pr_merge import MergeAbortError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
-from vergil_tooling.lib.worktrees import Worktree
+from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
 _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 
@@ -826,6 +826,9 @@ def _cleanup_path_mocks(root: Path) -> Iterator[None]:
     """Neutralize the post-merge cleanup path for inference-focused tests.
 
     Keeps main() off real git/config/gh calls after the part under test.
+    The worktree-arm sweep (issue #1552) classifies each inferred worktree,
+    so gather_worktree_status is stubbed to a non-removable verdict here —
+    these tests cover inference, not cleanup deletion.
     """
     with (
         patch(_MOD + ".git.repo_root", return_value=root),
@@ -834,6 +837,16 @@ def _cleanup_path_mocks(root: Path) -> Iterator[None]:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value=""),
+        patch(
+            _MOD + ".worktrees.gather_worktree_status",
+            return_value=WorktreeStatus(
+                worktree=Worktree(path=root, branch="x"),
+                state=WorktreeState.OPEN_PR,
+                pr_number=None,
+                ahead=0,
+                dirty=False,
+            ),
+        ),
     ):
         yield
 
@@ -939,8 +952,11 @@ def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
 
 
 def test_explicit_pr_skips_inference_and_prompts(tmp_path: Path) -> None:
+    # list_worktrees is now also called by the cleanup sweep (issue #1552),
+    # so it is no longer an inference-only signal; the no-prompt + provenance
+    # assertions prove inference was skipped. Empty list → worktree arm no-op.
     with (
-        patch(_MOD + ".worktrees.list_worktrees") as listing,
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
         patch(_MOD + ".prompt_yes_no") as confirm,
         patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
@@ -953,7 +969,6 @@ def test_explicit_pr_skips_inference_and_prompts(tmp_path: Path) -> None:
     ):
         rc = main(["123", "--dry-run"])
     assert rc == 0
-    listing.assert_not_called()
     confirm.assert_not_called()
     fin.assert_called_once()
 
@@ -983,10 +998,11 @@ def test_cleanup_only_rejects_pr_argument(
 
 def test_cleanup_only_skips_inference_and_prompts(tmp_path: Path) -> None:
     """--cleanup-only is the scriptable release path: no TTY guard, no
-    worktree enumeration, no prompts, no merge — straight to cleanup."""
+    prompts, no merge — straight to cleanup. (The cleanup sweep itself
+    enumerates worktrees; inference does not run.)"""
     with (
         patch(_MOD + ".worktrees.require_tty") as guard,
-        patch(_MOD + ".worktrees.list_worktrees") as listing,
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
         patch(_MOD + ".prompt_yes_no") as confirm,
         patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
@@ -997,7 +1013,6 @@ def test_cleanup_only_skips_inference_and_prompts(tmp_path: Path) -> None:
         rc = main(["--cleanup-only", "--dry-run"])
     assert rc == 0
     guard.assert_not_called()
-    listing.assert_not_called()
     confirm.assert_not_called()
     fin.assert_not_called()
 
@@ -1409,3 +1424,52 @@ def test_stage_cd_check_dry_run_skips(tmp_path: Path) -> None:
     with patch(_MOD + "._check_cd_workflow_status") as check:
         _stage_cd_check(ctx)
     check.assert_not_called()
+
+
+# -- squash-merge-aware straggler sweep (issue #1552) ------------------------
+
+
+def test_sweep_removes_squash_merged_worktree_branch(tmp_path: Path) -> None:
+    """A squash-merged branch is invisible to `git branch --merged`, so the
+    worktree arm must sweep it via its classify_worktree removable verdict."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-1-x", branch="feature/1-x")
+    removable = WorktreeStatus(
+        worktree=wt, state=WorktreeState.MERGED, pr_number=1, ahead=2, dirty=False
+    )
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
+        patch(_MOD + "._delete_branch_and_worktree", return_value=True) as deleter,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main(["--cleanup-only"])
+    assert result == 0
+    deleter.assert_any_call("feature/1-x", tmp_path, dry_run=False)
+
+
+def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
+    """Race-safety (issue #1445): a worktree whose PR is still open is not
+    removable, so the worktree arm never deletes live work."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-2-y", branch="feature/2-y")
+    not_removable = WorktreeStatus(
+        worktree=wt, state=WorktreeState.OPEN_PR, pr_number=2, ahead=2, dirty=False
+    )
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=not_removable),
+        patch(_MOD + "._delete_branch_and_worktree") as deleter,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main(["--cleanup-only"])
+    assert result == 0
+    deleter.assert_not_called()

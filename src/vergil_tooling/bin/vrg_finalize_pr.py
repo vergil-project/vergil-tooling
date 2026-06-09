@@ -369,18 +369,39 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
         else:
             print(f"  Merged PR branch {ctx.merged_branch} has no local branch — skipping.")
 
-    # Ancestry sweep for stragglers. `git branch --merged` classifies a
-    # branch as merged when its tip is an *ancestor* of the target —
-    # which a branch just created from the target's tip satisfies
-    # trivially. That is the normal starting state of every new issue
-    # worktree, so an unguarded sweep races parallel agent sessions in
-    # their creation-to-first-commit window and deletes their branch and
-    # worktree out from under them. Two guards close the race
-    # (issue #1445); both gate the worktree removal exactly as strictly
-    # as the branch deletion, since they sit ahead of either action.
+    # Straggler sweep. Candidates come from two sources, because a squash
+    # merge rewrites the branch's work onto the target as a new commit:
+    # the branch tip is never an ancestor, so `git branch --merged` (the
+    # ancestry arm) cannot see squash-merged branches (issue #1552). The
+    # worktree arm closes that gap by classifying every canonical worktree
+    # with the same logic that backs vrg-worktree-status, so "cruft" and
+    # "removed" match by construction.
     print("Checking for merged local branches...")
-    for branch in git.merged_branches(args.target_branch):
+    worktree_by_branch = {wt.branch: wt for wt in worktrees.list_worktrees(root)}
+
+    # Worktree arm (squash-merge-aware). classify_worktree's removable
+    # verdict (MERGED/CLOSED and not dirty) replaces the ancestry guards
+    # here and is race-safe against parallel agents (issue #1445): a branch
+    # with no merged/closed PR — including a freshly created one — is never
+    # removable.
+    for branch, wt in worktree_by_branch.items():
         if branch in eternal or branch in deleted:
+            continue
+        status = worktrees.gather_worktree_status(wt, target=args.target_branch)
+        if not status.removable:
+            print(f"  Skipping {branch}: {status.state.value} (not removable)")
+            continue
+        if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
+            deleted.append(branch)
+
+    # Ancestry arm. Catches branches with no canonical worktree (worktree
+    # already gone, or merge-commit/rebase merges whose tip IS an ancestor).
+    # `git branch --merged` classifies a branch as merged when its tip is an
+    # ancestor of the target — which a branch just created from the target's
+    # tip satisfies trivially, so the two guards below (issue #1445) gate the
+    # removal as strictly as the worktree arm above.
+    for branch in git.merged_branches(args.target_branch):
+        if branch in eternal or branch in deleted or branch in worktree_by_branch:
             continue
         # Guard 1 — skip zero-commit branches. A tip equal to the
         # target's carries no merged work, so deleting it saves nothing;
