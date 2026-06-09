@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
@@ -9,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
+    _push_branch,
     main,
     parse_args,
 )
@@ -212,8 +214,29 @@ def test_main_submits_pr(tmp_path: Path) -> None:
     ):
         result = main(["--issue", "42", "--summary", "Fix bug", "--title", "fix: bug"])
     assert result == 0
-    mock_git_run.assert_called_once_with("push", "-u", "origin", "feature/x")
+    mock_git_run.assert_called_once_with("push", "--force-with-lease", "-u", "origin", "feature/x")
     mock_create_pr.assert_called_once()
+
+
+def test_push_branch_uses_force_with_lease() -> None:
+    """Issue #1557: submission follows a rebase, so the push must tolerate a
+    diverged remote via --force-with-lease (never bare --force)."""
+    with patch("vergil_tooling.bin.vrg_submit_pr.git.run") as run:
+        _push_branch("feature/x")
+    run.assert_called_once_with("push", "--force-with-lease", "-u", "origin", "feature/x")
+    args = run.call_args[0]
+    assert "--force" not in args  # the bare, unsafe variant is never used
+
+
+def test_push_branch_raises_clear_error_on_rejection() -> None:
+    """A refused force-with-lease (remote moved since fetch) must surface a
+    clear, actionable message — not a raw CalledProcessError traceback."""
+    err = subprocess.CalledProcessError(1, ["git", "push"])
+    with (
+        patch("vergil_tooling.bin.vrg_submit_pr.git.run", side_effect=err),
+        pytest.raises(SystemExit, match="force-with-lease was refused"),
+    ):
+        _push_branch("feature/x")
 
 
 def test_main_submits_pr_with_notes(tmp_path: Path) -> None:
