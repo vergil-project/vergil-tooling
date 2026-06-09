@@ -1,0 +1,30 @@
+................F....................................................... [ 61%]
+..............................................                           [100%]
+=================================== FAILURES ===================================
+________________ test_audit_next_without_issue_acks_from_state _________________
+
+tmp_path = PosixPath('/tmp/pytest-of-root/pytest-0/test_audit_next_without_issue_0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0xf106cb771bd0>
+capsys = <_pytest.capture.CaptureFixture object at 0xf106cb7ca5d0>
+
+    def test_audit_next_without_issue_acks_from_state(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+    ) -> None:
+        """The audit is launched against the worktree (no issue number needed); it
+        acks using the issue recorded in the state (issue #1572)."""
+        repo = _init_repo(tmp_path)
+        _seed(repo, owner="audit", status="reviewing")
+>       assert _run(monkeypatch, repo, "next", identity="audit") == 0
+E       AssertionError: assert 1 == 0
+E        +  where 1 = _run(<_pytest.monkeypatch.MonkeyPatch object at 0xf106cb771bd0>, PosixPath('/tmp/pytest-of-root/pytest-0/test_audit_next_without_issue_0/repo'), 'next', identity='audit')
+
+/workspace/tests/vergil_tooling/pr_workflow/test_cli_e2e.py:288: AssertionError
+----------------------------- Captured stderr call -----------------------------
+error: timed out after 2.0s waiting for owner='audit'
+=========================== short test summary info ============================
+FAILED tests/vergil_tooling/pr_workflow/test_cli_e2e.py::test_audit_next_without_issue_acks_from_state
+1 failed, 117 passed in 2.45s
+
+real	0m2.727s
+user	0m0.891s
+sys	0m0.215s

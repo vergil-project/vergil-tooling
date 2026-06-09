@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -25,10 +26,19 @@ from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 if TYPE_CHECKING:
     from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
+
 # All agent-to-agent waits are patient: the sequential workflow means a side may
 # wait a long time for its counterpart, and a silent block reads as a hang, so the
-# transport heartbeats while waiting (issue #1572).
-_LONG_TIMEOUT = 86400.0
+# transport heartbeats while waiting (issue #1572). Both the timeout and the poll
+# interval are env-overridable and read at call time — production keeps the long,
+# once-a-second defaults; tests set a small timeout and a 0 poll so the suite
+# never sleeps on real time (issue #1572).
+def _wait_timeout() -> float:
+    return float(os.environ.get("VRG_PR_WORKFLOW_TIMEOUT", "86400.0"))
+
+
+def _poll_interval() -> float:
+    return float(os.environ.get("VRG_PR_WORKFLOW_POLL_INTERVAL", "1.0"))
 
 
 def _now() -> str:
@@ -99,7 +109,7 @@ def _next_user(args: argparse.Namespace, transport: LocalFileTransport) -> int:
         if mode == "paired":
             state = transport.wait_until_owner(
                 "user",
-                timeout=_LONG_TIMEOUT,
+                timeout=_wait_timeout(),
                 waiting_for="the audit agent to join — start it now in the audit window",
             )
     else:
@@ -110,7 +120,7 @@ def _next_user(args: argparse.Namespace, transport: LocalFileTransport) -> int:
             )
         if state.owner != "user":
             state = transport.wait_until_owner(
-                "user", timeout=_LONG_TIMEOUT, waiting_for="the audit to finish its review"
+                "user", timeout=_wait_timeout(), waiting_for="the audit to finish its review"
             )
     _emit(engine.directive_for(state, "user"))
     return 0
@@ -120,7 +130,7 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = transport.read()
     if state is None:
         state = transport.wait_until_present(
-            timeout=_LONG_TIMEOUT,
+            timeout=_wait_timeout(),
             waiting_for="the implement session to create the workflow file",
         )
     if state.mode == "solo":
@@ -140,7 +150,7 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
         )
         transport.write(state)
     state = transport.wait_until_owner(
-        "audit", timeout=_LONG_TIMEOUT, waiting_for="the user to report ready (your review turn)"
+        "audit", timeout=_wait_timeout(), waiting_for="the user to report ready (your review turn)"
     )
     directive = engine.directive_for(state, "audit")
     directive["prompt"] = registry.check_prompt(directive["check"])
@@ -293,7 +303,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    transport = LocalFileTransport(git.repo_root(), base=args.base)
+    transport = LocalFileTransport(git.repo_root(), base=args.base, poll_interval=_poll_interval())
     try:
         return int(args.func(args, transport))
     except WorkflowError as exc:
