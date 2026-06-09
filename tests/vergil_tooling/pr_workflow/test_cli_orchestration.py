@@ -41,13 +41,17 @@ class FakeTransport(LocalFileTransport):
         self.state = WorkflowState.from_json(state.to_json())
         self.writes.append(WorkflowState.from_json(state.to_json()))
 
-    def wait_until_present(self, *, timeout: float) -> WorkflowState:
+    def wait_until_present(
+        self, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
         if self.state is None:
             self.state = self.staged
         assert self.state is not None
         return self.state
 
-    def wait_until_owner(self, role: str, *, timeout: float) -> WorkflowState:
+    def wait_until_owner(
+        self, role: str, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
         assert self.state is not None
         self.state.owner = role  # simulate the counterpart handing the turn over
         return self.state
@@ -89,7 +93,9 @@ def test_next_audit_first_call_acks_and_returns_review_directive(capsys) -> None
         user_token="u-1",
         now=_NOW,
     )
-    rc = cli._next_audit(_args(as_role="audit", issue="1534"), transport)
+    # No --issue: the audit is launched against the worktree path, so it acks
+    # using the issue recorded in the state (issue #1572).
+    rc = cli._next_audit(_args(as_role="audit"), transport)
     assert rc == 0
     assert any(w.participants.get("audit") for w in transport.writes)  # ack recorded
     directive = json.loads(capsys.readouterr().out)

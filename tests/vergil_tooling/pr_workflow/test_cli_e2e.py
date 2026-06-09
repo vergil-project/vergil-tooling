@@ -64,6 +64,7 @@ def _seed(
     status: str,
     last_reviewed: str | None = None,
     pr_metadata: dict[str, str] | None = None,
+    audit_present: bool = False,
 ) -> None:
     """Write a workflow state directly, for verbs that need a specific turn."""
     state = engine.init_state(
@@ -80,6 +81,8 @@ def _seed(
     state.status = status
     state.git["last_reviewed_sha"] = last_reviewed
     state.pr_metadata = pr_metadata
+    if audit_present:
+        state.participants["audit"] = {"token": "a-seed", "present_at": _NOW}
     LocalFileTransport(repo, base="develop").write(state)
 
 
@@ -278,13 +281,17 @@ def test_verb_without_workflow_errors(
     assert "no workflow file" in capsys.readouterr().err
 
 
-def test_audit_next_without_issue_errors(
+def test_audit_next_without_issue_returns_directive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:
+    """The audit is launched against the worktree with no issue number; `next`
+    must not require --issue (it takes the issue from the state). Seeded with the
+    audit already present and a review turn so the wait resolves at once
+    (issue #1572)."""
     repo = _init_repo(tmp_path)
-    _seed(repo, owner="audit", status="reviewing")
-    assert _run(monkeypatch, repo, "next", identity="audit") == 1
-    assert "must pass --issue" in capsys.readouterr().err
+    _seed(repo, owner="audit", status="reviewing", audit_present=True)
+    assert _run(monkeypatch, repo, "next", identity="audit") == 0
+    assert json.loads(capsys.readouterr().out)["then"]["verb"] == "submit-check"
 
 
 def test_audit_next_is_done_when_approved(

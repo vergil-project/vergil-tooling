@@ -10,6 +10,7 @@ process CWD (the worktree).
 
 from __future__ import annotations
 
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,14 @@ if TYPE_CHECKING:
 _DIR = ".vergil"
 _FILE = "pr-workflow.json"
 _POLL_INTERVAL = 1.0
+# Emit a heartbeat to stderr while blocking so a long wait is visibly alive in
+# the watching human's session, not a silent hang (the two agents run in the
+# foreground; transparency is the oversight model).
+_HEARTBEAT_INTERVAL = 15.0
+
+
+def _heartbeat(waiting_for: str, elapsed: float) -> None:
+    print(f"  … still waiting for {waiting_for} ({int(elapsed)}s)", file=sys.stderr, flush=True)
 
 
 class LocalFileTransport(Transport):
@@ -51,22 +60,34 @@ class LocalFileTransport(Transport):
     def write(self, state: WorkflowState) -> None:
         atomic_write(self.path, state.to_json())
 
-    def wait_until_present(self, *, timeout: float) -> WorkflowState:
-        deadline = time.monotonic() + timeout
+    def wait_until_present(
+        self, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
+        start = time.monotonic()
+        deadline = start + timeout
+        last_beat = start
         while True:
             state = self.read()
             if state is not None:
                 return state
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 msg = (
                     f"timed out waiting for the workflow file after {timeout}s — "
                     "is the implement session running in this worktree?"
                 )
                 raise WorkflowError(msg)
+            if waiting_for and now - last_beat >= _HEARTBEAT_INTERVAL:
+                _heartbeat(waiting_for, now - start)
+                last_beat = now
             time.sleep(self.poll_interval)
 
-    def wait_until_owner(self, role: str, *, timeout: float) -> WorkflowState:
-        deadline = time.monotonic() + timeout
+    def wait_until_owner(
+        self, role: str, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
+        start = time.monotonic()
+        deadline = start + timeout
+        last_beat = start
         while True:
             state = self.read()
             if state is not None:
@@ -75,8 +96,12 @@ class LocalFileTransport(Transport):
                     raise WorkflowError(f"counterpart reported an error: {reason}")
                 if state.owner == role:
                     return state
-            if time.monotonic() >= deadline:
+            now = time.monotonic()
+            if now >= deadline:
                 raise WorkflowError(f"timed out after {timeout}s waiting for owner={role!r}")
+            if waiting_for and now - last_beat >= _HEARTBEAT_INTERVAL:
+                _heartbeat(waiting_for, now - start)
+                last_beat = now
             time.sleep(self.poll_interval)
 
     def head_sha(self) -> str:

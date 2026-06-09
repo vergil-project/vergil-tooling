@@ -112,3 +112,52 @@ def test_wait_until_owner_tolerates_initially_absent_file(tmp_path: Path) -> Non
         state = transport.wait_until_owner("user", timeout=5.0)
     assert state.owner == "user"
     slept.assert_called_once()
+
+
+def test_wait_until_owner_heartbeats_while_blocking(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A long wait must visibly heartbeat to stderr so the watching human sees it
+    is alive, not hung (issue #1572)."""
+    transport = LocalFileTransport(tmp_path, poll_interval=0.0)
+    reads = [_state(owner="audit"), _state(owner="audit"), _state(owner="user")]
+    with (
+        patch(f"{_MOD}.time.sleep"),
+        patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 0.0, 20.0]),
+        patch.object(LocalFileTransport, "read", side_effect=reads),
+    ):
+        state = transport.wait_until_owner(
+            "user", timeout=3600.0, waiting_for="the audit to finish"
+        )
+    assert state.owner == "user"
+    assert "still waiting for the audit to finish" in capsys.readouterr().err
+
+
+def test_waits_are_silent_without_waiting_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """No heartbeat unless a description is supplied — keeps existing callers quiet."""
+    transport = LocalFileTransport(tmp_path, poll_interval=0.0)
+    reads = [_state(owner="audit"), _state(owner="user")]
+    with (
+        patch(f"{_MOD}.time.sleep"),
+        patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 20.0]),
+        patch.object(LocalFileTransport, "read", side_effect=reads),
+    ):
+        transport.wait_until_owner("user", timeout=3600.0)
+    assert capsys.readouterr().err == ""
+
+
+def test_wait_until_present_heartbeats_while_blocking(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    transport = LocalFileTransport(tmp_path, poll_interval=0.0)
+    reads = [None, None, _state(owner="audit")]
+    with (
+        patch(f"{_MOD}.time.sleep"),
+        patch(f"{_MOD}.time.monotonic", side_effect=[0.0, 0.0, 20.0]),
+        patch.object(LocalFileTransport, "read", side_effect=reads),
+    ):
+        state = transport.wait_until_present(timeout=3600.0, waiting_for="the implement session")
+    assert state is not None
+    assert "still waiting for the implement session" in capsys.readouterr().err
