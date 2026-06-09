@@ -80,6 +80,27 @@ def config_file_model(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
+def config_file_two(tmp_path: Path) -> Path:
+    """Two identities so identity-selection tests can assert a non-default choice."""
+    p = tmp_path / "identities-two.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        default_identity = "vergil"
+        vergil = "v2.0"
+
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        projects_dir = "/home/user/projects"
+
+        [identities.audit]
+        vm_instance = "audit-agent"
+        projects_dir = "/home/user/projects"
+    """)
+    )
+    return p
+
+
+@pytest.fixture()
 def config_file_top_model(tmp_path: Path) -> Path:
     p = tmp_path / "identities-top-model.toml"
     p.write_text(
@@ -475,6 +496,17 @@ class TestStop:
         result = main(["stop", "--config", str(config_file)])
         assert result == 0
         mock_stop.assert_called_once_with("vergil-agent")
+
+    @patch("vergil_tooling.bin.vrg_vm.stop_vm")
+    def test_global_identity_and_config_before_subcommand(
+        self, mock_stop: MagicMock, config_file_two: Path
+    ) -> None:
+        # --identity/--config are accepted globally (before the subcommand) for
+        # every verb, not just session — and the global value is honored, not
+        # clobbered by the subparser's default.
+        result = main(["--identity", "audit", "--config", str(config_file_two), "stop"])
+        assert result == 0
+        mock_stop.assert_called_once_with("audit-agent")
 
 
 class TestRestart:
@@ -1334,6 +1366,100 @@ class TestSession:
         inner = self._inner(mock_exec)
         assert "exec bash" in inner
         assert "vrg-vm-resolve-session" not in inner
+
+    def test_session_identity_after_workspace(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # Regression: --identity placed AFTER the workspace positional used to be
+        # swallowed by the REMAINDER `cmd` and handed to the guest shell as a raw
+        # `exec --identity ...`. It must now parse as the option.
+        main(["session", "--config", str(config_file_two), "vergil-tooling", "--identity", "audit"])
+        cmd = mock_exec.call_args[0][1]
+        assert "audit-agent" in cmd
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session --identity audit" in inner
+        assert "exec --identity" not in inner
+
+    def test_session_identity_before_subcommand(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # --identity placed BEFORE the subcommand (global) is honored.
+        main(["--identity", "audit", "session", "--config", str(config_file_two), "vergil-tooling"])
+        assert "audit-agent" in mock_exec.call_args[0][1]
+
+    def test_session_identity_between_subcommand_and_workspace(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file_two: Path,
+    ) -> None:
+        # The historically-only-accepted slot must keep working.
+        main(["session", "--identity", "audit", "--config", str(config_file_two), "vergil-tooling"])
+        assert "audit-agent" in mock_exec.call_args[0][1]
+
+    def test_session_passthrough_unknown_flag_after_dashdash(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # Arbitrary claude flags pass through when placed after '--', regardless
+        # of leading dashes (nargs="*" captures everything past the separator).
+        main(
+            [
+                "session",
+                "--config",
+                str(config_file),
+                "vergil-tooling",
+                "--",
+                "claude",
+                "--dangerously-skip-permissions",
+            ]
+        )
+        inner = self._inner(mock_exec)
+        assert "vrg-vm-resolve-session" in inner
+        assert "-- --dangerously-skip-permissions" in inner
+
+    def test_session_unknown_flag_without_dashdash_errors(
+        self,
+        _age: MagicMock,
+        _update: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        _exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # Without '--', an unknown flag is a clear argparse error rather than being
+        # silently swallowed and mis-executed (the old REMAINDER failure mode).
+        with pytest.raises(SystemExit):
+            main(
+                [
+                    "session",
+                    "--config",
+                    str(config_file),
+                    "vergil-tooling",
+                    "claude",
+                    "--dangerously-skip-permissions",
+                ]
+            )
 
     def test_session_slot_passed_to_resolver(
         self,

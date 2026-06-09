@@ -1111,8 +1111,37 @@ def _cmd_session(args: argparse.Namespace) -> int:
 
 
 def _add_identity_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--identity", help="Identity name (default: default_identity)")
-    parser.add_argument("--config", type=Path, help="Path to identities.toml")
+    """Add per-subcommand ``--identity``/``--config`` (placed after the subcommand).
+
+    Their defaults are ``SUPPRESS`` so that omitting them after the subcommand does
+    not overwrite a value supplied *before* it via the matching top-level options
+    (``_add_global_identity_args``). That is the standard argparse parent/subparser
+    default-clobber gotcha: without SUPPRESS, the subparser's own default would
+    silently reset ``args.identity``/``args.config`` whenever the option appeared
+    only before the subcommand. The top-level parser owns the real defaults.
+    """
+    parser.add_argument(
+        "--identity",
+        default=argparse.SUPPRESS,
+        help="Identity name (default: default_identity)",
+    )
+    parser.add_argument(
+        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
+    )
+
+
+def _add_global_identity_args(parser: argparse.ArgumentParser) -> None:
+    """Add ``--identity``/``--config`` on the top-level parser, owning the real defaults.
+
+    Defining them here lets both options appear *before* the subcommand
+    (``vrg-vm --identity X session repo``); the per-subcommand copies let them
+    appear after it too. These defaults guarantee the attributes always exist, so
+    the subcommand copies can safely use SUPPRESS.
+    """
+    parser.add_argument(
+        "--identity", default=None, help="Identity name (default: default_identity)"
+    )
+    parser.add_argument("--config", type=Path, default=None, help="Path to identities.toml")
 
 
 def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
@@ -1129,6 +1158,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="vrg-vm",
         description="Manage identity VM lifecycle",
     )
+    _add_global_identity_args(parser)
     sub = parser.add_subparsers(dest="command")
 
     p_create = sub.add_parser("create", help="Create and provision a new VM")
@@ -1209,7 +1239,11 @@ def main(argv: list[str] | None = None) -> int:
             "below the repo's declared footprint."
         ),
     )
-    p_list.add_argument("--config", type=Path, help="Path to identities.toml")
+    # SUPPRESS so a global `--config` (before the subcommand) is not clobbered;
+    # `list` carries no `--identity` (identity does not scope a list of all VMs).
+    p_list.add_argument(
+        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
+    )
     p_list.add_argument(
         "--sessions",
         action="store_true",
@@ -1252,8 +1286,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_session.add_argument(
         "cmd",
-        nargs=argparse.REMAINDER,
-        help="Optional command override after '--' (e.g. -- bash)",
+        nargs="*",
+        help=(
+            "Optional command override. A bare 'claude' (or nothing) goes through the "
+            "session resolver; anything else runs raw. Pass flags after '--' so they are "
+            "not parsed as session options (e.g. '-- bash', '-- claude --model X')."
+        ),
     )
 
     args = parser.parse_args(argv)
