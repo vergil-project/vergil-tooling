@@ -69,6 +69,30 @@ def _target_branch(branch: str, base_override: str | None) -> str:
     return "main" if branch.startswith("release/") else "develop"
 
 
+def _push_branch(branch: str) -> None:
+    """Push *branch* to origin, tolerating a rebased (diverged) remote.
+
+    Submitting a PR routinely follows a rebase onto the current base
+    branch to clear stale drift; that leaves any previously-pushed remote
+    branch diverged, and a plain push is rejected non-fast-forward.
+    ``--force-with-lease`` is the safe overwrite: it updates the remote
+    only while it still matches our remote-tracking ref, so it refuses to
+    clobber commits pushed elsewhere since our last fetch. Bare
+    ``--force`` is never used. (Issue #1557.)
+    """
+    try:
+        git.run("push", "--force-with-lease", "-u", "origin", branch)
+    except subprocess.CalledProcessError as exc:
+        msg = (
+            f"vrg-submit-pr: pushing '{branch}' to origin failed.\n"
+            "  --force-with-lease was refused, which means the remote branch "
+            "moved since your last fetch.\n"
+            "  Run `vrg-git fetch origin` and review the remote commits before "
+            "retrying, so you don't overwrite someone else's work."
+        )
+        raise SystemExit(msg) from exc
+
+
 def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(pr_body)
@@ -152,7 +176,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         return 0
 
     print(f"Pushing branch '{branch}' to origin...")
-    git.run("push", "-u", "origin", branch)
+    _push_branch(branch)
 
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
@@ -295,7 +319,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # succeeds even for branches that touch .github/workflows/ — which the
     # agent's own push would have been rejected for.
     print(f"Ensuring branch '{branch}' is pushed to origin...")
-    git.run("push", "-u", "origin", branch)
+    _push_branch(branch)
 
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
