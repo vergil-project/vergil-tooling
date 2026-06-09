@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.24] - 2026-06-09
+
+### Bug fixes
+
+- patient, heartbeating handshake waits; audit acks from state (#1573)
+
 ## [2.1.23] - 2026-06-09
 
 ### Bug fixes
