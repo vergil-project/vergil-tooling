@@ -15,18 +15,10 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import config, git
-
-ALLOWED_TYPES = (
-    "feat",
-    "fix",
-    "docs",
-    "style",
-    "refactor",
-    "test",
-    "chore",
-    "ci",
-    "build",
-    "revert",
+from vergil_tooling.lib.commit_message import (
+    ALLOWED_TYPES,
+    build_commit_message,
+    contains_autoclose,
 )
 
 _PROTECTED_BRANCHES = {"develop", "release", "main"}
@@ -50,12 +42,6 @@ _ISSUE_REQUIRED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
 _ISSUE_FORMAT_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$")
 _WORKTREE_SCOPED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
 _WORKTREES_DIRNAME = ".worktrees"
-
-_AUTOCLOSE_RE = re.compile(
-    r"\b(close[sd]?|fix(?:e[sd])?|resolve[sd]?)"
-    r":?\s+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
-    re.IGNORECASE,
-)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -183,7 +169,7 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0:
         return rc
 
-    if args.body and _AUTOCLOSE_RE.search(args.body):
+    if args.body and contains_autoclose(args.body):
         return _reject(
             "ERROR: commit body contains a GitHub auto-close keyword "
             "(close/fix/resolve). Use 'Ref #N' instead.",
@@ -199,14 +185,16 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    subject = f"{args.commit_type}({args.scope}): {args.message}"
+    message = build_commit_message(
+        commit_type=args.commit_type,
+        scope=args.scope,
+        message=args.message,
+        body=args.body,
+        co_author=co_author,
+    )
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(f"{subject}\n")
-        if args.body:
-            f.write(f"\n{args.body}\n")
-        if co_author:
-            f.write(f"\nCo-Authored-By: {co_author}\n")
+        f.write(message)
         tmp_path = f.name
 
     try:

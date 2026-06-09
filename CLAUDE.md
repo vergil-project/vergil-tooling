@@ -244,6 +244,11 @@ CLI tools installed as `vrg-*` console scripts:
 
 - **`vrg-commit`** — Construct standards-compliant conventional
   commits with co-author resolution
+- **`vrg-reword`** — Reword a branch-local commit's message via a scripted,
+  non-interactive rebase; the agent-safe path to fix a
+  `commit-message-fidelity` failure. Bounded: refuses shared/merged history
+  and protected branches, refuses a foreign author without
+  `--allow-foreign-author`, and pushes the rewrite with `--force-with-lease`
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge;
   human-run — agents hand off via `.vergil/pr-template.yml`)
 - **`vrg-pr-fix-body`** — Regenerate a PR body from corrected fields via
