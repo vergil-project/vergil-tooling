@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -9,6 +10,10 @@ import pytest
 
 from vergil_tooling.lib.worktrees import (
     Worktree,
+    WorktreeState,
+    WorktreeStatus,
+    classify_worktree,
+    gather_worktree_status,
     list_worktrees,
     require_tty,
     select_worktree,
@@ -122,3 +127,148 @@ def test_select_worktree_multiple_candidates_prompts() -> None:
 def test_select_worktree_empty_raises() -> None:
     with pytest.raises(ValueError, match="at least one"):
         select_worktree([], purpose="Pick one", labels=[])
+
+
+# -- classify_worktree (pure) ------------------------------------------------
+
+_SAMPLE_WT = Worktree(path=Path("/repo/.worktrees/issue-1-x"), branch="feature/1-x")
+
+
+def _classify(
+    *,
+    pr_number: int | None = None,
+    pr_state: str | None = None,
+    pr_lookup_failed: bool = False,
+    ahead: int = 0,
+    dirty: bool = False,
+    detail: str | None = None,
+) -> WorktreeStatus:
+    return classify_worktree(
+        _SAMPLE_WT,
+        pr_number=pr_number,
+        pr_state=pr_state,
+        pr_lookup_failed=pr_lookup_failed,
+        ahead=ahead,
+        dirty=dirty,
+        detail=detail,
+    )
+
+
+def test_classify_open_pr_not_removable() -> None:
+    status = _classify(pr_number=10, pr_state="OPEN", ahead=2)
+    assert status.state is WorktreeState.OPEN_PR
+    assert status.removable is False
+
+
+def test_classify_merged_is_removable() -> None:
+    status = _classify(pr_number=11, pr_state="MERGED", ahead=2)
+    assert status.state is WorktreeState.MERGED
+    assert status.removable is True
+
+
+def test_classify_closed_is_removable() -> None:
+    status = _classify(pr_number=12, pr_state="CLOSED", ahead=1)
+    assert status.state is WorktreeState.CLOSED
+    assert status.removable is True
+
+
+def test_classify_no_pr_with_commits_is_stalled() -> None:
+    status = _classify(ahead=1)
+    assert status.state is WorktreeState.NO_PR
+    assert status.removable is False
+
+
+def test_classify_no_pr_zero_commits_is_draft() -> None:
+    status = _classify(ahead=0)
+    assert status.state is WorktreeState.DRAFT
+
+
+def test_classify_dirty_merged_is_not_removable() -> None:
+    status = _classify(pr_number=11, pr_state="MERGED", ahead=2, dirty=True)
+    assert status.state is WorktreeState.MERGED
+    assert status.dirty is True
+    assert status.removable is False
+
+
+def test_classify_lookup_failure_is_unknown() -> None:
+    status = _classify(pr_lookup_failed=True, detail="gh exploded")
+    assert status.state is WorktreeState.UNKNOWN
+    assert status.removable is False
+    assert status.detail == "gh exploded"
+
+
+# -- gather_worktree_status (I/O wrapper) ------------------------------------
+
+
+def test_gather_open_pr_short_circuits_closed_lookup() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=2),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"number": "10", "url": "", "title": "t"},
+        ),
+        patch(_MOD + ".github.closed_pr_for_branch") as closed,
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.OPEN_PR
+    assert status.pr_number == 10
+    closed.assert_not_called()
+
+
+def test_gather_merged_pr_is_removable() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.MERGED
+    assert status.pr_number == 11
+    assert status.removable is True
+
+
+def test_gather_dirty_overlay_blocks_removal() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".git.read_output", return_value=" M file.py"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.dirty is True
+    assert status.removable is False
+
+
+def test_gather_no_pr_with_commits_is_stalled() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=3),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.NO_PR
+    assert status.pr_number is None
+    assert status.removable is False
+
+
+def test_gather_pr_lookup_failure_is_unknown() -> None:
+    err = subprocess.CalledProcessError(1, ["gh"], stderr="boom")
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".github.pr_for_branch", side_effect=err),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.UNKNOWN
+    assert "boom" in (status.detail or "")

@@ -104,6 +104,24 @@ remotes, runs validation, and checks the CD workflow status.
 | Exit codes | 0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model |
 | Status | Active |
 
+### vrg-worktree-status
+
+List canonical `.worktrees/` worktrees with their derived lifecycle
+state, so removable cruft (merged/closed PRs whose worktree was never
+cleaned up) is distinguishable from in-flight work at a glance.
+Read-only — cleanup stays `vrg-finalize-pr`'s job. PR state is queried
+from GitHub per worktree; a failed lookup shows as `unknown` with the
+reason rather than being silently downgraded.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_worktree_status` |
+| Args | `--target-branch` (default: develop) |
+| Preconditions | Git repo; `gh` CLI on PATH for PR state |
+| Failure mode | None for classification — a failed PR lookup is reported as an `unknown` row, never a crash |
+| Exit codes | 0 always (read-only) |
+| Status | Active |
+
 ### vrg-ensure-label
 
 Ensure GitHub labels exist. Three modes: single-label (create/update

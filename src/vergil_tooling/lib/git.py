@@ -117,6 +117,11 @@ def merged_branches(target: str) -> list[str]:
     return output.splitlines()
 
 
+def commits_ahead(base: str, branch: str) -> int:
+    """Return the number of commits on *branch* not reachable from *base*."""
+    return int(read_output("rev-list", "--count", f"{base}..{branch}"))
+
+
 def working_tree_status() -> str:
     """Return ``git status --porcelain`` output (empty string when clean)."""
     return read_output("status", "--porcelain")
