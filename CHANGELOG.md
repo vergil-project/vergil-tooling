@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.23] - 2026-06-09
+
+### Bug fixes
+
+- push with --force-with-lease to tolerate rebased branch (#1557) (#1562)
+
+### Features
+
+- let report-fixes revise PR metadata mid-workflow (#1565)
+- add guarded vrg-reword to fix a branch-local commit message (#1567)
+
 ## [2.1.22] - 2026-06-09
 
 ### Documentation
