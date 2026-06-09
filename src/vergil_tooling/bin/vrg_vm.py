@@ -202,7 +202,17 @@ def _preflight_target(target: Target) -> int:
             file=sys.stderr,
         )
         return 1
-    if vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild":
+    # The spec fingerprint is stamped inside the guest (/etc/vergil/vm-spec.fingerprint)
+    # and is only readable over `limactl shell` while the VM runs. A stopped VM cannot
+    # be fingerprinted, so the drift gate can only run when already Running — checking it
+    # against a stopped VM always reads needs-rebuild, which made every stopped dedicated
+    # VM un-startable and falsely demanded a rebuild. For start (VM stopped) the check is
+    # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
+    # "drift only while running" contract.
+    if (
+        status == "Running"
+        and vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild"
+    ):
         print(
             f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
             f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
@@ -286,6 +296,32 @@ def _st_start(state: _LifecycleState) -> None:
     start_vm(state.target.instance, timeout=state.timeout)
 
 
+class SpecDriftError(RuntimeError):
+    """Raised by the post-start spec-check stage when a freshly-started VM's
+    stamped fingerprint no longer matches its composed spec. Carried as a warn:
+    surfaced as a non-fatal ⚠ in the pipeline summary, never aborts the start.
+    """
+
+
+def _st_spec_check(state: _LifecycleState) -> None:
+    # Post-start drift check. The fingerprint lives inside the guest and is only
+    # readable now that it is up — the check _preflight_target cannot perform
+    # against a stopped VM. Warn-mode: a drifted VM is already running and usable,
+    # so we tell the user to rebuild rather than refusing. Base boxes carry no
+    # per-repo spec and are skipped.
+    target = state.target
+    if not target.spec.dedicated:
+        return
+    if vm_spec_status(target.instance, target.fingerprint) != "needs-rebuild":
+        return
+    workspace = f"{target.org}/{target.repo}"
+    msg = (
+        f"VM '{target.instance}' no longer meets {workspace}'s spec — "
+        f"rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}"
+    )
+    raise SpecDriftError(msg)
+
+
 def _st_link_config(state: _LifecycleState) -> None:
     link_claude_dirs(state.target.instance, Path.home() / ".claude")
 
@@ -339,6 +375,10 @@ def _create_stages() -> list[Stage]:
 def _start_stages() -> list[Stage]:
     return [
         Stage("start", _st_start, mode="fail_fast"),
+        # Verify the just-booted guest against its composed spec. Non-fatal and
+        # placed immediately after start so a drift warning surfaces before the
+        # credential/config work, without blocking a usable VM from coming up.
+        Stage("spec-check", _st_spec_check, mode="warn"),
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
         Stage("update-tooling", _st_update_tooling, mode="warn"),
@@ -959,12 +999,15 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     rows.sort(key=lambda r: (str(r["identity"]), cast("int", r["slot"]), str(r["path"])))
 
     now = datetime.datetime.now(tz=datetime.UTC).timestamp()
-    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<36} {'STATE':<9} {'LAST ACTIVE':<12}")
-    print(f"{'─' * 16} {'─' * 6} {'─' * 36} {'─' * 9} {'─' * 12}")
+    # Size the WORKSPACE column to the longest path present (36 floor), so a
+    # path wider than the historical fixed width keeps STATE/LAST ACTIVE aligned.
+    ws = max([36, *(len(str(r["path"])) for r in rows)])
+    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<{ws}} {'STATE':<9} {'LAST ACTIVE':<12}")
+    print(f"{'─' * 16} {'─' * 6} {'─' * ws} {'─' * 9} {'─' * 12}")
     for r in rows:
         slot = f"{cast('int', r['slot']):02d}"
         age = _format_age(cast("float | None", r.get("lastActive")), now)
-        print(f"{r['identity']!s:<16} {slot:<6} {r['path']!s:<36} {r['state']!s:<9} {age:<12}")
+        print(f"{r['identity']!s:<16} {slot:<6} {r['path']!s:<{ws}} {r['state']!s:<9} {age:<12}")
 
     return 0
 
@@ -1068,8 +1111,37 @@ def _cmd_session(args: argparse.Namespace) -> int:
 
 
 def _add_identity_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--identity", help="Identity name (default: default_identity)")
-    parser.add_argument("--config", type=Path, help="Path to identities.toml")
+    """Add per-subcommand ``--identity``/``--config`` (placed after the subcommand).
+
+    Their defaults are ``SUPPRESS`` so that omitting them after the subcommand does
+    not overwrite a value supplied *before* it via the matching top-level options
+    (``_add_global_identity_args``). That is the standard argparse parent/subparser
+    default-clobber gotcha: without SUPPRESS, the subparser's own default would
+    silently reset ``args.identity``/``args.config`` whenever the option appeared
+    only before the subcommand. The top-level parser owns the real defaults.
+    """
+    parser.add_argument(
+        "--identity",
+        default=argparse.SUPPRESS,
+        help="Identity name (default: default_identity)",
+    )
+    parser.add_argument(
+        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
+    )
+
+
+def _add_global_identity_args(parser: argparse.ArgumentParser) -> None:
+    """Add ``--identity``/``--config`` on the top-level parser, owning the real defaults.
+
+    Defining them here lets both options appear *before* the subcommand
+    (``vrg-vm --identity X session repo``); the per-subcommand copies let them
+    appear after it too. These defaults guarantee the attributes always exist, so
+    the subcommand copies can safely use SUPPRESS.
+    """
+    parser.add_argument(
+        "--identity", default=None, help="Identity name (default: default_identity)"
+    )
+    parser.add_argument("--config", type=Path, default=None, help="Path to identities.toml")
 
 
 def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
@@ -1086,6 +1158,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="vrg-vm",
         description="Manage identity VM lifecycle",
     )
+    _add_global_identity_args(parser)
     sub = parser.add_subparsers(dest="command")
 
     p_create = sub.add_parser("create", help="Create and provision a new VM")
@@ -1166,7 +1239,11 @@ def main(argv: list[str] | None = None) -> int:
             "below the repo's declared footprint."
         ),
     )
-    p_list.add_argument("--config", type=Path, help="Path to identities.toml")
+    # SUPPRESS so a global `--config` (before the subcommand) is not clobbered;
+    # `list` carries no `--identity` (identity does not scope a list of all VMs).
+    p_list.add_argument(
+        "--config", type=Path, default=argparse.SUPPRESS, help="Path to identities.toml"
+    )
     p_list.add_argument(
         "--sessions",
         action="store_true",
@@ -1209,8 +1286,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_session.add_argument(
         "cmd",
-        nargs=argparse.REMAINDER,
-        help="Optional command override after '--' (e.g. -- bash)",
+        nargs="*",
+        help=(
+            "Optional command override. A bare 'claude' (or nothing) goes through the "
+            "session resolver; anything else runs raw. Pass flags after '--' so they are "
+            "not parsed as session options (e.g. '-- bash', '-- claude --model X')."
+        ),
     )
 
     args = parser.parse_args(argv)
