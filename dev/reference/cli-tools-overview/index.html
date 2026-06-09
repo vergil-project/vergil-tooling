@@ -5197,6 +5197,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-worktree-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-worktree-status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-ensure-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8233,6 +8244,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-worktree-status" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-worktree-status
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-ensure-label" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8698,6 +8720,47 @@ remotes, runs validation, and checks the CD workflow status.</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-worktree-status">vrg-worktree-status<a class="headerlink" href="#vrg-worktree-status" title="Permanent link">&para;</a></h3>
+<p>List canonical <code>.worktrees/</code> worktrees with their derived lifecycle
+state, so removable cruft (merged/closed PRs whose worktree was never
+cleaned up) is distinguishable from in-flight work at a glance.
+Read-only — cleanup stays <code>vrg-finalize-pr</code>'s job. PR state is queried
+from GitHub per worktree; a failed lookup shows as <code>unknown</code> with the
+reason rather than being silently downgraded.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_worktree_status</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>--target-branch</code> (default: develop)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Git repo; <code>gh</code> CLI on PATH for PR state</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>None for classification — a failed PR lookup is reported as an <code>unknown</code> row, never a crash</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 always (read-only)</td>
 </tr>
 <tr>
 <td>Status</td>
