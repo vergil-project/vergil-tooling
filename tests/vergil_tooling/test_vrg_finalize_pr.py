@@ -1454,7 +1454,9 @@ def test_sweep_removes_squash_merged_worktree_branch(tmp_path: Path) -> None:
 
 def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
     """Race-safety (issue #1445): a worktree whose PR is still open is not
-    removable, so the worktree arm never deletes live work."""
+    removable, so the worktree arm never deletes live work. The same branch
+    also appears in `git branch --merged`, exercising the ancestry arm's
+    dedup against worktree branches (issue #1552)."""
     _make_profile(tmp_path, "library-release")
     wt = Worktree(path=tmp_path / ".worktrees" / "issue-2-y", branch="feature/2-y")
     not_removable = WorktreeStatus(
@@ -1464,12 +1466,61 @@ def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/2-y"]),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=not_removable),
+        patch(_MOD + ".github.closed_pr_for_branch") as ancestry_evidence,
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
         patch(_MOD + "._check_cd_workflow_status", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
+    deleter.assert_not_called()
+    # The ancestry arm skipped feature/2-y as a worktree branch before
+    # reaching the merge-evidence guard.
+    ancestry_evidence.assert_not_called()
+
+
+def test_sweep_worktree_delete_decline_does_not_record(tmp_path: Path) -> None:
+    """If _delete_branch_and_worktree declines (e.g. the tree went dirty
+    between classification and deletion), the branch is not recorded as
+    deleted and the sweep continues without error."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-3-z", branch="feature/3-z")
+    removable = WorktreeStatus(
+        worktree=wt, state=WorktreeState.MERGED, pr_number=3, ahead=1, dirty=False
+    )
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
+        patch(_MOD + "._delete_branch_and_worktree", return_value=False) as deleter,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main(["--cleanup-only"])
+    assert result == 0
+    deleter.assert_called_once_with("feature/3-z", tmp_path, dry_run=False)
+
+
+def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
+    """A worktree checked out on an eternal branch is never classified or
+    swept — the eternal guard short-circuits before gather_worktree_status."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(path=tmp_path / ".worktrees" / "eternal", branch="develop")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".worktrees.gather_worktree_status") as gather,
+        patch(_MOD + "._delete_branch_and_worktree") as deleter,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main(["--cleanup-only"])
+    assert result == 0
+    gather.assert_not_called()
     deleter.assert_not_called()

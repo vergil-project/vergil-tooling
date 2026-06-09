@@ -134,16 +134,24 @@ def test_select_worktree_empty_raises() -> None:
 _SAMPLE_WT = Worktree(path=Path("/repo/.worktrees/issue-1-x"), branch="feature/1-x")
 
 
-def _classify(**overrides: object) -> WorktreeStatus:
-    base: dict[str, object] = {
-        "pr_number": None,
-        "pr_state": None,
-        "pr_lookup_failed": False,
-        "ahead": 0,
-        "dirty": False,
-    }
-    base.update(overrides)
-    return classify_worktree(_SAMPLE_WT, **base)  # type: ignore[arg-type]
+def _classify(
+    *,
+    pr_number: int | None = None,
+    pr_state: str | None = None,
+    pr_lookup_failed: bool = False,
+    ahead: int = 0,
+    dirty: bool = False,
+    detail: str | None = None,
+) -> WorktreeStatus:
+    return classify_worktree(
+        _SAMPLE_WT,
+        pr_number=pr_number,
+        pr_state=pr_state,
+        pr_lookup_failed=pr_lookup_failed,
+        ahead=ahead,
+        dirty=dirty,
+        detail=detail,
+    )
 
 
 def test_classify_open_pr_not_removable() -> None:
@@ -238,6 +246,19 @@ def test_gather_dirty_overlay_blocks_removal() -> None:
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.dirty is True
+    assert status.removable is False
+
+
+def test_gather_no_pr_with_commits_is_stalled() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=3),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.NO_PR
+    assert status.pr_number is None
     assert status.removable is False
 
 

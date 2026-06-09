@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
-
-import pytest
 
 from vergil_tooling.bin.vrg_worktree_status import main
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
+
+if TYPE_CHECKING:
+    import pytest
 
 _MOD = "vergil_tooling.bin.vrg_worktree_status"
 

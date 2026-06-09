@@ -12,7 +12,7 @@ from __future__ import annotations
 import subprocess
 import sys
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 
 from vergil_tooling.lib import git, github
@@ -27,7 +27,7 @@ class Worktree:
     branch: str
 
 
-class WorktreeState(str, Enum):
+class WorktreeState(StrEnum):
     """Lifecycle state of a canonical worktree, derived from PR + local signals."""
 
     OPEN_PR = "open-pr"
