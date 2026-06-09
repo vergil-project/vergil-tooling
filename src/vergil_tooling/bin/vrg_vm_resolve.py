@@ -340,8 +340,16 @@ def _execute(path: str, action: PlanAction, extra: list[str], names: dict[str, s
         _note(f"Creating session {action.name}")
         return _exec_claude(["-n", action.name, *extra])
     if isinstance(action, Resume):
-        _note(f"Resuming session {names.get(action.session_id, action.session_id)}")
-        return _exec_claude(["--resume", action.session_id, *extra])
+        name = names.get(action.session_id)
+        _note(f"Resuming session {name or action.session_id}")
+        # Re-assert -n on every resume so Claude restores the prompt-box
+        # title. Claude derives the displayed title from the last naming
+        # event in the transcript; sessions last named by a transitional
+        # Claude version end on a legacy ``agent-name`` event that current
+        # Claude no longer recognizes, leaving the label blank. Passing -n
+        # sets the live title directly, independent of transcript history.
+        rename = ["-n", name] if name else []
+        return _exec_claude(["--resume", action.session_id, *rename, *extra])
     if isinstance(action, Fork):
         _note(f"Forking session {names.get(action.session_id, action.session_id)} -> {action.name}")
         return _exec_claude(
@@ -357,7 +365,8 @@ def _execute(path: str, action: PlanAction, extra: list[str], names: dict[str, s
         _note(f"Creating session {prompt.name}")
         return _exec_claude(["-n", prompt.name, *extra])
     _note(f"Resuming session {prompt.name}")
-    return _exec_claude(["--resume", prompt.session_id, *extra])
+    # Re-assert -n on resume (see the Resume branch above).
+    return _exec_claude(["--resume", prompt.session_id, "-n", prompt.name, *extra])
 
 
 def resolve(
