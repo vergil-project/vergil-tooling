@@ -114,16 +114,32 @@ def apply_report_fixes(
     head_sha: str,
     note: str | None,
     now: str,
+    title: str | None = None,
+    summary: str | None = None,
+    notes: str | None = None,
     max_rounds: int = 10,
 ) -> WorkflowState:
-    """USER reports it addressed findings. Requires a genuinely new HEAD so an
-    empty round cannot loop. When the new round exceeds ``max_rounds`` the
-    workflow auto-escalates to the human instead of looping forever (the
+    """USER reports it addressed findings. A round counts only if it carries
+    something new to re-review: a new HEAD **or** a PR-metadata revision (so a
+    ``pr-description-fidelity`` fail is actionable — the USER can rewrite the
+    summary/notes/title with no code commit). An empty round (neither) is
+    rejected so the loop cannot spin. When the new round exceeds ``max_rounds``
+    the workflow auto-escalates to the human instead of looping forever (the
     runaway-round cap, spec §9). ``max_rounds`` is supplied by the CLI from
     ``settings.max_rounds``; the default keeps the engine usable standalone."""
     _require_owner(state, "user")
-    if head_sha == state.git.get("last_reviewed_sha"):
-        raise WorkflowError("no new commits since the last review; nothing to re-review")
+    revisions = {
+        key: value
+        for key, value in (("title", title), ("summary", summary), ("notes", notes))
+        if value is not None
+    }
+    new_head = head_sha != state.git.get("last_reviewed_sha")
+    if not new_head and not revisions:
+        raise WorkflowError(
+            "no new commits and no metadata revision since the last review; nothing to re-review"
+        )
+    if revisions:
+        state.pr_metadata = {**(state.pr_metadata or {}), **revisions}
     state.git["head_sha"] = head_sha
     state.round += 1
     state.updated_at = now
@@ -136,6 +152,8 @@ def apply_report_fixes(
     }
     if note:
         entry["note"] = note
+    if revisions:
+        entry["revised"] = sorted(revisions)
     state.history.append(entry)
     if state.round > max_rounds:
         state.owner = "human"

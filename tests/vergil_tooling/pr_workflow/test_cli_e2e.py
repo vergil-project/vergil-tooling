@@ -51,7 +51,20 @@ def _run(monkeypatch: pytest.MonkeyPatch, repo: Path, *args: str, identity: str 
     return cli.main(["--base", "develop", *args])
 
 
-def _seed(repo: Path, *, owner: str, status: str, last_reviewed: str | None = None) -> None:
+def _head_sha(repo: Path) -> str:
+    return subprocess.run(
+        ("git", "rev-parse", "HEAD"), cwd=repo, check=True, capture_output=True, text=True
+    ).stdout.strip()
+
+
+def _seed(
+    repo: Path,
+    *,
+    owner: str,
+    status: str,
+    last_reviewed: str | None = None,
+    pr_metadata: dict[str, str] | None = None,
+) -> None:
     """Write a workflow state directly, for verbs that need a specific turn."""
     state = engine.init_state(
         issue="1534",
@@ -66,6 +79,7 @@ def _seed(repo: Path, *, owner: str, status: str, last_reviewed: str | None = No
     state.owner = owner
     state.status = status
     state.git["last_reviewed_sha"] = last_reviewed
+    state.pr_metadata = pr_metadata
     LocalFileTransport(repo, base="develop").write(state)
 
 
@@ -185,6 +199,35 @@ def test_report_fixes_hands_back_to_audit(
     _seed(repo, owner="user", status="changes-requested", last_reviewed="oldsha")
     assert _run(monkeypatch, repo, "report-fixes", "--note", "addressed") == 0
     assert json.loads(capsys.readouterr().out)["owner"] == "audit"
+
+
+def test_report_fixes_revises_metadata_without_new_commit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    # last_reviewed == current HEAD, so there is no new commit: the only thing to
+    # re-review is the revised summary. This is the pr-description-fidelity path.
+    _seed(
+        repo,
+        owner="user",
+        status="changes-requested",
+        last_reviewed=_head_sha(repo),
+        pr_metadata={"title": "t", "summary": "old", "notes": "n", "linkage": "Ref"},
+    )
+    assert _run(monkeypatch, repo, "report-fixes", "--summary", "sharper summary") == 0
+    assert json.loads(capsys.readouterr().out)["owner"] == "audit"
+    state = json.loads((repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["pr_metadata"]["summary"] == "sharper summary"
+    assert state["round"] == 1
+
+
+def test_report_fixes_rejects_empty_round(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    _seed(repo, owner="user", status="changes-requested", last_reviewed=_head_sha(repo))
+    assert _run(monkeypatch, repo, "report-fixes", "--note", "nothing changed") == 1
+    assert "no new commits and no metadata revision" in capsys.readouterr().err
 
 
 def test_escalate_hands_to_human(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) -> None:

@@ -328,7 +328,7 @@ instruction.
 |---|---|---|
 | `next [--no-audit]` | USER, AUDIT | Block (SHA poll). Role resolved from `vrg-whoami` (no `--as` flag). First-ever call as USER: **init/takeover** the file and run the startup handshake (§8.1). Return a Directive or DONE. |
 | `report-ready --title --summary --notes [--linkage]` | USER | Snapshot HEAD, write `pr_metadata`, `owner→audit`. (Initial done signal.) |
-| `report-fixes [--note]` | USER | Verify HEAD moved, snapshot it, `owner→audit`, bump round. |
+| `report-fixes [--note] [--title --summary --notes]` | USER | Verify the round carries something new — HEAD moved **or** a `pr_metadata` revision (`--title`/`--summary`/`--notes`); overwrite the revised fields. Then snapshot HEAD, `owner→audit`, bump round. A metadata-only round (no new commit) makes a `pr-description-fidelity` fail actionable. |
 | `submit-check --payload check.json` | AUDIT | Validate one check vs `check.v1`, record it. Once every registry check has a result for the round, **roll up** → set owner/status, record `last_reviewed_sha`. |
 | `escalate --reason …` | USER, AUDIT | `owner→human`, set `escalation`, status=escalated. |
 | `abort --reason …` | USER, AUDIT | Record a terminal `error` (graceful give-up, §9); the counterpart's `next` detects it and stops. Role resolved from `vrg-whoami`. |
@@ -492,9 +492,12 @@ human is watching the two sessions.
   restart).
 - **Malformed report** — `submit-check`/`report-ready` payloads are validated
   against their schemas; rejection is non-zero so the model retries.
-- **No new commits on `report-fixes`** — the oracle verifies HEAD actually moved
-  since `last_reviewed_sha`; if not, it rejects ("nothing to review") to prevent
-  empty-round loops.
+- **Empty round on `report-fixes`** — a fix round must carry something new to
+  re-review: HEAD moved since `last_reviewed_sha` **or** a `pr_metadata` revision
+  (`--title`/`--summary`/`--notes`). A metadata-only round keeps a
+  `pr-description-fidelity` fail actionable (the summary is fixable without a code
+  commit); a genuinely empty round (no new HEAD and no revision) is rejected to
+  prevent empty-round loops.
 - **Runaway rounds** — a `round` counter with a configurable cap (in `vergil.toml`);
   exceeding it auto-escalates to the human rather than looping forever.
 - **Identity misread** — role comes from `vrg-whoami`; `next` warns on signal

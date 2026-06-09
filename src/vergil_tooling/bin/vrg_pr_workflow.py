@@ -156,6 +156,9 @@ def cmd_report_fixes(args: argparse.Namespace, transport: LocalFileTransport) ->
         head_sha=transport.head_sha(),
         note=args.note,
         now=_now(),
+        title=args.title,
+        summary=args.summary,
+        notes=args.notes,
         max_rounds=settings.max_rounds(transport.worktree_root),
     )
     transport.write(state)
@@ -245,6 +248,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     p_fixes = sub.add_parser("report-fixes", help="USER: report fixes for the last findings")
     p_fixes.add_argument("--note", default=None)
+    p_fixes.add_argument("--title", default=None, help="Revise the PR title (e.g. for fidelity)")
+    p_fixes.add_argument("--summary", default=None, help="Revise the PR summary")
+    p_fixes.add_argument("--notes", default=None, help="Revise the PR notes")
     p_fixes.set_defaults(func=cmd_report_fixes)
 
     p_check = sub.add_parser("submit-check", help="AUDIT: submit one check's result")
