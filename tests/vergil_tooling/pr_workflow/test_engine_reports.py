@@ -227,6 +227,51 @@ def test_report_fixes_bumps_round_and_reopens_all_checks() -> None:
     assert engine.next_pending_check(state) == check_ids()[0]  # all reopen for the new round
 
 
+def test_report_fixes_accepts_metadata_only_round() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)  # pr_metadata {title t, summary s, notes n, linkage Ref}
+    _run_review(state, fail=check_ids()[0])  # owner user, last_reviewed h1
+    # No new commit (head still h1), but the summary is revised: a valid round.
+    engine.apply_report_fixes(
+        state, head_sha="h1", note="reworded summary", now=_NOW, summary="sharper summary"
+    )
+    assert state.round == 1
+    assert state.owner == "audit"
+    assert state.status == "reviewing"
+    assert state.pr_metadata == {
+        "title": "t",
+        "summary": "sharper summary",
+        "notes": "n",
+        "linkage": "Ref",
+    }
+    assert state.history[-1]["revised"] == ["summary"]
+
+
+def test_report_fixes_revises_multiple_metadata_fields() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    _run_review(state, fail=check_ids()[0])
+    engine.apply_report_fixes(
+        state, head_sha="h1", note=None, now=_NOW, title="new title", notes="new notes"
+    )
+    assert state.pr_metadata == {
+        "title": "new title",
+        "summary": "s",
+        "notes": "new notes",
+        "linkage": "Ref",
+    }
+    assert state.history[-1]["revised"] == ["notes", "title"]
+
+
+def test_report_fixes_rejects_empty_round() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    _run_review(state, fail=check_ids()[0])  # owner user, last_reviewed h1
+    # No new commit and no metadata revision: nothing to re-review.
+    with pytest.raises(WorkflowError, match="no new commits and no metadata revision"):
+        engine.apply_report_fixes(state, head_sha="h1", note=None, now=_NOW)
+
+
 def test_report_fixes_escalates_when_round_cap_exceeded() -> None:
     state = _paired_owned_by_user()
     _ready(state)
