@@ -41,13 +41,17 @@ class FakeTransport(LocalFileTransport):
         self.state = WorkflowState.from_json(state.to_json())
         self.writes.append(WorkflowState.from_json(state.to_json()))
 
-    def wait_until_present(self, *, timeout: float) -> WorkflowState:
+    def wait_until_present(
+        self, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
         if self.state is None:
             self.state = self.staged
         assert self.state is not None
         return self.state
 
-    def wait_until_owner(self, role: str, *, timeout: float) -> WorkflowState:
+    def wait_until_owner(
+        self, role: str, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
         assert self.state is not None
         self.state.owner = role  # simulate the counterpart handing the turn over
         return self.state

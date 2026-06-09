@@ -28,13 +28,21 @@ class Transport(ABC):
         """Persist the state atomically."""
 
     @abstractmethod
-    def wait_until_present(self, *, timeout: float) -> WorkflowState:
-        """Block until a workflow exists. Raise WorkflowError on timeout."""
+    def wait_until_present(
+        self, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
+        """Block until a workflow exists. Raise WorkflowError on timeout.
+
+        ``waiting_for`` (when set) names what is being waited on, for a periodic
+        heartbeat so a long wait is visible rather than a silent hang."""
 
     @abstractmethod
-    def wait_until_owner(self, role: str, *, timeout: float) -> WorkflowState:
+    def wait_until_owner(
+        self, role: str, *, timeout: float, waiting_for: str | None = None
+    ) -> WorkflowState:
         """Block until ``owner == role``. Raise WorkflowError on timeout, or if
-        the counterpart recorded a terminal error."""
+        the counterpart recorded a terminal error. ``waiting_for`` drives a
+        heartbeat for long waits (see ``wait_until_present``)."""
 
     @abstractmethod
     def head_sha(self) -> str:
