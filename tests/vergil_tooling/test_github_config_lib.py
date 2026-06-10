@@ -48,7 +48,7 @@ from vergil_tooling.lib.github_config import (
 
 
 def test_desired_repo_settings_are_fixed() -> None:
-    s = desired_repo_settings(is_org=True)
+    s = desired_repo_settings(is_org=True, visibility="private")
     assert s.default_branch == "develop"
     assert s.allow_auto_merge is False
     assert s.delete_branch_on_merge is True
@@ -60,15 +60,15 @@ def test_desired_repo_settings_are_fixed() -> None:
     assert s.has_wiki is True
 
 
-def test_desired_repo_settings_org_repo_allows_forking() -> None:
-    # The tooling requires forkable repos, so org repos declare forking enabled
-    # regardless of visibility (public or private).
-    s = desired_repo_settings(is_org=True)
+def test_desired_repo_settings_private_org_repo_allows_forking() -> None:
+    # GitHub only accepts allow_forking on org-owned *private* repos, so the
+    # tooling declares forking enabled for private org repos (issue #1584).
+    s = desired_repo_settings(is_org=True, visibility="private")
     assert s.allow_forking is True
 
 
 def test_desired_repo_settings_new_hardcoded_values() -> None:
-    s = desired_repo_settings(is_org=True)
+    s = desired_repo_settings(is_org=True, visibility="private")
     assert s.allow_update_branch is True
     assert s.has_downloads is False
     assert s.merge_commit_title == "MERGE_MESSAGE"
@@ -1090,7 +1090,7 @@ def test_canonicalize_rules_preserves_non_dict_entries() -> None:
 
 
 def test_apply_repo_settings_calls_write_json() -> None:
-    settings = desired_repo_settings(is_org=True)
+    settings = desired_repo_settings(is_org=True, visibility="private")
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     mock_write.assert_called_once()
@@ -1103,7 +1103,7 @@ def test_apply_repo_settings_calls_write_json() -> None:
 
 
 def test_apply_repo_settings_includes_new_fields() -> None:
-    settings = desired_repo_settings(is_org=True)
+    settings = desired_repo_settings(is_org=True, visibility="private")
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
@@ -1473,12 +1473,12 @@ def test_compute_desired_state_publish_release_true() -> None:
 
 
 def test_desired_repo_settings_user_repo_allow_forking_is_none() -> None:
-    s = desired_repo_settings(is_org=False)
+    s = desired_repo_settings(is_org=False, visibility="public")
     assert s.allow_forking is None
 
 
 def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
-    settings = desired_repo_settings(is_org=False)
+    settings = desired_repo_settings(is_org=False, visibility="public")
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
@@ -1486,11 +1486,35 @@ def test_apply_repo_settings_omits_allow_forking_when_none() -> None:
 
 
 def test_apply_repo_settings_includes_allow_forking_for_private_org() -> None:
-    settings = desired_repo_settings(is_org=True)
+    settings = desired_repo_settings(is_org=True, visibility="private")
     with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
         _apply_repo_settings("o/r", settings)
     body = mock_write.call_args[0][2]
     assert body["allow_forking"] is True
+
+
+# ---------------------------------------------------------------------------
+# Issue #1584: GitHub only accepts allow_forking on org-owned *private* repos;
+# PATCHing it on a public repo returns 422. Public org repos must omit it.
+# ---------------------------------------------------------------------------
+
+
+def test_public_org_repo_omits_allow_forking() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="public", is_org=True)
+    assert state.repo_settings.allow_forking is None
+
+
+def test_private_org_repo_sets_allow_forking() -> None:
+    state = compute_desired_state(_vergil_config(), visibility="private", is_org=True)
+    assert state.repo_settings.allow_forking is True
+
+
+def test_apply_repo_settings_omits_allow_forking_for_public_org() -> None:
+    settings = desired_repo_settings(is_org=True, visibility="public")
+    with patch("vergil_tooling.lib.github_config.github.write_json") as mock_write:
+        _apply_repo_settings("o/r", settings)
+    body = mock_write.call_args[0][2]
+    assert "allow_forking" not in body
 
 
 def _private_forking_error() -> GitHubAPIError:
@@ -1503,7 +1527,7 @@ def _private_forking_error() -> GitHubAPIError:
 
 
 def test_apply_repo_settings_raises_actionable_error_on_private_forking_422() -> None:
-    settings = desired_repo_settings(is_org=True)
+    settings = desired_repo_settings(is_org=True, visibility="private")
     with (
         patch(
             "vergil_tooling.lib.github_config.github.write_json",
@@ -1515,7 +1539,7 @@ def test_apply_repo_settings_raises_actionable_error_on_private_forking_422() ->
 
 
 def test_apply_repo_settings_propagates_unrelated_api_error() -> None:
-    settings = desired_repo_settings(is_org=True)
+    settings = desired_repo_settings(is_org=True, visibility="private")
     unrelated = GitHubAPIError(
         1,
         ("gh", "api", "repos/o/r"),
