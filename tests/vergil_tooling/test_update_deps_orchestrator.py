@@ -85,6 +85,26 @@ def test_run_updaters_no_changes_sets_flag_false(monkeypatch) -> None:
     assert ctx.any_changes is False
 
 
+def test_run_updaters_honors_skip(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    state, ctx = _state()
+    state.registry = [_Changed(), _NoChange()]
+    state.skip = ["changed"]
+    run_updaters_stage(state)
+    assert [r.updater for r in ctx.results] == ["nochange"]
+    assert ctx.any_changes is False
+
+
+def test_run_updaters_honors_only(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    state, ctx = _state()
+    state.registry = [_Changed(), _NoChange()]
+    state.only = ["changed"]
+    run_updaters_stage(state)
+    assert [r.updater for r in ctx.results] == ["changed"]
+    assert ctx.any_changes is True
+
+
 def test_validate_stage_skips_when_no_changes(monkeypatch) -> None:
     called = {"ran": False}
     monkeypatch.setattr(_MOD + ".validate.run_validation", lambda: called.update(ran=True))
