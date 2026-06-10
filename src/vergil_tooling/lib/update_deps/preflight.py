@@ -7,9 +7,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git
+from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
 from vergil_tooling.lib.release.preflight import check_gh_auth
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
-from vergil_tooling.lib.update_deps.worktree import create_worktree
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -51,7 +51,14 @@ def preflight(*, repo_root: Path) -> UpdateDepsContext:
         )
 
     branch = f"chore/dep-update-{_today()}"
-    worktree_path = create_worktree(repo_root, branch=branch, base="develop")
+    try:
+        worktree_path = create_worktree(repo_root, branch=branch, base="develop")
+    except ManagedWorktreeError as exc:
+        raise UpdateDepsError(
+            phase="preflight",
+            command=f"git worktree add {branch}",
+            message=str(exc),
+        ) from exc
     os.chdir(worktree_path)
     print(f"Preflight passed: {repo} — worktree {worktree_path}")
     return UpdateDepsContext(
