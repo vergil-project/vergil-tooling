@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext
 from vergil_tooling.lib.update_deps.updaters.python_uv import PythonUvUpdater
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _MOD = "vergil_tooling.lib.update_deps.updaters.python_uv"
 

@@ -22,7 +22,7 @@ class PythonUvUpdater:
         root = ctx.repo_root
         return (root / "pyproject.toml").is_file() and (root / "uv.lock").is_file()
 
-    def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
+    def apply(self, ctx: UpdateDepsContext) -> UpdateResult:  # noqa: ARG002
         progress.run(["vrg-container-run", "--", "uv", "lock", "--upgrade"])
         dirty = bool(git.read_output("status", "--porcelain", "uv.lock").strip())
         return UpdateResult(

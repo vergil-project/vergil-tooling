@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from vergil_tooling.lib.update_deps import preflight as preflight_mod
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.preflight import preflight
 
@@ -14,27 +15,38 @@ def _sync_ok(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".check_gh_auth", lambda: "owner/repo")
     monkeypatch.setattr(_MOD + ".config.read_config", lambda root: None)
     monkeypatch.setattr(_MOD + ".git.current_branch", lambda: "develop")
-    monkeypatch.setattr(_MOD + ".git.read_output", lambda *a: "deadbeef" if "rev-parse" in a else "")
+    monkeypatch.setattr(
+        _MOD + ".git.read_output",
+        lambda *a: "deadbeef" if "rev-parse" in a else "",
+    )
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
     monkeypatch.setattr(_MOD + "._today", lambda: "20260610")
+
+
+def test_today_returns_yyyymmdd() -> None:
+    stamp = preflight_mod._today()  # noqa: SLF001
+    assert len(stamp) == 8
+    assert stamp.isdigit()
 
 
 def test_preflight_creates_worktree_and_chdirs(monkeypatch) -> None:
     _sync_ok(monkeypatch)
     chdirs: list[Path] = []
     made: dict[str, object] = {}
-    monkeypatch.setattr(
-        _MOD + ".create_worktree",
-        lambda root, *, branch, base: made.update(branch=branch, base=base)
-        or Path("/tmp/repo/.worktrees/chore-dep-update-20260610"),  # noqa: S108
-    )
+    wt_path = Path("/tmp/repo/.worktrees/chore-dep-update-20260610")  # noqa: S108
+
+    def _fake_create(root, *, branch, base):  # noqa: ARG001
+        made.update(branch=branch, base=base)
+        return wt_path
+
+    monkeypatch.setattr(_MOD + ".create_worktree", _fake_create)
     monkeypatch.setattr(_MOD + ".os.chdir", lambda p: chdirs.append(Path(p)))
     ctx = preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
     assert ctx.repo == "owner/repo"
     assert ctx.branch == "chore/dep-update-20260610"
     assert made == {"branch": "chore/dep-update-20260610", "base": "develop"}
-    assert ctx.worktree_path == Path("/tmp/repo/.worktrees/chore-dep-update-20260610")  # noqa: S108
-    assert chdirs == [Path("/tmp/repo/.worktrees/chore-dep-update-20260610")]  # noqa: S108
+    assert ctx.worktree_path == wt_path
+    assert chdirs == [wt_path]
 
 
 def test_preflight_rejects_non_develop(monkeypatch) -> None:

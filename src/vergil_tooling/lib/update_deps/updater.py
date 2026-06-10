@@ -32,11 +32,11 @@ class Updater(Protocol):
 
     def applies(self, ctx: UpdateDepsContext) -> bool:
         """True when this repo has the surface this updater handles."""
-        ...
+        ...  # pragma: no cover
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         """Upgrade at the source of truth; report what changed."""
-        ...
+        ...  # pragma: no cover
 
 
 def applicable_updaters(

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.worktree import create_worktree, remove_worktree
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _MOD = "vergil_tooling.lib.update_deps.worktree"
 
