@@ -79,6 +79,41 @@ def prompt_choice(label: str, options: list[str], *, default: str = "") -> str:
         print(f"  Enter a number between 1 and {len(options)}.")
 
 
+def prompt_language(*, default: str = "") -> str:
+    """Prompt for the primary language, with an explicit no-language option.
+
+    "No primary language" is the *absence* of a language, not a sixth language.
+    It is presented as a separate "0. None of the above" choice, set apart from
+    the real languages, and maps to an empty string so the caller omits the
+    ``primary-language`` key entirely (see issue #1579). This is deliberately
+    asymmetric with the other enums (e.g. ``versioning-scheme``), which encode
+    their no-op as a literal ``none`` member.
+    """
+    languages = sorted(_ENUMS["primary-language"])
+    print("\nPrimary language:")
+    for i, lang in enumerate(languages, 1):
+        marker = " (default)" if lang == default else ""
+        print(f"  {i}. {lang}{marker}")
+    print()
+    none_marker = " (default)" if not default else ""
+    print(f"  0. None of the above — this repo has no primary language{none_marker}")
+
+    while True:
+        hint = f" [{default}]" if default else " [none]"
+        raw = input(f"  Choice{hint}: ").strip()
+        if not raw:
+            return default  # may be "" → no primary language
+        if raw == "0":
+            return ""
+        try:
+            idx = int(raw)
+            if 1 <= idx <= len(languages):
+                return languages[idx - 1]
+        except ValueError:
+            pass
+        print(f"  Enter 0–{len(languages)}.")
+
+
 def prompt_yes_no(label: str, *, default: bool | None = None) -> bool:
     """Prompt for a yes/no answer."""
     hint_map = {True: " [Y/n]", False: " [y/N]", None: " [y/n]"}
@@ -625,14 +660,22 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     pub_raw = existing.get("publish", {}) if existing else {}
     deps = existing.get("dependencies", {}) if existing else {}
 
+    ctx.repository_type = prompt_choice(
+        "Repository type",
+        sorted(_ENUMS["repository-type"]),
+        default=project.get("repository-type", ""),
+    )
+
+    # Primary language is prompted on its own — "no language" is the absence of
+    # a language, presented as a separate "none of the above" choice, not a
+    # sixth enum value (issue #1579).
+    ctx.primary_language = prompt_language(default=project.get("primary-language", ""))
+
     enum_fields = [
-        ("repository_type", "repository-type", "Repository type"),
-        ("primary_language", "primary-language", "Primary language"),
         ("branching_model", "branching-model", "Branching model"),
         ("versioning_scheme", "versioning-scheme", "Versioning scheme"),
         ("release_model", "release-model", "Release model"),
     ]
-
     for attr, toml_key, label in enum_fields:
         options = sorted(_ENUMS[toml_key])
         default = project.get(toml_key, "")

@@ -20,6 +20,7 @@ from vergil_tooling.lib.repo_init import (
     detect_completed_steps,
     prompt_choice,
     prompt_free_text,
+    prompt_language,
     prompt_yes_no,
     render_cd_workflow,
     render_ci_workflow,
@@ -59,6 +60,29 @@ class TestPromptChoice:
         with patch("builtins.input", side_effect=["0", "abc", "1"]):
             result = prompt_choice("Pick one", options)
         assert result == "alpha"
+
+
+class TestPromptLanguage:
+    # Languages are listed sorted: go, java, python, ruby, rust (so index 3 is python).
+    def test_selects_language(self) -> None:
+        with patch("builtins.input", return_value="3"):
+            assert prompt_language() == "python"
+
+    def test_none_of_the_above_returns_empty(self) -> None:
+        with patch("builtins.input", return_value="0"):
+            assert prompt_language() == ""
+
+    def test_empty_with_no_default_means_no_language(self) -> None:
+        with patch("builtins.input", return_value=""):
+            assert prompt_language() == ""
+
+    def test_empty_with_language_default_keeps_default(self) -> None:
+        with patch("builtins.input", return_value=""):
+            assert prompt_language(default="python") == "python"
+
+    def test_invalid_then_none(self) -> None:
+        with patch("builtins.input", side_effect=["9", "abc", "0"]):
+            assert prompt_language() == ""
 
 
 class TestPromptYesNo:
@@ -634,6 +658,76 @@ class TestStepGenerateConfig:
         assert 'primary-language = "python"' in content
 
         assert any("commit" in c for c in calls)
+
+    def test_none_of_the_above_omits_primary_language(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="dot-github")
+        ctx.work_dir = tmp_path
+
+        inputs = iter(
+            [
+                "2",  # repository-type: documentation
+                "0",  # primary-language: none of the above
+                "3",  # branching-model: docs-single-branch
+                "2",  # versioning-scheme: none
+                "3",  # release-model: none
+                "latest",  # ci versions
+                "n",  # integration tests
+                "n",  # publish releases
+                "y",  # publish docs
+                "",  # vergil version
+                "1",  # license: GPL-3.0
+                "",  # initial version
+            ]
+        )
+
+        with (
+            patch("builtins.input", side_effect=lambda _="": next(inputs)),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.primary_language == ""
+        content = (tmp_path / "vergil.toml").read_text()
+        assert "primary-language" not in content
+        # Round-trips through config validation as a language-less repo.
+        assert _parse_raw_config(tomllib.loads(content)).project.primary_language is None
+
+    def test_adopt_language_less_toml_round_trips(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="dot-github", adopt=True)
+        ctx.work_dir = tmp_path
+
+        existing = (
+            "[project]\n"
+            'repository-type = "documentation"\n'
+            'versioning-scheme = "none"\n'
+            'branching-model = "docs-single-branch"\n'
+            'release-model = "none"\n'
+            "\n"
+            "[ci]\n"
+            'versions = ["latest"]\n'
+            "integration-tests = false\n"
+            "\n"
+            "[publish]\n"
+            "release = false\n"
+            "docs = true\n"
+            "\n"
+            "[dependencies]\n"
+            'vergil = "v2.1"\n'
+        )
+        (tmp_path / "vergil.toml").write_text(existing)
+
+        # All defaults accepted (empty input); the language default is "no language".
+        inputs = iter([""] * 12)
+
+        with (
+            patch("builtins.input", side_effect=lambda _="": next(inputs)),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.primary_language == ""
+        content = (tmp_path / "vergil.toml").read_text()
+        assert "primary-language" not in content
 
     def test_prefills_from_existing_toml_in_adopt_mode(
         self,
