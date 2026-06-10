@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.56/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.53/">
+        <link rel="next" href="../v2.1.25/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.54 - VERGIL Tooling</title>
+        <title>2.1.26 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2054-2026-05-25" class="md-skip">
+        <a href="#release-2126-2026-06-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.54
+              2.1.26
             
           </span>
         </div>
@@ -922,10 +922,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.26/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.26
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -941,6 +968,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2378,37 +2447,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.54
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.54/" class="md-nav__link">
         
   
   
@@ -2424,48 +2466,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8059,10 +8059,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documentation
+        Bug fixes
       
     </span>
   </a>
@@ -8097,45 +8097,59 @@
 
 
 
-<h1 id="release-2054-2026-05-25">Release 2.0.54 (2026-05-25)<a class="headerlink" href="#release-2054-2026-05-25" title="Permanent link">&para;</a></h1>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<h1 id="release-2126-2026-06-10">Release 2.1.26 (2026-06-10)<a class="headerlink" href="#release-2126-2026-06-10" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>stateless VM lifecycle design spec</strong>
-Supersedes distribution and dynamic tooling management sections of #894. VMs are dataless and stateless — all persistent data lives on the host via selective mounts (projects/, skills/) and file copies (CLAUDE.md, settings.json). vergil-tooling is the sole in-place-updatable component; everything else updates via VM rebuild on a 3-day staleness threshold. Ref #907</p>
-</li>
-<li>
-<p><strong>stateless VM lifecycle implementation plan</strong>
-Seven-task TDD implementation plan for issue #907: vm_age_days, copy_claude_config, try_update_tooling, staleness enforcement in start and session, rebuild command, and test updates.</p>
-</li>
+<li><strong>omit allow_forking for public org repos (#1585)</strong>
+GitHub only accepts the allow_forking field on org-owned private repos; sending it for a public repo returns 422 ("Allow forks setting can only be changed on org-owned private repositories"), failing the GitHub-config step when adopting public repos like an org .github repo.</li>
 </ul>
+<p>Gate allow_forking on visibility: set it only for private org repos and leave it unmanaged (None) for public org repos and user-owned repos. compute_desired_state already has visibility in scope and threads it into desired_repo_settings; the existing None handling in _diff_dataclass and _apply_repo_settings then omits the field from the PATCH body. Private org behaviour and the members_can_fork_private_repositories 422 handler are unchanged.</p>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>vm_age_days reads VM creation time from Lima metadata</strong>
-Returns fractional days since VM creation using the Lima instance directory birth time. Falls back to mtime on platforms without st_birthtime.</p>
-</li>
-<li>
-<p><strong>copy_claude_config copies CLAUDE.md and settings.json into VM</strong>
-One-way host-to-VM copy for files that cannot be mounted (Lima mounts directories only).</p>
-</li>
-<li>
-<p><strong>try_update_tooling wraps update with graceful fallback</strong>
-Returns False and warns on failure instead of aborting. Used by start and session to avoid blocking on network errors.</p>
-</li>
-<li>
-<p><strong>staleness enforcement and auto-update in vrg-vm start</strong>
-Refuses to start VMs older than 3 days unless --allow-stale-vm is passed. Auto-updates vergil-tooling and copies Claude config on start.</p>
-</li>
-<li>
-<p><strong>staleness enforcement in vrg-vm session</strong>
-Session refuses to connect to VMs older than 3 days unless --allow-stale-vm is passed. Also copies Claude config and uses graceful tooling update.</p>
-</li>
-<li>
-<p><strong>vrg-vm rebuild command for stateless VM lifecycle</strong>
-Destroys and recreates the VM in one step. Safe because VMs are stateless — all persistent data lives on host mounts. Also fixes mypy st_birthtime error and adds missing coverage tests.</p>
-</li>
+<li><strong>mechanized dependency-update workflow (Phase 1) (#1586)</strong></li>
+<li>docs(specs): add vrg-update-deps design and phase 1 plan (#1379)</li>
 </ul>
+<p>Mechanized, human-run dependency-update tool: generic driver + updater registry, managed-worktree execution, Python/uv updater, full PR lifecycle. Phase 1 plan covers the Python end-to-end slice; other updaters and the vrg-release worktree retrofit (#1578) follow. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add pipeline context and error types</li>
+</ul>
+<p>UpdateDepsContext carries repo, repo_root, branch, worktree_path, pr_url, any_changes, and per-updater results through the stage pipeline. UpdateDepsError mirrors ReleaseError. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add updater protocol, result type, registry</li>
+</ul>
+<p>Updater is a runtime-checkable Protocol (applies/apply); UpdateResult reports changed/summary/commit_message/warnings; applicable_updaters filters a registry by applies(). Ref #1379</p>
+<ul>
+<li>feat(update-deps): add Python/uv language updater</li>
+</ul>
+<p>PythonUvUpdater applies when pyproject.toml and uv.lock exist; apply() runs 'uv lock --upgrade' in the dev container and reports changed iff uv.lock is dirty. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add managed-worktree create/remove helper</li>
+</ul>
+<p>create_worktree makes a worktree under .worktrees/ on a new branch off a base ref and rejects an existing path; remove_worktree force-removes it. Shared mechanism for automated workflows (vrg-release retrofit tracked in #1578). Ref #1379</p>
+<ul>
+<li>feat(update-deps): add preflight with synced-develop checks and worktree creation</li>
+</ul>
+<p>Preflight asserts on develop, clean tree, and local develop in sync with origin/develop, then creates the managed worktree off develop and chdirs into it. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add single-shot validation stage</li>
+</ul>
+<p>run_validation runs 'vrg-container-run -- vrg-validate' in the cwd (the worktree) and raises UpdateDepsError with captured output on failure. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add PR create/merge and worktree-cleanup helpers</li>
+</ul>
+<p>prepare_pr pushes the worktree branch and opens the PR to develop; merge_pr reuses pr_merge.wait_and_merge; cleanup_worktree chdirs to the root, removes the worktree, and deletes the local branch (used by both no-op and success paths). Ref #1379</p>
+<ul>
+<li>feat(update-deps): add stage pipeline with no-op/abort and worktree cleanup</li>
+</ul>
+<p>build_stages wires preflight -&gt; update -&gt; validate -&gt; prepare-pr -&gt; merge -&gt; finalize. Updaters commit per category; downstream stages no-op when nothing changed; validate is fail_fast (abort leaves the worktree); finalize removes the worktree on both no-op and success. Ref #1379</p>
+<ul>
+<li>feat(update-deps): add vrg-update-deps CLI entry point and console script</li>
+</ul>
+<p>main() refuses agent identities (human-only), captures repo_root before any worktree chdir, and drives the stage pipeline via progress.run_pipeline. Registers the vrg-update-deps console script. Ref #1379</p>
+<ul>
+<li>test(update-deps): satisfy lint, typecheck, and 100% coverage gates</li>
+</ul>
+<p>Mark Protocol stub bodies and the unused ctx arg with pragma/noqa; move annotation-only Path imports under TYPE_CHECKING; narrow optional ctx in orchestrator tests; add branch/error-path tests so the new modules reach 100% branch coverage under vrg-validate. Ref #1379</p>
 
 
 
