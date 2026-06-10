@@ -104,7 +104,7 @@ _LANGUAGE_ACTION_PATTERNS: dict[str, list[str]] = {
 }
 
 
-def desired_repo_settings(*, is_org: bool) -> DesiredRepoSettings:
+def desired_repo_settings(*, is_org: bool, visibility: str) -> DesiredRepoSettings:
     return DesiredRepoSettings(
         default_branch="develop",
         allow_auto_merge=False,
@@ -115,12 +115,15 @@ def desired_repo_settings(*, is_org: bool) -> DesiredRepoSettings:
         has_issues=True,
         has_projects=True,
         has_wiki=True,
-        # The tooling requires repos to be forkable, so org repos (public and
-        # private) declare forking enabled. Private repos additionally depend on
-        # the org-level ``members_can_fork_private_repositories`` flag, which the
-        # tool cannot yet manage (vergil-tooling#1268). User-owned repos are left
-        # unmanaged (vergil-tooling#666).
-        allow_forking=True if is_org else None,
+        # GitHub only accepts the ``allow_forking`` field on org-owned *private*
+        # repos; PATCHing it on a public repo returns 422 (vergil-tooling#1584),
+        # and it is moot there since public repos are forkable per org policy.
+        # Private org repos additionally depend on the org-level
+        # ``members_can_fork_private_repositories`` flag, which the tool cannot
+        # yet manage (vergil-tooling#1268). User-owned repos are left unmanaged
+        # (vergil-tooling#666). Anything other than a private org repo is left
+        # unmanaged (``None`` → omitted from the PATCH body).
+        allow_forking=True if (is_org and visibility == "private") else None,
         allow_update_branch=True,
         has_downloads=False,
         merge_commit_title="MERGE_MESSAGE",
@@ -348,7 +351,7 @@ def compute_desired_state(
     )
 
     return DesiredState(
-        repo_settings=desired_repo_settings(is_org=is_org),
+        repo_settings=desired_repo_settings(is_org=is_org, visibility=visibility),
         security=desired_security_settings(ghas=ghas),
         actions_permissions=desired_actions_permissions(config.project.primary_language),
         rulesets=rulesets,
