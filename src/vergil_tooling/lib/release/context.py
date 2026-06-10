@@ -23,6 +23,10 @@ class ReleaseContext:
     release_branch: str | None = None
     release_pr_url: str | None = None
 
+    # Managed worktree all release branch work happens in, so the root
+    # checkout's HEAD never moves while a release runs (#1578).
+    worktree_path: Path | None = None
+
     release_merge_sha: str | None = None
 
     bump_pr_url: str | None = None

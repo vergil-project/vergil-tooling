@@ -37,6 +37,7 @@ def test_build_stages_order_and_modes() -> None:
         "merge-release",
         "confirm-main",
         "back-merge-bump",
+        "teardown-worktree",
         "confirm-develop",
         "promote",
         "close-finalize",
@@ -52,6 +53,39 @@ def test_build_stages_order_and_modes() -> None:
         "confirm-main",
         "back-merge-bump",
     }
+
+
+def test_teardown_stage_runs_after_back_merge_and_defers() -> None:
+    """teardown-worktree must sit between back-merge-bump and confirm-develop,
+    so the worktree is gone before close-finalize runs vrg-finalize-pr from the
+    main worktree (#1578). It is fail_defer: a teardown hiccup must not abort a
+    release whose branch work already succeeded."""
+    stages = build_stages()
+    names = [s.name for s in stages]
+    teardown = stages[names.index("teardown-worktree")]
+    assert names.index("back-merge-bump") < names.index("teardown-worktree")
+    assert names.index("teardown-worktree") < names.index("confirm-develop")
+    assert names.index("teardown-worktree") < names.index("close-finalize")
+    assert teardown.mode == "fail_defer"
+
+
+def test_teardown_stage_calls_teardown_worktree() -> None:
+    from vergil_tooling.lib.release.orchestrator import _teardown_stage
+
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    with patch(_MOD + ".teardown_worktree") as m_teardown:
+        _teardown_stage(state)
+    m_teardown.assert_called_once_with(state.ctx)
+
+
+def test_teardown_stage_noop_without_ctx() -> None:
+    from vergil_tooling.lib.release.orchestrator import _teardown_stage
+
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    with patch(_MOD + ".teardown_worktree") as m_teardown:
+        _teardown_stage(state)
+    m_teardown.assert_not_called()
 
 
 def test_preflight_stage_populates_ctx() -> None:

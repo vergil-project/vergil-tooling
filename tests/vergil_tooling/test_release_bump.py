@@ -118,10 +118,11 @@ def test_back_merge_waits_and_merges() -> None:
     )
 
 
-def test_back_merge_syncs_develop_after_merge() -> None:
-    """The final develop sync must fetch then ff-merge the remote-tracking
-    ref — never `pull`, whose FETCH_HEAD dependence races concurrent
-    fetches (issue #1499)."""
+def test_back_merge_never_returns_to_develop() -> None:
+    """Work happens in the release worktree, so back-merge never checks out
+    develop in the root checkout (#1578). The root's develop is synced later
+    by the finalize cleanup stage. The only checkout is the worktree's own
+    `checkout -b release/post-<v>`."""
     ctx = _ctx()
     git_run_calls: list[tuple[str, ...]] = []
 
@@ -139,12 +140,8 @@ def test_back_merge_syncs_develop_after_merge() -> None:
     ):
         back_merge_and_bump(ctx)
 
-    develop_checkout_idx = next(
-        i for i, c in enumerate(git_run_calls) if c == ("checkout", "develop")
-    )
-    fetch_idx = next(i for i, c in enumerate(git_run_calls) if c == ("fetch", "origin", "develop"))
-    merge_idx = next(
-        i for i, c in enumerate(git_run_calls) if c == ("merge", "--ff-only", "origin/develop")
-    )
-    assert develop_checkout_idx < fetch_idx < merge_idx
+    checkout_calls = [c for c in git_run_calls if c and c[0] == "checkout"]
+    assert checkout_calls == [("checkout", "-b", "release/post-2.1.0", "origin/main")]
+    assert ("checkout", "develop") not in git_run_calls
+    assert not any("merge" in c for c in git_run_calls)
     assert not any(c[0] == "pull" for c in git_run_calls)

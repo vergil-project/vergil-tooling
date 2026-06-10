@@ -10,7 +10,7 @@ from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
 from vergil_tooling.lib.release.confirm import confirm_develop, confirm_main
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.finalize import close_and_finalize
+from vergil_tooling.lib.release.finalize import close_and_finalize, teardown_worktree
 from vergil_tooling.lib.release.handoff import consumer_refresh
 from vergil_tooling.lib.release.merge import wait_and_merge
 from vergil_tooling.lib.release.preflight import preflight, run_audit
@@ -48,6 +48,17 @@ def _preflight_stage(state: ReleaseState) -> None:
     )
     ctx.promote = state.promote
     state.ctx = ctx
+
+
+def _teardown_stage(state: ReleaseState) -> None:
+    """Remove the release worktree and return to the root checkout (#1578).
+
+    Runs once the last branch work (back-merge-bump) is done, before
+    close-finalize hands off to vrg-finalize-pr, which must run from the
+    main worktree.
+    """
+    if state.ctx is not None:
+        teardown_worktree(state.ctx)
 
 
 def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[ReleaseState], None]:
@@ -93,6 +104,7 @@ def build_stages() -> list[Stage]:
             _tracked("back-merge-bump", back_merge_and_bump),
             mode="fail_fast",
         ),
+        Stage("teardown-worktree", _teardown_stage, mode="fail_defer"),
         Stage(
             "confirm-develop",
             _tracked("confirm-develop", confirm_develop),
