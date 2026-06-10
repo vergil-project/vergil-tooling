@@ -32,6 +32,7 @@ class UpdateDepsState:
     registry: list[Updater] = field(default_factory=lambda: list(DEFAULT_REGISTRY))
     only: list[str] | None = None
     skip: list[str] | None = None
+    vergil_bump: str | None = None
 
 
 def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
@@ -46,6 +47,7 @@ def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
 
 def preflight_stage(state: UpdateDepsState) -> None:
     state.ctx = preflight(repo_root=state.repo_root)
+    state.ctx.vergil_bump = state.vergil_bump
 
 
 def run_updaters_stage(state: UpdateDepsState) -> None:
