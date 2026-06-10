@@ -48,13 +48,14 @@ def read_source_version(base: Path) -> str:
     with (base / "vergil.toml").open("rb") as handle:
         raw = tomllib.load(handle)
     try:
-        return raw["dependencies"]["vergil"]
+        value: str = raw["dependencies"]["vergil"]
     except KeyError as exc:
         raise UpdateDepsError(
             phase="vergil",
             command="read_source_version",
             message="vergil.toml [dependencies].vergil not found.",
         ) from exc
+    return value
 
 
 def set_source_version(base: Path, target: str) -> bool:

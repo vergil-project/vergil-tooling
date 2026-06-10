@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
 
 
@@ -44,14 +46,14 @@ class Updater(Protocol):
 def applicable_updaters(
     ctx: UpdateDepsContext,
     *,
-    registry: list[Updater],
+    registry: Sequence[Updater],
 ) -> list[Updater]:
     """Return registry members whose ``applies`` is true for this repo."""
     return [u for u in registry if u.applies(ctx)]
 
 
 def select_updaters(
-    registry: list[Updater],
+    registry: Sequence[Updater],
     *,
     only: list[str] | None = None,
     skip: list[str] | None = None,
