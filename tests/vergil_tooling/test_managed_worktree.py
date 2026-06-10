@@ -4,13 +4,22 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib.update_deps.context import UpdateDepsError
-from vergil_tooling.lib.update_deps.worktree import create_worktree, remove_worktree
+from vergil_tooling.lib.managed_worktree import (
+    ManagedWorktreeError,
+    create_worktree,
+    remove_worktree,
+    worktree_path,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-_MOD = "vergil_tooling.lib.update_deps.worktree"
+_MOD = "vergil_tooling.lib.managed_worktree"
+
+
+def test_worktree_path_slugifies_branch(tmp_path: Path) -> None:
+    path = worktree_path(tmp_path, "release/2.1.0")
+    assert path == tmp_path / ".worktrees" / "release-2.1.0"
 
 
 def test_create_worktree_adds_off_base(tmp_path: Path, monkeypatch) -> None:
@@ -33,7 +42,7 @@ def test_create_worktree_rejects_existing_path(tmp_path: Path, monkeypatch) -> N
     monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
     target = tmp_path / ".worktrees" / "chore-dep-update-20260610"
     target.mkdir(parents=True)
-    with pytest.raises(UpdateDepsError, match="already exists"):
+    with pytest.raises(ManagedWorktreeError, match="already exists"):
         create_worktree(tmp_path, branch="chore/dep-update-20260610", base="develop")
 
 

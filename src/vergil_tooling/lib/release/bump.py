@@ -14,7 +14,13 @@ if TYPE_CHECKING:
 
 
 def back_merge_and_bump(ctx: ReleaseContext) -> None:
-    """Create back-merge branch from main, bump version, PR to develop."""
+    """Create back-merge branch from main, bump version, PR to develop.
+
+    Runs inside the release's managed worktree (#1578): ``checkout -b``
+    moves the worktree's own HEAD, never the root checkout's. The root's
+    ``develop`` is fast-forwarded to the back-merge later, by the
+    finalize cleanup stage, from the root checkout.
+    """
     branch = f"release/post-{ctx.version}"
 
     print("Fetching main...")
@@ -34,14 +40,6 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     print(f"Back-merge PR created: {pr_url}")
 
     wait_and_merge(pr_url, phase="back-merge-bump")
-
-    git.run("checkout", "develop")
-    # Fetch then ff-merge the remote-tracking ref instead of `pull`:
-    # FETCH_HEAD is written non-atomically, so a `pull` racing a
-    # concurrent fetch can see two merge candidates and abort
-    # (issue #1499). origin/develop is updated atomically.
-    git.run("fetch", "origin", "develop")
-    git.run("merge", "--ff-only", "origin/develop")
 
     ctx.bump_pr_url = pr_url
     ctx.next_version = next_ver

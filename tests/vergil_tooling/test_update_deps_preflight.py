@@ -49,6 +49,22 @@ def test_preflight_creates_worktree_and_chdirs(monkeypatch) -> None:
     assert chdirs == [wt_path]
 
 
+def test_preflight_wraps_worktree_error(monkeypatch) -> None:
+    """A ManagedWorktreeError from the shared helper is translated into the
+    pipeline's own UpdateDepsError at the preflight boundary."""
+    from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
+
+    _sync_ok(monkeypatch)
+
+    def _raise(root, *, branch, base):  # noqa: ARG001
+        raise ManagedWorktreeError("path already exists")
+
+    monkeypatch.setattr(_MOD + ".create_worktree", _raise)
+    monkeypatch.setattr(_MOD + ".os.chdir", lambda p: None)
+    with pytest.raises(UpdateDepsError, match="path already exists"):
+        preflight(repo_root=Path("/tmp/repo"))  # noqa: S108
+
+
 def test_preflight_rejects_non_develop(monkeypatch) -> None:
     monkeypatch.setattr(_MOD + ".check_gh_auth", lambda: "owner/repo")
     monkeypatch.setattr(_MOD + ".config.read_config", lambda root: None)

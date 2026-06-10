@@ -17,17 +17,18 @@ def _ctx(*, version_override: str | None = None) -> ReleaseContext:
         version="2.1.0",
         repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=version_override,
+        # preflight creates the worktree and sets the release branch.
+        release_branch="release/2.1.0",
     )
     ctx.issue_number = 42
     ctx.issue_url = "https://github.com/owner/repo/issues/42"
     return ctx
 
 
-def test_prepare_creates_branch_and_pr() -> None:
+def test_prepare_pushes_branch_and_opens_pr() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.run"),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -40,18 +41,19 @@ def test_prepare_creates_branch_and_pr() -> None:
     assert ctx.release_pr_url == "https://github.com/owner/repo/pull/100"
 
 
-def test_prepare_fails_if_branch_exists() -> None:
+def test_prepare_fails_without_release_branch() -> None:
+    """preflight owns branch creation; prepare refuses if it did not run."""
     ctx = _ctx()
+    ctx.release_branch = None
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".git.ref_exists", return_value=True),
-        pytest.raises(ReleaseError, match="already exists"),
+        pytest.raises(ReleaseError, match="No release branch"),
     ):
         prepare(ctx)
 
 
-def test_prepare_does_not_merge_main() -> None:
-    """Verify the -X ours merge of origin/main is removed."""
+def test_prepare_never_switches_head() -> None:
+    """The branch is the worktree's own — prepare never checks out (#1578)."""
     ctx = _ctx()
     git_run_calls: list[tuple[str, ...]] = []
 
@@ -60,7 +62,6 @@ def test_prepare_does_not_merge_main() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + "._generate_changelog"),
         patch(
@@ -70,6 +71,8 @@ def test_prepare_does_not_merge_main() -> None:
     ):
         prepare(ctx)
 
+    checkout_calls = [c for c in git_run_calls if c and c[0] == "checkout"]
+    assert checkout_calls == [], f"Unexpected checkout calls: {checkout_calls}"
     merge_calls = [c for c in git_run_calls if "merge" in c]
     assert merge_calls == [], f"Unexpected merge calls: {merge_calls}"
 
@@ -84,7 +87,6 @@ def test_prepare_with_version_override() -> None:
 
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.run", side_effect=capture_git_run),
         patch(_MOD + ".version.bump", return_value="2.1.0"),
         patch(_MOD + "._generate_changelog"),
@@ -104,7 +106,6 @@ def test_prepare_without_version_override_skips_bump() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".create_tracking_issue"),
-        patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".version.bump") as mock_bump,
         patch(_MOD + "._generate_changelog"),

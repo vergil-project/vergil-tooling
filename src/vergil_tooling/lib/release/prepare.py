@@ -15,21 +15,22 @@ if TYPE_CHECKING:
 
 
 def prepare(ctx: ReleaseContext) -> None:
-    """Create tracking issue, release branch, changelog, and PR to main."""
+    """Create tracking issue, changelog, and PR to main on the release branch.
+
+    The release branch and its managed worktree are created by preflight
+    (and chdir'd into), so this phase never switches HEAD in the root
+    checkout (#1578).
+    """
     create_tracking_issue(ctx)
     print(f"Tracking issue created: {ctx.issue_url}")
 
-    branch = f"release/{ctx.version}"
-
-    if git.ref_exists(branch) or git.ref_exists(f"origin/{branch}"):
+    branch = ctx.release_branch
+    if branch is None:
         raise ReleaseError(
             phase="prepare",
-            command=f"git rev-parse {branch}",
-            message=f"Release branch '{branch}' already exists.",
+            command="prepare",
+            message="No release branch on context — preflight did not run.",
         )
-
-    print(f"Creating branch: {branch}")
-    git.run("checkout", "-b", branch)
 
     if ctx.version_override is not None:
         print(f"Applying version override: {ctx.version_override}")
@@ -42,13 +43,8 @@ def prepare(ctx: ReleaseContext) -> None:
     print(f"Pushing branch: {branch}")
     git.run("push", "-u", "origin", branch)
 
-    pr_url = _create_pr(ctx)
-
-    git.run("checkout", "develop")
-
-    ctx.release_branch = branch
-    ctx.release_pr_url = pr_url
-    print(f"Release PR created: {pr_url}")
+    ctx.release_pr_url = _create_pr(ctx)
+    print(f"Release PR created: {ctx.release_pr_url}")
 
 
 def _generate_changelog(ctx: ReleaseContext) -> None:
