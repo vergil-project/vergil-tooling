@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.26] - 2026-06-10
+
+### Bug fixes
+
+- omit allow_forking for public org repos (#1585)
+
+### Features
+
+- mechanized dependency-update workflow (Phase 1) (#1586)
+
 ## [2.1.25] - 2026-06-10
 
 ### Bug fixes
