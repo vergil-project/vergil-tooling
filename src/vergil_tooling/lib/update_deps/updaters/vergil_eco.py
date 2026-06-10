@@ -13,9 +13,12 @@ import tomllib
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
+from vergil_tooling.lib.update_deps.updater import UpdateResult
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from vergil_tooling.lib.update_deps.context import UpdateDepsContext
 
 # A vergil-internal reusable-workflow ref: owner starts with ``vergil-`` (e.g.
 # vergil-project), pinned to a ``vX.Y`` tag. Third-party actions (actions/...,
@@ -78,3 +81,43 @@ def normalize_refs(base: Path, target: str) -> list[Path]:
             path.write_text(new)
             changed.append(path)
     return changed
+
+
+def _base(ctx: UpdateDepsContext) -> Path:
+    """The directory updaters operate on — the worktree once preflight made it."""
+    return ctx.worktree_path if ctx.worktree_path is not None else ctx.repo_root
+
+
+class VergilUpdater:
+    """Keep vergil-ecosystem references consistent; bump the version on request."""
+
+    name = "vergil"
+
+    def applies(self, ctx: UpdateDepsContext) -> bool:
+        return (_base(ctx) / "vergil.toml").is_file()
+
+    def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
+        base = _base(ctx)
+        if ctx.vergil_bump is not None:
+            target = format_version(ctx.vergil_bump)
+            bumped = set_source_version(base, target)
+            normalized = normalize_refs(base, target)
+            return UpdateResult(
+                updater=self.name,
+                changed=bumped or bool(normalized),
+                summary=f"bump vergil to {target}",
+                commit_message=f"chore(deps): bump vergil to {target}",
+            )
+        target = read_source_version(base)
+        normalized = normalize_refs(base, target)
+        changed = bool(normalized)
+        return UpdateResult(
+            updater=self.name,
+            changed=changed,
+            summary=(
+                f"normalize vergil refs to {target}"
+                if changed
+                else f"vergil refs already at {target}"
+            ),
+            commit_message=f"chore(deps): normalize vergil ecosystem refs ({target})",
+        )

@@ -16,11 +16,12 @@ from vergil_tooling.lib.update_deps.updater import (
     select_updaters,
 )
 from vergil_tooling.lib.update_deps.updaters.python_uv import PythonUvUpdater
+from vergil_tooling.lib.update_deps.updaters.vergil_eco import VergilUpdater
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-DEFAULT_REGISTRY: list[Updater] = [PythonUvUpdater()]
+DEFAULT_REGISTRY: list[Updater] = [PythonUvUpdater(), VergilUpdater()]
 
 
 @dataclass

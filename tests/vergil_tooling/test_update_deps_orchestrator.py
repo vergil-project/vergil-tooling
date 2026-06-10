@@ -6,6 +6,7 @@ import pytest
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.orchestrator import (
+    DEFAULT_REGISTRY,
     UpdateDepsState,
     build_stages,
     finalize_stage,
@@ -50,6 +51,10 @@ def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
     ctx.worktree_path = Path("/tmp/r/.worktrees/chore-dep-update-20260610")  # noqa: S108
     state.ctx = ctx
     return state, ctx
+
+
+def test_default_registry_names() -> None:
+    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "vergil"]
 
 
 def test_require_ctx_raises_when_missing() -> None:

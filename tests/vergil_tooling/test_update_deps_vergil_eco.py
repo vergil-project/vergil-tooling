@@ -4,8 +4,9 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib.update_deps.context import UpdateDepsError
+from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
+    VergilUpdater,
     format_version,
     normalize_refs,
     read_source_version,
@@ -14,6 +15,21 @@ from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _ctx(worktree: Path) -> UpdateDepsContext:
+    return UpdateDepsContext(repo="o/r", repo_root=worktree, worktree_path=worktree)
+
+
+def _seed(worktree: Path, ci_version: str) -> None:
+    (worktree / "vergil.toml").write_text('[dependencies]\nvergil = "v2.1"\n')
+    wf = worktree / ".github" / "workflows"
+    wf.mkdir(parents=True)
+    (wf / "ci.yml").write_text(
+        "jobs:\n"
+        "  a:\n"
+        f"    uses: vergil-project/vergil-actions/.github/workflows/ci.yml@{ci_version}\n"
+    )
 
 
 def test_format_version_normalizes() -> None:
@@ -68,3 +84,37 @@ def test_normalize_refs_rewrites_drifting_only(tmp_path: Path) -> None:
 
 def test_normalize_refs_no_workflows_dir(tmp_path: Path) -> None:
     assert normalize_refs(tmp_path, "v2.1") == []
+
+
+def test_updater_applies(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.1"\n')
+    assert VergilUpdater().applies(_ctx(tmp_path)) is True
+
+
+def test_updater_applies_false_without_config(tmp_path: Path) -> None:
+    assert VergilUpdater().applies(_ctx(tmp_path)) is False
+
+
+def test_apply_normalize_rewrites_drift(tmp_path: Path) -> None:
+    _seed(tmp_path, "v2.0")
+    result = VergilUpdater().apply(_ctx(tmp_path))
+    assert result.changed is True
+    assert result.commit_message == "chore(deps): normalize vergil ecosystem refs (v2.1)"
+    assert "@v2.1" in (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
+
+
+def test_apply_normalize_noop_when_aligned(tmp_path: Path) -> None:
+    _seed(tmp_path, "v2.1")
+    result = VergilUpdater().apply(_ctx(tmp_path))
+    assert result.changed is False
+
+
+def test_apply_bump_rewrites_source_and_refs(tmp_path: Path) -> None:
+    _seed(tmp_path, "v2.1")
+    ctx = _ctx(tmp_path)
+    ctx.vergil_bump = "2.2"
+    result = VergilUpdater().apply(ctx)
+    assert result.changed is True
+    assert result.commit_message == "chore(deps): bump vergil to v2.2"
+    assert 'vergil = "v2.2"' in (tmp_path / "vergil.toml").read_text()
+    assert "@v2.2" in (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
