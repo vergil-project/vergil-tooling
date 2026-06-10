@@ -16,7 +16,7 @@ _COMMIT_MESSAGE = "chore(deps): uv lock --upgrade"
 class PythonUvUpdater:
     """Upgrade Python dependencies within their declared constraints."""
 
-    name = "python-uv"
+    name = "python"
 
     def applies(self, ctx: UpdateDepsContext) -> bool:
         root = ctx.repo_root

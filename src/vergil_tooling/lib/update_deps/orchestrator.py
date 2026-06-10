@@ -10,13 +10,18 @@ from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.update_deps import pr, validate
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.preflight import preflight
-from vergil_tooling.lib.update_deps.updater import Updater, applicable_updaters
+from vergil_tooling.lib.update_deps.updater import (
+    Updater,
+    applicable_updaters,
+    select_updaters,
+)
 from vergil_tooling.lib.update_deps.updaters.python_uv import PythonUvUpdater
+from vergil_tooling.lib.update_deps.updaters.vergil_eco import VergilUpdater
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-DEFAULT_REGISTRY: list[Updater] = [PythonUvUpdater()]
+DEFAULT_REGISTRY: list[Updater] = [PythonUvUpdater(), VergilUpdater()]
 
 
 @dataclass
@@ -26,6 +31,9 @@ class UpdateDepsState:
     repo_root: Path
     ctx: UpdateDepsContext | None = None
     registry: list[Updater] = field(default_factory=lambda: list(DEFAULT_REGISTRY))
+    only: list[str] | None = None
+    skip: list[str] | None = None
+    vergil_bump: str | None = None
 
 
 def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
@@ -40,11 +48,13 @@ def _require_ctx(state: UpdateDepsState) -> UpdateDepsContext:
 
 def preflight_stage(state: UpdateDepsState) -> None:
     state.ctx = preflight(repo_root=state.repo_root)
+    state.ctx.vergil_bump = state.vergil_bump
 
 
 def run_updaters_stage(state: UpdateDepsState) -> None:
     ctx = _require_ctx(state)
-    for updater in applicable_updaters(ctx, registry=state.registry):
+    selected = select_updaters(state.registry, only=state.only, skip=state.skip)
+    for updater in applicable_updaters(ctx, registry=selected):
         result = updater.apply(ctx)
         ctx.results.append(result)
         if result.changed:

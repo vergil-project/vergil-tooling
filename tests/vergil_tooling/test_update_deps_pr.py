@@ -18,7 +18,7 @@ def _ctx() -> UpdateDepsContext:
     ctx.worktree_path = Path("/tmp/r/.worktrees/chore-dep-update-20260610")  # noqa: S108
     ctx.results = [
         UpdateResult(
-            updater="python-uv",
+            updater="python",
             changed=True,
             summary="uv lock --upgrade",
             commit_message="m",
@@ -29,7 +29,7 @@ def _ctx() -> UpdateDepsContext:
 
 def test_build_pr_body_lists_changed_updaters() -> None:
     body = build_pr_body(_ctx())
-    assert "python-uv" in body
+    assert "python" in body
     assert "uv lock --upgrade" in body
     assert "Ref #1379" in body
 

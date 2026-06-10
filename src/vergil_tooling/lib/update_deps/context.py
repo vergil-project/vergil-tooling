@@ -22,6 +22,7 @@ class UpdateDepsContext:
     pr_url: str | None = None
     any_changes: bool = False
     results: list[UpdateResult] = field(default_factory=list)
+    vergil_bump: str | None = None
 
 
 class UpdateDepsError(Exception):

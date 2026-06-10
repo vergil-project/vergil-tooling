@@ -6,6 +6,7 @@ import pytest
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDepsError
 from vergil_tooling.lib.update_deps.orchestrator import (
+    DEFAULT_REGISTRY,
     UpdateDepsState,
     build_stages,
     finalize_stage,
@@ -52,18 +53,23 @@ def _state() -> tuple[UpdateDepsState, UpdateDepsContext]:
     return state, ctx
 
 
+def test_default_registry_names() -> None:
+    assert [u.name for u in DEFAULT_REGISTRY] == ["python", "vergil"]
+
+
 def test_require_ctx_raises_when_missing() -> None:
     state = UpdateDepsState(repo_root=Path("/tmp/r"))  # noqa: S108
     with pytest.raises(UpdateDepsError, match="context missing"):
         run_updaters_stage(state)
 
 
-def test_preflight_stage_populates_ctx(monkeypatch) -> None:
+def test_preflight_stage_populates_ctx_and_bump(monkeypatch) -> None:
     sentinel = UpdateDepsContext(repo="o/r", repo_root=Path("/tmp/r"))  # noqa: S108
     monkeypatch.setattr(_MOD + ".preflight", lambda *, repo_root: sentinel)  # noqa: ARG005
-    state = UpdateDepsState(repo_root=Path("/tmp/r"))  # noqa: S108
+    state = UpdateDepsState(repo_root=Path("/tmp/r"), vergil_bump="v2.2")  # noqa: S108
     preflight_stage(state)
     assert state.ctx is sentinel
+    assert sentinel.vergil_bump == "v2.2"
 
 
 def test_run_updaters_commits_changed_only(monkeypatch) -> None:
@@ -83,6 +89,26 @@ def test_run_updaters_no_changes_sets_flag_false(monkeypatch) -> None:
     state.registry = [_NoChange()]
     run_updaters_stage(state)
     assert ctx.any_changes is False
+
+
+def test_run_updaters_honors_skip(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    state, ctx = _state()
+    state.registry = [_Changed(), _NoChange()]
+    state.skip = ["changed"]
+    run_updaters_stage(state)
+    assert [r.updater for r in ctx.results] == ["nochange"]
+    assert ctx.any_changes is False
+
+
+def test_run_updaters_honors_only(monkeypatch) -> None:
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: None)
+    state, ctx = _state()
+    state.registry = [_Changed(), _NoChange()]
+    state.only = ["changed"]
+    run_updaters_stage(state)
+    assert [r.updater for r in ctx.results] == ["changed"]
+    assert ctx.any_changes is True
 
 
 def test_validate_stage_skips_when_no_changes(monkeypatch) -> None:
