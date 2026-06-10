@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, github, pr_merge
+from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.release.subprocess import wait_for_checks
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
-from vergil_tooling.lib.update_deps.worktree import remove_worktree
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
