@@ -27,8 +27,13 @@ def _state_path(worktree_root: Path) -> Path:
 
 def read_pr_fields(worktree_root: Path) -> dict[str, str]:
     """Return the PR submission fields (``issue``/``title``/``summary``/``notes``/
-    ``linkage``) from the workflow state file if present, else the legacy
-    ``pr-template.yml``.
+    ``linkage``/``base``) from the workflow state file if present, else the
+    legacy ``pr-template.yml``.
+
+    The ``base`` key carries the base ref the oracle recorded for this branch
+    (e.g. ``origin/develop``) so submission targets the branch the agent
+    intended rather than re-inferring it from the branch name. The legacy
+    template path omits ``base`` (it never recorded one).
 
     Raises ``FileNotFoundError`` if neither exists, and ``WorkflowError`` if the
     state file carries no PR metadata yet (the USER agent must ``report-ready``
@@ -49,6 +54,7 @@ def read_pr_fields(worktree_root: Path) -> dict[str, str]:
             "summary": meta["summary"],
             "notes": meta.get("notes", ""),
             "linkage": meta.get("linkage", "Ref"),
+            "base": state.base,
         }
     return pr_template.read_template(worktree_root)
 

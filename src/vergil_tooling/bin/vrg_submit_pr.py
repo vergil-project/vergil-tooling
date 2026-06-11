@@ -63,10 +63,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def _target_branch(branch: str, base_override: str | None) -> str:
+def _target_branch(base_override: str | None, oracle_base: str | None = None) -> str:
+    """Resolve the PR's target branch.
+
+    Precedence: an explicit ``--base`` always wins; otherwise the base the
+    oracle recorded (``oracle_base``, ``origin/`` stripped) is honored; failing
+    that, default to ``develop``.
+
+    There is deliberately no branch-name inference here. The legacy
+    ``release/`` → ``main`` special-case predated ``vrg-submit-pr`` becoming a
+    human-only command and silently retargeted PRs (issue #1609); release→main
+    PRs are created by the release tooling via ``github.create_pr``, never this
+    path. A genuine manual release PR uses an explicit ``--base main``.
+    """
     if base_override:
         return base_override
-    return "main" if branch.startswith("release/") else "develop"
+    if oracle_base:
+        return oracle_base.removeprefix("origin/")
+    return "develop"
 
 
 def _push_branch(branch: str) -> None:
@@ -159,7 +173,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
 
     issue_ref = resolve_issue_ref(args.issue)
     branch = git.current_branch()
-    target = _target_branch(branch, args.base)
+    target = _target_branch(args.base)
     pr_body = build_pr_body(
         summary=args.summary,
         linkage=args.linkage,
@@ -269,7 +283,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     issue_ref = resolve_issue_ref(fields["issue"])
     branch = git.current_branch()
-    target = _target_branch(branch, args.base)
+    target = _target_branch(args.base, fields.get("base"))
     title = fields["title"]
     linkage = fields.get("linkage", "Ref")
     notes = fields.get("notes", "")
