@@ -29,7 +29,7 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     print(f"Creating branch: {branch}")
     git.run("checkout", "-b", branch, "origin/main")
 
-    next_ver = version.bump(ctx.repo_root)
+    next_ver = version.bump(ctx.work_root)
     print(f"Bumped version to {next_ver}")
     git.run("add", "-A")
     git.run("commit", "-m", f"chore(release): bump version to {next_ver}")

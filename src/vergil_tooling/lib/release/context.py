@@ -45,6 +45,20 @@ class ReleaseContext:
 
     promote: bool = True
 
+    @property
+    def work_root(self) -> Path:
+        """Directory release artifacts are written into and git runs in.
+
+        Post-#1600 every release phase runs inside the managed worktree
+        (preflight chdir's into it), so artifact writes — CHANGELOG, release
+        notes, version bump — must target the worktree. ``repo_root`` stays
+        the main checkout, which ``finalize`` chdir's back to so
+        ``vrg-finalize-pr`` (which refuses to run outside the main worktree)
+        works. Falls back to ``repo_root`` when no worktree is set (defensive;
+        preflight always sets ``worktree_path``).
+        """
+        return self.worktree_path or self.repo_root
+
 
 class ReleaseError(Exception):
     """Raised when a release phase fails."""
