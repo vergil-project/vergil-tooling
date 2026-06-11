@@ -673,17 +673,21 @@ Expected: PASS — lint, typecheck, pytest, markdownlint (covers the new guide),
 This step must be run by the human; the agent should hand off with these exact commands. From a host with a running agent VM `<vm>`:
 
 ```bash
-# 1. Confirm claude resolves over a login shell (the invocation update_plugins uses):
-limactl shell <vm> -- bash -lc 'command -v claude && claude --version'
+# update_plugins uses: bash -c with an explicit PATH (NOT a login shell), because
+# the VM's login shell is zsh and PATH comes from /etc/environment, not bash rc.
+PE='export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
+
+# 1. Confirm claude resolves under the exact invocation update_plugins uses:
+limactl shell <vm> -- bash -c "$PE && command -v claude && claude --version"
 
 # 2. Record current plugin state, run the refresh, record again:
-limactl shell <vm> -- bash -lc 'claude plugin list'
+limactl shell <vm> -- bash -c "$PE && claude plugin list"
 vrg-vm update --identity <identity>     # or: vrg-vm update --all
-limactl shell <vm> -- bash -lc 'claude plugin list'
+limactl shell <vm> -- bash -c "$PE && claude plugin list"
 ```
 
 Pass conditions:
-- `command -v claude` resolves (Step 1 of this verification). **If it does not**, `update_plugins` must switch from `bash -lc` to an explicit absolute path or the npm global bin — fix `update_plugins` in `lima.py`, update the `TestUpdatePlugins` assertions accordingly, and re-run Task 3's tests.
+- `command -v claude` resolves (Step 1 of this verification). **If it does not**, the explicit PATH in `update_plugins` is wrong for this VM — note where `command -v claude` actually points, update the PATH (or use the absolute path) in `lima.py`, update the `TestUpdatePlugins` assertions, and re-run Task 3's tests.
 - `vrg-vm update` advances at least one plugin's version (or reports already-current), with no error from the `update-plugins` stage.
 
 - [ ] **Step 3: (Human) Verify a rebuilt VM ends up with plugins installed**
