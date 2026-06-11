@@ -1432,6 +1432,9 @@ class TestUpdatePlugins:
         second_cmd = mock_run.call_args_list[1][0][-1]
         assert "claude plugin marketplace update" in first_cmd
         assert "claude plugin update" in second_cmd
-        # Invoked via a login shell so claude resolves on PATH.
-        assert mock_run.call_args_list[0][0][:3] == ("vergil-agent", "bash", "-lc")
-        assert mock_run.call_args_list[1][0][:3] == ("vergil-agent", "bash", "-lc")
+        # PATH is set explicitly (not via a login shell) so claude resolves
+        # regardless of the VM's zsh-configured interactive environment.
+        assert mock_run.call_args_list[0][0][:3] == ("vergil-agent", "bash", "-c")
+        assert mock_run.call_args_list[1][0][:3] == ("vergil-agent", "bash", "-c")
+        assert "/usr/local/bin" in first_cmd
+        assert "/usr/local/bin" in second_cmd

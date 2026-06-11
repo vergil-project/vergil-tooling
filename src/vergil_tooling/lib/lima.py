@@ -582,13 +582,18 @@ def update_plugins(instance: str) -> None:
     advances them to the latest published versions, mirroring how
     update_tooling advances vergil-tooling.
 
-    Uses a login shell (bash -lc) so claude resolves on PATH: claude is a
-    global npm install, not a uv tool, so the ~/.local/bin export that the
-    tooling install uses does not apply here.
+    Sets PATH explicitly rather than relying on a login shell, exactly as
+    update_tooling does. The VM's login shell is zsh (vergil-vm `chsh -s
+    /bin/zsh`), configured via ~/.zshenv / /etc/environment — a bash login
+    shell would source none of that. claude is a global npm install
+    (apt node + `npm install -g`) under /usr/local/bin; add it and
+    ~/.local/bin to PATH so resolution does not depend on the interactive
+    environment at all.
     """
+    plugin_env = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
     print("  Refreshing Claude plugins...")
-    shell_run(instance, "bash", "-lc", "claude plugin marketplace update")
-    shell_run(instance, "bash", "-lc", "claude plugin update")
+    shell_run(instance, "bash", "-c", f"{plugin_env} && claude plugin marketplace update")
+    shell_run(instance, "bash", "-c", f"{plugin_env} && claude plugin update")
 
 
 def vm_age_days(instance: str) -> float | None:
