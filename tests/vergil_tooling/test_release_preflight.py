@@ -18,6 +18,7 @@ _MOD = "vergil_tooling.lib.release.preflight"
 
 def test_preflight_success() -> None:
     root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
         patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
@@ -27,15 +28,22 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._create_release_worktree", return_value=wt) as m_wt,
+        patch(_MOD + ".os.chdir") as m_chdir,
     ):
         ctx = preflight(version_override=None, repo_root=root)
     assert ctx.repo == "owner/repo"
     assert ctx.version == "2.1.0"
     assert ctx.version_override is None
+    assert ctx.release_branch == "release/2.1.0"
+    assert ctx.worktree_path == wt
+    m_wt.assert_called_once_with(root, "release/2.1.0")
+    m_chdir.assert_called_once_with(wt)
 
 
 def test_preflight_with_minor_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
         patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
@@ -45,14 +53,18 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override="minor", repo_root=root)
     assert ctx.version == "2.1.0"
     assert ctx.version_override == "minor"
+    assert ctx.release_branch == "release/2.1.0"
 
 
 def test_preflight_with_major_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-3.0.0")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
         patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
@@ -62,10 +74,13 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override="major", repo_root=root)
     assert ctx.version == "3.0.0"
     assert ctx.version_override == "major"
+    assert ctx.release_branch == "release/3.0.0"
 
 
 def test_preflight_wraps_version_error() -> None:
@@ -274,6 +289,7 @@ def testaudit_repo_config_success() -> None:
 def test_preflight_never_audits() -> None:
     """The audit is its own pipeline stage now — preflight never runs it."""
     root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
     with (
         patch(_MOD + "._check_host_prerequisites"),
         patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
@@ -283,10 +299,51 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
+        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override=None, repo_root=root)
     assert ctx.repo == "owner/repo"
     mock_audit.assert_not_called()
+
+
+def test_create_release_worktree_creates_off_develop() -> None:
+    from vergil_tooling.lib.release.preflight import _create_release_worktree
+
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = root / ".worktrees" / "release-2.1.0"
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(_MOD + ".create_worktree", return_value=wt) as m_create,
+    ):
+        result = _create_release_worktree(root, "release/2.1.0")
+    assert result == wt
+    m_create.assert_called_once_with(root, branch="release/2.1.0", base="develop")
+
+
+def test_create_release_worktree_fails_if_branch_exists() -> None:
+    from vergil_tooling.lib.release.preflight import _create_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        pytest.raises(ReleaseError, match="already exists"),
+    ):
+        _create_release_worktree(Path("/tmp/repo"), "release/2.1.0")  # noqa: S108
+
+
+def test_create_release_worktree_wraps_worktree_error() -> None:
+    from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
+    from vergil_tooling.lib.release.preflight import _create_release_worktree
+
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(
+            _MOD + ".create_worktree",
+            side_effect=ManagedWorktreeError("path already exists"),
+        ),
+        pytest.raises(ReleaseError, match="path already exists"),
+    ):
+        _create_release_worktree(Path("/tmp/repo"), "release/2.1.0")  # noqa: S108
 
 
 def test_run_audit_resolves_repo_and_audits() -> None:

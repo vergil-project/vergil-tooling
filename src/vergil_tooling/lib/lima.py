@@ -214,13 +214,10 @@ def create_vm(
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
     claude_skills_path = Path.home() / ".claude" / "skills"
-    claude_sessions_path = Path.home() / ".claude" / "sessions"
     claude_projects_path.mkdir(parents=True, exist_ok=True)
     claude_skills_path.mkdir(parents=True, exist_ok=True)
-    claude_sessions_path.mkdir(parents=True, exist_ok=True)
     claude_projects = str(claude_projects_path)
     claude_skills = str(claude_skills_path)
-    claude_sessions = str(claude_sessions_path)
 
     args = [
         "create",
@@ -234,9 +231,6 @@ def create_vm(
         f'--set=.mounts[2].location = "{claude_skills}"',
         f'--set=.mounts[2].mountPoint = "{claude_skills}"',
         "--set=.mounts[2].writable = false",
-        f'--set=.mounts[3].location = "{claude_sessions}"',
-        f'--set=.mounts[3].mountPoint = "{claude_sessions}"',
-        "--set=.mounts[3].writable = true",
     ]
     if cpus is not None:
         args.append(f"--set=.cpus = {cpus}")
@@ -579,6 +573,72 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
+# Prepended to every in-VM `claude` invocation. claude itself is on the base
+# PATH (/usr/bin/claude, from apt node + `npm install -g`), but exporting PATH
+# explicitly — exactly as update_tooling does — keeps resolution independent of
+# the interactive environment. The VM's login shell is zsh (vergil-vm `chsh -s
+# /bin/zsh`), configured via ~/.zshenv / /etc/environment, so a bash login shell
+# would source none of its config; a non-login `bash -c` with an explicit PATH
+# avoids depending on any of that.
+_PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
+
+
+def update_plugins(instance: str) -> None:
+    """Refresh enabled Claude Code plugins inside the VM.
+
+    Plugins are installed VM-locally from their GitHub marketplaces (declared
+    in the copied settings.json); they are deliberately not shared from the
+    host (see docs/site/docs/guides/agent-vm-claude-share-set.md). This
+    refreshes marketplace metadata and then advances each enabled plugin to its
+    latest version, mirroring how update_tooling advances vergil-tooling.
+
+    `claude plugin update` has no bulk form: it requires a specific plugin id
+    and honours the plugin's scope (user vs project), which differ across the
+    set. So enumerate the installed plugins with `claude plugin list --json`
+    and update each enabled one with its own scope. Updates apply on the next
+    Claude restart, which every new session triggers.
+
+    Best-effort across the set: one plugin failing does not block the others;
+    failures are collected and surfaced by raising afterwards (never swallowed).
+    """
+    print("  Refreshing Claude plugins...")
+    shell_run(
+        instance,
+        "bash",
+        "-c",
+        f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace update",
+    )
+    listing = shell_run(
+        instance,
+        "bash",
+        "-c",
+        f"{_PLUGIN_PATH_EXPORT} && claude plugin list --json",
+    )
+    plugins = json.loads(listing.stdout)
+
+    failures: list[str] = []
+    for plugin in plugins:
+        if not plugin.get("enabled"):
+            continue
+        pid = plugin["id"]
+        scope = plugin.get("scope", "user")
+        print(f"    updating {pid} ({scope})...")
+        cmd = (
+            f"{_PLUGIN_PATH_EXPORT} && claude plugin update "
+            f"{shlex.quote(pid)} --scope {shlex.quote(scope)}"
+        )
+        try:
+            shell_run(instance, "bash", "-c", cmd)
+        except subprocess.CalledProcessError:
+            failures.append(pid)
+
+    if failures:
+        joined = ", ".join(failures)
+        msg = f"failed to update plugin(s): {joined}"
+        print(f"ERROR: {msg}", file=sys.stderr)
+        raise RuntimeError(msg)
+
+
 def vm_age_days(instance: str) -> float | None:
     """Return VM age in fractional days, or None if not found."""
     try:
@@ -619,10 +679,20 @@ def copy_claude_config(instance: str, claude_dir: Path) -> None:
             )
 
 
-# Subdirs symlinked to the path-preserved host mounts so they are shared with
-# the host and survive VM rebuilds. projects/ holds the conversation
-# transcripts (append writes, which work fine through the virtiofs mount);
-# skills/ is a read-only reference mount.
+# The agent-VM ~/.claude share set. See
+# docs/site/docs/guides/agent-vm-claude-share-set.md for the full model.
+#
+# projects/ -> durable, host-shared transcript store. Resume-after-rebuild
+#   reads these, so a conversation survives a VM rebuild (the data lives on
+#   the host). Append-only writes, which work fine through the virtiofs mount.
+# skills/   -> read-only reference mount.
+# sessions/ -> NOT shared; see _CLAUDE_UNLINK_DIRS below. It is a disposable
+#   VM-local roster (pid->session), regenerated each run. Resume does NOT
+#   depend on it, so keeping it VM-local does not break resume.
+# plugins/  -> NOT shared; kept current VM-locally via update_plugins (each VM
+#   installs/refreshes from the GitHub marketplaces declared in the copied
+#   settings.json). Sharing the host's materialized checkout across the
+#   macOS/Linux boundary would be fragile and is unnecessary.
 _CLAUDE_LINK_DIRS = ("projects", "skills")
 
 # Subdirs that must NOT be symlinked onto the host mount and must stay

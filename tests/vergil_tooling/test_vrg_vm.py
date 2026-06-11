@@ -338,6 +338,13 @@ class TestCreate:
 
 
 class TestStart:
+    # The start pipeline includes a warn-mode update-plugins stage; mock it so
+    # the pipeline tests don't reach the real claude/limactl call.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -388,6 +395,11 @@ class TestStart:
 
 
 class TestStartStaleness:
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -542,6 +554,12 @@ class TestDestroy:
 
 
 class TestRebuild:
+    # The rebuild pipeline includes a warn-mode update-plugins stage; mock it.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -905,6 +923,13 @@ class TestList:
 
 
 class TestUpdate:
+    # vrg-vm update refreshes plugins too (via _update_instance); mock it so the
+    # command tests don't reach the real claude/limactl call.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
@@ -914,6 +939,21 @@ class TestUpdate:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
         mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_refreshes_plugins(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        _mock_update_plugins: MagicMock,
+        config_file: Path,
+    ) -> None:
+        result = main(["update", "--config", str(config_file)])
+        assert result == 0
+        _mock_update_plugins.assert_called_once_with("vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1004,6 +1044,12 @@ def config_file_multi(tmp_path: Path) -> Path:
 
 
 class TestUpdateAll:
+    # vrg-vm update --all refreshes plugins per VM (via _update_instance); mock it.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
@@ -2376,17 +2422,21 @@ class TestLifecycleStages:
             "credentials",
             "copy-config",
             "update-tooling",
+            "update-plugins",
         ]
         modes = {s.name: s.mode for s in stages}
         # spec-check verifies the freshly-booted guest's fingerprint; it is
         # non-fatal (warn) so a drifted-but-running VM stays usable, and it sits
         # immediately after start so the warning surfaces before later work.
+        # update-plugins is warn for the same reason as update-tooling: a failed
+        # plugin refresh must not abort a usable session.
         assert modes == {
             "start": "fail_fast",
             "spec-check": "warn",
             "credentials": "fail_fast",
             "copy-config": "fail_fast",
             "update-tooling": "warn",
+            "update-plugins": "warn",
         }
 
     def test_rebuild_stage_order_and_modes(self) -> None:
@@ -2401,9 +2451,14 @@ class TestLifecycleStages:
             "credentials",
             "tooling",
             "copy-config",
+            "update-plugins",
             "cycle-ssh",
         ]
-        assert all(s.mode == "fail_fast" for s in stages)
+        # All fail_fast except update-plugins, which is warn so a failed plugin
+        # refresh does not abort the rebuild.
+        modes = {s.name: s.mode for s in stages}
+        assert modes["update-plugins"] == "warn"
+        assert all(s.mode == "fail_fast" for s in stages if s.name != "update-plugins")
 
     def test_st_create_requires_template(self, tmp_path: Path) -> None:
         from vergil_tooling.bin.vrg_vm import _LifecycleState, _st_create
@@ -2509,6 +2564,7 @@ class TestRunLifecycle:
         assert rc == 1
         assert not template.exists()
 
+    @patch("vergil_tooling.bin.vrg_vm.update_plugins")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch(
         "vergil_tooling.bin.vrg_vm.update_tooling",
@@ -2526,6 +2582,7 @@ class TestRunLifecycle:
         _inject: MagicMock,
         _update: MagicMock,
         _copy: MagicMock,
+        _plugins: MagicMock,
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -2547,3 +2604,23 @@ class TestLogRoot:
         completed = MagicMock(returncode=128, stdout="")
         with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
             assert _REAL_LOG_ROOT() == Path.home()
+
+
+class TestPluginStage:
+    def test_start_pipeline_includes_update_plugins(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _start_stages
+
+        names = [s.name for s in _start_stages()]
+        assert "update-plugins" in names
+        # Runs after tooling, in warn mode.
+        assert names.index("update-plugins") > names.index("update-tooling")
+        stage = next(s for s in _start_stages() if s.name == "update-plugins")
+        assert stage.mode == "warn"
+
+    def test_rebuild_pipeline_includes_update_plugins(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _rebuild_stages
+
+        names = [s.name for s in _rebuild_stages()]
+        assert "update-plugins" in names
+        stage = next(s for s in _rebuild_stages() if s.name == "update-plugins")
+        assert stage.mode == "warn"

@@ -2,15 +2,36 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import progress
+from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.tracking import close_tracking_issue
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
+
+
+def teardown_worktree(ctx: ReleaseContext) -> None:
+    """Return to the root checkout and remove the release worktree (#1578).
+
+    Must run before ``close-finalize``: ``vrg-finalize-pr`` refuses to run
+    outside the main worktree, and its cleanup stage syncs ``develop`` and
+    prunes branches in the root checkout. The release branches
+    (``release/<v>``, ``release/post-<v>``) are left as refs for
+    ``vrg-finalize-pr`` to prune as merged — exactly as in the pre-worktree
+    flow, where they were also left behind in the root checkout.
+    """
+    if ctx.worktree_path is None:
+        return
+    os.chdir(ctx.repo_root)
+    if ctx.worktree_path.exists():
+        print(f"Removing release worktree: {ctx.worktree_path}")
+        remove_worktree(ctx.worktree_path)
+    ctx.worktree_path = None
 
 
 def close_and_finalize(ctx: ReleaseContext) -> None:

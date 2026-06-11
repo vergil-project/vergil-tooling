@@ -12,6 +12,7 @@ def test_context_defaults() -> None:
     assert ctx.pr_url is None
     assert ctx.any_changes is False
     assert ctx.results == []
+    assert ctx.vergil_bump is None
 
 
 def test_update_deps_error_carries_fields() -> None:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, github, version
+from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
 
@@ -44,13 +46,41 @@ def preflight(
     _check_version_not_tagged(release_version)
     _check_no_existing_tracking_issue(repo, release_version)
 
-    print(f"Preflight passed: {repo} v{release_version}")
+    branch = f"release/{release_version}"
+    worktree = _create_release_worktree(repo_root, branch)
+    os.chdir(worktree)
+
+    print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
     return ReleaseContext(
         repo=repo,
         version=release_version,
         repo_root=repo_root,
         version_override=version_override,
+        release_branch=branch,
+        worktree_path=worktree,
     )
+
+
+def _create_release_worktree(repo_root: Path, branch: str) -> Path:
+    """Create the managed worktree on *branch* off develop.
+
+    All release branch work happens here, so the root checkout's HEAD
+    never moves while the release runs (#1578).
+    """
+    if git.ref_exists(branch) or git.ref_exists(f"origin/{branch}"):
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git rev-parse {branch}",
+            message=f"Release branch '{branch}' already exists.",
+        )
+    try:
+        return create_worktree(repo_root, branch=branch, base="develop")
+    except ManagedWorktreeError as exc:
+        raise ReleaseError(
+            phase="preflight",
+            command=f"git worktree add {branch}",
+            message=str(exc),
+        ) from exc
 
 
 def _compute_release_version(current: str, override: str) -> str:
