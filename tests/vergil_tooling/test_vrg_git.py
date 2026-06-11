@@ -41,6 +41,29 @@ _ALLOWED_SIMPLE = [
     "branch",
     "ls-remote",
     "rev-parse",
+    "annotate",
+    "blame",
+    "cat-file",
+    "cherry",
+    "count-objects",
+    "describe",
+    "diff-files",
+    "diff-index",
+    "diff-tree",
+    "for-each-ref",
+    "grep",
+    "ls-files",
+    "ls-tree",
+    "merge-base",
+    "name-rev",
+    "rev-list",
+    "shortlog",
+    "show-branch",
+    "show-ref",
+    "var",
+    "verify-commit",
+    "verify-tag",
+    "whatchanged",
     "add",
     "mv",
     "rm",
@@ -117,7 +140,6 @@ _DENIED = [
     "clean",
     "config",
     "remote",
-    "reflog",
     "gc",
     "prune",
     "filter-branch",
@@ -150,6 +172,44 @@ def test_config_denied(capsys: pytest.CaptureFixture[str]) -> None:
 def test_config_with_args_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["config", "user.email", "x@example.com"]) != 0
     assert "denied" in capsys.readouterr().err.lower()
+
+
+# -- reflog: read-only forms allowed, mutating sub-ops denied -----------------
+
+
+def test_reflog_bare_allowed() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(["reflog"])
+    assert rc == 0
+    args = mock_run.call_args[0][0]
+    assert args == ["git", "reflog"]
+
+
+@pytest.mark.parametrize("sub", ["show", "exists"])
+def test_reflog_readonly_subcommand_allowed(sub: str) -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(["reflog", sub, "HEAD"])
+    assert rc == 0
+    args = mock_run.call_args[0][0]
+    assert args[:3] == ["git", "reflog", sub]
+
+
+@pytest.mark.parametrize("sub", ["expire", "delete"])
+def test_reflog_mutating_subcommand_denied(sub: str, capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["reflog", sub, "--all"]) != 0
+    err = capsys.readouterr().err
+    assert sub in err
+    assert "denied" in err.lower()
+
+
+def test_reflog_flag_before_subcommand_allowed() -> None:
+    """A flag in the first position is read-only (e.g. `git reflog --all`)."""
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
+        rc = main(["reflog", "--all"])
+    assert rc == 0
 
 
 # -- helper: _is_protected_branch --------------------------------------------
