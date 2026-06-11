@@ -87,3 +87,18 @@ def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
         if not checked:
             return name
     return None
+
+
+def tick(body: str, stage: str) -> str:
+    """Return *body* with *stage*'s checkbox set to ``[x]``.
+
+    Raises ``ChecklistError`` if *stage* is not one of the block's stages.
+    """
+    pairs = parse(body)
+    names = [name for name, _ in pairs]
+    if stage not in names:
+        msg = f"stage {stage!r} is not in the release checklist"
+        raise ChecklistError(msg)
+    checked = {name for name, was_checked in pairs if was_checked}
+    checked.add(stage)
+    return upsert(body, names, checked)

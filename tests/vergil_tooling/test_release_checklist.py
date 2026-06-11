@@ -82,3 +82,21 @@ def test_first_unchecked_skew_guard_refuses_mismatch() -> None:
     body = checklist.render(["audit", "OLD_STAGE"], checked={"audit"})
     with pytest.raises(checklist.ChecklistError, match="different .* version"):
         checklist.first_unchecked(body, ["audit", "prepare"])
+
+
+def test_tick_checks_one_box_and_keeps_others() -> None:
+    body = "head\n\n" + checklist.render(["audit", "prepare"], checked={"audit"})
+    updated = checklist.tick(body, "prepare")
+    assert checklist.parse(updated) == [("audit", True), ("prepare", True)]
+    assert updated.startswith("head")
+
+
+def test_tick_is_idempotent_on_already_checked() -> None:
+    body = checklist.render(["audit"], checked={"audit"})
+    assert checklist.parse(checklist.tick(body, "audit")) == [("audit", True)]
+
+
+def test_tick_unknown_stage_raises() -> None:
+    body = checklist.render(["audit"])
+    with pytest.raises(checklist.ChecklistError, match="not in .* checklist"):
+        checklist.tick(body, "nope")
