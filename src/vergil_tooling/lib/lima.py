@@ -573,6 +573,24 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
+def update_plugins(instance: str) -> None:
+    """Refresh Claude Code plugins inside the VM.
+
+    Plugins are installed VM-locally from their GitHub marketplaces (declared
+    in the copied settings.json); they are deliberately not shared from the
+    host (see docs/site/docs/guides/agent-vm-claude-share-set.md). This
+    advances them to the latest published versions, mirroring how
+    update_tooling advances vergil-tooling.
+
+    Uses a login shell (bash -lc) so claude resolves on PATH: claude is a
+    global npm install, not a uv tool, so the ~/.local/bin export that the
+    tooling install uses does not apply here.
+    """
+    print("  Refreshing Claude plugins...")
+    shell_run(instance, "bash", "-lc", "claude plugin marketplace update")
+    shell_run(instance, "bash", "-lc", "claude plugin update")
+
+
 def vm_age_days(instance: str) -> float | None:
     """Return VM age in fractional days, or None if not found."""
     try:

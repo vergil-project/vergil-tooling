@@ -30,6 +30,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     try_update_tooling,
+    update_plugins,
     update_tooling,
     vm_age_days,
     vm_occupancy,
@@ -1419,3 +1420,18 @@ class TestProvisionMonitor:
         with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
             _provision_monitor(tmp_path, "30m", stop, poll_secs=0.01, heartbeat_secs=0.03)
         assert [c.args[0] for c in m_emit.call_args_list] == ["[guest] final line"]
+
+
+class TestUpdatePlugins:
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_runs_marketplace_then_plugin_update(self, mock_run: MagicMock) -> None:
+        update_plugins("vergil-agent")
+        # Two in-VM commands, marketplace refresh before plugin update.
+        assert mock_run.call_count == 2
+        first_cmd = mock_run.call_args_list[0][0][-1]
+        second_cmd = mock_run.call_args_list[1][0][-1]
+        assert "claude plugin marketplace update" in first_cmd
+        assert "claude plugin update" in second_cmd
+        # Invoked via a login shell so claude resolves on PATH.
+        assert mock_run.call_args_list[0][0][:3] == ("vergil-agent", "bash", "-lc")
+        assert mock_run.call_args_list[1][0][:3] == ("vergil-agent", "bash", "-lc")
