@@ -214,13 +214,10 @@ def create_vm(
 ) -> None:
     claude_projects_path = Path.home() / ".claude" / "projects"
     claude_skills_path = Path.home() / ".claude" / "skills"
-    claude_sessions_path = Path.home() / ".claude" / "sessions"
     claude_projects_path.mkdir(parents=True, exist_ok=True)
     claude_skills_path.mkdir(parents=True, exist_ok=True)
-    claude_sessions_path.mkdir(parents=True, exist_ok=True)
     claude_projects = str(claude_projects_path)
     claude_skills = str(claude_skills_path)
-    claude_sessions = str(claude_sessions_path)
 
     args = [
         "create",
@@ -234,9 +231,6 @@ def create_vm(
         f'--set=.mounts[2].location = "{claude_skills}"',
         f'--set=.mounts[2].mountPoint = "{claude_skills}"',
         "--set=.mounts[2].writable = false",
-        f'--set=.mounts[3].location = "{claude_sessions}"',
-        f'--set=.mounts[3].mountPoint = "{claude_sessions}"',
-        "--set=.mounts[3].writable = true",
     ]
     if cpus is not None:
         args.append(f"--set=.cpus = {cpus}")

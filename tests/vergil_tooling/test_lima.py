@@ -286,16 +286,14 @@ class TestCreateVm:
         args = mock.call_args[0]
         claude_projects = str(tmp_path / ".claude" / "projects")
         claude_skills = str(tmp_path / ".claude" / "skills")
-        claude_sessions = str(tmp_path / ".claude" / "sessions")
         assert f'--set=.mounts[1].location = "{claude_projects}"' in args
         assert f'--set=.mounts[1].mountPoint = "{claude_projects}"' in args
         assert "--set=.mounts[1].writable = true" in args
         assert f'--set=.mounts[2].location = "{claude_skills}"' in args
         assert f'--set=.mounts[2].mountPoint = "{claude_skills}"' in args
         assert "--set=.mounts[2].writable = false" in args
-        assert f'--set=.mounts[3].location = "{claude_sessions}"' in args
-        assert f'--set=.mounts[3].mountPoint = "{claude_sessions}"' in args
-        assert "--set=.mounts[3].writable = true" in args
+        # The vestigial sessions mount (mounts[3]) is removed; sessions stays VM-local.
+        assert not any(".mounts[3]" in a for a in args)
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
@@ -307,7 +305,8 @@ class TestCreateVm:
         create_vm("vergil-agent", tpl, "/home/user/projects")
         assert (tmp_path / ".claude" / "projects").is_dir()
         assert (tmp_path / ".claude" / "skills").is_dir()
-        assert (tmp_path / ".claude" / "sessions").is_dir()
+        # create_vm no longer backs a sessions mount, so it must not create the dir.
+        assert not (tmp_path / ".claude" / "sessions").is_dir()
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
