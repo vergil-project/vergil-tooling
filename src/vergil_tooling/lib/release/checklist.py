@@ -66,6 +66,14 @@ def upsert(body: str, stages: Sequence[str], checked: Iterable[str] = ()) -> str
     return body.rstrip() + "\n\n" + block + "\n"
 
 
+def _names_and_checked(body: str) -> tuple[list[str], set[str]]:
+    """Return the block's stage names (in order) and the set of checked ones."""
+    pairs = parse(body)
+    names = [name for name, _ in pairs]
+    checked = {name for name, was_checked in pairs if was_checked}
+    return names, checked
+
+
 def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
     """Return the first unchecked stage, or None if all are checked.
 
@@ -73,8 +81,7 @@ def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
     *expected_stages* — a mismatch means the checklist was written by a
     different tooling version, and resume must refuse rather than guess.
     """
-    pairs = parse(body)
-    names = [name for name, _ in pairs]
+    names, checked = _names_and_checked(body)
     if names != list(expected_stages):
         msg = (
             "release checklist was written by a different vrg-release version "
@@ -83,8 +90,8 @@ def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
             "manually"
         )
         raise ChecklistError(msg)
-    for name, checked in pairs:
-        if not checked:
+    for name in names:
+        if name not in checked:
             return name
     return None
 
@@ -94,11 +101,9 @@ def tick(body: str, stage: str) -> str:
 
     Raises ``ChecklistError`` if *stage* is not one of the block's stages.
     """
-    pairs = parse(body)
-    names = [name for name, _ in pairs]
+    names, checked = _names_and_checked(body)
     if stage not in names:
         msg = f"stage {stage!r} is not in the release checklist"
         raise ChecklistError(msg)
-    checked = {name for name, was_checked in pairs if was_checked}
     checked.add(stage)
     return upsert(body, names, checked)
