@@ -51,3 +51,17 @@ def test_parse_ignores_non_item_lines_in_block() -> None:
 def test_parse_raises_when_no_block() -> None:
     with pytest.raises(checklist.ChecklistError, match="no .* progress block"):
         checklist.parse("## Release 2.1.0\n")
+
+
+def test_upsert_appends_when_absent() -> None:
+    body = checklist.upsert("## Release 2.1.0\n", ["audit"])
+    assert "## Release 2.1.0" in body
+    assert checklist.parse(body) == [("audit", False)]
+
+
+def test_upsert_replaces_existing_block_preserving_surroundings() -> None:
+    original = "head\n\n" + checklist.render(["audit"]) + "\n\ntail\n"
+    updated = checklist.upsert(original, ["audit"], checked={"audit"})
+    assert updated.startswith("head")
+    assert updated.rstrip().endswith("tail")
+    assert checklist.parse(updated) == [("audit", True)]

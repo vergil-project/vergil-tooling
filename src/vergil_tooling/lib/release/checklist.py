@@ -50,3 +50,17 @@ def parse(body: str) -> list[tuple[str, bool]]:
         if match:
             pairs.append((match.group(2), match.group(1).lower() == "x"))
     return pairs
+
+
+def upsert(body: str, stages: Sequence[str], checked: Iterable[str] = ()) -> str:
+    """Return *body* with the checklist block inserted or replaced.
+
+    If a block is already present it is replaced in place; otherwise the block
+    is appended after a blank line.
+    """
+    block = render(stages, checked)
+    if BEGIN in body and END in body:
+        pre = body[: body.index(BEGIN)]
+        post = body[body.index(END) + len(END) :]
+        return pre + block + post
+    return body.rstrip() + "\n\n" + block + "\n"
