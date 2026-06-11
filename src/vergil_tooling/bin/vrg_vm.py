@@ -53,6 +53,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     try_update_tooling,
+    update_plugins,
     update_tooling,
     vm_age_days,
     vm_probe,
@@ -531,7 +532,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
 
 def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
-    """Update vergil-tooling in one running VM, printing the version transition."""
+    """Update vergil-tooling and Claude plugins in one running VM, printing the version transition."""
     print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
     before = get_tooling_version(instance)
@@ -545,6 +546,8 @@ def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -
             print(f"  vergil-tooling: {before} → {after}")
     elif after:
         print(f"  vergil-tooling: {after}")
+
+    update_plugins(instance)
 
 
 def _cmd_update(args: argparse.Namespace) -> int:

@@ -905,6 +905,13 @@ class TestList:
 
 
 class TestUpdate:
+    # vrg-vm update refreshes plugins too (via _update_instance); mock it so the
+    # command tests don't reach the real claude/limactl call.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
@@ -914,6 +921,21 @@ class TestUpdate:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
         mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_update_refreshes_plugins(
+        self,
+        _status: MagicMock,
+        _update: MagicMock,
+        _ver: MagicMock,
+        _mock_update_plugins: MagicMock,
+        config_file: Path,
+    ) -> None:
+        result = main(["update", "--config", str(config_file)])
+        assert result == 0
+        _mock_update_plugins.assert_called_once_with("vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1004,6 +1026,12 @@ def config_file_multi(tmp_path: Path) -> Path:
 
 
 class TestUpdateAll:
+    # vrg-vm update --all refreshes plugins per VM (via _update_instance); mock it.
+    @pytest.fixture(autouse=True)
+    def _mock_update_plugins(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
