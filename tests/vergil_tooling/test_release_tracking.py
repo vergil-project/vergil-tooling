@@ -68,6 +68,18 @@ def test_ensure_checklist_adds_block_when_absent() -> None:
     assert "- [ ] audit" in written
 
 
+def test_ensure_checklist_pre_checks_completed_stages() -> None:
+    ctx = _ctx_with_issue()
+    with (
+        patch(_MOD + ".read_issue_body", return_value="## Release 2.1.0\n"),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        ensure_checklist(ctx, ["audit", "prepare"], checked=["audit"])
+    written = write.call_args.args[1]
+    assert ("audit", True) in checklist.parse(written)
+    assert ("prepare", False) in checklist.parse(written)
+
+
 def test_ensure_checklist_noop_when_present() -> None:
     ctx = _ctx_with_issue()
     body = "## Release\n" + checklist.render(["audit"])

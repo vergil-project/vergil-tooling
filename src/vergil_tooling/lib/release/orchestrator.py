@@ -18,6 +18,8 @@ from vergil_tooling.lib.release.prepare import prepare
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
+    ensure_checklist,
+    tick_stage,
 )
 
 if TYPE_CHECKING:
@@ -87,8 +89,16 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             comment_phase_failed(ctx, name, wrapped)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
+        names = _stage_names()
+        ensure_checklist(ctx, names, checked=names[: names.index(name)])
+        tick_stage(ctx, name)
 
     return stage
+
+
+def _stage_names() -> list[str]:
+    """The pipeline stage names, in execution order."""
+    return [stage.name for stage in build_stages()]
 
 
 def build_stages() -> list[Stage]:

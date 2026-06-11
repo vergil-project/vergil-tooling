@@ -11,7 +11,7 @@ from vergil_tooling.lib import github
 from vergil_tooling.lib.release import checklist
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
@@ -171,12 +171,18 @@ def _write_issue_body(ctx: ReleaseContext, body: str) -> None:
         Path(tmp_path).unlink(missing_ok=True)
 
 
-def ensure_checklist(ctx: ReleaseContext, stages: Sequence[str]) -> None:
-    """Embed the stage checklist in the tracking-issue body if not already there."""
+def ensure_checklist(
+    ctx: ReleaseContext, stages: Sequence[str], checked: Iterable[str] = ()
+) -> None:
+    """Embed the stage checklist in the tracking-issue body if not already there.
+
+    *checked* pre-marks stages that have already completed (e.g. the read-only
+    stages that ran before the issue existed). No-op if a block is present.
+    """
     body = read_issue_body(ctx)
     if checklist.BEGIN in body:
         return
-    _write_issue_body(ctx, checklist.upsert(body, stages))
+    _write_issue_body(ctx, checklist.upsert(body, stages, checked))
 
 
 def tick_stage(ctx: ReleaseContext, stage: str) -> None:
