@@ -439,7 +439,82 @@ vrg-git add src/vergil_tooling/lib/release/checklist.py tests/vergil_tooling/tes
 vrg-commit --type feat --scope release --message "tick a checklist box" --body "Ref #1612."
 ```
 
-### Task 7: Full validation and coverage
+### Task 7: Refactor — consolidate the shared parse logic
+
+`first_unchecked` and `tick` both open by re-deriving the names and the
+checked-set from `parse`. Extract that once now that both exist. Pure
+refactor — no behavior change, tests stay green.
+
+**Files:**
+- Modify: `src/vergil_tooling/lib/release/checklist.py`
+
+- [ ] **Step 1: Confirm the baseline is green**
+
+Run: `uv run python -m pytest tests/vergil_tooling/test_release_checklist.py -q`
+Expected: PASS (all Task 1–6 tests).
+
+- [ ] **Step 2: Extract `_names_and_checked` and route both callers through it**
+
+```python
+def _names_and_checked(body: str) -> tuple[list[str], set[str]]:
+    """Return the block's stage names (in order) and the set of checked ones."""
+    pairs = parse(body)
+    names = [name for name, _ in pairs]
+    checked = {name for name, was_checked in pairs if was_checked}
+    return names, checked
+
+
+def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
+    """Return the first unchecked stage, or None if all are checked.
+
+    Raises ``ChecklistError`` if the block's stages do not match
+    *expected_stages* — a mismatch means the checklist was written by a
+    different tooling version, and resume must refuse rather than guess.
+    """
+    names, checked = _names_and_checked(body)
+    if names != list(expected_stages):
+        msg = (
+            "release checklist was written by a different vrg-release version "
+            f"(found {names}, expected {list(expected_stages)}); complete the "
+            "release with the original version or finish the remaining stages "
+            "manually"
+        )
+        raise ChecklistError(msg)
+    for name in names:
+        if name not in checked:
+            return name
+    return None
+
+
+def tick(body: str, stage: str) -> str:
+    """Return *body* with *stage*'s checkbox set to ``[x]``.
+
+    Raises ``ChecklistError`` if *stage* is not one of the block's stages.
+    """
+    names, checked = _names_and_checked(body)
+    if stage not in names:
+        msg = f"stage {stage!r} is not in the release checklist"
+        raise ChecklistError(msg)
+    checked.add(stage)
+    return upsert(body, names, checked)
+```
+
+Both error messages now end with "the release checklist" phrasing —
+keep them consistent.
+
+- [ ] **Step 3: Run tests — still green (no behavior change)**
+
+Run: `uv run python -m pytest tests/vergil_tooling/test_release_checklist.py -q`
+Expected: PASS, unchanged from Step 1.
+
+- [ ] **Step 4: Commit**
+
+```bash
+vrg-git add src/vergil_tooling/lib/release/checklist.py
+vrg-commit --type refactor --scope release --message "extract shared names/checked helper in checklist" --body "Ref #1612."
+```
+
+### Task 8: Full validation and coverage
 
 **Files:**
 - (no source change)

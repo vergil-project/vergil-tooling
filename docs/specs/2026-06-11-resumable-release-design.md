@@ -127,8 +127,8 @@ a mismatch signals the checklist was written by a different tooling version.
 
 The refusal must be **actionable**, not a dead end: the error explains the cause
 and the two ways forward — complete the release with the tooling version that
-started it (its checklist matches), or finish the remaining stages manually
-(linking the recovery doc). Auto-migrating an old checklist to the new stage
+started it (its checklist matches), or finish the remaining stages manually.
+Auto-migrating an old checklist to the new stage
 list is deliberately *not* offered: stage semantics may have changed between
 versions, and silently remapping is exactly the guessing the guard exists to
 prevent. A `--force`-style override could be added later if skew ever proves
