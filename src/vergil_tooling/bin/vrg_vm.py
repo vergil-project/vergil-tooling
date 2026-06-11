@@ -349,6 +349,13 @@ def _st_update_tooling(state: _LifecycleState) -> None:
     update_tooling(state.target.instance, fallback_tag=fallback)
 
 
+def _st_update_plugins(state: _LifecycleState) -> None:
+    # Warn-mode stage: a failed plugin refresh surfaces as ⚠ and the lifecycle
+    # continues, the same warn-and-continue contract as update-tooling. Plugins
+    # are VM-local; this advances them to the latest published versions.
+    update_plugins(state.target.instance)
+
+
 def _st_cycle_ssh(state: _LifecycleState) -> None:
     # Lima establishes its multiplexed SSH ControlMaster as soon as the
     # guest's sshd answers — before cloud-init group provisioning
@@ -383,6 +390,7 @@ def _start_stages() -> list[Stage]:
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
         Stage("update-tooling", _st_update_tooling, mode="warn"),
+        Stage("update-plugins", _st_update_plugins, mode="warn"),
     ]
 
 
@@ -395,6 +403,7 @@ def _rebuild_stages() -> list[Stage]:
         Stage("credentials", _st_credentials, mode="fail_fast"),
         Stage("tooling", _st_install_tooling, mode="fail_fast"),
         Stage("copy-config", _st_copy_config, mode="fail_fast"),
+        Stage("update-plugins", _st_update_plugins, mode="warn"),
         Stage("cycle-ssh", _st_cycle_ssh, mode="fail_fast"),
     ]
 
@@ -532,7 +541,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
 
 
 def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
-    """Update vergil-tooling and Claude plugins in one running VM, printing the version transition."""
+    """Update tooling and plugins in one running VM, printing the version transition."""
     print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
     before = get_tooling_version(instance)
