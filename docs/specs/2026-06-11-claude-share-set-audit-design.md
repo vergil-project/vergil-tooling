@@ -1,18 +1,19 @@
-# Audit the `.claude` share set — cleanups + plugins experiment
+# Audit the `.claude` share set — cleanups + VM-local plugin lifecycle
 
 - **Issue:** [#1603](https://github.com/vergil-project/vergil-tooling/issues/1603)
 - **Status:** Design approved
 - **Date:** 2026-06-11
 - **Owner of the affected code:** `src/vergil_tooling/lib/lima.py`
-  (`create_vm`, `link_claude_dirs`, `copy_claude_config`). The
-  `vergil-vm/templates/agent.yaml` template only declares the static
-  `projects` mount; the `.claude` sub-mounts and symlinks are injected
-  dynamically by `lima.py`.
+  (`create_vm`, `link_claude_dirs`, `copy_claude_config`, `update_tooling`)
+  and `src/vergil_tooling/bin/vrg_vm.py` (lifecycle pipeline + `update`
+  command). The `vergil-vm/templates/agent.yaml` template only declares
+  the static `projects` mount; the `.claude` sub-mounts, symlinks, and
+  config copy are injected dynamically by `lima.py`.
 
 ## Background
 
-Agent VMs share a curated subset of the host's `~/.claude` directory. The
-share set is defined entirely in `lima.py`:
+Agent VMs share a curated subset of the host's `~/.claude` directory.
+The share set is defined entirely in `lima.py`:
 
 - **Mounts** (`create_vm`): `mounts[0]` projects_dir · `mounts[1]`
   `.claude/projects` (rw) · `mounts[2]` `.claude/skills` (ro) ·
@@ -21,14 +22,17 @@ share set is defined entirely in `lima.py`:
   "skills")` are symlinked onto the path-preserved host mounts;
   `_CLAUDE_UNLINK_DIRS = ("sessions",)` are kept VM-local (any stale
   symlink from an older build is removed).
-- **Copy** (`copy_claude_config`): only `CLAUDE.md` + `settings.json`.
+- **Copy** (`copy_claude_config`): `_CLAUDE_CONFIG_FILES = ("CLAUDE.md",
+  "settings.json")`.
 
 An audit (#1603) surfaced three findings of differing certainty:
 
-1. **Plugins version skew (open question).** `~/.claude/plugins` is never
-   shared — not mounted, symlinked, or copied. It is VM-local, installed
-   at build time, so it drifts from the host between rebuilds. History
-   confirms this was never implemented (not a regression).
+1. **Plugins version skew.** `~/.claude/plugins` is never shared — not
+   mounted, symlinked, or copied. It is installed VM-locally on first
+   launch and then drifts from the host between rebuilds (observed: a VM
+   pinned to vergil **2.1.4** while the host had **2.1.8**). History
+   confirms this was never a regression; plugins were never in the share
+   set.
 2. **Sessions persistence is correct (decided).** Resume-after-rebuild
    works because it reads the **shared `projects/` transcript**, not the
    VM-local `sessions/` roster. The #1301 "keep the roster VM-local"
@@ -36,15 +40,64 @@ An audit (#1603) surfaced three findings of differing certainty:
 3. **Vestigial sessions mount (decided).** `mounts[3]` mounts the host
    `~/.claude/sessions`, but the VM keeps `sessions/` VM-local
    (`_CLAUDE_UNLINK_DIRS`) and never reads the mount. It is dead weight.
+   (History: `32bc0484d` added the mount "for session persistence";
+   #1301 later made the directory VM-local without removing the mount,
+   orphaning it.)
+
+## How the VM gets its plugins today
+
+There is no `claude plugin` or marketplace command anywhere in the
+agent-VM template, `lima.py`, or `vrg_vm.py`. The plugins arrive
+indirectly:
+
+- The host `settings.json` declares `enabledPlugins` (the on/off set —
+  currently `paad`, `vergil`, `superpowers`, `diogenes` enabled) and
+  `extraKnownMarketplaces` (their **GitHub source repos**).
+- `copy_claude_config` copies `settings.json` into the VM on create and
+  on every start (the `copy-config` lifecycle stage).
+- On first launch in the VM, Claude reads `settings.json` and installs
+  the enabled plugins **VM-locally** from their GitHub marketplaces into
+  `~/.claude/plugins`.
+
+Two consequences follow, and they decide the design:
+
+1. The plugins are sourced from **GitHub repos**, not from the host's
+   materialized `~/.claude/plugins` checkout. The "what to install" is
+   already declared (`settings.json`) and already seeded into the VM.
+2. Once installed at first launch, the VM never refreshes; the host
+   advances and the VM stays pinned. That is the skew.
 
 ## Scope
 
-This issue ships the two **decided** cleanups (findings 2 and 3) and a
-**documented, reproducible** EXDEV experiment procedure for finding 1.
+This issue delivers all three findings:
 
-**Out of scope:** any permanent plugins mount/symlink wiring. That is a
-follow-up issue, decided by the experiment's outcome (see Component 3).
-Nothing irreversible happens to plugins in this issue.
+- **Findings 2 and 3** — the decided cleanups (remove the vestigial
+  mount; document the persistence model).
+- **Finding 1** — a VM-local plugin lifecycle that mirrors how
+  vergil-tooling is kept current in VMs. We **do not** share plugins
+  across the host/VM boundary.
+
+### Rejected approach: sharing plugins via a mount
+
+An earlier direction was to mount + symlink `~/.claude/plugins` like
+`projects`/`skills`, gated on an EXDEV experiment (atomic `rename()`
+across the virtiofs boundary fails with `EXDEV`, the #1301 failure mode).
+That approach is rejected:
+
+- **It fights two problems, not one.** Beyond EXDEV, the host's
+  `~/.claude/plugins` is a materialized checkout on macOS; symlinking it
+  into a Linux VM is fragile and would break outright if any plugin ever
+  shipped a compiled/binary component. Sharing the materialized directory
+  is the wrong boundary to cross.
+- **It is unnecessary.** The marketplaces are GitHub repos, so each VM
+  can install and refresh plugins itself, platform-independently — the
+  same model already used for vergil-tooling. No shared mount, no
+  virtiofs writes, no EXDEV.
+
+This is a deliberate retreat from making host/VM plugin state transparent.
+Transparent cross-boundary sharing is an unusual code path; the
+tooling-style "push the update into each VM" model is simpler and
+robust.
 
 ## Component 1 — Remove the vestigial sessions mount
 
@@ -54,10 +107,11 @@ In `create_vm` (`lima.py`):
   the last slot, so the remaining mounts do not re-index.
 - Remove the now-dead `claude_sessions_path` / `claude_sessions` locals
   and the host `claude_sessions_path.mkdir(...)`. Nothing mounts or reads
-  that host directory anymore — VM session detection reads each VM's
-  *local* roster over `limactl shell`, and the host's own Claude creates
-  `~/.claude/sessions` for itself when it needs it. `create_vm` only ever
-  created it to back the (now-removed) mount.
+  that host directory: VM session detection reads each VM's *local*
+  roster in-guest (`vrg_vm_resolve.read_roster` over `Path.home()/
+  ".claude"/"sessions"`, invoked via `limactl shell`), and the host's own
+  Claude creates `~/.claude/sessions` for itself when it needs it.
+  `create_vm` only ever created it to back the now-removed mount.
 
 **Keep unchanged:** `_CLAUDE_UNLINK_DIRS = ("sessions",)` and the
 symlink-removal loop in `link_claude_dirs`. An existing VM carrying a
@@ -65,16 +119,17 @@ stale `sessions` symlink (from an older build) must still be cleaned up
 on re-link. The mount removal and the symlink guard are independent
 concerns; only the mount is vestigial.
 
+Existing VMs created with the old `mounts[3]` keep the (unused) mount
+until their next rebuild — harmless, since nothing reads it.
+
 ## Component 2 — Document the persistence model
 
-The point of finding 2 is that the projects-vs-sessions persistence model
-should be written down in one place so it is not re-litigated. Two
-pieces:
+Two pieces:
 
 ### Code comment
 
 Expand the comment block at `_CLAUDE_LINK_DIRS` (and a short note at the
-mounts in `create_vm`) to state the full model:
+mounts in `create_vm`) to state the full model in one place:
 
 - `projects/` → durable, **host-shared** transcript store. Resume reads
   these; survives VM rebuilds because the data lives on the host.
@@ -91,51 +146,59 @@ The comment links to the guide below.
 
 New `docs/site/docs/guides/agent-vm-claude-share-set.md` narrating:
 
-- the `.claude` share set (projects rw / skills ro / sessions VM-local),
+- the `.claude` share set (projects rw / skills ro / sessions VM-local);
 - the resume-after-rebuild mechanism (reads the shared `projects/`
-  transcript, not the local roster), and
-- why `sessions/` must stay VM-local (the #1301 `EXDEV` story).
+  transcript, not the local roster);
+- why `sessions/` must stay VM-local (the #1301 `EXDEV` story); and
+- how plugins are kept current (VM-local install + refresh, Component 3),
+  and why they are deliberately *not* shared.
 
-This is the durable "so it isn't re-litigated" record. Cross-reference
-adjacent guides (e.g. `identity-architecture.md`) and the worktree
-convention where relevant.
+Cross-reference adjacent guides (e.g. `identity-architecture.md`) where
+relevant.
 
-## Component 3 — Plugins EXDEV experiment procedure
+## Component 3 — VM-local plugin lifecycle (mirrors vergil-tooling)
 
-This issue **documents and hands off** the experiment; it does not wire
-plugins and does not flip any code on.
+Plugins stay unmounted and unshared. Each VM owns its own plugin
+directory and is refreshed from the GitHub marketplaces — exactly the
+model already used for vergil-tooling, where `update_tooling` runs both
+on demand (`vrg-vm update`) and as a warn-mode start stage.
 
-**Ownership.** The human runs the experiment on a macOS host. It needs a
-live Lima VM and the real virtiofs boundary, which an agent session
-(itself inside a VM/container) cannot faithfully reproduce. The agent
-produces the procedure; the human runs it; the result seeds the
-follow-up.
+### Refresh primitive
 
-**Why an experiment is required.** `sessions/` was made VM-local
-precisely because Claude's atomic temp-file + `rename()` writes hit
-`EXDEV` across the virtiofs boundary (#1301). Plugin installs and
-marketplace updates likely use the same temp+rename pattern. Wiring a
-plugins mount without testing risks trading a stale-version bug for a
-silent-write-failure bug.
+Add `update_plugins(instance: str)` to `lima.py`, mirroring
+`update_tooling`. It runs, inside the VM:
 
-**Procedure:**
+- `claude plugin marketplace update` — refresh marketplace metadata; then
+- `claude plugin update` — update installed plugins to latest.
 
-1. Scratch/uncommitted change: add a `.claude/plugins` mount in
-   `create_vm` and `"plugins"` to `_CLAUDE_LINK_DIRS`, mirroring
-   `projects`.
-2. Rebuild/start an agent VM; confirm `~/.claude/plugins` is a symlink
-   onto the virtiofs mount.
-3. In the VM, run `claude plugin marketplace update` and
-   `claude plugin update`.
-4. Observe: success (writes land on the host mount) vs. `EXDEV` /
-   silent-failure on the atomic temp+rename.
+The "what" needs no new configuration: `settings.json` (already copied by
+the `copy-config` stage on every start) is the source of truth for
+enabled plugins and marketplaces, so newly enabled/disabled host plugins
+propagate on the next start, and `update_plugins` only advances versions.
 
-**Decision the result feeds (follow-up issue, not this one):**
+### Drive it two ways (mirroring tooling)
 
-- **Success** → wire the mount + symlink permanently, so plugins track
-  the host live.
-- **`EXDEV`** → fallback: host→VM copy at provision, or a VM-side
-  `claude plugin update` on session start.
+1. **Fold into `vrg-vm update`.** `vrg-vm update` and `vrg-vm update
+   --all` refresh **both** tooling and plugins in one pass. Concretely,
+   `_update_instance` calls `update_plugins` alongside `update_tooling`.
+   "Update my VM(s)" brings everything current — the same gesture used
+   after re-releasing tooling now also picks up re-released plugins.
+2. **Warn-mode start/rebuild stage.** Add `Stage("update-plugins",
+   _st_update_plugins, mode="warn")` beside the existing `update-tooling`
+   stage in the start and rebuild pipelines, so a started or rebuilt VM
+   converges to latest plugins. Warn mode: a failed refresh surfaces as
+   ⚠ in the lifecycle summary, never aborts the session.
+
+### First-launch install on create
+
+The create pipeline relies on Claude's first-launch auto-install from
+`settings.json`. **Implementation must verify this happens reliably in
+the headless/agent launch path.** If first-launch auto-install is not
+dependable without an interactive TUI, add an explicit plugin-install
+step to the create pipeline (install the enabled plugins from
+`settings.json`) so a freshly created VM is never plugin-less. Resolve
+this during implementation; the refresh primitive above is install-safe
+to re-run regardless.
 
 ## Testing
 
@@ -144,6 +207,14 @@ silent-write-failure bug.
     `mounts[3]` / sessions args, and `mounts[0..2]` are unchanged.
   - Update `test_creates_host_claude_dirs`: drop the `sessions` directory
     assertion (projects/ and skills/ still created).
+  - Add coverage for `update_plugins`: asserts the in-VM command is
+    `claude plugin marketplace update` followed by `claude plugin
+    update`, dispatched through the shell wrapper.
+- `tests/vergil_tooling/test_vrg_vm.py`:
+  - `vrg-vm update` / `--all` invokes the plugin refresh as well as the
+    tooling update.
+  - The start (and rebuild) pipeline includes the `update-plugins`
+    warn-mode stage.
 - `link_claude_dirs` behavior is unchanged; existing coverage stands.
 - markdownlint on the new guide.
 - Full gate: `vrg-container-run -- vrg-validate`.
@@ -152,5 +223,9 @@ silent-write-failure bug.
 
 - #1301 — sessions roster kept VM-local (`EXDEV` rationale).
 - vergil-vm #73 — same `EXDEV` thread.
+- `32bc0484d` — added the sessions mount "for persistence" (now
+  vestigial).
 - #1602 — `vrg-git blame` allowlist gap surfaced during the audit
   (separate).
+- Prior art: `update_tooling` (`lima.py`) + `vrg-vm update` — the pattern
+  Component 3 mirrors.
