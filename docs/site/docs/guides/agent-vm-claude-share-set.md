@@ -52,8 +52,10 @@ on first launch and keeps them current with an in-VM refresh — the same
 model used for vergil-tooling. The host's materialized `~/.claude/plugins`
 checkout is never shared: doing so would cross the macOS/Linux boundary
 (fragile if any plugin ships a binary) and hit the same `EXDEV` write
-problem as the roster. Instead, `update_plugins` runs `claude plugin
-marketplace update` + `claude plugin update` inside the VM, driven by
-`vrg-vm update` and a warn-mode stage on VM start/rebuild.
+problem as the roster. Instead, `update_plugins` refreshes the marketplaces
+(`claude plugin marketplace update`) and then updates each **enabled** plugin to
+its latest version with the plugin's own scope (`claude plugin update <id>
+--scope <user|project>` — there is no bulk-update form), all inside the VM.
+It is driven by `vrg-vm update` and a warn-mode stage on VM start/rebuild.
 
 See also: [Identity Architecture](identity-architecture.md).

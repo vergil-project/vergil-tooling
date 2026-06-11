@@ -168,8 +168,15 @@ on demand (`vrg-vm update`) and as a warn-mode start stage.
 Add `update_plugins(instance: str)` to `lima.py`, mirroring
 `update_tooling`. It runs, inside the VM:
 
-- `claude plugin marketplace update` — refresh marketplace metadata; then
-- `claude plugin update` — update installed plugins to latest.
+- `claude plugin marketplace update` — refresh all marketplace metadata; then
+- for each **enabled** plugin from `claude plugin list --json`,
+  `claude plugin update <id> --scope <user|project>`.
+
+`claude plugin update` has no bulk form and honours each plugin's scope
+(the `vergil` plugin is `project`-scoped, others `user`), so the refresh
+enumerates the installed list and updates each enabled plugin with its own
+scope. It is best-effort across the set — one plugin failing does not block
+the rest, and failures are surfaced by raising afterwards.
 
 The "what" needs no new configuration: `settings.json` (already copied by
 the `copy-config` stage on every start) is the source of truth for

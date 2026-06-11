@@ -1423,18 +1423,56 @@ class TestProvisionMonitor:
 
 
 class TestUpdatePlugins:
+    _LISTING = json.dumps(
+        [
+            {"id": "paad@paad", "scope": "user", "enabled": True},
+            {"id": "frontend-design@official", "scope": "user", "enabled": False},
+            {"id": "vergil@vergil-marketplace", "scope": "project", "enabled": True},
+        ]
+    )
+
+    def _fake_shell(self) -> MagicMock:
+        def side_effect(_instance: str, *args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            out = self._LISTING if "plugin list --json" in cmd else ""
+            return MagicMock(stdout=out, returncode=0)
+
+        mock = MagicMock(side_effect=side_effect)
+        return mock
+
     @patch("vergil_tooling.lib.lima.shell_run")
-    def test_runs_marketplace_then_plugin_update(self, mock_run: MagicMock) -> None:
+    def test_refreshes_marketplaces_then_updates_enabled_plugins(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = self._fake_shell().side_effect
         update_plugins("vergil-agent")
-        # Two in-VM commands, marketplace refresh before plugin update.
-        assert mock_run.call_count == 2
-        first_cmd = mock_run.call_args_list[0][0][-1]
-        second_cmd = mock_run.call_args_list[1][0][-1]
-        assert "claude plugin marketplace update" in first_cmd
-        assert "claude plugin update" in second_cmd
-        # PATH is set explicitly (not via a login shell) so claude resolves
-        # regardless of the VM's zsh-configured interactive environment.
-        assert mock_run.call_args_list[0][0][:3] == ("vergil-agent", "bash", "-c")
-        assert mock_run.call_args_list[1][0][:3] == ("vergil-agent", "bash", "-c")
-        assert "/usr/local/bin" in first_cmd
-        assert "/usr/local/bin" in second_cmd
+        cmds = [c.args[-1] for c in mock_run.call_args_list]
+        # Marketplace metadata refreshed first, then the installed list is read.
+        assert any("claude plugin marketplace update" in c for c in cmds)
+        assert any("claude plugin list --json" in c for c in cmds)
+        # Each ENABLED plugin updated with its own scope; no bulk update exists.
+        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
+        assert any(
+            "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
+        )
+        # Disabled plugins are left alone.
+        assert not any("frontend-design" in c for c in cmds)
+        # Every call is a non-login bash -c with an explicit PATH export, so claude
+        # resolves regardless of the VM's zsh-configured interactive environment.
+        for c in mock_run.call_args_list:
+            assert c.args[:3] == ("vergil-agent", "bash", "-c")
+            assert "export PATH=" in c.args[-1]
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_raises_after_attempting_all_when_a_plugin_fails(self, mock_run: MagicMock) -> None:
+        def side_effect(_instance: str, *args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "claude plugin update paad@paad" in cmd:
+                raise subprocess.CalledProcessError(1, "claude plugin update")
+            out = self._LISTING if "plugin list --json" in cmd else ""
+            return MagicMock(stdout=out, returncode=0)
+
+        mock_run.side_effect = side_effect
+        with pytest.raises(RuntimeError, match="paad@paad"):
+            update_plugins("vergil-agent")
+        # Best-effort: the other enabled plugin is still attempted before raising.
+        cmds = [c.args[-1] for c in mock_run.call_args_list]
+        assert any("claude plugin update vergil@vergil-marketplace" in c for c in cmds)
