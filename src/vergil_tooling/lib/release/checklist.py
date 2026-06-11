@@ -64,3 +64,26 @@ def upsert(body: str, stages: Sequence[str], checked: Iterable[str] = ()) -> str
         post = body[body.index(END) + len(END) :]
         return pre + block + post
     return body.rstrip() + "\n\n" + block + "\n"
+
+
+def first_unchecked(body: str, expected_stages: Sequence[str]) -> str | None:
+    """Return the first unchecked stage, or None if all are checked.
+
+    Raises ``ChecklistError`` if the block's stages do not match
+    *expected_stages* — a mismatch means the checklist was written by a
+    different tooling version, and resume must refuse rather than guess.
+    """
+    pairs = parse(body)
+    names = [name for name, _ in pairs]
+    if names != list(expected_stages):
+        msg = (
+            "release checklist was written by a different vrg-release version "
+            f"(found {names}, expected {list(expected_stages)}); complete the "
+            "release with the original version or finish the remaining stages "
+            "manually"
+        )
+        raise ChecklistError(msg)
+    for name, checked in pairs:
+        if not checked:
+            return name
+    return None
