@@ -100,9 +100,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
         "--strategy",
-        default="squash",
+        default=None,
         choices=["merge", "squash", "rebase"],
-        help="Merge strategy for the PR (feature PRs default to squash)",
+        help=(
+            "Merge strategy for the PR. Default by branch prefix: 'release/*' "
+            "branches merge with a merge commit (preserve develop<->main "
+            "ancestry); all others squash."
+        ),
     )
     parser.add_argument(
         "--allow-provenance-violation",
@@ -303,19 +307,39 @@ def _stage_provenance(ctx: FinalizeContext) -> None:
         )
 
 
+_RELEASE_BRANCH_PREFIX = "release/"
+
+
+def _resolve_strategy(branch: str, override: str | None) -> str:
+    """Merge strategy for *branch*.
+
+    An explicit ``--strategy`` always wins. Otherwise the default is driven by
+    the branch prefix: ``release/*`` branches (release PRs and back-merges)
+    merge with a merge commit to preserve the develop<->main ancestry the
+    release model relies on; squashing them silently breaks that ancestry and
+    makes later release branches conflict (issue #1620). Every other branch
+    squashes, as before.
+    """
+    if override is not None:
+        return override
+    return "merge" if branch.startswith(_RELEASE_BRANCH_PREFIX) else "squash"
+
+
 def _stage_merge(ctx: FinalizeContext) -> None:
     """Merge the PR (or confirm it is already merged) and record its branch."""
     args = ctx.args
+    branch = github.head_ref(args.pr)
+    strategy = _resolve_strategy(branch, args.strategy)
     if github.pr_state(args.pr) == "MERGED":
         print(f"PR {args.pr} already merged.")
     elif args.dry_run:
-        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{args.strategy})")
+        print(f"  [dry-run] wait for green, then merge PR {args.pr} (--{strategy})")
     else:
         try:
-            pr_merge.wait_and_merge(args.pr, strategy=args.strategy)
+            pr_merge.wait_and_merge(args.pr, strategy=strategy)
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc
-    ctx.merged_branch = github.head_ref(args.pr)
+    ctx.merged_branch = branch
 
 
 def _stage_cleanup(ctx: FinalizeContext) -> None:

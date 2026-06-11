@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import git, github
 from vergil_tooling.lib.release.context import ReleaseError
@@ -17,6 +18,10 @@ _MAIN_EXPECTED_JOBS = ("docs", "release")
 _DEVELOP_EXPECTED_JOBS = ("docs",)
 _CD_POLL_INTERVAL = 10
 _CD_POLL_ATTEMPTS = 30
+# A reusable-workflow leaf job's conclusion can lag the run-level status by a
+# few seconds in the jobs API (issue #1611); poll for it to settle.
+_JOB_SETTLE_INTERVAL = 5
+_JOB_SETTLE_ATTEMPTS = 12
 
 
 def confirm_main(ctx: ReleaseContext) -> None:
@@ -104,6 +109,51 @@ def _poll_for_run(repo: str, branch: str, head_sha: str) -> str:
     )
 
 
+def _fetch_run_jobs(ctx: ReleaseContext, run_id: str) -> list[dict[str, Any]]:
+    """Return the ``jobs`` array for *run_id* from the GitHub API."""
+    out = github.read_output("run", "view", "--repo", ctx.repo, run_id, "--json", "jobs")
+    data = json.loads(out) if out.strip() else {}
+    jobs: list[dict[str, Any]] = data.get("jobs", [])
+    return jobs
+
+
+def _find_job(jobs: list[dict[str, Any]], job_name: str) -> dict[str, Any] | None:
+    """First job whose name *contains* ``job_name``.
+
+    Reusable-workflow leaf jobs are surfaced as ``<caller> / <job>`` (e.g.
+    ``docs / docs``), so we substring-match rather than compare exactly.
+    """
+    for job in jobs:
+        if job_name in job.get("name", ""):
+            return job
+    return None
+
+
+def _settled_run_jobs(
+    ctx: ReleaseContext, run_id: str, expected: tuple[str, ...]
+) -> list[dict[str, Any]]:
+    """Poll until every *expected* job is present and ``completed``.
+
+    ``gh run watch`` returns when the run-level status is terminal, but a
+    reusable-workflow leaf job's ``conclusion`` can still be ``null`` in the
+    jobs API for a few seconds (issue #1611). Reading once raced that window
+    and aborted an already-succeeded release. Polling for ``completed`` closes
+    the race; a genuinely absent job never settles and the final snapshot lets
+    the caller report it as not found.
+    """
+    jobs: list[dict[str, Any]] = []
+    for attempt in range(_JOB_SETTLE_ATTEMPTS):
+        jobs = _fetch_run_jobs(ctx, run_id)
+        if all(
+            (job := _find_job(jobs, name)) is not None and job.get("status") == "completed"
+            for name in expected
+        ):
+            return jobs
+        if attempt < _JOB_SETTLE_ATTEMPTS - 1:
+            time.sleep(_JOB_SETTLE_INTERVAL)
+    return jobs
+
+
 def _verify_jobs(
     ctx: ReleaseContext,
     run_id: str,
@@ -111,24 +161,16 @@ def _verify_jobs(
     *,
     phase: str,
 ) -> None:
+    jobs = _settled_run_jobs(ctx, run_id, expected)
     for job_name in expected:
-        conclusion = github.read_output(
-            "run",
-            "view",
-            "--repo",
-            ctx.repo,
-            run_id,
-            "--json",
-            "jobs",
-            "--jq",
-            f'.jobs[] | select(.name | contains("{job_name}")) | .conclusion',
-        )
-        if not conclusion:
+        job = _find_job(jobs, job_name)
+        if job is None:
             raise ReleaseError(
                 phase=phase,
                 command=f"verify job '{job_name}'",
                 message=(f"Expected job '{job_name}' not found in workflow run {run_id}."),
             )
+        conclusion = job.get("conclusion")
         if conclusion != "success":
             raise ReleaseError(
                 phase=phase,
