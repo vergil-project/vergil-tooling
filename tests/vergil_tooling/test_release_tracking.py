@@ -7,15 +7,21 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.release import checklist
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import (
     _MAX_COMMENT_CHARS,
     _truncate_for_comment,
+    _write_issue_body,
     close_tracking_issue,
     comment_phase_complete,
     comment_phase_failed,
     create_tracking_issue,
+    cursor,
+    ensure_checklist,
     find_existing_tracking_issue,
+    read_issue_body,
+    tick_stage,
 )
 
 _MOD = "vergil_tooling.lib.release.tracking"
@@ -28,6 +34,67 @@ def _ctx() -> ReleaseContext:
         repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
     )
+
+
+def _ctx_with_issue() -> ReleaseContext:
+    ctx = _ctx()
+    ctx.issue_number = 42
+    return ctx
+
+
+def test_read_issue_body_queries_gh() -> None:
+    ctx = _ctx_with_issue()
+    with patch(_MOD + ".github.read_output", return_value="body text") as ro:
+        assert read_issue_body(ctx) == "body text"
+    assert "view" in ro.call_args.args
+
+
+def test_write_issue_body_edits_via_body_file() -> None:
+    ctx = _ctx_with_issue()
+    with patch(_MOD + ".github.run") as run:
+        _write_issue_body(ctx, "new body")
+    assert run.call_args.args[:2] == ("issue", "edit")
+
+
+def test_ensure_checklist_adds_block_when_absent() -> None:
+    ctx = _ctx_with_issue()
+    with (
+        patch(_MOD + ".read_issue_body", return_value="## Release 2.1.0\n"),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        ensure_checklist(ctx, ["audit", "prepare"])
+    written = write.call_args.args[1]
+    assert checklist.BEGIN in written
+    assert "- [ ] audit" in written
+
+
+def test_ensure_checklist_noop_when_present() -> None:
+    ctx = _ctx_with_issue()
+    body = "## Release\n" + checklist.render(["audit"])
+    with (
+        patch(_MOD + ".read_issue_body", return_value=body),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        ensure_checklist(ctx, ["audit"])
+    write.assert_not_called()
+
+
+def test_tick_stage_checks_box() -> None:
+    ctx = _ctx_with_issue()
+    body = checklist.render(["audit", "prepare"])
+    with (
+        patch(_MOD + ".read_issue_body", return_value=body),
+        patch(_MOD + "._write_issue_body") as write,
+    ):
+        tick_stage(ctx, "audit")
+    assert ("audit", True) in checklist.parse(write.call_args.args[1])
+
+
+def test_cursor_returns_first_unchecked() -> None:
+    ctx = _ctx_with_issue()
+    body = checklist.render(["audit", "prepare"], checked={"audit"})
+    with patch(_MOD + ".read_issue_body", return_value=body):
+        assert cursor(ctx, ["audit", "prepare"]) == "prepare"
 
 
 def test_create_tracking_issue() -> None:
