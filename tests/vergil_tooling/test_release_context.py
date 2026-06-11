@@ -77,6 +77,32 @@ def test_context_develop_cd_fields_default_none() -> None:
     assert ctx.develop_cd_run_url is None
 
 
+def test_work_root_prefers_worktree() -> None:
+    """During a release every phase runs in the worktree, so artifact writes
+    target it — not repo_root, which finalize chdir's back to (#1626)."""
+    worktree = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+        worktree_path=worktree,
+    )
+    assert ctx.work_root == worktree
+    assert ctx.work_root != ctx.repo_root
+
+
+def test_work_root_falls_back_to_repo_root() -> None:
+    """With no worktree set, work_root is repo_root (defensive fallback)."""
+    ctx = ReleaseContext(
+        repo="owner/repo",
+        version="2.1.0",
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        version_override=None,
+    )
+    assert ctx.work_root == ctx.repo_root
+
+
 def test_release_error_carries_diagnostics() -> None:
     err = ReleaseError(
         phase="merge-release",

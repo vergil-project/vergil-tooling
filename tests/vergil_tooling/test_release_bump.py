@@ -15,6 +15,8 @@ def _ctx() -> ReleaseContext:
         version="2.1.0",
         repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=None,
+        # preflight chdir's into this worktree; the bump must land here.
+        worktree_path=Path("/tmp/repo/.worktrees/release-2.1.0"),  # noqa: S108
     )
     ctx.issue_number = 42
     return ctx
@@ -81,6 +83,25 @@ def test_back_merge_commits_version_bump() -> None:
     commit_calls = [c for c in git_run_calls if c[0] == "commit"]
     assert len(commit_calls) == 1
     assert "bump version to 2.1.1" in commit_calls[0][2]
+
+
+def test_back_merge_bumps_in_worktree() -> None:
+    """The version bump writes into the worktree, not the main checkout (#1626)."""
+    ctx = _ctx()
+    assert ctx.work_root == ctx.worktree_path
+    assert ctx.work_root != ctx.repo_root
+    with (
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".version.bump", return_value="2.1.1") as mock_bump,
+        patch(
+            _MOD + ".github.create_pr",
+            return_value="https://github.com/owner/repo/pull/101",
+        ),
+        patch(_MOD + ".wait_and_merge"),
+    ):
+        back_merge_and_bump(ctx)
+
+    mock_bump.assert_called_once_with(ctx.work_root)
 
 
 def test_back_merge_creates_pr_to_develop() -> None:
