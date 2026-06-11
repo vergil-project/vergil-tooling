@@ -23,3 +23,31 @@ def test_render_unchecked_and_checked() -> None:
 def test_render_empty_checked_defaults_to_all_unchecked() -> None:
     block = checklist.render(["audit"])
     assert "- [ ] audit" in block
+
+
+def test_parse_returns_stage_state_pairs() -> None:
+    body = (
+        "## Release 2.1.0\n\n"
+        + checklist.render(["audit", "prepare"], checked={"audit"})
+        + "\n\nmore text\n"
+    )
+    assert checklist.parse(body) == [("audit", True), ("prepare", False)]
+
+
+def test_parse_accepts_capital_x() -> None:
+    body = checklist.render(["audit"]).replace("[ ] audit", "[X] audit")
+    assert checklist.parse(body) == [("audit", True)]
+
+
+def test_parse_ignores_non_item_lines_in_block() -> None:
+    body = (
+        checklist.BEGIN
+        + "\nsome note\n- [ ] audit\n"
+        + checklist.END
+    )
+    assert checklist.parse(body) == [("audit", False)]
+
+
+def test_parse_raises_when_no_block() -> None:
+    with pytest.raises(checklist.ChecklistError, match="no .* progress block"):
+        checklist.parse("## Release 2.1.0\n")

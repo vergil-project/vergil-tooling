@@ -29,3 +29,24 @@ def render(stages: Sequence[str], checked: Iterable[str] = ()) -> str:
     lines.extend(f"- [{'x' if s in done else ' '}] {s}" for s in stages)
     lines.append(END)
     return "\n".join(lines)
+
+
+_ITEM_RE = re.compile(r"^\s*-\s*\[([ xX])\]\s*(\S+)\s*$")
+
+
+def _block_inner(body: str) -> str:
+    if BEGIN not in body or END not in body:
+        msg = "no vrg-release progress block found in issue body"
+        raise ChecklistError(msg)
+    start = body.index(BEGIN) + len(BEGIN)
+    return body[start : body.index(END)]
+
+
+def parse(body: str) -> list[tuple[str, bool]]:
+    """Return ``[(stage, checked)]`` parsed from the block in *body*."""
+    pairs: list[tuple[str, bool]] = []
+    for line in _block_inner(body).splitlines():
+        match = _ITEM_RE.match(line)
+        if match:
+            pairs.append((match.group(2), match.group(1).lower() == "x"))
+    return pairs
