@@ -14,6 +14,9 @@ from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.git import _git_auth_env
 
 _ALLOWED_SIMPLE: set[str] = {
+    # Read-only inspection commands. These only read history, objects, or
+    # refs and have no mode that mutates the repository, so they are allowed
+    # unconditionally for triage and debugging (#1602).
     "status",
     "log",
     "diff",
@@ -21,6 +24,30 @@ _ALLOWED_SIMPLE: set[str] = {
     "branch",
     "ls-remote",
     "rev-parse",
+    "annotate",
+    "blame",
+    "cat-file",
+    "cherry",
+    "count-objects",
+    "describe",
+    "diff-files",
+    "diff-index",
+    "diff-tree",
+    "for-each-ref",
+    "grep",
+    "ls-files",
+    "ls-tree",
+    "merge-base",
+    "name-rev",
+    "rev-list",
+    "shortlog",
+    "show-branch",
+    "show-ref",
+    "var",
+    "verify-commit",
+    "verify-tag",
+    "whatchanged",
+    # Mutating commands, gated further by _FLAG_DENY and worktree checks.
     "add",
     "mv",
     "rm",
@@ -39,13 +66,23 @@ _ALLOWED_COMPOUND: dict[str, set[str]] = {
     "worktree": {"add", "list", "remove"},
 }
 
+# Commands whose default/listing form is read-only but which also expose
+# mutating sub-operations. The read-only forms (bare invocation plus any
+# sub-operation not listed here) are allowed; the listed sub-operations are
+# denied. Used for high-value debugging commands like reflog (#1602).
+_READONLY_WITH_DENIED_SUBS: dict[str, set[str]] = {
+    "reflog": {"expire", "delete"},
+}
+
 _DENIED: dict[str, str] = {
     "commit": "Use vrg-commit instead of git commit.",
     "reset": "git reset is denied by vrg-git.",
     "clean": "git clean is denied by vrg-git.",
+    # config has a broad mutating-flag surface (--add/--unset/--replace-all/
+    # --rename-section/--remove-section/-e/bare set); its read-only forms
+    # (--get/--list) need a careful flag allowlist and are deferred (#1602).
     "config": "git config is denied by vrg-git.",
     "remote": "git remote is denied by vrg-git.",
-    "reflog": "git reflog is denied by vrg-git.",
     "gc": "git gc is denied by vrg-git.",
     "prune": "git prune is denied by vrg-git.",
     "filter-branch": "git filter-branch is denied by vrg-git.",
@@ -260,6 +297,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vrg-git: {subcmd} is denied. {msg}", file=sys.stderr)
         return 1
 
+    if subcmd in _READONLY_WITH_DENIED_SUBS:
+        denied_subs = _READONLY_WITH_DENIED_SUBS[subcmd]
+        # The mutating sub-operation, if any, is the first positional token.
+        sub = argv[1] if len(argv) >= 2 else None
+        if sub in denied_subs:
+            print(f"vrg-git: {subcmd} {sub} is denied by vrg-git.", file=sys.stderr)
+            return 1
+        result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
+        return result.returncode
+
     if subcmd in _ALLOWED_COMPOUND:
         allowed_subs = _ALLOWED_COMPOUND[subcmd]
         if len(argv) < 2 or argv[1] not in allowed_subs:
@@ -280,9 +327,9 @@ def main(argv: list[str] | None = None) -> int:
         return result.returncode
 
     if subcmd not in _ALLOWED_SIMPLE:
+        allowed = _ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND) | set(_READONLY_WITH_DENIED_SUBS)
         print(
-            f"vrg-git: {subcmd} is not recognized. "
-            f"Allowed: {', '.join(sorted(_ALLOWED_SIMPLE | set(_ALLOWED_COMPOUND)))}",
+            f"vrg-git: {subcmd} is not recognized. Allowed: {', '.join(sorted(allowed))}",
             file=sys.stderr,
         )
         return 1

@@ -45,6 +45,30 @@ shell expansion, no pipes, no redirection.
 | `branch` | `--force`; `-D` conditional | `-d` allowed; `-D` allowed when upstream is `[gone]` |
 | `ls-remote` | — | Read-only |
 | `rev-parse` | — | Read-only |
+| `annotate` | — | Read-only — line-level authorship |
+| `blame` | — | Read-only — line-level authorship |
+| `cat-file` | — | Read-only — object type/size/content |
+| `cherry` | — | Read-only — commits not yet upstream |
+| `count-objects` | — | Read-only — repo object stats |
+| `describe` | — | Read-only — nearest reachable tag |
+| `diff-files` | — | Read-only — plumbing diff |
+| `diff-index` | — | Read-only — plumbing diff |
+| `diff-tree` | — | Read-only — plumbing diff |
+| `for-each-ref` | — | Read-only — enumerate refs |
+| `grep` | — | Read-only — search tracked content |
+| `ls-files` | — | Read-only — list tracked files |
+| `ls-tree` | — | Read-only — list a tree's contents |
+| `merge-base` | — | Read-only — common-ancestor lookup |
+| `name-rev` | — | Read-only — symbolic names for commits |
+| `reflog` | `expire`, `delete` | Read-only show/exists allowed; mutating sub-ops denied |
+| `rev-list` | — | Read-only — list commits |
+| `shortlog` | — | Read-only — summarized log |
+| `show-branch` | — | Read-only — compare branches |
+| `show-ref` | — | Read-only — list refs |
+| `var` | — | Read-only — logical git variables |
+| `verify-commit` | — | Read-only — signature verification |
+| `verify-tag` | — | Read-only — signature verification |
+| `whatchanged` | — | Read-only — log with file changes |
 | `worktree add` | — | Parallel agent work |
 | `worktree list` | — | Read-only |
 | `worktree remove` | — | Cleanup after merge |
