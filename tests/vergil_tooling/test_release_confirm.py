@@ -18,6 +18,17 @@ _MOD = "vergil_tooling.lib.release.confirm"
 _SHA = "abc123def456"
 
 
+def _job(
+    name: str, status: str = "completed", conclusion: str | None = "success"
+) -> dict[str, str | None]:
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+# Reusable-workflow leaf jobs are surfaced as "<caller> / <job>".
+_MAIN_JOBS_OK = [_job("docs / docs"), _job("release / release")]
+_DEVELOP_JOBS_OK = [_job("docs / docs")]
+
+
 def _ctx() -> ReleaseContext:
     ctx = ReleaseContext(
         repo="owner/repo",
@@ -67,11 +78,10 @@ def test_confirm_main_success() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "success",
                 "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -96,11 +106,10 @@ def test_confirm_main_polls_until_run_appears() -> None:
                 "",
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "success",
                 "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -132,9 +141,11 @@ def test_confirm_main_fails_job_not_found() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "",
             ],
         ),
+        # 'docs' never appears — poll exhausts and it is reported missing.
+        patch(_MOD + "._fetch_run_jobs", return_value=[_job("release / release")]),
+        patch(_MOD + ".time.sleep"),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -151,8 +162,11 @@ def test_confirm_main_fails_job_not_success() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "failure",
             ],
+        ),
+        patch(
+            _MOD + "._fetch_run_jobs",
+            return_value=[_job("docs / docs", conclusion="failure"), _job("release / release")],
         ),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
@@ -170,10 +184,9 @@ def test_confirm_main_fails_tag_missing() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "success",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -192,11 +205,10 @@ def test_confirm_main_fails_develop_tag_missing() -> None:
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "success",
                 "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -214,9 +226,9 @@ def test_confirm_develop_success() -> None:
             side_effect=[
                 "67890",
                 "https://github.com/o/r/actions/runs/67890",
-                "success",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -247,8 +259,11 @@ def test_confirm_develop_fails_job_not_success() -> None:
             side_effect=[
                 "67890",
                 "https://github.com/o/r/actions/runs/67890",
-                "failure",
             ],
+        ),
+        patch(
+            _MOD + "._fetch_run_jobs",
+            return_value=[_job("docs / docs", conclusion="failure")],
         ),
         patch(_MOD + ".watch_workflow"),
         patch(_MOD + ".git.run"),
@@ -256,6 +271,54 @@ def test_confirm_develop_fails_job_not_success() -> None:
         pytest.raises(ReleaseError, match="did not succeed"),
     ):
         confirm_develop(ctx)
+
+
+def test_fetch_run_jobs_parses_jobs_array() -> None:
+    from vergil_tooling.lib.release.confirm import _fetch_run_jobs
+
+    ctx = _ctx()
+    payload = '{"jobs": [{"name": "docs / docs", "status": "completed", "conclusion": "success"}]}'
+    with patch(_MOD + ".github.read_output", return_value=payload):
+        jobs = _fetch_run_jobs(ctx, "12345")
+    assert jobs == [{"name": "docs / docs", "status": "completed", "conclusion": "success"}]
+
+
+def test_fetch_run_jobs_empty_output_returns_empty() -> None:
+    from vergil_tooling.lib.release.confirm import _fetch_run_jobs
+
+    ctx = _ctx()
+    with patch(_MOD + ".github.read_output", return_value=""):
+        assert _fetch_run_jobs(ctx, "12345") == []
+
+
+def test_find_job_substring_matches_reusable_leaf() -> None:
+    from vergil_tooling.lib.release.confirm import _find_job
+
+    jobs = [_job("docs / docs"), _job("release / release")]
+    matched = _find_job(jobs, "docs")
+    assert matched is not None
+    assert matched["name"] == "docs / docs"
+    assert _find_job(jobs, "missing") is None
+
+
+def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
+    """Regression #1611: a reusable-workflow leaf whose conclusion lags the
+    run-level status is polled until it settles, not read once."""
+    from vergil_tooling.lib.release.confirm import _settled_run_jobs
+
+    ctx = _ctx()
+    lagging = [
+        _job("docs / docs", status="in_progress", conclusion=None),
+        _job("release / release"),
+    ]
+    settled = [_job("docs / docs"), _job("release / release")]
+    with (
+        patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]),
+        patch(_MOD + ".time.sleep") as sleep,
+    ):
+        jobs = _settled_run_jobs(ctx, "12345", _MAIN_EXPECTED_JOBS)
+    assert jobs == settled
+    sleep.assert_called_once()
 
 
 def test_poll_attempts_constant() -> None:
@@ -277,11 +340,10 @@ def test_confirm_main_prints_run_url_before_watching(
             side_effect=[
                 "12345",
                 "https://github.com/o/r/actions/runs/12345",
-                "success",
-                "success",
                 "https://github.com/o/r/releases/tag/v2.1.0",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_MAIN_JOBS_OK),
         patch(_MOD + ".watch_workflow", side_effect=fake_watch),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
@@ -307,9 +369,9 @@ def test_confirm_develop_prints_run_url_before_watching(
             side_effect=[
                 "67890",
                 "https://github.com/o/r/actions/runs/67890",
-                "success",
             ],
         ),
+        patch(_MOD + "._fetch_run_jobs", return_value=_DEVELOP_JOBS_OK),
         patch(_MOD + ".watch_workflow", side_effect=fake_watch),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),

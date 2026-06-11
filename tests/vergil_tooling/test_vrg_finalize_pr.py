@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
     _check_cd_workflow_status,
+    _resolve_strategy,
     _stage_cd_check,
     _stage_merge,
     _stage_provenance,
@@ -88,6 +89,7 @@ def test_parse_args_defaults() -> None:
     args = parse_args([])
     assert args.target_branch == "develop"
     assert args.dry_run is False
+    assert args.strategy is None
 
 
 def test_parse_args_custom() -> None:
@@ -785,6 +787,7 @@ def test_merge_abort_returns_one_from_main(
     with (
         patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
         patch(f"{_MOD}.github.pr_state", return_value="OPEN"),
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
         patch(f"{_MOD}.pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.git.current_branch") as branch,
@@ -1313,10 +1316,50 @@ def test_stage_merge_abort_raises() -> None:
     ctx = _stage_ctx(["123"])
     with (
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
         patch(_MOD + ".pr_merge.wait_and_merge", side_effect=MergeAbortError("is a draft")),
         pytest.raises(FinalizeError, match="is a draft"),
     ):
         _stage_merge(ctx)
+
+
+def test_resolve_strategy_release_branch_merges() -> None:
+    assert _resolve_strategy("release/2.1.30", None) == "merge"
+    assert _resolve_strategy("release/post-2.1.30", None) == "merge"
+
+
+def test_resolve_strategy_feature_branch_squashes() -> None:
+    assert _resolve_strategy("feature/42-x", None) == "squash"
+    assert _resolve_strategy("develop", None) == "squash"
+
+
+def test_resolve_strategy_explicit_override_wins() -> None:
+    assert _resolve_strategy("release/2.1.30", "squash") == "squash"
+    assert _resolve_strategy("feature/42-x", "merge") == "merge"
+
+
+def test_stage_merge_release_branch_uses_merge_commit() -> None:
+    """A release/* branch with no explicit --strategy merges with a merge
+    commit, preserving develop<->main ancestry (issue #1620)."""
+    ctx = _stage_ctx(["123"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="release/post-2.1.30"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_called_once_with("123", strategy="merge")
+
+
+def test_stage_merge_explicit_strategy_overrides_prefix() -> None:
+    ctx = _stage_ctx(["123", "--strategy", "squash"])
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".pr_merge.wait_and_merge") as engine,
+        patch(_MOD + ".github.head_ref", return_value="release/2.1.30"),
+    ):
+        _stage_merge(ctx)
+    engine.assert_called_once_with("123", strategy="squash")
 
 
 def test_stage_merge_already_merged_skips_engine() -> None:
