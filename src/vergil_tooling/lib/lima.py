@@ -613,10 +613,20 @@ def copy_claude_config(instance: str, claude_dir: Path) -> None:
             )
 
 
-# Subdirs symlinked to the path-preserved host mounts so they are shared with
-# the host and survive VM rebuilds. projects/ holds the conversation
-# transcripts (append writes, which work fine through the virtiofs mount);
-# skills/ is a read-only reference mount.
+# The agent-VM ~/.claude share set. See
+# docs/site/docs/guides/agent-vm-claude-share-set.md for the full model.
+#
+# projects/ -> durable, host-shared transcript store. Resume-after-rebuild
+#   reads these, so a conversation survives a VM rebuild (the data lives on
+#   the host). Append-only writes, which work fine through the virtiofs mount.
+# skills/   -> read-only reference mount.
+# sessions/ -> NOT shared; see _CLAUDE_UNLINK_DIRS below. It is a disposable
+#   VM-local roster (pid->session), regenerated each run. Resume does NOT
+#   depend on it, so keeping it VM-local does not break resume.
+# plugins/  -> NOT shared; kept current VM-locally via update_plugins (each VM
+#   installs/refreshes from the GitHub marketplaces declared in the copied
+#   settings.json). Sharing the host's materialized checkout across the
+#   macOS/Linux boundary would be fragile and is unnecessary.
 _CLAUDE_LINK_DIRS = ("projects", "skills")
 
 # Subdirs that must NOT be symlinked onto the host mount and must stay
