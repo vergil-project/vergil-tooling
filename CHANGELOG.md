@@ -5,13 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.31] - 2026-06-11
+
+### Bug fixes
+
+- poll confirm-main job conclusions; choose finalize strategy by branch prefix (#1622)
+
 ## [2.1.30] - 2026-06-11
 
 ### Bug fixes
 
 - honor oracle-recorded base; drop legacy release/ inference (#1610)
 
-## [2.1.27] - 2026-06-11
+## [2.1.28] - 2026-06-11
 
 ### Features
 
