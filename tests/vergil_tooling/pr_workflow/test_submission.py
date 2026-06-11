@@ -50,6 +50,7 @@ def test_read_pr_fields_prefers_the_state_file(tmp_path: Path) -> None:
         "summary": "did x",
         "notes": "n",
         "linkage": "Ref",
+        "base": "develop",
     }
 
 

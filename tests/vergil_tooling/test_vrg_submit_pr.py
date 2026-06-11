@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _target_branch,
     main,
     parse_args,
 )
@@ -31,6 +32,25 @@ def _in_worktree() -> Iterator[None]:
     """
     with patch(_MOD + ".git.is_main_worktree", return_value=False):
         yield
+
+
+def test_target_branch_explicit_override_wins() -> None:
+    """An explicit --base always takes precedence."""
+    assert _target_branch("main", oracle_base="origin/develop") == "main"
+    assert _target_branch("some-branch", oracle_base=None) == "some-branch"
+
+
+def test_target_branch_honors_oracle_base_origin_stripped() -> None:
+    """The oracle-recorded base is honored, with any origin/ prefix stripped."""
+    assert _target_branch(None, oracle_base="origin/develop") == "develop"
+    assert _target_branch(None, oracle_base="develop") == "develop"
+    assert _target_branch(None, oracle_base="origin/main") == "main"
+
+
+def test_target_branch_defaults_to_develop() -> None:
+    """With neither override nor oracle base, the default is develop."""
+    assert _target_branch(None, oracle_base=None) == "develop"
+    assert _target_branch(None) == "develop"
 
 
 def test_parse_args_cli_fields() -> None:
@@ -393,6 +413,51 @@ class TestTemplateMode:
         out = capsys.readouterr().out
         assert "feat: oracle" in out
         assert "#1534" in out
+
+    def test_oracle_base_overrides_release_branch_inference(self, tmp_path: Path) -> None:
+        """Regression (#1609): a release/* branch whose oracle base is develop
+        must target develop, not main. The legacy branch-name inference must
+        not override the base the oracle recorded."""
+        from vergil_tooling.lib.pr_workflow import engine
+        from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+        now = "2026-06-08T00:00:00Z"
+        state = engine.init_state(
+            issue="1606",
+            branch="release/post-2.1.27",
+            base="origin/develop",
+            mode="solo",
+            head_sha="h0",
+            base_sha="b0",
+            user_token="u-1",
+            now=now,
+        )
+        engine.apply_report_ready(
+            state,
+            title="chore(release): back-merge",
+            summary="back-merge",
+            notes="n",
+            linkage="Ref",
+            head_sha="h0",
+            now=now,
+        )
+        LocalFileTransport(tmp_path, base="origin/develop").write(state)
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="release/post-2.1.27",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/1",
+            ) as mock_pr,
+            patch("builtins.input", return_value="y"),
+        ):
+            result = main([])
+        assert result == 0
+        assert mock_pr.call_args.kwargs["base"] == "develop"
 
     def test_template_creates_pr_on_confirm(self, tmp_path: Path) -> None:
         vergil = tmp_path / ".vergil"
