@@ -13,10 +13,7 @@ def test_markers_are_html_comments() -> None:
 def test_render_unchecked_and_checked() -> None:
     block = checklist.render(["audit", "prepare"], checked={"audit"})
     assert block == (
-        "<!-- vrg-release:progress -->\n"
-        "- [x] audit\n"
-        "- [ ] prepare\n"
-        "<!-- /vrg-release:progress -->"
+        "<!-- vrg-release:progress -->\n- [x] audit\n- [ ] prepare\n<!-- /vrg-release:progress -->"
     )
 
 
@@ -40,11 +37,7 @@ def test_parse_accepts_capital_x() -> None:
 
 
 def test_parse_ignores_non_item_lines_in_block() -> None:
-    body = (
-        checklist.BEGIN
-        + "\nsome note\n- [ ] audit\n"
-        + checklist.END
-    )
+    body = checklist.BEGIN + "\nsome note\n- [ ] audit\n" + checklist.END
     assert checklist.parse(body) == [("audit", False)]
 
 

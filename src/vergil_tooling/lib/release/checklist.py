@@ -9,7 +9,10 @@ caller; this module has no knowledge of the pipeline.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
 
 BEGIN = "<!-- vrg-release:progress -->"
 END = "<!-- /vrg-release:progress -->"
