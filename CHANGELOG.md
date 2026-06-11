@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 - honor oracle-recorded base; drop legacy release/ inference (#1610)
 
-## [2.1.28] - 2026-06-11
+## [2.1.27] - 2026-06-11
 
 ### Features
 
