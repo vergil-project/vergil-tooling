@@ -313,10 +313,27 @@ def test_merge_release_calls_wait_and_merge() -> None:
 
     ctx = _ctx()
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
-    with patch(_MOD + ".wait_and_merge") as m_wm:
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
         merge_release(ctx)
     m_wm.assert_called_once_with(
         "https://github.com/o/r/pull/100",
         phase="merge-release",
     )
+    assert ctx.release_merge_sha == "merged"
+
+
+def test_merge_release_skips_when_already_merged() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    with (
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        merge_release(ctx)
+    m_wm.assert_not_called()
     assert ctx.release_merge_sha == "merged"

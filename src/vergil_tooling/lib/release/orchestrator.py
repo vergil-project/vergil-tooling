@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import github
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
@@ -135,13 +136,21 @@ def build_stages() -> list[Stage]:
 
 
 def merge_release(ctx: ReleaseContext) -> None:
-    """Phase 2: merge the release PR."""
+    """Phase 2: merge the release PR.
+
+    Resume-safe: if the PR is already merged (a prior run got this far), skip
+    the merge and hydrate ``release_merge_sha`` rather than re-attempting it.
+    """
     if ctx.release_pr_url is None:
         raise ReleaseError(
             phase="merge-release",
             command="merge_release",
             message=("release_pr_url is not set — prepare phase may not have run."),
         )
+    if github.pr_state(ctx.release_pr_url) == "MERGED":
+        print("Release PR already merged — skipping merge.")
+        ctx.release_merge_sha = "merged"
+        return
     wait_and_merge(ctx.release_pr_url, phase="merge-release")
     ctx.release_merge_sha = "merged"
 
