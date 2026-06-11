@@ -95,25 +95,44 @@ clobber the human-written summary:
 ### Ordering invariant: the issue comes before any other artifact
 
 The tracking issue is the durable state *and* the lock, so it must be created
-**before any other durable artifact** (release branch, PR, tag). Any failure
-*after* the issue exists is resumable; any failure *before* it leaves nothing
-behind and is handled by a plain fresh re-run.
+**after all read-only validation, but before the first durable artifact**
+(release branch, PR, tag). Any failure *after* the issue exists is resumable;
+any failure *before* it leaves nothing behind and is handled by a plain fresh
+re-run.
 
-This moves issue creation earlier than today. Currently `prepare` (stage 3)
-creates the issue, while `preflight` (stage 2) already creates the release
-branch/worktree — so a `prepare` failure could strand a branch with no issue.
-Under this design the issue + checklist is created as the first durable step,
-immediately after `audit` (which is read-only and leaves nothing behind):
-`audit` is recorded as `[x]` at creation time, and `preflight` onward tick into
-the existing issue. The exact refactor — where issue creation lands relative to
-`preflight`'s branch/worktree creation — is for the implementation plan; the
-invariant it must satisfy is *issue first, everything else after*.
+The placement matters in both directions. Today `prepare` (stage 3) creates the
+issue while `preflight` (stage 2) already creates the release branch/worktree,
+so a `prepare` failure could strand a branch with no issue — the gap this fixes.
+But the issue must not be created *too* early either: `preflight` does two
+things, **read-only validation** (on `develop`? clean tree? version not already
+tagged? branch exists?) and **branch/worktree creation**. Creating the issue
+before the validations would manufacture a tracking issue for every release that
+*correctly* fails preflight ("version already tagged", "develop behind origin")
+— cruft for a release that should never have started.
+
+So the sequence is: `audit` → preflight **validations** → **create issue +
+checklist** → preflight **branch/worktree** (adopt-or-create) → `prepare`.
+Validation failures still leave nothing behind; only branch-creation-and-onward
+is resumable. `audit` and the preflight validations are recorded as `[x]` at
+creation time. This likely means splitting today's `preflight` into a validation
+part and a branch part so issue creation can sit between them — a detail for the
+implementation plan, but the invariant it must satisfy is *issue after all
+read-only checks, before the first durable write*.
 
 ### Version-skew guard
 
 On resume the checklist's stage names are validated against the current
 `build_stages()`. If they do not match, resume refuses rather than guessing —
 a mismatch signals the checklist was written by a different tooling version.
+
+The refusal must be **actionable**, not a dead end: the error explains the cause
+and the two ways forward — complete the release with the tooling version that
+started it (its checklist matches), or finish the remaining stages manually
+(linking the recovery doc). Auto-migrating an old checklist to the new stage
+list is deliberately *not* offered: stage semantics may have changed between
+versions, and silently remapping is exactly the guessing the guard exists to
+prevent. A `--force`-style override could be added later if skew ever proves
+common, but it is YAGNI for v1 — the skew is rare and the manual path bounds it.
 
 ### The log
 
@@ -141,39 +160,52 @@ state, a tag or branch lookup) or the stage is naturally idempotent
 |---|---|---|
 | audit | re-run (read-only) | — |
 | **preflight** | **adopt-or-create**: reuse the existing `release/X.Y.Z` branch/worktree instead of aborting | branch/worktree exists |
-| prepare | skip if the release PR exists; rebuild `release_pr_url` from it | `pr list --head release/X.Y.Z` |
+| prepare | **sub-step idempotent**: complete only the missing part of {changelog commit, push, PR}; rebuild `release_pr_url` | `pr list --head` + branch log |
 | merge-release | skip if release PR `MERGED`; else re-run the merge | PR state |
 | confirm-main | re-run (pure verification, #1611-hardened) | — |
 | back-merge-bump | skip if back-merge PR merged; adopt an existing open `release/post-X.Y.Z` | `pr list --head release/post-X.Y.Z` |
 | teardown-worktree | remove-if-present | worktree exists |
 | confirm-develop | re-run (verification) | — |
 | promote | already a force-update; optional skip if `vX.Y` already there | tag compare |
-| close-finalize | cleanup is idempotent; **close the issue last** | (issue is open — that is why we are here) |
+| close-finalize | cleanup is idempotent; **close the issue only if no fail-defer error is pending** | deferred-error state |
 | consumer-refresh | re-run (display only) | — |
 
-Three points:
+Four points:
 
 1. **The core change is `preflight` → adopt-or-create.** Today's hard "branch
    already exists" abort is exactly what blocks resume. The *fresh* path keeps
    that abort (the lock); the *resume* path adopts the existing branch and
    worktree instead. `back-merge-bump` needs the same adopt-existing treatment
    for `release/post-X.Y.Z`.
-2. **The manual-repair fallback is not for idempotency gaps** — every stage
+2. **"Skip" never means "no-op" — it means *hydrate from reality*.** A stage
+   that is already done still re-derives the `ReleaseContext` fields it would
+   have set (see [Context reconstruction](#context-reconstruction)) by probing,
+   then skips only the *work*. Otherwise a later stage entered on resume finds
+   `None` where it expected an upstream stage's output.
+3. **`close-finalize` closes the issue only when the release truly succeeded.**
+   The tail (`teardown-worktree`, `confirm-develop`, `promote`, `close-finalize`)
+   is `fail_defer`: a failure there is recorded and the pipeline keeps going, so
+   without care `close-finalize` would close the issue *despite* a failed
+   `promote`, leaving an unchecked box on a closed issue that `--resume` (which
+   scans only open issues) can never recover. So `close-finalize` closes the
+   tracking issue **only if no prior fail-defer stage has a pending error** — it
+   reads the runner's accumulated deferred-error state. Any deferred failure →
+   the issue stays open → resumable. `consumer-refresh` runs after and is just a
+   reminder, so it does not gate the close.
+4. **The manual-repair fallback is not for idempotency gaps** — every stage
    above is covered cheaply. It is for genuine *work* failures that recur (a
    merge conflict, a red CD): fix the underlying cause, then re-run `--resume`,
    which only has to get the broken stage across the line and proceed.
-3. **`close-finalize` closes the GitHub issue as its final act** (after
-   cleanup), because closing the issue ends resumability. `consumer-refresh`
-   runs after it and is display-only, so nothing is lost.
 
 ## CLI surface and edges
 
 - **`vrg-release`** (fresh): unchanged — creates the issue/checklist, aborts if
   an open `release: X.Y.Z` issue exists.
-- **`vrg-release --resume`**: adopts the open release issue, reconstructs
-  context (version from the issue title, `release_pr_url` from `pr list --head`,
-  the rest derived), and enters at the first unchecked box. No `--continue`
-  alias — one spelling.
+- **`vrg-release --resume`**: adopts the open release issue, reconstructs the
+  minimal context anchors (version, issue number) up front while each skipped
+  stage hydrates its own outputs (see [Context
+  reconstruction](#context-reconstruction)), and enters at the first unchecked
+  box. No `--continue` alias — one spelling.
 
 **Which release does `--resume` adopt?** Look for open `release: X.Y.Z` issues:
 
@@ -188,13 +220,29 @@ is an error — the version is locked by the issue. Other flags (`--no-promote`,
 
 ## Context reconstruction
 
-On resume, `ReleaseContext` is rebuilt before the pipeline runs:
+`ReleaseContext` is in-memory, so on resume it must be rebuilt — and this is the
+subtle part, because most fields are populated by stages that resume *skips*.
+Downstream stages read far more than the obvious few: `close-finalize`'s summary
+alone consumes `bump_pr_url`, `tag`, `develop_tag`, `release_url`, `cd_run_url`,
+and `develop_cd_run_url`, all set by earlier stages. If those stages are skipped
+and their fields left `None`, everything after them breaks.
 
-- `version` ← parsed from the issue title (`release: X.Y.Z`).
-- `issue_number` ← the adopted open issue.
-- `release_pr_url` ← `gh pr list --head release/X.Y.Z`.
-- `release branch` / `worktree` ← `preflight` adopt-or-create.
-- tags and the back-merge PR ← derived/probed by the stages that need them.
+The resolution is the **hydrate** principle (per-stage point 2): a skipped stage
+re-derives its own `ctx` outputs from reality, rather than no-opping. So context
+reconstruction is *not* one big up-front rebuild (which would duplicate every
+stage's output-derivation in a second place that can drift); it is split:
+
+- **Up front, before the pipeline:** the minimal anchors —
+  - `version` ← parsed from the issue title (`release: X.Y.Z`).
+  - `issue_number` ← the adopted open issue.
+- **Per stage, on its skip/hydrate path:** that stage re-derives the fields it
+  owns by probing — e.g. `prepare` → `release_pr_url` from `pr list --head`;
+  `confirm-main` → `tag` / `develop_tag` / `release_url` / `cd_run_url`;
+  `back-merge-bump` → `bump_pr_url` / `next_version`; `preflight` → the branch /
+  worktree via adopt-or-create.
+
+Each stage thus stays the single source of how its outputs are derived, on both
+the do-the-work path and the skip path.
 
 ## Testing strategy
 
@@ -208,8 +256,17 @@ Built test-first, to the repo's 100% coverage bar:
 - **Per-stage probes (unit):** each cheap probe (PR merged? tag at version?
   branch/worktree exists?) returns skip-vs-run correctly, with `gh`/`git`
   mocked.
-- **Context reconstruction (unit):** issue title + `pr list` → version, issue
-  number, `release_pr_url`.
+- **Context reconstruction / hydrate (unit):** each stage's skip path populates
+  the `ctx` fields it owns from probes (e.g. resume entered at `close-finalize`
+  still has `tag`, `bump_pr_url`, the CD/release URLs), not `None`.
+- **Deferred-error gating (unit):** `close-finalize` closes the issue when no
+  fail-defer stage errored, and **leaves it open** when one did (e.g. a failed
+  `promote`) so the release stays resumable.
+- **`prepare` partial states (unit):** branch-with-commit-but-no-PR, and
+  branch-pushed-but-no-PR, each complete only the missing sub-step without
+  re-committing the changelog.
+- **Issue-creation ordering (unit):** a preflight *validation* failure leaves no
+  tracking issue; a failure after the branch is created leaves a resumable one.
 - **CLI (unit):** `--resume` with zero / one / multiple open release issues;
   `--resume` + `{minor,major}` → error; fresh run with an existing issue → lock
   abort.
