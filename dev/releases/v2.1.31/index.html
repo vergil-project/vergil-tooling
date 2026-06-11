@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.17/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.15/">
+        <link rel="next" href="../v2.1.30/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.16 - VERGIL Tooling</title>
+        <title>2.1.31 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2016-2026-05-18" class="md-skip">
+        <a href="#release-2131-2026-06-11" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.16
+              2.1.31
             
           </span>
         </div>
@@ -928,10 +928,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.31/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.31
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -947,6 +974,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3504,37 +3562,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.16
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.16/" class="md-nav__link">
         
   
   
@@ -3550,48 +3581,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8189,17 +8178,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -8217,15 +8195,17 @@
 
 
 
-<h1 id="release-2016-2026-05-18">Release 2.0.16 (2026-05-18)<a class="headerlink" href="#release-2016-2026-05-18" title="Permanent link">&para;</a></h1>
+<h1 id="release-2131-2026-06-11">Release 2.1.31 (2026-06-11)<a class="headerlink" href="#release-2131-2026-06-11" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>hardcode co-author noreply ID while agent account is shadow-banned</strong></li>
+<li><strong>poll confirm-main job conclusions; choose finalize strategy by branch prefix (#1622)</strong></li>
+<li>fix(release): poll for reusable-workflow leaf job conclusions in confirm</li>
 </ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<p>confirm-main/confirm-develop read the jobs API once after gh run watch returned, but a reusable-workflow leaf job (docs / docs, release / release) can still report a null conclusion for a few seconds after the run-level status settles. That race aborted already-succeeded releases with a false 'job not found'. _verify_jobs now polls until every expected job is present and completed, distinguishing a still-settling leaf from a genuinely absent job. Ref #1611.</p>
 <ul>
-<li><strong>bump version to 2.0.16</strong></li>
+<li>feat(finalize): choose merge strategy by branch prefix</li>
 </ul>
+<p>vrg-finalize-pr defaulted every PR to squash. Squashing a release/back-merge branch flattens the merge commit and breaks the develop&lt;-&gt;main ancestry the release model depends on, making later release branches conflict at merge-release. The --strategy default is now driven by branch prefix: release/* merges with a merge commit (preserving ancestry); everything else squashes. An explicit --strategy still overrides. Ref #1620.</p>
 
 
 
