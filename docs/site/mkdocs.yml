@@ -130,6 +130,7 @@ nav:
       - Credential Management: guides/credential-management.md
       - Permission Model: guides/permission-model.md
       - Account Setup: guides/account-setup.md
+      - Agent VM Claude Share Set: guides/agent-vm-claude-share-set.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md

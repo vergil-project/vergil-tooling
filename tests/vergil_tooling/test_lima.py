@@ -30,6 +30,7 @@ from vergil_tooling.lib.lima import (
     start_vm,
     stop_vm,
     try_update_tooling,
+    update_plugins,
     update_tooling,
     vm_age_days,
     vm_occupancy,
@@ -286,16 +287,14 @@ class TestCreateVm:
         args = mock.call_args[0]
         claude_projects = str(tmp_path / ".claude" / "projects")
         claude_skills = str(tmp_path / ".claude" / "skills")
-        claude_sessions = str(tmp_path / ".claude" / "sessions")
         assert f'--set=.mounts[1].location = "{claude_projects}"' in args
         assert f'--set=.mounts[1].mountPoint = "{claude_projects}"' in args
         assert "--set=.mounts[1].writable = true" in args
         assert f'--set=.mounts[2].location = "{claude_skills}"' in args
         assert f'--set=.mounts[2].mountPoint = "{claude_skills}"' in args
         assert "--set=.mounts[2].writable = false" in args
-        assert f'--set=.mounts[3].location = "{claude_sessions}"' in args
-        assert f'--set=.mounts[3].mountPoint = "{claude_sessions}"' in args
-        assert "--set=.mounts[3].writable = true" in args
+        # The vestigial sessions mount (mounts[3]) is removed; sessions stays VM-local.
+        assert not any(".mounts[3]" in a for a in args)
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
@@ -307,7 +306,8 @@ class TestCreateVm:
         create_vm("vergil-agent", tpl, "/home/user/projects")
         assert (tmp_path / ".claude" / "projects").is_dir()
         assert (tmp_path / ".claude" / "skills").is_dir()
-        assert (tmp_path / ".claude" / "sessions").is_dir()
+        # create_vm no longer backs a sessions mount, so it must not create the dir.
+        assert not (tmp_path / ".claude" / "sessions").is_dir()
 
     @patch("vergil_tooling.lib.lima.Path.home")
     @patch("vergil_tooling.lib.lima._limactl")
@@ -1420,3 +1420,59 @@ class TestProvisionMonitor:
         with patch("vergil_tooling.lib.lima.progress.emit") as m_emit:
             _provision_monitor(tmp_path, "30m", stop, poll_secs=0.01, heartbeat_secs=0.03)
         assert [c.args[0] for c in m_emit.call_args_list] == ["[guest] final line"]
+
+
+class TestUpdatePlugins:
+    _LISTING = json.dumps(
+        [
+            {"id": "paad@paad", "scope": "user", "enabled": True},
+            {"id": "frontend-design@official", "scope": "user", "enabled": False},
+            {"id": "vergil@vergil-marketplace", "scope": "project", "enabled": True},
+        ]
+    )
+
+    def _fake_shell(self) -> MagicMock:
+        def side_effect(_instance: str, *args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            out = self._LISTING if "plugin list --json" in cmd else ""
+            return MagicMock(stdout=out, returncode=0)
+
+        mock = MagicMock(side_effect=side_effect)
+        return mock
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_refreshes_marketplaces_then_updates_enabled_plugins(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = self._fake_shell().side_effect
+        update_plugins("vergil-agent")
+        cmds = [c.args[-1] for c in mock_run.call_args_list]
+        # Marketplace metadata refreshed first, then the installed list is read.
+        assert any("claude plugin marketplace update" in c for c in cmds)
+        assert any("claude plugin list --json" in c for c in cmds)
+        # Each ENABLED plugin updated with its own scope; no bulk update exists.
+        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
+        assert any(
+            "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
+        )
+        # Disabled plugins are left alone.
+        assert not any("frontend-design" in c for c in cmds)
+        # Every call is a non-login bash -c with an explicit PATH export, so claude
+        # resolves regardless of the VM's zsh-configured interactive environment.
+        for c in mock_run.call_args_list:
+            assert c.args[:3] == ("vergil-agent", "bash", "-c")
+            assert "export PATH=" in c.args[-1]
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_raises_after_attempting_all_when_a_plugin_fails(self, mock_run: MagicMock) -> None:
+        def side_effect(_instance: str, *args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "claude plugin update paad@paad" in cmd:
+                raise subprocess.CalledProcessError(1, "claude plugin update")
+            out = self._LISTING if "plugin list --json" in cmd else ""
+            return MagicMock(stdout=out, returncode=0)
+
+        mock_run.side_effect = side_effect
+        with pytest.raises(RuntimeError, match="paad@paad"):
+            update_plugins("vergil-agent")
+        # Best-effort: the other enabled plugin is still attempted before raising.
+        cmds = [c.args[-1] for c in mock_run.call_args_list]
+        assert any("claude plugin update vergil@vergil-marketplace" in c for c in cmds)
