@@ -244,6 +244,22 @@ stage's output-derivation in a second place that can drift); it is split:
 Each stage thus stays the single source of how its outputs are derived, on both
 the do-the-work path and the skip path.
 
+## Implementation notes
+
+The initial implementation (#1612) lands every stage's resume idempotency, the
+checklist state machine, the deferred-error-gated close, and the `--resume`
+CLI. One refinement is **deferred to a follow-up**: the strict ordering
+invariant. As shipped, the tracking issue is created at the start of `prepare`
+(idempotently — skipped when already adopted), which is *after* `preflight`
+creates the release branch. The realistic failure modes — the `confirm-main`
+race and the fail-defer tail (promote / back-merge / finalize) — all happen
+well after the issue exists and are fully resumable. The only unhandled window
+is a tracking-issue **creation** failure immediately after the branch is made,
+which leaves a branch with no issue; that narrow case is bounded by the manual
+fallback (delete the branch and re-run). Moving issue creation ahead of the
+branch interacts with the checklist-creation timing and is tracked as
+follow-up work.
+
 ## Testing strategy
 
 Built test-first, to the repo's 100% coverage bar:
