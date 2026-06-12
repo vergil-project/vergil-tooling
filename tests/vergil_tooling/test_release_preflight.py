@@ -62,6 +62,31 @@ def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
     m_wt.assert_called_once_with(root, "release/2.1.0", resume=True)
 
 
+def test_preflight_resume_uses_resume_version_and_sets_issue() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".version.show") as m_show,
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+    ):
+        ctx = preflight(
+            version_override=None,
+            repo_root=root,
+            resume=True,
+            resume_version="2.3.0",
+            resume_issue_number=42,
+        )
+    assert ctx.version == "2.3.0"
+    m_show.assert_not_called()  # resume_version bypasses the develop VERSION file
+    assert ctx.issue_number == 42
+    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
+
+
 def test_preflight_with_minor_override() -> None:
     root = Path("/tmp/repo")  # noqa: S108
     wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108

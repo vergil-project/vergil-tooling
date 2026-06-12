@@ -27,31 +27,39 @@ def preflight(
     version_override: str | None,
     repo_root: Path,
     resume: bool = False,
+    resume_version: str | None = None,
+    resume_issue_number: int | None = None,
 ) -> ReleaseContext:
     """Run all preflight checks and return an initialized ReleaseContext.
 
-    On *resume* (#1612), the checks that assume a fresh start are skipped — the
-    version is expected to be tagged and the tracking issue is expected to exist
-    — and an existing release branch is adopted rather than refused.
+    On *resume* (#1612), the version comes from the adopted tracking issue
+    (*resume_version*) rather than the develop VERSION file (which may already
+    be bumped); the checks that assume a fresh start are skipped — the version
+    is expected to be tagged and the tracking issue is expected to exist — an
+    existing release branch is adopted rather than refused, and the adopted
+    issue (*resume_issue_number*) is pre-set on the context.
     """
     _check_host_prerequisites()
     repo = check_gh_auth()
     _read_and_validate_config(repo_root)
     _check_branch_and_tree()
 
-    try:
-        current_version = version.show(repo_root)
-    except (FileNotFoundError, version.VersionSyncError) as exc:
-        raise ReleaseError(
-            phase="preflight",
-            command="version.show",
-            message=str(exc),
-        ) from exc
-
-    if version_override in _VERSION_OVERRIDE_FIELDS:
-        release_version = _compute_release_version(current_version, version_override)
+    if resume and resume_version is not None:
+        release_version = resume_version
     else:
-        release_version = current_version
+        try:
+            current_version = version.show(repo_root)
+        except (FileNotFoundError, version.VersionSyncError) as exc:
+            raise ReleaseError(
+                phase="preflight",
+                command="version.show",
+                message=str(exc),
+            ) from exc
+
+        if version_override in _VERSION_OVERRIDE_FIELDS:
+            release_version = _compute_release_version(current_version, version_override)
+        else:
+            release_version = current_version
 
     if not resume:
         _check_version_not_tagged(release_version)
@@ -62,7 +70,7 @@ def preflight(
     os.chdir(worktree)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
-    return ReleaseContext(
+    ctx = ReleaseContext(
         repo=repo,
         version=release_version,
         repo_root=repo_root,
@@ -70,6 +78,10 @@ def preflight(
         release_branch=branch,
         worktree_path=worktree,
     )
+    if resume_issue_number is not None:
+        ctx.issue_number = resume_issue_number
+        ctx.issue_url = f"https://github.com/{repo}/issues/{resume_issue_number}"
+    return ctx
 
 
 def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:

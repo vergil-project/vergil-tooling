@@ -38,6 +38,9 @@ class ReleaseState:
     repo_root: Path
     promote: bool
     ctx: ReleaseContext | None = None
+    resume: bool = False
+    resume_version: str | None = None
+    resume_issue_number: int | None = None
 
 
 def _audit_stage(_state: ReleaseState) -> None:
@@ -48,6 +51,9 @@ def _preflight_stage(state: ReleaseState) -> None:
     ctx = preflight(
         version_override=state.version_override,
         repo_root=state.repo_root,
+        resume=state.resume,
+        resume_version=state.resume_version,
+        resume_issue_number=state.resume_issue_number,
     )
     ctx.promote = state.promote
     state.ctx = ctx

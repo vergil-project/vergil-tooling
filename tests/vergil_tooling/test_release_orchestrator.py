@@ -93,7 +93,13 @@ def test_preflight_stage_populates_ctx() -> None:
     ctx = _ctx()
     with patch(_MOD + ".preflight", return_value=ctx) as m_preflight:
         _preflight_stage(state)
-    m_preflight.assert_called_once_with(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_preflight.assert_called_once_with(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        resume=False,
+        resume_version=None,
+        resume_issue_number=None,
+    )
     assert state.ctx is ctx
     assert ctx.promote is False
 
