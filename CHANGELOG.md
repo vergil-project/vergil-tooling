@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.34] - 2026-06-12
+
+### Features
+
+- --release cascades submit, finalize, and release (#1638)
+
 ## [2.1.33] - 2026-06-12
 
 ### Features
