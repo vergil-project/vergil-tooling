@@ -46,7 +46,7 @@ def prepare(ctx: ReleaseContext) -> None:
 
     if ctx.version_override is not None:
         print(f"Applying version override: {ctx.version_override}")
-        version.bump(ctx.repo_root, ctx.version_override)
+        version.bump(ctx.work_root, ctx.version_override)
         git.run("add", "-A")
         git.run("commit", "-m", f"chore(release): bump version to {ctx.version}")
 
@@ -70,10 +70,10 @@ def _generate_changelog(ctx: ReleaseContext) -> None:
         print(f"Changelog already prepared for v{ctx.version} — skipping.")
         return
     print(f"Generating changelog for v{ctx.version}")
-    changelog.generate_changelog(ctx.repo_root, ctx.version)
+    changelog.generate_changelog(ctx.work_root, ctx.version)
     git.run("add", "CHANGELOG.md")
 
-    notes_path = changelog.generate_release_notes(ctx.repo_root, ctx.version)
+    notes_path = changelog.generate_release_notes(ctx.work_root, ctx.version)
     git.run("add", str(notes_path))
 
     status = git.read_output("status", "--porcelain")

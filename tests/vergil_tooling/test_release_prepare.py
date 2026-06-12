@@ -17,8 +17,10 @@ def _ctx(*, version_override: str | None = None) -> ReleaseContext:
         version="2.1.0",
         repo_root=Path("/tmp/repo"),  # noqa: S108
         version_override=version_override,
-        # preflight creates the worktree and sets the release branch.
+        # preflight creates the worktree (distinct from repo_root) and sets
+        # the release branch, then chdir's into the worktree.
         release_branch="release/2.1.0",
+        worktree_path=Path("/tmp/repo/.worktrees/release-2.1.0"),  # noqa: S108
     )
     ctx.issue_number = 42
     ctx.issue_url = "https://github.com/owner/repo/issues/42"
@@ -173,23 +175,36 @@ def test_generate_changelog_skips_when_prepare_commit_present() -> None:
     m_run.assert_not_called()
 
 
-def test_generate_changelog_uses_lib() -> None:
+def test_generate_changelog_targets_worktree() -> None:
+    """Artifacts are written into the managed worktree, not the main checkout.
+
+    Regression test for #1626: preflight chdir's into the worktree, so every
+    ``git add`` runs there. Writing CHANGELOG/notes to ``repo_root`` (the main
+    checkout) instead left ``git add <abs-notes-path>`` pointing outside the
+    worktree ("fatal: ... is outside repository") and broke every release.
+    """
     from vergil_tooling.lib.release.prepare import _generate_changelog
 
     ctx = _ctx()
-    notes_path = Path("/tmp/repo/releases/v2.1.0.md")  # noqa: S108
+    assert ctx.work_root == ctx.worktree_path
+    assert ctx.work_root != ctx.repo_root
+    notes_path = ctx.work_root / "releases" / "v2.1.0.md"
     with (
         patch(_MOD + ".changelog.generate_changelog") as mock_cl,
         patch(
             _MOD + ".changelog.generate_release_notes",
             return_value=notes_path,
         ) as mock_rn,
-        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.run") as mock_git,
         patch(_MOD + ".git.read_output", return_value="M CHANGELOG.md"),
     ):
         _generate_changelog(ctx)
-    mock_cl.assert_called_once_with(ctx.repo_root, ctx.version)
-    mock_rn.assert_called_once_with(ctx.repo_root, ctx.version)
+    mock_cl.assert_called_once_with(ctx.work_root, ctx.version)
+    mock_rn.assert_called_once_with(ctx.work_root, ctx.version)
+    # The notes path git adds must live under the worktree, never repo_root.
+    add_calls = [c.args for c in mock_git.call_args_list if c.args and c.args[0] == "add"]
+    assert ("add", str(notes_path)) in add_calls
+    assert str(ctx.worktree_path) in str(notes_path)
 
 
 def test_generate_changelog_fails_on_no_changes() -> None:
