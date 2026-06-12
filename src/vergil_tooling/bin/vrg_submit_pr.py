@@ -22,6 +22,14 @@ where the human has already decided to merge on green. The chain runs
 only after the PR exists, so a submit failure leaves no half-finalized
 state, and a finalize failure reports the created PR so the human can
 re-run ``vrg-finalize-pr`` alone.
+
+``--release`` extends that one step further (issue #1634): it implies
+``--finalize`` and passes ``--release`` through, so a clean finalize
+cascades into ``vrg-release`` — the whole submit -> finalize -> release
+sequence from one command. Each hop runs as a subprocess (not ``exec``)
+so control returns here for the final summary, which states how far the
+cascade got: submitted, submitted and finalized, or submitted, finalized,
+and released.
 """
 
 from __future__ import annotations
@@ -59,6 +67,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="After creating the PR, chain straight into vrg-finalize-pr "
         "(wait for checks, merge, post-merge cleanup)",
+    )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="After creating the PR, run the full cascade: finalize (implies "
+        "--finalize) and then vrg-release",
     )
     return parser.parse_args(argv)
 
@@ -118,37 +132,59 @@ def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
     return pr_url
 
 
-def _chain_finalize(pr_url: str) -> int:
+def _chain_finalize(pr_url: str, *, release: bool = False) -> int:
     """Hand off to ``vrg-finalize-pr`` right after PR creation (issue #1491).
 
     Equivalent to running ``vrg-finalize-pr <pr-url>`` by hand: same
-    merge-strategy default, same post-merge cleanup. Runs as a subprocess
-    from the main worktree root because vrg-finalize-pr refuses to run
-    from a secondary worktree (it removes worktrees during cleanup) and
-    template mode chdir'd into one. The child inherits the TTY so its
-    live progress display and prompts behave exactly as a manual run.
+    merge-strategy default, same post-merge cleanup. With *release*, passes
+    ``--release`` through so a clean finalize cascades into ``vrg-release``
+    (issue #1634). Runs as a subprocess from the main worktree root because
+    vrg-finalize-pr refuses to run from a secondary worktree (it removes
+    worktrees during cleanup) and template mode chdir'd into one. The child
+    inherits the TTY so its live progress display and prompts behave exactly
+    as a manual run.
 
     A failure here never un-creates the PR — report the PR clearly so
-    the human can re-run vrg-finalize-pr alone.
+    the human can re-run the finalize (or the cascade) alone.
     """
     main_root = git.main_worktree_root()
+    cmd: tuple[str, ...] = ("vrg-finalize-pr", pr_url)
+    if release:
+        cmd = (*cmd, "--release")
     print()
-    print(f"--finalize: handing off to vrg-finalize-pr {pr_url}")
-    result = subprocess.run(  # noqa: S603
-        ("vrg-finalize-pr", pr_url),  # noqa: S607
-        cwd=main_root,
-        check=False,
-    )
+    print(f"--{'release' if release else 'finalize'}: handing off to {' '.join(cmd)}")
+    result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603
     if result.returncode != 0:
+        rerun = f"vrg-finalize-pr {pr_url}{' --release' if release else ''}"
         print(
-            f"vrg-submit-pr: finalize failed (exit {result.returncode}); "
+            f"vrg-submit-pr: cascade failed (exit {result.returncode}); "
             "the PR was created and is unaffected:\n"
             f"  {pr_url}\n"
-            f"  Re-run finalization alone with: vrg-finalize-pr {pr_url}",
+            f"  Re-run the rest of the cascade alone with: {rerun}",
             file=sys.stderr,
         )
         return result.returncode
     return 0
+
+
+def _print_cascade_summary(pr_url: str, *, released: bool) -> None:
+    """Final summary owned by vrg-submit-pr stating how far the cascade got.
+
+    Reached only after a successful chain, so it always reports completed
+    work (issue #1634). The submitted-only outcome is reported separately by
+    the pr-watch one-liner.
+    """
+    print()
+    if released:
+        print(f"Done: PR submitted, finalized, and released.\n  {pr_url}")
+    else:
+        print(f"Done: PR submitted and finalized.\n  {pr_url}")
+
+
+def _dry_run_chain_note(*, release: bool) -> str:
+    """The ``[dry-run]`` line naming the chain command that would run."""
+    cmd = "vrg-finalize-pr --release <pr-url>" if release else "vrg-finalize-pr <pr-url>"
+    return f"\n[dry-run] would chain into: {cmd}"
 
 
 def _print_pr_watch(pr_url: str) -> None:
@@ -186,7 +222,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         print(f"=== Target Branch ===\n{target}\n")
         print(f"=== PR Body ===\n{pr_body}")
         if args.finalize:
-            print("\n[dry-run] would chain into: vrg-finalize-pr <pr-url>")
+            print(_dry_run_chain_note(release=args.release))
         return 0
 
     print(f"Pushing branch '{branch}' to origin...")
@@ -195,9 +231,13 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
     print(f"PR created: {pr_url}")
-    print(f"Done. PR URL: {pr_url}")
     if args.finalize:
-        return _chain_finalize(pr_url)
+        rc = _chain_finalize(pr_url, release=args.release)
+        if rc != 0:
+            return rc
+        _print_cascade_summary(pr_url, released=args.release)
+        return 0
+    print(f"Done. PR URL: {pr_url}")
     _print_pr_watch(pr_url)
     return 0
 
@@ -315,7 +355,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         if args.finalize:
-            print("\n[dry-run] would chain into: vrg-finalize-pr <pr-url>")
+            print(_dry_run_chain_note(release=args.release))
         return 0
 
     try:
@@ -339,15 +379,25 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
     submission.delete_submission(root)
     print(f"PR created: {pr_url}")
-    print(f"Done. PR URL: {pr_url}")
     if args.finalize:
-        return _chain_finalize(pr_url)
+        rc = _chain_finalize(pr_url, release=args.release)
+        if rc != 0:
+            return rc
+        _print_cascade_summary(pr_url, released=args.release)
+        return 0
+    print(f"Done. PR URL: {pr_url}")
     _print_pr_watch(pr_url)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # --release is the full cascade and implies --finalize; normalize once so
+    # every downstream branch (dry-run notes, chain, summary) sees finalize on
+    # (issue #1634).
+    if args.release:
+        args.finalize = True
 
     if identity_mode.is_agent():
         print(
