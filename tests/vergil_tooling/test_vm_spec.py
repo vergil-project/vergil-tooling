@@ -37,6 +37,7 @@ def _mq_stanza() -> VmStanza:
         stale_days=None,
         apt_repos=[_REPO],
         vagrant_plugins=[],
+        port_forwards=["3000|10.50.0.2:3000"],
         roles={
             "vergil-user": RoleOverlay(
                 packages=[],
@@ -46,6 +47,7 @@ def _mq_stanza() -> VmStanza:
                 stale_days=7,
                 apt_repos=[],
                 vagrant_plugins=["vagrant-libvirt"],
+                port_forwards=["8080|10.50.0.2:8080"],
             ),
         },
     )
@@ -73,6 +75,8 @@ class TestComposeVmSpec:
         assert spec.packages == ("libvirt-clients", "qemu-system-x86")
         assert spec.apt_repos == (_REPO,)  # from [vm] tier
         assert spec.vagrant_plugins == ("vagrant-libvirt",)  # from the role tier
+        # base [vm] tier + role tier accumulate, deduped and sorted
+        assert spec.port_forwards == ("3000|10.50.0.2:3000", "8080|10.50.0.2:8080")
         assert spec.under == ()
 
     def test_audit_gets_packages_only_at_base_footprint(self) -> None:
@@ -85,6 +89,7 @@ class TestComposeVmSpec:
         assert spec.packages == ("libvirt-clients", "qemu-system-x86")
         assert spec.apt_repos == (_REPO,)  # all-identity [vm] tier
         assert spec.vagrant_plugins == ()  # role-only, did not apply to audit
+        assert spec.port_forwards == ("3000|10.50.0.2:3000",)  # all-identity [vm] tier only
         assert spec.stale_days == 3
 
     def test_host_override_below_declared_flags_under(self) -> None:
@@ -140,6 +145,7 @@ class TestComposeVmSpec:
             stale_days=None,
             apt_repos=[],
             vagrant_plugins=[],
+            port_forwards=[],
             roles={},
             nested=True,
         )
@@ -156,6 +162,7 @@ class TestComposeVmSpec:
             stale_days=None,
             apt_repos=[],
             vagrant_plugins=[],
+            port_forwards=[],
             nested=True,
             roles={
                 "vergil-user": RoleOverlay(
@@ -166,6 +173,7 @@ class TestComposeVmSpec:
                     stale_days=None,
                     apt_repos=[],
                     vagrant_plugins=[],
+                    port_forwards=[],
                     nested=False,
                 ),
             },
@@ -182,6 +190,7 @@ class TestComposeVmSpec:
             stale_days=None,
             apt_repos=[],
             vagrant_plugins=[],
+            port_forwards=[],
             roles={
                 "vergil-user": RoleOverlay(
                     packages=[],
@@ -191,6 +200,7 @@ class TestComposeVmSpec:
                     stale_days=None,
                     apt_repos=[],
                     vagrant_plugins=[],
+                    port_forwards=[],
                     nested=True,
                 ),
             },
@@ -275,6 +285,7 @@ class TestFingerprint:
             "packages": ("a", "b"),
             "apt_repos": (_REPO,),
             "vagrant_plugins": ("vagrant-libvirt",),
+            "port_forwards": (),
             "dedicated": True,
             "under": (),
         }
@@ -309,6 +320,38 @@ class TestFingerprint:
         assert spec_fingerprint(self._spec(vagrant_plugins=("a",))) != spec_fingerprint(
             self._spec(vagrant_plugins=("a", "b"))
         )
+
+    def test_port_forwards_set_changes_fingerprint(self) -> None:
+        # Going from no forwards to a declared forward flips the hash.
+        assert spec_fingerprint(self._spec(port_forwards=())) != spec_fingerprint(
+            self._spec(port_forwards=("3000|10.50.0.2:3000",))
+        )
+
+    def test_port_forwards_edit_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec(port_forwards=("3000|10.50.0.2:3000",))) != (
+            spec_fingerprint(self._spec(port_forwards=("8080|10.50.0.2:8080",)))
+        )
+
+    def test_port_forwards_empty_keeps_legacy_fingerprint(self) -> None:
+        """Profiles that never declare forwards must not flip on upgrade.
+
+        Pins the encoding: ``port_forwards`` enters the payload only when
+        non-empty, so every fingerprint stored before the knob existed
+        stays valid.
+        """
+        legacy_payload = "\n".join(
+            (
+                "cpus=12",
+                "memory=64GiB",
+                "disk=300GiB",
+                "stale_days=7",
+                "packages=a,b",
+                "apt_repos=" + "|".join(f"{k}={_REPO[k]}" for k in sorted(_REPO)),
+                "vagrant_plugins=vagrant-libvirt",
+            )
+        )
+        expected = hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()
+        assert spec_fingerprint(self._spec(port_forwards=())) == expected
 
     def test_nested_toggle_changes_fingerprint(self) -> None:
         assert spec_fingerprint(self._spec(nested=True)) != spec_fingerprint(

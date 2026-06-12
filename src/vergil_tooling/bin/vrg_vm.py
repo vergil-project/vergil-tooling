@@ -439,6 +439,7 @@ def _create_from_target(target: Target, template: Path) -> None:
             packages=list(target.spec.packages),
             apt_repos=list(target.spec.apt_repos),
             vagrant_plugins=list(target.spec.vagrant_plugins),
+            port_forwards=list(target.spec.port_forwards),
             fingerprint=target.fingerprint,
             nested=target.spec.nested,
         )

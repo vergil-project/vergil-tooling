@@ -1764,6 +1764,7 @@ cpus = 12
 memory = "64GiB"
 disk = "300GiB"
 vagrant_plugins = ["vagrant-libvirt"]
+port_forwards = ["3000|10.50.0.2:3000"]
 """
 
 
@@ -1805,6 +1806,7 @@ class TestResolveTarget:
         assert target.spec.dedicated is True
         assert target.spec.cpus == 12
         assert target.spec.vagrant_plugins == ("vagrant-libvirt",)
+        assert target.spec.port_forwards == ("3000|10.50.0.2:3000",)
         assert len(target.spec.apt_repos) == 1
         assert target.fingerprint != ""
 
@@ -1816,6 +1818,7 @@ class TestResolveTarget:
         assert target.spec.dedicated is True
         assert target.spec.apt_repos == ()
         assert target.spec.vagrant_plugins == ()
+        assert target.spec.port_forwards == ()
         assert target.fingerprint != ""
 
     def test_one_level_workspace_is_base(self, tmp_path: Path) -> None:
@@ -1869,6 +1872,7 @@ class TestCreateDedicated:
         assert kwargs["fingerprint"] != ""
         assert len(kwargs["apt_repos"]) == 1
         assert kwargs["vagrant_plugins"] == ["vagrant-libvirt"]
+        assert kwargs["port_forwards"] == ["3000|10.50.0.2:3000"]
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -1902,6 +1906,7 @@ class TestCreateDedicated:
         assert kwargs["packages"] == ["qemu-system-x86"]
         assert kwargs["apt_repos"] == []
         assert kwargs["vagrant_plugins"] == []
+        assert kwargs["port_forwards"] == []
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -2090,6 +2095,7 @@ def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = 
         packages=(),
         apt_repos=(),
         vagrant_plugins=(),
+        port_forwards=(),
         dedicated=dedicated,
         under=under,
     )
