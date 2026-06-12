@@ -154,6 +154,7 @@ def test_tracked_stage_comments_release_error_on_failure() -> None:
     ):
         _tracked("prepare", fn)(state)
     m_failed.assert_called_once_with(state.ctx, "prepare", exc)
+    assert state.ctx.deferred_failures == ["prepare"]
 
 
 def test_tracked_stage_wraps_and_comments_on_failure() -> None:

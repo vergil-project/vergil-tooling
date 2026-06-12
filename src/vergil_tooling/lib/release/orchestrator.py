@@ -79,6 +79,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             fn(ctx)
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
+            ctx.deferred_failures.append(name)
             raise
         except Exception as exc:
             wrapped = ReleaseError(
@@ -88,6 +89,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)
+            ctx.deferred_failures.append(name)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
         names = _stage_names()

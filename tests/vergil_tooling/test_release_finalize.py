@@ -44,6 +44,23 @@ def test_close_and_finalize_succeeds() -> None:
     mock_close.assert_called_once()
 
 
+def test_close_and_finalize_skips_when_deferred_failures(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    ctx = _ctx()
+    ctx.deferred_failures = ["promote"]
+    with (
+        patch(_MOD + ".close_tracking_issue") as mock_close,
+        patch(_MOD + ".progress.run") as mock_run,
+    ):
+        close_and_finalize(ctx)
+    mock_close.assert_not_called()
+    mock_run.assert_not_called()
+    out = capsys.readouterr().out
+    assert "open" in out
+    assert "promote" in out
+
+
 def test_close_and_finalize_streams_through_progress() -> None:
     """Issue #1470: the cleanup child must not inherit the TTY — raw writes
     under the live display strand stale frames on screen. Its output streams

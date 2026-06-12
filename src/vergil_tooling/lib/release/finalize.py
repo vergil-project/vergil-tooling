@@ -35,7 +35,20 @@ def teardown_worktree(ctx: ReleaseContext) -> None:
 
 
 def close_and_finalize(ctx: ReleaseContext) -> None:
-    """Close the tracking issue with a summary, then finalize the repo."""
+    """Close the tracking issue with a summary, then finalize the repo.
+
+    Closes (and cleans up) only when no earlier fail-defer stage errored. A
+    pending deferred failure means the release did not fully succeed, so the
+    issue is left open and the branches intact — keeping it resumable with
+    ``vrg-release --resume`` (#1612).
+    """
+    if ctx.deferred_failures:
+        print(
+            "Leaving the tracking issue open and skipping cleanup — earlier "
+            f"stages failed ({', '.join(ctx.deferred_failures)}). Fix the cause "
+            "and resume with vrg-release --resume."
+        )
+        return
     summary = _build_summary(ctx)
     close_tracking_issue(ctx, summary)
     print("Tracking issue closed.")

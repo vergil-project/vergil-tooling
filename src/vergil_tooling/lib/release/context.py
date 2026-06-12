@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -42,6 +42,11 @@ class ReleaseContext:
     develop_cd_run_url: str | None = None
 
     consumer_refresh_message: str | None = None
+
+    # Names of fail-defer stages that errored. close-finalize leaves the
+    # tracking issue open (and skips cleanup) when any are pending, so the
+    # release stays resumable (#1612).
+    deferred_failures: list[str] = field(default_factory=list)
 
     promote: bool = True
 
