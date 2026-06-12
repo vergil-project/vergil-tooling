@@ -20,8 +20,23 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
     moves the worktree's own HEAD, never the root checkout's. The root's
     ``develop`` is fast-forwarded to the back-merge later, by the
     finalize cleanup stage, from the root checkout.
+
+    Resume-safe (#1612): if the back-merge PR already exists it is adopted —
+    skipped when merged, merged when still open — and ``bump_pr_url`` /
+    ``next_version`` are hydrated rather than re-creating the branch.
     """
     branch = f"release/post-{ctx.version}"
+
+    existing = github.pr_for_branch(branch)
+    if existing is not None:
+        ctx.bump_pr_url = str(existing["url"])
+        if github.pr_state(ctx.bump_pr_url) == "MERGED":
+            print(f"Back-merge PR already merged: {ctx.bump_pr_url}")
+        else:
+            print(f"Back-merge PR already open — merging: {ctx.bump_pr_url}")
+            wait_and_merge(ctx.bump_pr_url, phase="back-merge-bump")
+        ctx.next_version = _post_branch_version(ctx, branch)
+        return
 
     print("Fetching main...")
     git.run("fetch", "--tags", "--force", "origin", "main")
@@ -43,6 +58,12 @@ def back_merge_and_bump(ctx: ReleaseContext) -> None:
 
     ctx.bump_pr_url = pr_url
     ctx.next_version = next_ver
+
+
+def _post_branch_version(ctx: ReleaseContext, branch: str) -> str:
+    """The version the back-merge bumped to — read from the post branch's VERSION."""
+    git.run("fetch", "origin", branch)
+    return version.show(ctx.repo_root, ref="FETCH_HEAD")
 
 
 def _create_bump_pr(ctx: ReleaseContext, next_ver: str) -> str:

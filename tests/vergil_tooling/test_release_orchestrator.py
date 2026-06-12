@@ -93,7 +93,13 @@ def test_preflight_stage_populates_ctx() -> None:
     ctx = _ctx()
     with patch(_MOD + ".preflight", return_value=ctx) as m_preflight:
         _preflight_stage(state)
-    m_preflight.assert_called_once_with(version_override=None, repo_root=Path("/tmp/repo"))  # noqa: S108
+    m_preflight.assert_called_once_with(
+        version_override=None,
+        repo_root=Path("/tmp/repo"),  # noqa: S108
+        resume=False,
+        resume_version=None,
+        resume_issue_number=None,
+    )
     assert state.ctx is ctx
     assert ctx.promote is False
 
@@ -111,10 +117,36 @@ def test_tracked_stage_comments_on_success() -> None:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
     state.ctx = _ctx()
     fn = MagicMock()
-    with patch(_MOD + ".comment_phase_complete") as m_comment:
+    with (
+        patch(_MOD + ".comment_phase_complete") as m_comment,
+        patch(_MOD + ".ensure_checklist"),
+        patch(_MOD + ".tick_stage"),
+    ):
         _tracked("prepare", fn)(state)
     fn.assert_called_once_with(state.ctx)
     m_comment.assert_called_once()
+
+
+def test_tracked_stage_ticks_checklist_with_prior_stages_prechecked() -> None:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/repo"), promote=True)  # noqa: S108
+    state.ctx = _ctx()
+    with (
+        patch(_MOD + ".comment_phase_complete"),
+        patch(_MOD + ".ensure_checklist") as m_ensure,
+        patch(_MOD + ".tick_stage") as m_tick,
+    ):
+        _tracked("prepare", MagicMock())(state)
+    names = m_ensure.call_args.args[1]
+    checked = m_ensure.call_args.kwargs["checked"]
+    assert names[: names.index("prepare")] == checked
+    assert "prepare" not in checked
+    m_tick.assert_called_once_with(state.ctx, "prepare")
+
+
+def test_stage_names_match_pipeline_order() -> None:
+    from vergil_tooling.lib.release.orchestrator import _stage_names, build_stages
+
+    assert _stage_names() == [stage.name for stage in build_stages()]
 
 
 def test_tracked_stage_comments_release_error_on_failure() -> None:
@@ -128,6 +160,7 @@ def test_tracked_stage_comments_release_error_on_failure() -> None:
     ):
         _tracked("prepare", fn)(state)
     m_failed.assert_called_once_with(state.ctx, "prepare", exc)
+    assert state.ctx.deferred_failures == ["prepare"]
 
 
 def test_tracked_stage_wraps_and_comments_on_failure() -> None:
@@ -287,10 +320,27 @@ def test_merge_release_calls_wait_and_merge() -> None:
 
     ctx = _ctx()
     ctx.release_pr_url = "https://github.com/o/r/pull/100"
-    with patch(_MOD + ".wait_and_merge") as m_wm:
+    with (
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
         merge_release(ctx)
     m_wm.assert_called_once_with(
         "https://github.com/o/r/pull/100",
         phase="merge-release",
     )
+    assert ctx.release_merge_sha == "merged"
+
+
+def test_merge_release_skips_when_already_merged() -> None:
+    from vergil_tooling.lib.release.orchestrator import merge_release
+
+    ctx = _ctx()
+    ctx.release_pr_url = "https://github.com/o/r/pull/100"
+    with (
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        merge_release(ctx)
+    m_wm.assert_not_called()
     assert ctx.release_merge_sha == "merged"

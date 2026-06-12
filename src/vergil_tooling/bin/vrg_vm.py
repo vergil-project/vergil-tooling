@@ -690,11 +690,13 @@ def _cmd_rebuild(args: argparse.Namespace) -> int:
 
     status = vm_status(target.instance)
     if not status:
-        print(
-            f"ERROR: VM '{target.instance}' does not exist — run 'vrg-vm create' first",
-            file=sys.stderr,
-        )
-        return 1
+        # Rebuild is idempotent: with nothing to rebuild, create the VM rather
+        # than abort. An absent VM has nothing to destroy, so the create
+        # lifecycle — not a destroy-skipped rebuild — is the right pipeline.
+        # Delegate to _cmd_create, which re-confirms absence and runs the
+        # create stages (and accurately labels the run as a create).
+        print(f"VM '{target.instance}' does not exist yet — creating it (nothing to rebuild).")
+        return _cmd_create(args)
 
     if not identity.projects_dir:
         print(

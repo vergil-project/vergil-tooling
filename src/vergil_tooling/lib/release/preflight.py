@@ -8,7 +8,11 @@ import subprocess
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import config, git, github, version
-from vergil_tooling.lib.managed_worktree import ManagedWorktreeError, create_worktree
+from vergil_tooling.lib.managed_worktree import (
+    ManagedWorktreeError,
+    adopt_worktree,
+    create_worktree,
+)
 from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.tracking import find_existing_tracking_issue
 
@@ -22,36 +26,51 @@ def preflight(
     *,
     version_override: str | None,
     repo_root: Path,
+    resume: bool = False,
+    resume_version: str | None = None,
+    resume_issue_number: int | None = None,
 ) -> ReleaseContext:
-    """Run all preflight checks and return an initialized ReleaseContext."""
+    """Run all preflight checks and return an initialized ReleaseContext.
+
+    On *resume* (#1612), the version comes from the adopted tracking issue
+    (*resume_version*) rather than the develop VERSION file (which may already
+    be bumped); the checks that assume a fresh start are skipped — the version
+    is expected to be tagged and the tracking issue is expected to exist — an
+    existing release branch is adopted rather than refused, and the adopted
+    issue (*resume_issue_number*) is pre-set on the context.
+    """
     _check_host_prerequisites()
     repo = check_gh_auth()
     _read_and_validate_config(repo_root)
     _check_branch_and_tree()
 
-    try:
-        current_version = version.show(repo_root)
-    except (FileNotFoundError, version.VersionSyncError) as exc:
-        raise ReleaseError(
-            phase="preflight",
-            command="version.show",
-            message=str(exc),
-        ) from exc
-
-    if version_override in _VERSION_OVERRIDE_FIELDS:
-        release_version = _compute_release_version(current_version, version_override)
+    if resume and resume_version is not None:
+        release_version = resume_version
     else:
-        release_version = current_version
+        try:
+            current_version = version.show(repo_root)
+        except (FileNotFoundError, version.VersionSyncError) as exc:
+            raise ReleaseError(
+                phase="preflight",
+                command="version.show",
+                message=str(exc),
+            ) from exc
 
-    _check_version_not_tagged(release_version)
-    _check_no_existing_tracking_issue(repo, release_version)
+        if version_override in _VERSION_OVERRIDE_FIELDS:
+            release_version = _compute_release_version(current_version, version_override)
+        else:
+            release_version = current_version
+
+    if not resume:
+        _check_version_not_tagged(release_version)
+        _check_no_existing_tracking_issue(repo, release_version)
 
     branch = f"release/{release_version}"
-    worktree = _create_release_worktree(repo_root, branch)
+    worktree = _acquire_release_worktree(repo_root, branch, resume=resume)
     os.chdir(worktree)
 
     print(f"Preflight passed: {repo} v{release_version} — worktree {worktree}")
-    return ReleaseContext(
+    ctx = ReleaseContext(
         repo=repo,
         version=release_version,
         repo_root=repo_root,
@@ -59,21 +78,32 @@ def preflight(
         release_branch=branch,
         worktree_path=worktree,
     )
+    if resume_issue_number is not None:
+        ctx.issue_number = resume_issue_number
+        ctx.issue_url = f"https://github.com/{repo}/issues/{resume_issue_number}"
+    return ctx
 
 
-def _create_release_worktree(repo_root: Path, branch: str) -> Path:
-    """Create the managed worktree on *branch* off develop.
+def _acquire_release_worktree(repo_root: Path, branch: str, *, resume: bool) -> Path:
+    """Create the managed worktree on *branch* off develop, or adopt it on resume.
 
-    All release branch work happens here, so the root checkout's HEAD
-    never moves while the release runs (#1578).
+    All release branch work happens in the worktree, so the root checkout's HEAD
+    never moves while the release runs (#1578). A fresh run refuses an existing
+    release branch (the lock); a resume adopts it — creating the local branch
+    from origin if needed, then attaching a worktree (#1612).
     """
-    if git.ref_exists(branch) or git.ref_exists(f"origin/{branch}"):
+    exists = git.ref_exists(branch) or git.ref_exists(f"origin/{branch}")
+    if exists and not resume:
         raise ReleaseError(
             phase="preflight",
             command=f"git rev-parse {branch}",
             message=f"Release branch '{branch}' already exists.",
         )
     try:
+        if resume and exists:
+            if not git.ref_exists(branch):
+                git.run("branch", branch, f"origin/{branch}")
+            return adopt_worktree(repo_root, branch=branch)
         return create_worktree(repo_root, branch=branch, base="develop")
     except ManagedWorktreeError as exc:
         raise ReleaseError(

@@ -8,8 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.release import checklist
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable, Sequence
+
     from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 
 # GitHub's addComment API rejects any comment body longer than this many
@@ -132,6 +135,64 @@ def close_tracking_issue(ctx: ReleaseContext, summary: str) -> None:
         "--repo",
         ctx.repo,
     )
+
+
+def read_issue_body(ctx: ReleaseContext) -> str:
+    """Return the current body of the tracking issue."""
+    return github.read_output(
+        "issue",
+        "view",
+        str(ctx.issue_number),
+        "--repo",
+        ctx.repo,
+        "--json",
+        "body",
+        "--jq",
+        ".body",
+    )
+
+
+def _write_issue_body(ctx: ReleaseContext, body: str) -> None:
+    """Replace the tracking-issue body with *body*."""
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
+        f.write(body)
+        tmp_path = f.name
+    try:
+        github.run(
+            "issue",
+            "edit",
+            str(ctx.issue_number),
+            "--repo",
+            ctx.repo,
+            "--body-file",
+            tmp_path,
+        )
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+def ensure_checklist(
+    ctx: ReleaseContext, stages: Sequence[str], checked: Iterable[str] = ()
+) -> None:
+    """Embed the stage checklist in the tracking-issue body if not already there.
+
+    *checked* pre-marks stages that have already completed (e.g. the read-only
+    stages that ran before the issue existed). No-op if a block is present.
+    """
+    body = read_issue_body(ctx)
+    if checklist.BEGIN in body:
+        return
+    _write_issue_body(ctx, checklist.upsert(body, stages, checked))
+
+
+def tick_stage(ctx: ReleaseContext, stage: str) -> None:
+    """Check *stage*'s box in the tracking-issue checklist."""
+    _write_issue_body(ctx, checklist.tick(read_issue_body(ctx), stage))
+
+
+def cursor(ctx: ReleaseContext, stages: Sequence[str]) -> str | None:
+    """Return the first incomplete stage in the checklist, or None if all done."""
+    return checklist.first_unchecked(read_issue_body(ctx), stages)
 
 
 def _comment(ctx: ReleaseContext, body: str) -> None:

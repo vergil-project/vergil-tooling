@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.33] - 2026-06-12
+
+### Features
+
+- rebuild creates the VM when it doesn't exist instead of aborting (#1631) (#1632)
+- resumable releases via vrg-release --resume (#1633)
+
 ## [2.1.32] - 2026-06-11
 
 ### Bug fixes

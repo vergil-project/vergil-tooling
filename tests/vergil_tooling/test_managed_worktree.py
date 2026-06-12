@@ -6,6 +6,7 @@ import pytest
 
 from vergil_tooling.lib.managed_worktree import (
     ManagedWorktreeError,
+    adopt_worktree,
     create_worktree,
     remove_worktree,
     worktree_path,
@@ -44,6 +45,26 @@ def test_create_worktree_rejects_existing_path(tmp_path: Path, monkeypatch) -> N
     target.mkdir(parents=True)
     with pytest.raises(ManagedWorktreeError, match="already exists"):
         create_worktree(tmp_path, branch="chore/dep-update-20260610", base="develop")
+
+
+def test_adopt_worktree_attaches_to_existing_branch(tmp_path: Path, monkeypatch) -> None:
+    runs: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
+    path = adopt_worktree(tmp_path, branch="release/2.1.0")
+    expected = tmp_path / ".worktrees" / "release-2.1.0"
+    assert path == expected
+    # No -b: attaches to the existing branch rather than creating one.
+    assert ("worktree", "add", str(expected), "release/2.1.0") in runs
+
+
+def test_adopt_worktree_reuses_existing_path(tmp_path: Path, monkeypatch) -> None:
+    runs: list[tuple[str, ...]] = []
+    monkeypatch.setattr(_MOD + ".git.run", lambda *a: runs.append(a))
+    target = tmp_path / ".worktrees" / "release-2.1.0"
+    target.mkdir(parents=True)
+    path = adopt_worktree(tmp_path, branch="release/2.1.0")
+    assert path == target
+    assert runs == []  # path already there — nothing to add
 
 
 def test_remove_worktree_force_removes(tmp_path: Path, monkeypatch) -> None:
