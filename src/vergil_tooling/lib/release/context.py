@@ -43,6 +43,11 @@ class ReleaseContext:
 
     consumer_refresh_message: str | None = None
 
+    # The version-expanded consumer-refresh command block, without the
+    # display wrapper, so ``vrg-release --install`` can execute exactly what
+    # the message shows (issue #1643). None when no template is configured.
+    consumer_refresh_commands: str | None = None
+
     # Names of fail-defer stages that errored. close-finalize leaves the
     # tracking issue open (and skips cleanup) when any are pending, so the
     # release stays resumable (#1612).

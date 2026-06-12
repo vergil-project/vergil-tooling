@@ -8,7 +8,10 @@ primary-language = "python"
 release = true
 docs = true
 consumer-refresh = """\
+# Reinstall the host tools at the just-released version
 uv tool install --python 3.14 'vergil-tooling @ git+https://github.com/vergil-project/vergil-tooling@v<VERSION>'
+# Refresh all dev VMs
+vrg-vm update --all
 """
 
 [ci]
