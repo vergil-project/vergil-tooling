@@ -95,6 +95,7 @@ def test_back_merge_bumps_in_worktree() -> None:
     assert ctx.work_root != ctx.repo_root
     with (
         patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1") as mock_bump,
         patch(
             _MOD + ".github.create_pr",
