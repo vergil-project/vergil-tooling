@@ -24,6 +24,7 @@ def test_back_merge_creates_branch_and_pr() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -46,6 +47,7 @@ def test_back_merge_fetches_main_first() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -69,6 +71,7 @@ def test_back_merge_commits_version_bump() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -87,6 +90,7 @@ def test_back_merge_creates_pr_to_develop() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(_MOD + ".github.create_pr") as mock_pr,
         patch(_MOD + ".wait_and_merge"),
@@ -103,6 +107,7 @@ def test_back_merge_waits_and_merges() -> None:
     ctx = _ctx()
     with (
         patch(_MOD + ".git.run"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
@@ -118,6 +123,58 @@ def test_back_merge_waits_and_merges() -> None:
     )
 
 
+def test_back_merge_skips_when_pr_already_merged() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".version.bump") as m_bump,
+        patch(_MOD + ".github.create_pr") as m_pr,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        back_merge_and_bump(ctx)
+    assert ctx.bump_pr_url == "https://github.com/owner/repo/pull/9"
+    assert ctx.next_version == "2.1.1"
+    m_bump.assert_not_called()
+    m_pr.assert_not_called()
+    m_wm.assert_not_called()
+
+
+def test_back_merge_merges_existing_open_pr() -> None:
+    ctx = _ctx()
+    with (
+        patch(
+            _MOD + ".github.pr_for_branch",
+            return_value={"url": "https://github.com/owner/repo/pull/9"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="OPEN"),
+        patch(_MOD + "._post_branch_version", return_value="2.1.1"),
+        patch(_MOD + ".github.create_pr") as m_pr,
+        patch(_MOD + ".wait_and_merge") as m_wm,
+    ):
+        back_merge_and_bump(ctx)
+    m_wm.assert_called_once_with("https://github.com/owner/repo/pull/9", phase="back-merge-bump")
+    m_pr.assert_not_called()
+    assert ctx.next_version == "2.1.1"
+
+
+def test_post_branch_version_reads_from_fetch_head() -> None:
+    from vergil_tooling.lib.release.bump import _post_branch_version
+
+    ctx = _ctx()
+    with (
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".version.show", return_value="2.1.1") as m_show,
+    ):
+        assert _post_branch_version(ctx, "release/post-2.1.0") == "2.1.1"
+    m_run.assert_called_once_with("fetch", "origin", "release/post-2.1.0")
+    m_show.assert_called_once_with(ctx.repo_root, ref="FETCH_HEAD")
+
+
 def test_back_merge_never_returns_to_develop() -> None:
     """Work happens in the release worktree, so back-merge never checks out
     develop in the root checkout (#1578). The root's develop is synced later
@@ -131,6 +188,7 @@ def test_back_merge_never_returns_to_develop() -> None:
 
     with (
         patch(_MOD + ".git.run", side_effect=capture_git_run),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(_MOD + ".version.bump", return_value="2.1.1"),
         patch(
             _MOD + ".github.create_pr",
