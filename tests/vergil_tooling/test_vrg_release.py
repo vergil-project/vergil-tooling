@@ -79,6 +79,39 @@ def test_main_returns_pipeline_exit_code() -> None:
         assert main([]) == 1
 
 
+def test_main_resume_with_bump_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(_MOD + ".git"):
+        assert main(["minor", "--resume"]) == 1
+    assert "cannot be combined" in capsys.readouterr().err
+
+
+def test_main_resume_finds_target_and_runs_pipeline() -> None:
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".find_resume_target", return_value=("2.1.0", 42)),
+        patch(_MOD + ".progress.run_pipeline", return_value=0) as m_pipeline,
+    ):
+        assert main(["--resume", "--output-format", "plain"]) == 0
+    state = m_pipeline.call_args.args[0]
+    assert state.resume is True
+    assert state.resume_version == "2.1.0"
+    assert state.resume_issue_number == 42
+
+
+def test_main_resume_no_target_returns_1(capsys: pytest.CaptureFixture[str]) -> None:
+    from vergil_tooling.lib.release.context import ReleaseError
+
+    err = ReleaseError(phase="resume", command="x", message="No in-flight release to resume.")
+    with (
+        patch(_MOD + ".git"),
+        patch(_MOD + ".github.current_repo", return_value="o/r"),
+        patch(_MOD + ".find_resume_target", side_effect=err),
+    ):
+        assert main(["--resume"]) == 1
+    assert "No in-flight release" in capsys.readouterr().err
+
+
 def test_main_prints_consumer_refresh_message_after_pipeline(
     capsys: pytest.CaptureFixture[str],
 ) -> None:

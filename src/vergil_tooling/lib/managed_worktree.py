@@ -37,6 +37,21 @@ def create_worktree(repo_root: Path, *, branch: str, base: str) -> Path:
     return path
 
 
+def adopt_worktree(repo_root: Path, *, branch: str) -> Path:
+    """Attach a worktree under ``.worktrees/`` to an existing *branch*.
+
+    The resume counterpart to :func:`create_worktree`: if the worktree path
+    already exists (a prior run left it), it is reused as-is; otherwise a
+    worktree is created checked out on the existing *branch* rather than a new
+    branch off a base.
+    """
+    path = worktree_path(repo_root, branch)
+    if path.exists():
+        return path
+    git.run("worktree", "add", str(path), branch)
+    return path
+
+
 def remove_worktree(path: Path) -> None:
     """Force-remove a managed worktree (the branch ref is left for the caller)."""
     git.run("worktree", "remove", "--force", str(path))

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import github
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.promote import promote
 from vergil_tooling.lib.release.bump import back_merge_and_bump
@@ -18,6 +19,8 @@ from vergil_tooling.lib.release.prepare import prepare
 from vergil_tooling.lib.release.tracking import (
     comment_phase_complete,
     comment_phase_failed,
+    ensure_checklist,
+    tick_stage,
 )
 
 if TYPE_CHECKING:
@@ -35,6 +38,9 @@ class ReleaseState:
     repo_root: Path
     promote: bool
     ctx: ReleaseContext | None = None
+    resume: bool = False
+    resume_version: str | None = None
+    resume_issue_number: int | None = None
 
 
 def _audit_stage(_state: ReleaseState) -> None:
@@ -45,6 +51,9 @@ def _preflight_stage(state: ReleaseState) -> None:
     ctx = preflight(
         version_override=state.version_override,
         repo_root=state.repo_root,
+        resume=state.resume,
+        resume_version=state.resume_version,
+        resume_issue_number=state.resume_issue_number,
     )
     ctx.promote = state.promote
     state.ctx = ctx
@@ -76,6 +85,7 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
             fn(ctx)
         except ReleaseError as exc:
             comment_phase_failed(ctx, name, exc)
+            ctx.deferred_failures.append(name)
             raise
         except Exception as exc:
             wrapped = ReleaseError(
@@ -85,10 +95,19 @@ def _tracked(name: str, fn: Callable[[ReleaseContext], None]) -> Callable[[Relea
                 detail=(getattr(exc, "stderr", None) or getattr(exc, "stdout", None)),
             )
             comment_phase_failed(ctx, name, wrapped)
+            ctx.deferred_failures.append(name)
             raise wrapped from exc
         comment_phase_complete(ctx, name, _phase_details(ctx, name))
+        names = _stage_names()
+        ensure_checklist(ctx, names, checked=names[: names.index(name)])
+        tick_stage(ctx, name)
 
     return stage
+
+
+def _stage_names() -> list[str]:
+    """The pipeline stage names, in execution order."""
+    return [stage.name for stage in build_stages()]
 
 
 def build_stages() -> list[Stage]:
@@ -125,13 +144,21 @@ def build_stages() -> list[Stage]:
 
 
 def merge_release(ctx: ReleaseContext) -> None:
-    """Phase 2: merge the release PR."""
+    """Phase 2: merge the release PR.
+
+    Resume-safe: if the PR is already merged (a prior run got this far), skip
+    the merge and hydrate ``release_merge_sha`` rather than re-attempting it.
+    """
     if ctx.release_pr_url is None:
         raise ReleaseError(
             phase="merge-release",
             command="merge_release",
             message=("release_pr_url is not set — prepare phase may not have run."),
         )
+    if github.pr_state(ctx.release_pr_url) == "MERGED":
+        print("Release PR already merged — skipping merge.")
+        ctx.release_merge_sha = "merged"
+        return
     wait_and_merge(ctx.release_pr_url, phase="merge-release")
     ctx.release_merge_sha = "merged"
 

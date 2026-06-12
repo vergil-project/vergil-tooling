@@ -28,7 +28,7 @@ def test_preflight_success() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
-        patch(_MOD + "._create_release_worktree", return_value=wt) as m_wt,
+        patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
         patch(_MOD + ".os.chdir") as m_chdir,
     ):
         ctx = preflight(version_override=None, repo_root=root)
@@ -37,8 +37,54 @@ def test_preflight_success() -> None:
     assert ctx.version_override is None
     assert ctx.release_branch == "release/2.1.0"
     assert ctx.worktree_path == wt
-    m_wt.assert_called_once_with(root, "release/2.1.0")
+    m_wt.assert_called_once_with(root, "release/2.1.0", resume=False)
     m_chdir.assert_called_once_with(wt)
+
+
+def test_preflight_resume_skips_fresh_checks_and_adopts() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.1.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".audit_repo_config"),
+        patch(_MOD + ".version.show", return_value="2.1.0"),
+        patch(_MOD + "._check_version_not_tagged") as m_tagged,
+        patch(_MOD + "._check_no_existing_tracking_issue") as m_issue,
+        patch(_MOD + "._acquire_release_worktree", return_value=wt) as m_wt,
+        patch(_MOD + ".os.chdir"),
+    ):
+        preflight(version_override=None, repo_root=root, resume=True)
+    m_tagged.assert_not_called()
+    m_issue.assert_not_called()
+    m_wt.assert_called_once_with(root, "release/2.1.0", resume=True)
+
+
+def test_preflight_resume_uses_resume_version_and_sets_issue() -> None:
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = Path("/tmp/repo/.worktrees/release-2.3.0")  # noqa: S108
+    with (
+        patch(_MOD + "._check_host_prerequisites"),
+        patch(_MOD + ".check_gh_auth", return_value="owner/repo"),
+        patch(_MOD + "._read_and_validate_config"),
+        patch(_MOD + "._check_branch_and_tree"),
+        patch(_MOD + ".version.show") as m_show,
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
+        patch(_MOD + ".os.chdir"),
+    ):
+        ctx = preflight(
+            version_override=None,
+            repo_root=root,
+            resume=True,
+            resume_version="2.3.0",
+            resume_issue_number=42,
+        )
+    assert ctx.version == "2.3.0"
+    m_show.assert_not_called()  # resume_version bypasses the develop VERSION file
+    assert ctx.issue_number == 42
+    assert ctx.issue_url == "https://github.com/owner/repo/issues/42"
 
 
 def test_preflight_with_minor_override() -> None:
@@ -53,7 +99,7 @@ def test_preflight_with_minor_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
-        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override="minor", repo_root=root)
@@ -74,7 +120,7 @@ def test_preflight_with_major_override() -> None:
         patch(_MOD + ".version.show", return_value="2.0.34"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
-        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override="major", repo_root=root)
@@ -299,7 +345,7 @@ def test_preflight_never_audits() -> None:
         patch(_MOD + ".version.show", return_value="2.1.0"),
         patch(_MOD + "._check_version_not_tagged"),
         patch(_MOD + "._check_no_existing_tracking_issue"),
-        patch(_MOD + "._create_release_worktree", return_value=wt),
+        patch(_MOD + "._acquire_release_worktree", return_value=wt),
         patch(_MOD + ".os.chdir"),
     ):
         ctx = preflight(version_override=None, repo_root=root)
@@ -307,8 +353,8 @@ def test_preflight_never_audits() -> None:
     mock_audit.assert_not_called()
 
 
-def test_create_release_worktree_creates_off_develop() -> None:
-    from vergil_tooling.lib.release.preflight import _create_release_worktree
+def test_acquire_release_worktree_creates_off_develop() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
 
     root = Path("/tmp/repo")  # noqa: S108
     wt = root / ".worktrees" / "release-2.1.0"
@@ -316,24 +362,57 @@ def test_create_release_worktree_creates_off_develop() -> None:
         patch(_MOD + ".git.ref_exists", return_value=False),
         patch(_MOD + ".create_worktree", return_value=wt) as m_create,
     ):
-        result = _create_release_worktree(root, "release/2.1.0")
+        result = _acquire_release_worktree(root, "release/2.1.0", resume=False)
     assert result == wt
     m_create.assert_called_once_with(root, branch="release/2.1.0", base="develop")
 
 
-def test_create_release_worktree_fails_if_branch_exists() -> None:
-    from vergil_tooling.lib.release.preflight import _create_release_worktree
+def test_acquire_release_worktree_adopts_existing_local_branch_on_resume() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = root / ".worktrees" / "release-2.1.0"
+    with (
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".adopt_worktree", return_value=wt) as m_adopt,
+        patch(_MOD + ".create_worktree") as m_create,
+    ):
+        result = _acquire_release_worktree(root, "release/2.1.0", resume=True)
+    assert result == wt
+    m_adopt.assert_called_once_with(root, branch="release/2.1.0")
+    m_create.assert_not_called()
+    m_run.assert_not_called()
+
+
+def test_acquire_release_worktree_creates_local_branch_from_origin_on_resume() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
+
+    root = Path("/tmp/repo")  # noqa: S108
+    wt = root / ".worktrees" / "release-2.1.0"
+    with (
+        patch(_MOD + ".git.ref_exists", side_effect=[False, True, False]),
+        patch(_MOD + ".git.run") as m_run,
+        patch(_MOD + ".adopt_worktree", return_value=wt),
+    ):
+        result = _acquire_release_worktree(root, "release/2.1.0", resume=True)
+    assert result == wt
+    m_run.assert_called_once_with("branch", "release/2.1.0", "origin/release/2.1.0")
+
+
+def test_acquire_release_worktree_fails_if_branch_exists() -> None:
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
 
     with (
         patch(_MOD + ".git.ref_exists", return_value=True),
         pytest.raises(ReleaseError, match="already exists"),
     ):
-        _create_release_worktree(Path("/tmp/repo"), "release/2.1.0")  # noqa: S108
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
 
 
-def test_create_release_worktree_wraps_worktree_error() -> None:
+def test_acquire_release_worktree_wraps_worktree_error() -> None:
     from vergil_tooling.lib.managed_worktree import ManagedWorktreeError
-    from vergil_tooling.lib.release.preflight import _create_release_worktree
+    from vergil_tooling.lib.release.preflight import _acquire_release_worktree
 
     with (
         patch(_MOD + ".git.ref_exists", return_value=False),
@@ -343,7 +422,7 @@ def test_create_release_worktree_wraps_worktree_error() -> None:
         ),
         pytest.raises(ReleaseError, match="path already exists"),
     ):
-        _create_release_worktree(Path("/tmp/repo"), "release/2.1.0")  # noqa: S108
+        _acquire_release_worktree(Path("/tmp/repo"), "release/2.1.0", resume=False)  # noqa: S108
 
 
 def test_run_audit_resolves_repo_and_audits() -> None:
