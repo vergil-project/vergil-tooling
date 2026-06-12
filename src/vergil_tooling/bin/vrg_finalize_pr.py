@@ -53,9 +53,10 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container_cache import clean_branch_images
 from vergil_tooling.lib.progress import Stage
-from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
+from vergil_tooling.lib.repo_init import prompt_choice
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -130,6 +131,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="After a successful finalize, chain straight into vrg-release "
         "(the full submit-finalize-release cascade)",
     )
+    add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
 
@@ -191,7 +193,7 @@ def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bo
     return True
 
 
-def _infer_pr(root: Path, target_branch: str) -> str | None:
+def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> str | None:
     """Resolve which PR to finalize when none was given; always confirm.
 
     Returns the PR URL to finalize, or None when the user confirmed
@@ -199,9 +201,12 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
     a message via require_tty when stdin is not interactive — these
     prompts are the human touch point of the workflow, and the
     explicit-PR argument is the scriptable path.
-    """
-    worktrees.require_tty("vrg-finalize-pr without a PR argument")
 
+    With *assume_yes* (``--yes``) the single-PR finalize confirm and the
+    cleanup-only confirm are pre-answered "yes". The multiple-PR choice is
+    a disambiguation, not a yes/no, so it is still presented even under
+    ``--yes`` — there is no single obvious answer to skip to.
+    """
     pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     for wt in worktrees.list_worktrees(root):
         pr = github.pr_for_branch(wt.branch)
@@ -211,10 +216,18 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
             continue
         pairs.append((wt, pr))
 
+    # A prompt is unavoidable only when more than one PR forces a choice;
+    # every other interaction here is a single yes/no that --yes pre-answers.
+    # Demand a TTY only when an interactive prompt will actually be shown.
+    must_disambiguate = len(pairs) > 1
+    if must_disambiguate or not assume_yes:
+        worktrees.require_tty("vrg-finalize-pr without a PR argument")
+
     if not pairs:
-        confirmed = prompt_yes_no(
+        confirmed = confirm(
             f"No open PRs found in worktrees. Run cleanup only (switch to "
             f"{target_branch}, sync, prune branches/worktrees)?",
+            assume_yes=assume_yes,
             default=False,
         )
         if not confirmed:
@@ -229,7 +242,11 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
         chosen = prompt_choice("Multiple PRs ready to finalize", labels)
         wt, pr = pairs[labels.index(chosen)]
 
-    if not prompt_yes_no(f"Finalize PR #{pr['number']} ({pr['title']})?", default=False):
+    if not confirm(
+        f"Finalize PR #{pr['number']} ({pr['title']})?",
+        assume_yes=assume_yes,
+        default=False,
+    ):
         print("Aborted.")
         raise SystemExit(0)
     return pr["url"]
@@ -615,7 +632,7 @@ def main(argv: list[str] | None = None) -> int:
     # cleanup/validation/cd-check stages run (issue #1448).
     if args.pr is None and not args.cleanup_only:
         try:
-            args.pr = _infer_pr(root, args.target_branch)
+            args.pr = _infer_pr(root, args.target_branch, assume_yes=args.yes)
         except SystemExit as exc:
             if exc.code == 0:
                 return 0

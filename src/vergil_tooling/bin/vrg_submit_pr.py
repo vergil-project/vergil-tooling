@@ -42,6 +42,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
+from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import submission
@@ -74,6 +75,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="After creating the PR, run the full cascade: finalize (implies "
         "--finalize) and then vrg-release",
     )
+    add_yes_argument(parser)
     return parser.parse_args(argv)
 
 
@@ -358,13 +360,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
             print(_dry_run_chain_note(release=args.release))
         return 0
 
-    try:
-        answer = input("\nSubmit this PR? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\nAborted.")
-        return 1
-
-    if answer != "y":
+    if not confirm("\nSubmit this PR?", assume_yes=args.yes):
         print("Aborted.")
         return 1
 
