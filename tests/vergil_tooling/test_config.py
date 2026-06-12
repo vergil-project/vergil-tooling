@@ -677,6 +677,7 @@ class TestParseVmStanza:
         assert stanza.packages == ["qemu-system-x86", "libvirt-clients"]
         assert stanza.apt_repos == []
         assert stanza.vagrant_plugins == []
+        assert stanza.port_forwards == []
         assert stanza.cpus is None
         assert stanza.roles == {}
 
@@ -692,9 +693,11 @@ class TestParseVmStanza:
             "vm": {
                 "apt_repos": [repo],
                 "vagrant_plugins": ["vagrant-libvirt"],
+                "port_forwards": ["3000|10.50.0.2:3000"],
                 "vergil-user": {
                     "apt_repos": [repo],
                     "vagrant_plugins": ["vagrant-libvirt"],
+                    "port_forwards": ["8080|10.50.0.2:8080"],
                     "packages": ["vagrant"],
                 },
             }
@@ -703,9 +706,11 @@ class TestParseVmStanza:
         assert stanza is not None
         assert stanza.apt_repos == [repo]
         assert stanza.vagrant_plugins == ["vagrant-libvirt"]
+        assert stanza.port_forwards == ["3000|10.50.0.2:3000"]
         overlay = stanza.roles["vergil-user"]
         assert overlay.apt_repos == [repo]
         assert overlay.vagrant_plugins == ["vagrant-libvirt"]
+        assert overlay.port_forwards == ["8080|10.50.0.2:8080"]
         assert overlay.packages == ["vagrant"]
 
     def test_role_overlay_parsed(self) -> None:
@@ -739,6 +744,19 @@ class TestParseVmStanza:
 
     def test_nested_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
         parse_vm_stanza({"vm": {"nested": True, "vergil-user": {"nested": True}}})
+        assert "unrecognized" not in capsys.readouterr().err
+
+    def test_port_forwards_not_flagged_unrecognized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parse_vm_stanza(
+            {
+                "vm": {
+                    "port_forwards": ["3000|10.50.0.2:3000"],
+                    "vergil-user": {"port_forwards": ["8080|10.50.0.2:8080"]},
+                }
+            }
+        )
         assert "unrecognized" not in capsys.readouterr().err
 
     def test_vm_section_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:

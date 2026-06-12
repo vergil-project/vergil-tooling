@@ -131,6 +131,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="After a successful finalize, chain straight into vrg-release "
         "(the full submit-finalize-release cascade)",
     )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Extend the cascade one step further: implies --release and passes "
+        "--install through, so vrg-release runs the consumer-refresh install "
+        "step (issue #1643)",
+    )
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -580,7 +587,7 @@ def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
     )
 
 
-def _chain_release(root: Path) -> int:
+def _chain_release(root: Path, *, install: bool = False) -> int:
     """Hand off to ``vrg-release`` after a successful finalize (issue #1634).
 
     Runs only when the finalize pipeline succeeded. By the time
@@ -591,22 +598,27 @@ def _chain_release(root: Path) -> int:
     so a caller like ``vrg-submit-pr`` regains control to report the
     cascade outcome.
 
+    With *install*, passes ``--install`` through so ``vrg-release`` also runs
+    the consumer-refresh install step (issue #1643).
+
     A failure here never un-merges the PR — it was already merged and
     cleaned up — so report it clearly and let the human re-run vrg-release
     alone.
     """
+    cmd: tuple[str, ...] = ("vrg-release", "--install") if install else ("vrg-release",)
     print()
-    print("--release: handing off to vrg-release")
+    print(f"--{'install' if install else 'release'}: handing off to {' '.join(cmd)}")
     result = subprocess.run(  # noqa: S603
-        ("vrg-release",),  # noqa: S607
+        cmd,  # noqa: S607
         cwd=root,
         check=False,
     )
     if result.returncode != 0:
+        rerun = "vrg-release --install" if install else "vrg-release"
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
             "the PR was already merged and cleaned up and is unaffected.\n"
-            "  Re-run the release alone with: vrg-release",
+            f"  Re-run the release alone with: {rerun}",
             file=sys.stderr,
         )
     return result.returncode
@@ -614,6 +626,11 @@ def _chain_release(root: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # --install extends the cascade one step past --release; normalize once so
+    # the release-chain logic below sees release on (issue #1643).
+    if args.install:
+        args.release = True
 
     if not git.is_main_worktree():
         main_root = git.main_worktree_root()
@@ -658,9 +675,10 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0 or not args.release:
         return rc
     if args.dry_run:
-        print("\n[dry-run] would chain into: vrg-release")
+        target = "vrg-release --install" if args.install else "vrg-release"
+        print(f"\n[dry-run] would chain into: {target}")
         return 0
-    return _chain_release(root)
+    return _chain_release(root, install=args.install)
 
 
 if __name__ == "__main__":

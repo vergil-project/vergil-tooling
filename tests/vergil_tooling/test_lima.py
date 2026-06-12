@@ -1135,6 +1135,7 @@ class TestCreateVmProfileParams:
                 }
             ],
             vagrant_plugins=["vagrant-libvirt"],
+            port_forwards=["3000|10.50.0.2:3000", "8080|10.50.0.2:8080"],
             fingerprint="abc123",
         )
         args = mock_limactl.call_args[0]
@@ -1144,6 +1145,8 @@ class TestCreateVmProfileParams:
             'https://apt.releases.hashicorp.com|noble|main"' in args
         )
         assert '--set=.param.VAGRANT_PLUGINS = "vagrant-libvirt"' in args
+        # records joined by ";" to match the template's IFS=';' parser
+        assert '--set=.param.PORT_FORWARDS = "3000|10.50.0.2:3000;8080|10.50.0.2:8080"' in args
         assert '--set=.param.SPEC_FINGERPRINT = "abc123"' in args
         assert "--set=.cpus = 12" in args
         assert "create" in args
@@ -1161,6 +1164,7 @@ class TestCreateVmProfileParams:
         assert not any("param.EXTRA_PACKAGES" in a for a in args)
         assert not any("param.APT_REPOS" in a for a in args)
         assert not any("param.VAGRANT_PLUGINS" in a for a in args)
+        assert not any("param.PORT_FORWARDS" in a for a in args)
         assert not any("param.SPEC_FINGERPRINT" in a for a in args)
 
 

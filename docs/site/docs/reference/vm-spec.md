@@ -30,6 +30,7 @@ memory = "64GiB"
 disk = "300GiB"
 stale_days = 7
 vagrant_plugins = ["vagrant-libvirt"]
+port_forwards = ["3000|10.50.0.2:3000"]   # local VM port | nested target
 nested = true
 ```
 
@@ -45,8 +46,8 @@ Five tiers, later wins:
    below the repo-declared floor are flagged loudly)
 
 Scalars are **last-wins**; list keys (`packages`, `apt_repos`,
-`vagrant_plugins`) **accumulate** across tiers. Declaring any `[vm]`
-key marks the spec customized, which gives the repo a dedicated VM.
+`vagrant_plugins`, `port_forwards`) **accumulate** across tiers. Declaring
+any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 
 ## Keys
 
@@ -59,6 +60,7 @@ key marks the spec customized, which gives the repo a dedicated VM.
 | `packages` | list of strings | `[]` | Extra apt packages (accumulates) |
 | `apt_repos` | list of tables | `[]` | Extra apt repositories — `name`, `key_url`, `uri`, `suite`, `components` (accumulates) |
 | `vagrant_plugins` | list of strings | `[]` | Vagrant plugins to install (accumulates) |
+| `port_forwards` | list of strings | `[]` | `"<port>\|<host:port>"` relay records — bind `<port>` in the VM and proxy to `<host:port>` (accumulates; see below) |
 | `nested` | bool | `false` | Nested virtualization (last-wins scalar; see below) |
 
 The vergil-vm template owns *how* declarative installs happen — repos
@@ -84,12 +86,27 @@ Three-layer defense, outermost first:
 3. **In-guest check** — the template verifies `/dev/kvm` exists and
    fails the build rather than degrading silently to TCG emulation.
 
+## Port forwards (`port_forwards`)
+
+Each record is `"<port>|<host:port>"`. The vergil-vm template
+(vergil-project/vergil-vm#170) provisions a `systemd-socket-proxyd`
+relay per record: it binds `0.0.0.0:<port>` inside the VM and proxies
+to `<host:port>` — typically a nested libvirt guest. The `0.0.0.0` bind
+is auto-forwarded by Lima to the Mac's `localhost:<port>` with no extra
+config. The relay is boot-persistent; the build fails loudly if the
+port is already bound.
+
+`vrg-vm` joins the accumulated records with `;` and passes them as
+`--set='.param.PORT_FORWARDS = "<records>"'` — the template splits on
+`;` then `|`. Repos never supply a script; the template owns the relay.
+
 ## Fingerprint and `NEEDS-REBUILD`
 
 The composed spec is fingerprinted (SHA-256 over the declaration) and
 stamped into the VM at create time. `vrg-vm list` compares the stored
 fingerprint against the freshly composed one and shows `NEEDS-REBUILD`
 on any drift. Editing any declarative key — including toggling
-`nested` — flips the fingerprint. `nested` enters the fingerprint
-payload only when true, so profiles that never set it kept their
-fingerprints when the knob was introduced.
+`nested` — flips the fingerprint. `nested` and `port_forwards` enter
+the fingerprint payload only when set (true / non-empty), so profiles
+that never declare them kept their fingerprints when the knobs were
+introduced.
