@@ -1567,3 +1567,109 @@ def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
     assert result == 0
     gather.assert_not_called()
     deleter.assert_not_called()
+
+
+# -- --release: chain into vrg-release after a clean finalize (issue #1634) ----
+
+
+def test_parse_args_release_defaults_false() -> None:
+    assert parse_args([]).release is False
+
+
+def test_parse_args_release_flag() -> None:
+    assert parse_args(["--release"]).release is True
+
+
+def test_release_chains_into_vrg_release_on_success(tmp_path: Path) -> None:
+    """A clean finalize hands off to vrg-release from the repo root."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        result = main(["--release"])
+    assert result == 0
+    mock_run.assert_called_once()
+    call = mock_run.call_args
+    assert call.args[0] == ("vrg-release",)
+    assert call.kwargs["cwd"] == tmp_path
+
+
+def test_release_skipped_when_finalize_fails(tmp_path: Path) -> None:
+    """A non-zero pipeline must never trigger the release."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(
+            _MOD + ".progress.run",
+            side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",)),
+        ),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        result = main(["--release"])
+    assert result == 1
+    mock_run.assert_not_called()
+
+
+def test_release_dry_run_notes_without_running(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        result = main(["--release", "--dry-run"])
+    assert result == 0
+    mock_run.assert_not_called()
+    assert "vrg-release" in capsys.readouterr().out
+
+
+def test_release_failure_reports_pr_unaffected(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A release failure propagates its exit code and points the human at a
+    re-run; the merge already happened and is unaffected."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 2
+        result = main(["--release"])
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "release failed" in err
+    assert "vrg-release" in err
+
+
+def test_no_release_flag_does_not_invoke_release(tmp_path: Path) -> None:
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        result = main([])
+    assert result == 0
+    mock_run.assert_not_called()

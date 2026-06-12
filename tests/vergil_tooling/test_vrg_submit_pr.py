@@ -948,3 +948,186 @@ class TestFinalizeFlag:
         assert result != 0
         mock_run.assert_not_called()
         assert "human maintainer" in capsys.readouterr().err.lower()
+
+
+# -- --release: cascade submit -> finalize -> release (issue #1634) ------------
+
+
+class TestReleaseFlag:
+    """--release implies --finalize and passes --release through to the chain."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_parse_args_release_defaults_false(self) -> None:
+        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
+        assert args.release is False
+
+    def test_parse_args_release_flag(self) -> None:
+        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert args.release is True
+
+    def test_cli_mode_chains_into_finalize_with_release(self, tmp_path: Path) -> None:
+        """--release implies --finalize and appends --release to the chain."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert result == 0
+        mock_run.assert_called_once()
+        call = mock_run.call_args
+        assert call.args[0] == ("vrg-finalize-pr", "https://github.com/pr/1", "--release")
+        assert call.kwargs["cwd"] == tmp_path
+
+    def test_cli_mode_release_prints_three_way_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """On success the final summary reports the full cascade."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "submitted, finalized, and released" in out
+        assert "pr-watch" not in out
+
+    def test_finalize_only_prints_two_way_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--finalize without --release stops the summary at 'finalized'."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(
+                ["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--finalize"]
+            )
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "submitted and finalized" in out
+        assert "released" not in out
+
+    def test_release_failure_reports_created_pr_with_release_rerun(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A cascade failure must not obscure the created PR; the re-run hint
+        carries --release so the human can resume the whole cascade."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 1
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert result != 0
+        err = capsys.readouterr().err
+        assert "https://github.com/pr/1" in err
+        assert "vrg-finalize-pr https://github.com/pr/1 --release" in err
+
+    def test_dry_run_notes_release_chain_without_running(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            result = main(
+                [
+                    "--issue",
+                    "42",
+                    "--summary",
+                    "Fix",
+                    "--title",
+                    "fix: bug",
+                    "--release",
+                    "--dry-run",
+                ]
+            )
+        assert result == 0
+        mock_run.assert_not_called()
+        assert "vrg-finalize-pr --release" in capsys.readouterr().out
+
+    def test_template_mode_chains_into_finalize_with_release(self, tmp_path: Path) -> None:
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+            patch("builtins.input", return_value="y"),
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(["--release"])
+        assert result == 0
+        mock_run.assert_called_once()
+        assert mock_run.call_args.args[0] == (
+            "vrg-finalize-pr",
+            "https://github.com/pr/7",
+            "--release",
+        )
+
+    def test_template_mode_chain_failure_propagates_and_skips_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A failed cascade from template mode returns the child's code and
+        never prints a success summary — the failure helper reported the PR."""
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+        )
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+            patch("builtins.input", return_value="y"),
+        ):
+            mock_run.return_value.returncode = 3
+            result = main(["--release"])
+        assert result == 3
+        out = capsys.readouterr().out
+        assert "submitted, finalized, and released" not in out
+
+    def test_agent_identity_still_blocked_with_release(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--release must not weaken the identity-mode gate."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".subprocess.run") as mock_run:
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert result != 0
+        mock_run.assert_not_called()
+        assert "human maintainer" in capsys.readouterr().err.lower()
