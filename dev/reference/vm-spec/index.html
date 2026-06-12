@@ -5551,6 +5551,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#port-forwards-port_forwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Port forwards (port_forwards)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fingerprint-and-needs-rebuild" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8350,6 +8361,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#port-forwards-port_forwards" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Port forwards (port_forwards)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#fingerprint-and-needs-rebuild" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8404,7 +8426,8 @@ this page is the key-by-key reference.</p>
 <a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;300GiB&quot;</span>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">stale_days</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">7</span>
 <a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">vagrant_plugins</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;vagrant-libvirt&quot;</span><span class="p">]</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">nested</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">port_forwards</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;3000|10.50.0.2:3000&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># local VM port | nested target</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">nested</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 </code></pre></div>
 <h2 id="precedence">Precedence<a class="headerlink" href="#precedence" title="Permanent link">&para;</a></h2>
 <p>Five tiers, later wins:</p>
@@ -8417,8 +8440,8 @@ this page is the key-by-key reference.</p>
    below the repo-declared floor are flagged loudly)</li>
 </ol>
 <p>Scalars are <strong>last-wins</strong>; list keys (<code>packages</code>, <code>apt_repos</code>,
-<code>vagrant_plugins</code>) <strong>accumulate</strong> across tiers. Declaring any <code>[vm]</code>
-key marks the spec customized, which gives the repo a dedicated VM.</p>
+<code>vagrant_plugins</code>, <code>port_forwards</code>) <strong>accumulate</strong> across tiers. Declaring
+any <code>[vm]</code> key marks the spec customized, which gives the repo a dedicated VM.</p>
 <h2 id="keys">Keys<a class="headerlink" href="#keys" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -8473,6 +8496,12 @@ key marks the spec customized, which gives the repo a dedicated VM.</p>
 <td>Vagrant plugins to install (accumulates)</td>
 </tr>
 <tr>
+<td><code>port_forwards</code></td>
+<td>list of strings</td>
+<td><code>[]</code></td>
+<td><code>"&lt;port&gt;\|&lt;host:port&gt;"</code> relay records — bind <code>&lt;port&gt;</code> in the VM and proxy to <code>&lt;host:port&gt;</code> (accumulates; see below)</td>
+</tr>
+<tr>
 <td><code>nested</code></td>
 <td>bool</td>
 <td><code>false</code></td>
@@ -8501,14 +8530,26 @@ halves together:</p>
 <li><strong>In-guest check</strong> — the template verifies <code>/dev/kvm</code> exists and
    fails the build rather than degrading silently to TCG emulation.</li>
 </ol>
+<h2 id="port-forwards-port_forwards">Port forwards (<code>port_forwards</code>)<a class="headerlink" href="#port-forwards-port_forwards" title="Permanent link">&para;</a></h2>
+<p>Each record is <code>"&lt;port&gt;|&lt;host:port&gt;"</code>. The vergil-vm template
+(vergil-project/vergil-vm#170) provisions a <code>systemd-socket-proxyd</code>
+relay per record: it binds <code>0.0.0.0:&lt;port&gt;</code> inside the VM and proxies
+to <code>&lt;host:port&gt;</code> — typically a nested libvirt guest. The <code>0.0.0.0</code> bind
+is auto-forwarded by Lima to the Mac's <code>localhost:&lt;port&gt;</code> with no extra
+config. The relay is boot-persistent; the build fails loudly if the
+port is already bound.</p>
+<p><code>vrg-vm</code> joins the accumulated records with <code>;</code> and passes them as
+<code>--set='.param.PORT_FORWARDS = "&lt;records&gt;"'</code> — the template splits on
+<code>;</code> then <code>|</code>. Repos never supply a script; the template owns the relay.</p>
 <h2 id="fingerprint-and-needs-rebuild">Fingerprint and <code>NEEDS-REBUILD</code><a class="headerlink" href="#fingerprint-and-needs-rebuild" title="Permanent link">&para;</a></h2>
 <p>The composed spec is fingerprinted (SHA-256 over the declaration) and
 stamped into the VM at create time. <code>vrg-vm list</code> compares the stored
 fingerprint against the freshly composed one and shows <code>NEEDS-REBUILD</code>
 on any drift. Editing any declarative key — including toggling
-<code>nested</code> — flips the fingerprint. <code>nested</code> enters the fingerprint
-payload only when true, so profiles that never set it kept their
-fingerprints when the knob was introduced.</p>
+<code>nested</code> — flips the fingerprint. <code>nested</code> and <code>port_forwards</code> enter
+the fingerprint payload only when set (true / non-empty), so profiles
+that never declare them kept their fingerprints when the knobs were
+introduced.</p>
 
 
 
