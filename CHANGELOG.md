@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.35] - 2026-06-12
+
+### Features
+
+- --install runs consumer-refresh as the post-release cascade step (#1646)
+- plumb [vm].port_forwards through to the PORT_FORWARDS template param (#1647)
+- add --yes to pre-answer confirmation prompts (#1648)
+
 ## [2.1.34] - 2026-06-12
 
 ### Features

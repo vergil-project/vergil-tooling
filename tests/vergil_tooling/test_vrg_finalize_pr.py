@@ -57,7 +57,7 @@ def _interactive_defaults() -> Iterator[None]:
     with (
         patch(_MOD + ".worktrees.require_tty"),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-        patch(_MOD + ".prompt_yes_no", return_value=True),
+        patch(_MOD + ".confirm", return_value=True),
     ):
         yield
 
@@ -859,7 +859,7 @@ def test_no_arg_single_candidate_confirms_and_finalizes(tmp_path: Path) -> None:
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
         patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
-        patch(_MOD + ".prompt_yes_no", return_value=True) as confirm,
+        patch(_MOD + ".confirm", return_value=True) as confirm,
         patch(_MOD + "._stage_provenance") as prov,
         patch(_MOD + "._stage_merge"),
     ):
@@ -869,11 +869,49 @@ def test_no_arg_single_candidate_confirms_and_finalizes(tmp_path: Path) -> None:
     assert prov.call_args[0][0].args.pr == "https://github.com/o/r/pull/7"
 
 
+def test_yes_single_candidate_skips_tty_guard_and_finalizes(tmp_path: Path) -> None:
+    """--yes pre-answers the single-PR confirm, so no interactive prompt is
+    shown and the TTY guard is not required (issue #1644)."""
+    with (
+        _cleanup_path_mocks(tmp_path),
+        patch(_MOD + ".worktrees.require_tty") as guard,
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
+        patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
+        patch(_MOD + "._stage_provenance") as prov,
+        patch(_MOD + "._stage_merge"),
+    ):
+        rc = main(["--yes", "--dry-run"])
+    assert rc == 0
+    guard.assert_not_called()
+    assert prov.call_args[0][0].args.pr == "https://github.com/o/r/pull/7"
+
+
+def test_yes_multiple_candidates_still_disambiguates(tmp_path: Path) -> None:
+    """--yes never auto-picks among PRs: the disambiguation menu is still
+    shown, and only the post-choice confirm is pre-answered (issue #1644)."""
+
+    def _pr_for(branch: str) -> dict[str, str]:
+        return _PR7 if branch == "feature/7-foo" else _PR8
+
+    with (
+        _cleanup_path_mocks(tmp_path),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
+        patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
+        patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
+        patch(_MOD + "._stage_provenance") as prov,
+        patch(_MOD + "._stage_merge"),
+    ):
+        rc = main(["--yes", "--dry-run"])
+    assert rc == 0
+    menu.assert_called_once()
+    assert prov.call_args[0][0].args.pr == "https://github.com/o/r/pull/8"
+
+
 def test_no_arg_single_candidate_decline_exits_zero_without_action() -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
         patch(_MOD + ".github.pr_for_branch", return_value=_PR7),
-        patch(_MOD + ".prompt_yes_no", return_value=False),
+        patch(_MOD + ".confirm", return_value=False),
         patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".git.current_branch") as branch,
     ):
@@ -892,7 +930,7 @@ def test_no_arg_multiple_candidates_menu_then_confirm(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
         patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
         patch(_MOD + ".prompt_choice", return_value="PR #8 (feature/8-bar): Bar") as menu,
-        patch(_MOD + ".prompt_yes_no", return_value=True),
+        patch(_MOD + ".confirm", return_value=True),
         patch(_MOD + "._stage_provenance") as prov,
         patch(_MOD + "._stage_merge"),
     ):
@@ -906,7 +944,7 @@ def test_no_arg_no_candidates_confirms_cleanup_only() -> None:
     with (
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7]),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
-        patch(_MOD + ".prompt_yes_no", return_value=False) as confirm,
+        patch(_MOD + ".confirm", return_value=False) as confirm,
     ):
         rc = main([])
     assert rc == 0
@@ -927,7 +965,7 @@ def test_no_arg_excluded_worktree_prints_reason(
         _cleanup_path_mocks(tmp_path),
         patch(_MOD + ".worktrees.list_worktrees", return_value=[_WT7, _WT8]),
         patch(_MOD + ".github.pr_for_branch", side_effect=_pr_for),
-        patch(_MOD + ".prompt_yes_no", return_value=True),
+        patch(_MOD + ".confirm", return_value=True),
         patch(_MOD + "._stage_provenance"),
         patch(_MOD + "._stage_merge"),
     ):
@@ -945,7 +983,7 @@ def test_no_arg_non_tty_fails_fast_before_prompting() -> None:
             _MOD + ".worktrees.require_tty",
             side_effect=SystemExit("requires an interactive terminal"),
         ),
-        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + ".confirm") as confirm,
         patch(_MOD + "._stage_provenance") as fin,
         pytest.raises(SystemExit, match="interactive terminal"),
     ):
@@ -960,7 +998,7 @@ def test_explicit_pr_skips_inference_and_prompts(tmp_path: Path) -> None:
     # assertions prove inference was skipped. Empty list → worktree arm no-op.
     with (
         patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + ".confirm") as confirm,
         patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".github.head_ref", return_value="feature/7-foo"),
@@ -1006,7 +1044,7 @@ def test_cleanup_only_skips_inference_and_prompts(tmp_path: Path) -> None:
     with (
         patch(_MOD + ".worktrees.require_tty") as guard,
         patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
-        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + ".confirm") as confirm,
         patch(_MOD + "._stage_provenance") as fin,
         patch(_MOD + ".config.read_config", side_effect=FileNotFoundError),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -1034,7 +1072,7 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch(tmp_path: Path) -> Non
         git_run_calls.append(args)
 
     with (
-        patch(_MOD + ".prompt_yes_no") as confirm,
+        patch(_MOD + ".confirm") as confirm,
         patch(_MOD + ".pr_provenance.check_pr", return_value=_CLEAN_PROVENANCE),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".git.repo_root", return_value=tmp_path),
@@ -1673,3 +1711,70 @@ def test_no_release_flag_does_not_invoke_release(tmp_path: Path) -> None:
         result = main([])
     assert result == 0
     mock_run.assert_not_called()
+
+
+# -- --install: extend the cascade through vrg-release --install (issue #1643) --
+
+
+def test_parse_args_install_defaults_false() -> None:
+    assert parse_args([]).install is False
+
+
+def test_parse_args_install_flag() -> None:
+    assert parse_args(["--install"]).install is True
+
+
+def test_install_chains_into_vrg_release_install_on_success(tmp_path: Path) -> None:
+    """--install implies --release and hands off to `vrg-release --install`."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 0
+        result = main(["--install"])
+    assert result == 0
+    mock_run.assert_called_once()
+    call = mock_run.call_args
+    assert call.args[0] == ("vrg-release", "--install")
+    assert call.kwargs["cwd"] == tmp_path
+
+
+def test_install_dry_run_notes_release_install_without_running(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        result = main(["--install", "--dry-run"])
+    assert result == 0
+    mock_run.assert_not_called()
+    assert "vrg-release --install" in capsys.readouterr().out
+
+
+def test_install_failure_points_at_release_install_rerun(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".subprocess.run") as mock_run,
+    ):
+        mock_run.return_value.returncode = 2
+        result = main(["--install"])
+    assert result == 2
+    assert "vrg-release --install" in capsys.readouterr().err

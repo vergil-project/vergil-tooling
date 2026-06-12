@@ -115,6 +115,7 @@ class RoleOverlay:
     stale_days: int | None
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
+    port_forwards: list[str]
     nested: bool | None = None
 
 
@@ -127,6 +128,7 @@ class VmStanza:
     stale_days: int | None
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
+    port_forwards: list[str]
     roles: dict[str, RoleOverlay]
     nested: bool | None = None
 
@@ -134,10 +136,22 @@ class VmStanza:
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
 # (key + apt source line); vagrant_plugins is a list of plugin names. The
 # vergil-vm template owns *how* these install — repos never supply a script.
-# nested enables Lima nested virtualization for the profile (issue #1447);
-# default off, requires macOS 15+ on M3-or-later Apple silicon at create time.
+# port_forwards is a list of "<port>|<host:port>" records the template relays
+# via systemd-socket-proxyd (vergil-vm #170). nested enables Lima nested
+# virtualization for the profile (issue #1447); default off, requires macOS 15+
+# on M3-or-later Apple silicon at create time.
 _VM_KEYS = frozenset(
-    {"cpus", "memory", "disk", "stale_days", "packages", "apt_repos", "vagrant_plugins", "nested"}
+    {
+        "cpus",
+        "memory",
+        "disk",
+        "stale_days",
+        "packages",
+        "apt_repos",
+        "vagrant_plugins",
+        "port_forwards",
+        "nested",
+    }
 )
 
 
@@ -153,6 +167,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FIL
         stale_days=raw.get("stale_days"),
         apt_repos=list(raw.get("apt_repos", [])),
         vagrant_plugins=list(raw.get("vagrant_plugins", [])),
+        port_forwards=list(raw.get("port_forwards", [])),
         nested=raw.get("nested"),
     )
 
@@ -179,6 +194,7 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         stale_days=fields.get("stale_days"),
         apt_repos=list(fields.get("apt_repos", [])),
         vagrant_plugins=list(fields.get("vagrant_plugins", [])),
+        port_forwards=list(fields.get("port_forwards", [])),
         roles=roles,
         nested=fields.get("nested"),
     )

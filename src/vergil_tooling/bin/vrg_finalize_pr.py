@@ -53,9 +53,10 @@ from vergil_tooling.lib import (
     progress,
     worktrees,
 )
+from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container_cache import clean_branch_images
 from vergil_tooling.lib.progress import Stage
-from vergil_tooling.lib.repo_init import prompt_choice, prompt_yes_no
+from vergil_tooling.lib.repo_init import prompt_choice
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -130,6 +131,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="After a successful finalize, chain straight into vrg-release "
         "(the full submit-finalize-release cascade)",
     )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Extend the cascade one step further: implies --release and passes "
+        "--install through, so vrg-release runs the consumer-refresh install "
+        "step (issue #1643)",
+    )
+    add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
 
@@ -191,7 +200,7 @@ def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bo
     return True
 
 
-def _infer_pr(root: Path, target_branch: str) -> str | None:
+def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> str | None:
     """Resolve which PR to finalize when none was given; always confirm.
 
     Returns the PR URL to finalize, or None when the user confirmed
@@ -199,9 +208,12 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
     a message via require_tty when stdin is not interactive — these
     prompts are the human touch point of the workflow, and the
     explicit-PR argument is the scriptable path.
-    """
-    worktrees.require_tty("vrg-finalize-pr without a PR argument")
 
+    With *assume_yes* (``--yes``) the single-PR finalize confirm and the
+    cleanup-only confirm are pre-answered "yes". The multiple-PR choice is
+    a disambiguation, not a yes/no, so it is still presented even under
+    ``--yes`` — there is no single obvious answer to skip to.
+    """
     pairs: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     for wt in worktrees.list_worktrees(root):
         pr = github.pr_for_branch(wt.branch)
@@ -211,10 +223,18 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
             continue
         pairs.append((wt, pr))
 
+    # A prompt is unavoidable only when more than one PR forces a choice;
+    # every other interaction here is a single yes/no that --yes pre-answers.
+    # Demand a TTY only when an interactive prompt will actually be shown.
+    must_disambiguate = len(pairs) > 1
+    if must_disambiguate or not assume_yes:
+        worktrees.require_tty("vrg-finalize-pr without a PR argument")
+
     if not pairs:
-        confirmed = prompt_yes_no(
+        confirmed = confirm(
             f"No open PRs found in worktrees. Run cleanup only (switch to "
             f"{target_branch}, sync, prune branches/worktrees)?",
+            assume_yes=assume_yes,
             default=False,
         )
         if not confirmed:
@@ -229,7 +249,11 @@ def _infer_pr(root: Path, target_branch: str) -> str | None:
         chosen = prompt_choice("Multiple PRs ready to finalize", labels)
         wt, pr = pairs[labels.index(chosen)]
 
-    if not prompt_yes_no(f"Finalize PR #{pr['number']} ({pr['title']})?", default=False):
+    if not confirm(
+        f"Finalize PR #{pr['number']} ({pr['title']})?",
+        assume_yes=assume_yes,
+        default=False,
+    ):
         print("Aborted.")
         raise SystemExit(0)
     return pr["url"]
@@ -563,7 +587,7 @@ def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
     )
 
 
-def _chain_release(root: Path) -> int:
+def _chain_release(root: Path, *, install: bool = False) -> int:
     """Hand off to ``vrg-release`` after a successful finalize (issue #1634).
 
     Runs only when the finalize pipeline succeeded. By the time
@@ -574,22 +598,27 @@ def _chain_release(root: Path) -> int:
     so a caller like ``vrg-submit-pr`` regains control to report the
     cascade outcome.
 
+    With *install*, passes ``--install`` through so ``vrg-release`` also runs
+    the consumer-refresh install step (issue #1643).
+
     A failure here never un-merges the PR — it was already merged and
     cleaned up — so report it clearly and let the human re-run vrg-release
     alone.
     """
+    cmd: tuple[str, ...] = ("vrg-release", "--install") if install else ("vrg-release",)
     print()
-    print("--release: handing off to vrg-release")
+    print(f"--{'install' if install else 'release'}: handing off to {' '.join(cmd)}")
     result = subprocess.run(  # noqa: S603
-        ("vrg-release",),  # noqa: S607
+        cmd,  # noqa: S607
         cwd=root,
         check=False,
     )
     if result.returncode != 0:
+        rerun = "vrg-release --install" if install else "vrg-release"
         print(
             f"vrg-finalize-pr: release failed (exit {result.returncode}); "
             "the PR was already merged and cleaned up and is unaffected.\n"
-            "  Re-run the release alone with: vrg-release",
+            f"  Re-run the release alone with: {rerun}",
             file=sys.stderr,
         )
     return result.returncode
@@ -597,6 +626,11 @@ def _chain_release(root: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # --install extends the cascade one step past --release; normalize once so
+    # the release-chain logic below sees release on (issue #1643).
+    if args.install:
+        args.release = True
 
     if not git.is_main_worktree():
         main_root = git.main_worktree_root()
@@ -615,7 +649,7 @@ def main(argv: list[str] | None = None) -> int:
     # cleanup/validation/cd-check stages run (issue #1448).
     if args.pr is None and not args.cleanup_only:
         try:
-            args.pr = _infer_pr(root, args.target_branch)
+            args.pr = _infer_pr(root, args.target_branch, assume_yes=args.yes)
         except SystemExit as exc:
             if exc.code == 0:
                 return 0
@@ -641,9 +675,10 @@ def main(argv: list[str] | None = None) -> int:
     if rc != 0 or not args.release:
         return rc
     if args.dry_run:
-        print("\n[dry-run] would chain into: vrg-release")
+        target = "vrg-release --install" if args.install else "vrg-release"
+        print(f"\n[dry-run] would chain into: {target}")
         return 0
-    return _chain_release(root)
+    return _chain_release(root, install=args.install)
 
 
 if __name__ == "__main__":

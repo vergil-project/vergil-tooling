@@ -7,6 +7,7 @@ import sys
 
 from vergil_tooling.lib import git, github, progress
 from vergil_tooling.lib.release.context import ReleaseError
+from vergil_tooling.lib.release.handoff import run_consumer_refresh
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
 from vergil_tooling.lib.release.resume import find_resume_target
 
@@ -28,6 +29,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Skip rolling-tag promotion after release.",
+    )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        default=False,
+        help=(
+            "After a successful release, execute the [publish].consumer-refresh "
+            "commands (the install/refresh step of the cascade) instead of only "
+            "printing them."
+        ),
     )
     parser.add_argument(
         "--resume",
@@ -93,6 +104,21 @@ def main(argv: list[str] | None = None) -> int:
     if state.ctx is not None and state.ctx.consumer_refresh_message:
         print()
         print(state.ctx.consumer_refresh_message)
+
+    # --install: run the consumer-refresh commands rather than leaving them
+    # for the human to copy/paste (issue #1643). Only on a clean release —
+    # a failed pipeline must not trigger an install — and only after the
+    # message above has been printed, so the human sees what is about to run.
+    if args.install and rc == 0:
+        commands = state.ctx.consumer_refresh_commands if state.ctx is not None else None
+        if not commands:
+            print(
+                "vrg-release: --install was given but no [publish].consumer-refresh "
+                "is configured; nothing to run.",
+                file=sys.stderr,
+            )
+            return 1
+        return run_consumer_refresh(commands)
     return rc
 
 

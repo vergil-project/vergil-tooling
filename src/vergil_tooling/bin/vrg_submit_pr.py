@@ -26,10 +26,13 @@ re-run ``vrg-finalize-pr`` alone.
 ``--release`` extends that one step further (issue #1634): it implies
 ``--finalize`` and passes ``--release`` through, so a clean finalize
 cascades into ``vrg-release`` — the whole submit -> finalize -> release
-sequence from one command. Each hop runs as a subprocess (not ``exec``)
-so control returns here for the final summary, which states how far the
-cascade got: submitted, submitted and finalized, or submitted, finalized,
-and released.
+sequence from one command. ``--install`` extends it one link further still
+(issue #1643): it implies ``--release`` and passes ``--install`` through, so
+``vrg-release`` runs the consumer-refresh install commands rather than only
+printing them — submit -> finalize -> release -> install. Each hop runs as a
+subprocess (not ``exec``) so control returns here for the final summary,
+which states how far the cascade got: submitted, submitted and finalized,
+submitted/finalized/released, or submitted/finalized/released/installed.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ import tempfile
 from pathlib import Path
 
 from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
+from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import submission
@@ -74,6 +78,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="After creating the PR, run the full cascade: finalize (implies "
         "--finalize) and then vrg-release",
     )
+    parser.add_argument(
+        "--install",
+        action="store_true",
+        help="Run the full cascade through the install step: implies --release "
+        "(hence --finalize) and passes --install through so vrg-release runs the "
+        "consumer-refresh install commands (issue #1643)",
+    )
+    add_yes_argument(parser)
     return parser.parse_args(argv)
 
 
@@ -132,17 +144,18 @@ def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
     return pr_url
 
 
-def _chain_finalize(pr_url: str, *, release: bool = False) -> int:
+def _chain_finalize(pr_url: str, *, release: bool = False, install: bool = False) -> int:
     """Hand off to ``vrg-finalize-pr`` right after PR creation (issue #1491).
 
     Equivalent to running ``vrg-finalize-pr <pr-url>`` by hand: same
     merge-strategy default, same post-merge cleanup. With *release*, passes
     ``--release`` through so a clean finalize cascades into ``vrg-release``
-    (issue #1634). Runs as a subprocess from the main worktree root because
-    vrg-finalize-pr refuses to run from a secondary worktree (it removes
-    worktrees during cleanup) and template mode chdir'd into one. The child
-    inherits the TTY so its live progress display and prompts behave exactly
-    as a manual run.
+    (issue #1634); with *install*, also passes ``--install`` so the cascade
+    runs vrg-release's consumer-refresh install step (issue #1643). Runs as a
+    subprocess from the main worktree root because vrg-finalize-pr refuses to
+    run from a secondary worktree (it removes worktrees during cleanup) and
+    template mode chdir'd into one. The child inherits the TTY so its live
+    progress display and prompts behave exactly as a manual run.
 
     A failure here never un-creates the PR — report the PR clearly so
     the human can re-run the finalize (or the cascade) alone.
@@ -151,11 +164,15 @@ def _chain_finalize(pr_url: str, *, release: bool = False) -> int:
     cmd: tuple[str, ...] = ("vrg-finalize-pr", pr_url)
     if release:
         cmd = (*cmd, "--release")
+    if install:
+        cmd = (*cmd, "--install")
+    stage = "install" if install else "release" if release else "finalize"
     print()
-    print(f"--{'release' if release else 'finalize'}: handing off to {' '.join(cmd)}")
+    print(f"--{stage}: handing off to {' '.join(cmd)}")
     result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603
     if result.returncode != 0:
-        rerun = f"vrg-finalize-pr {pr_url}{' --release' if release else ''}"
+        flags = f"{' --release' if release else ''}{' --install' if install else ''}"
+        rerun = f"vrg-finalize-pr {pr_url}{flags}"
         print(
             f"vrg-submit-pr: cascade failed (exit {result.returncode}); "
             "the PR was created and is unaffected:\n"
@@ -167,23 +184,26 @@ def _chain_finalize(pr_url: str, *, release: bool = False) -> int:
     return 0
 
 
-def _print_cascade_summary(pr_url: str, *, released: bool) -> None:
+def _print_cascade_summary(pr_url: str, *, released: bool, installed: bool) -> None:
     """Final summary owned by vrg-submit-pr stating how far the cascade got.
 
     Reached only after a successful chain, so it always reports completed
-    work (issue #1634). The submitted-only outcome is reported separately by
-    the pr-watch one-liner.
+    work (issue #1634, extended for --install in issue #1643). The
+    submitted-only outcome is reported separately by the pr-watch one-liner.
     """
     print()
-    if released:
+    if installed:
+        print(f"Done: PR submitted, finalized, released, and installed.\n  {pr_url}")
+    elif released:
         print(f"Done: PR submitted, finalized, and released.\n  {pr_url}")
     else:
         print(f"Done: PR submitted and finalized.\n  {pr_url}")
 
 
-def _dry_run_chain_note(*, release: bool) -> str:
+def _dry_run_chain_note(*, release: bool, install: bool) -> str:
     """The ``[dry-run]`` line naming the chain command that would run."""
-    cmd = "vrg-finalize-pr --release <pr-url>" if release else "vrg-finalize-pr <pr-url>"
+    flags = f"{' --release' if release else ''}{' --install' if install else ''}"
+    cmd = f"vrg-finalize-pr{flags} <pr-url>"
     return f"\n[dry-run] would chain into: {cmd}"
 
 
@@ -222,7 +242,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         print(f"=== Target Branch ===\n{target}\n")
         print(f"=== PR Body ===\n{pr_body}")
         if args.finalize:
-            print(_dry_run_chain_note(release=args.release))
+            print(_dry_run_chain_note(release=args.release, install=args.install))
         return 0
 
     print(f"Pushing branch '{branch}' to origin...")
@@ -232,10 +252,10 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     pr_url = _create_pr(target_branch=target, title=args.title, pr_body=pr_body)
     print(f"PR created: {pr_url}")
     if args.finalize:
-        rc = _chain_finalize(pr_url, release=args.release)
+        rc = _chain_finalize(pr_url, release=args.release, install=args.install)
         if rc != 0:
             return rc
-        _print_cascade_summary(pr_url, released=args.release)
+        _print_cascade_summary(pr_url, released=args.release, installed=args.install)
         return 0
     print(f"Done. PR URL: {pr_url}")
     _print_pr_watch(pr_url)
@@ -355,16 +375,10 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     if args.dry_run:
         if args.finalize:
-            print(_dry_run_chain_note(release=args.release))
+            print(_dry_run_chain_note(release=args.release, install=args.install))
         return 0
 
-    try:
-        answer = input("\nSubmit this PR? [y/N] ").strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        print("\nAborted.")
-        return 1
-
-    if answer != "y":
+    if not confirm("\nSubmit this PR?", assume_yes=args.yes):
         print("Aborted.")
         return 1
 
@@ -380,10 +394,10 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     submission.delete_submission(root)
     print(f"PR created: {pr_url}")
     if args.finalize:
-        rc = _chain_finalize(pr_url, release=args.release)
+        rc = _chain_finalize(pr_url, release=args.release, install=args.install)
         if rc != 0:
             return rc
-        _print_cascade_summary(pr_url, released=args.release)
+        _print_cascade_summary(pr_url, released=args.release, installed=args.install)
         return 0
     print(f"Done. PR URL: {pr_url}")
     _print_pr_watch(pr_url)
@@ -393,9 +407,12 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
-    # --release is the full cascade and implies --finalize; normalize once so
-    # every downstream branch (dry-run notes, chain, summary) sees finalize on
-    # (issue #1634).
+    # --install extends the cascade one link past --release, which itself
+    # implies --finalize; normalize once (install ⇒ release ⇒ finalize) so
+    # every downstream branch (dry-run notes, chain, summary) sees the right
+    # flags (issues #1634, #1643).
+    if args.install:
+        args.release = True
     if args.release:
         args.finalize = True
 

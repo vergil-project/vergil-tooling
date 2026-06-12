@@ -483,6 +483,32 @@ class TestTemplateMode:
         mock_pr.assert_called_once()
         assert not (vergil / "pr-template.yml").exists()
 
+    def test_template_yes_flag_submits_without_prompting(self, tmp_path: Path) -> None:
+        """--yes pre-answers the submit confirmation, so the PR is created
+        without reading stdin (issue #1644)."""
+        vergil = tmp_path / ".vergil"
+        vergil.mkdir()
+        (vergil / "pr-template.yml").write_text(
+            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nnotes: Verified locally\n"
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/1",
+            ) as mock_pr,
+            patch("builtins.input", side_effect=AssertionError("stdin read")) as mock_input,
+        ):
+            result = main(["--yes"])
+        assert result == 0
+        mock_pr.assert_called_once()
+        mock_input.assert_not_called()
+
     def test_template_prints_pr_watch_oneliner(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1128,6 +1154,123 @@ class TestReleaseFlag:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
         with patch(_MOD + ".subprocess.run") as mock_run:
             result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--release"])
+        assert result != 0
+        mock_run.assert_not_called()
+        assert "human maintainer" in capsys.readouterr().err.lower()
+
+
+# -- --install: cascade submit -> finalize -> release -> install (issue #1643) -
+
+
+class TestInstallFlag:
+    """--install implies --release (hence --finalize) and passes --install
+    through, so the chain runs vrg-release's consumer-refresh install step."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_parse_args_install_defaults_false(self) -> None:
+        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug"])
+        assert args.install is False
+
+    def test_parse_args_install_flag(self) -> None:
+        args = parse_args(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
+        assert args.install is True
+
+    def test_cli_mode_chains_finalize_with_release_and_install(self, tmp_path: Path) -> None:
+        """--install implies --release and appends both flags to the chain."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
+        assert result == 0
+        mock_run.assert_called_once()
+        call = mock_run.call_args
+        assert call.args[0] == (
+            "vrg-finalize-pr",
+            "https://github.com/pr/1",
+            "--release",
+            "--install",
+        )
+        assert call.kwargs["cwd"] == tmp_path
+
+    def test_cli_mode_install_prints_four_way_summary(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """On success the final summary reports the full submit→install cascade."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
+        assert result == 0
+        out = capsys.readouterr().out
+        assert "submitted, finalized, released, and installed" in out
+
+    def test_install_failure_reports_created_pr_with_install_rerun(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A cascade failure must not obscure the created PR; the re-run hint
+        carries --release --install so the human can resume the whole cascade."""
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".git.run"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1"),
+            patch(_MOD + ".git.main_worktree_root", return_value=tmp_path),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 1
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
+        assert result != 0
+        err = capsys.readouterr().err
+        assert "https://github.com/pr/1" in err
+        assert "vrg-finalize-pr https://github.com/pr/1 --release --install" in err
+
+    def test_dry_run_notes_install_chain_without_running(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+            patch(_MOD + ".subprocess.run") as mock_run,
+        ):
+            result = main(
+                [
+                    "--issue",
+                    "42",
+                    "--summary",
+                    "Fix",
+                    "--title",
+                    "fix: bug",
+                    "--install",
+                    "--dry-run",
+                ]
+            )
+        assert result == 0
+        mock_run.assert_not_called()
+        assert "vrg-finalize-pr --release --install" in capsys.readouterr().out
+
+    def test_agent_identity_still_blocked_with_install(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--install must not weaken the identity-mode gate."""
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".subprocess.run") as mock_run:
+            result = main(["--issue", "42", "--summary", "Fix", "--title", "fix: bug", "--install"])
         assert result != 0
         mock_run.assert_not_called()
         assert "human maintainer" in capsys.readouterr().err.lower()
