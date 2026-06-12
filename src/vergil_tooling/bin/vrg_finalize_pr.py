@@ -25,6 +25,14 @@ After cleanup succeeds, validation runs in the dev container, then the
 most recent CD workflow run on the target branch is checked and the
 command fails if it did not succeed (issue #303 — docs publish is async
 and used to fail silently).
+
+``--release`` chains straight into ``vrg-release`` after the finalize
+pipeline completes **successfully** (issue #1634) — the fast-turnaround
+cascade that merges, cleans up, and cuts a release in one command. The
+chain runs only on success, and only after ``run_pipeline`` has torn down
+its live display, so the two renderers never nest (cf. issue #1470). It
+runs as a subprocess, not ``exec``, so the caller (e.g. ``vrg-submit-pr``)
+regains control to report how far the cascade got.
 """
 
 from __future__ import annotations
@@ -115,6 +123,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Show what would be done without making changes"
+    )
+    parser.add_argument(
+        "--release",
+        action="store_true",
+        help="After a successful finalize, chain straight into vrg-release "
+        "(the full submit-finalize-release cascade)",
     )
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -549,6 +563,38 @@ def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
     )
 
 
+def _chain_release(root: Path) -> int:
+    """Hand off to ``vrg-release`` after a successful finalize (issue #1634).
+
+    Runs only when the finalize pipeline succeeded. By the time
+    ``run_pipeline`` returns it has closed its live display (its ``finally``
+    block calls ``renderer.close()``), so ``vrg-release`` starts a fresh
+    renderer with no nesting — the two live displays never overlap
+    (cf. issue #1470). Run as a subprocess inheriting the TTY, not ``exec``,
+    so a caller like ``vrg-submit-pr`` regains control to report the
+    cascade outcome.
+
+    A failure here never un-merges the PR — it was already merged and
+    cleaned up — so report it clearly and let the human re-run vrg-release
+    alone.
+    """
+    print()
+    print("--release: handing off to vrg-release")
+    result = subprocess.run(  # noqa: S603
+        ("vrg-release",),  # noqa: S607
+        cwd=root,
+        check=False,
+    )
+    if result.returncode != 0:
+        print(
+            f"vrg-finalize-pr: release failed (exit {result.returncode}); "
+            "the PR was already merged and cleaned up and is unaffected.\n"
+            "  Re-run the release alone with: vrg-release",
+            file=sys.stderr,
+        )
+    return result.returncode
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -579,7 +625,7 @@ def main(argv: list[str] | None = None) -> int:
     # below runs under the progress pipeline, which owns stdout/stderr
     # (issue #1479).
     ctx = FinalizeContext(args=args, root=root)
-    return progress.run_pipeline(
+    rc = progress.run_pipeline(
         ctx,
         build_stages(include_pr=args.pr is not None),
         command="vrg-finalize-pr",
@@ -587,6 +633,17 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=root,
     )
+
+    # --release cascade (issue #1634): chain into vrg-release only after a
+    # clean finalize. A non-zero pipeline must not trigger a release, and the
+    # hand-off happens here — after run_pipeline has closed its live display —
+    # so the two renderers never nest (cf. issue #1470).
+    if rc != 0 or not args.release:
+        return rc
+    if args.dry_run:
+        print("\n[dry-run] would chain into: vrg-release")
+        return 0
+    return _chain_release(root)
 
 
 if __name__ == "__main__":
