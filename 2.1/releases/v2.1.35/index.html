@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.5/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.2/">
+        <link rel="next" href="../v2.1.34/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.4 - VERGIL Tooling</title>
+        <title>2.1.35 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-204-2026-05-13" class="md-skip">
+        <a href="#release-2135-2026-06-12" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.4
+              2.1.35
             
           </span>
         </div>
@@ -936,10 +936,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.35/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.35
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -955,6 +982,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3960,37 +4018,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.4
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.4/" class="md-nav__link">
         
   
   
@@ -4006,37 +4037,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8288,10 +8288,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -8315,13 +8315,26 @@
 
 
 
-<h1 id="release-204-2026-05-13">Release 2.0.4 (2026-05-13)<a class="headerlink" href="#release-204-2026-05-13" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2135-2026-06-12">Release 2.1.35 (2026-06-12)<a class="headerlink" href="#release-2135-2026-06-12" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>update hardcoded org URL from wphillipmoore to vergil-project</strong></li>
-<li><strong>surface captured API output in CalledProcessError messages</strong>
-Add GitHubAPIError subclass of CalledProcessError whose <strong>str</strong> includes captured stderr/stdout. _run_with_retry raises this instead of bare CalledProcessError when API output is available, making gh api failures diagnosable.</li>
+<li><strong>--install runs consumer-refresh as the post-release cascade step (#1646)</strong></li>
+<li>feat(release): execute consumer-refresh via vrg-release --install</li>
 </ul>
+<p>Add the install step of the post-release cascade (issue #1643). vrg-release gains an --install flag that, after a clean release, runs the [publish].consumer-refresh command block through bash under 'set -eo pipefail' instead of only printing it. The version-expanded block is stored on ReleaseContext.consumer_refresh_commands so execution matches exactly what the handoff message displays.</p>
+<p>A failed install propagates its exit code but never implicates the release, which already completed. --install with no consumer-refresh configured is a clear error, not a silent no-op.</p>
+<p>This repo's consumer-refresh expands from the lone uv tool install line to also run 'vrg-vm update --all' — the two steps the maintainer runs by hand after every build.</p>
+<ul>
+<li>feat(submit-pr,finalize-pr): --install cascades submit, finalize, release, and install</li>
+</ul>
+<p>Extend the submit -&gt; finalize -&gt; release cascade one link further with --install (issue #1643). On both vrg-submit-pr and vrg-finalize-pr, --install implies --release (and so --finalize) and is passed through to the next hop, ending at 'vrg-release --install' which runs the consumer-refresh commands.</p>
+<p>vrg-submit-pr's final summary gains a four-way outcome (submitted / +finalized / +released / +installed), its dry-run note and failure re-run hint carry --install, and the identity gate still blocks agents. vrg-finalize-pr hands off to 'vrg-release --install' and its dry-run note and re-run hint reflect it.</p>
+<ul>
+<li><strong>plumb [vm].port_forwards through to the PORT_FORWARDS template param (#1647)</strong></li>
+<li><strong>add --yes to pre-answer confirmation prompts (#1648)</strong>
+Introduce a shared lib/confirm.py providing a consistent --yes/-y flag (add_yes_argument) and a confirm() yes/no gate that honors it. Wire it into vrg-submit-pr's template-mode submit confirmation and vrg-finalize-pr's finalize/cleanup confirmations.</li>
+</ul>
+<p>--yes is deliberately narrow: it auto-answers a single, unambiguous yes/no confirmation only. It does not pick between multiple choices — vrg-finalize-pr's multiple-PR menu is still shown under --yes — and it does not override safety gates, which keep their own --force/--allow-* flags. In finalize, the TTY guard is now demanded only when an interactive prompt will actually appear, so --yes on a single candidate runs without a terminal.</p>
 
 
 
