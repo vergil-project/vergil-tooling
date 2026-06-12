@@ -30,6 +30,9 @@ class ComposedSpec:
     # plugins. The vergil-vm template owns *how* these install — no repo-supplied code.
     apt_repos: tuple[dict[str, str], ...]
     vagrant_plugins: tuple[str, ...]
+    # "<port>|<host:port>" relay records the vergil-vm template proxies into the
+    # guest (vergil-vm #170). Additive across the [vm]/[vm.<role>] cascade.
+    port_forwards: tuple[str, ...]
     dedicated: bool
     under: tuple[str, ...]
     # Per-profile nested virtualization (issue #1447): default off, last-wins
@@ -48,6 +51,7 @@ class _Acc:
     packages: list[str]
     apt_repos: list[dict[str, str]]
     vagrant_plugins: list[str]
+    port_forwards: list[str]
     customized: bool
     nested: bool
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
@@ -67,6 +71,9 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
         acc.customized = True
     if overlay.vagrant_plugins:
         acc.vagrant_plugins.extend(overlay.vagrant_plugins)
+        acc.customized = True
+    if overlay.port_forwards:
+        acc.port_forwards.extend(overlay.port_forwards)
         acc.customized = True
     if overlay.cpus is not None:
         acc.cpus = acc.declared_cpus = overlay.cpus
@@ -104,6 +111,7 @@ def compose_vm_spec(
         packages=[],
         apt_repos=[],
         vagrant_plugins=[],
+        port_forwards=[],
         customized=False,
         nested=False,
         declared_cpus=None,
@@ -145,6 +153,7 @@ def compose_vm_spec(
         packages=tuple(sorted(set(acc.packages))),
         apt_repos=tuple(acc.apt_repos),
         vagrant_plugins=tuple(sorted(set(acc.vagrant_plugins))),
+        port_forwards=tuple(sorted(set(acc.port_forwards))),
         dedicated=acc.customized,
         under=tuple(under),
         nested=acc.nested,
@@ -203,6 +212,12 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
         "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
         "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
     ]
+    # port_forwards enters the payload only when non-empty, for the same reason
+    # as nested below: profiles that never declare forwards keep the fingerprint
+    # they had before the knob existed (no spurious NEEDS-REBUILD on upgrade),
+    # while adding/editing forwards flips the hash.
+    if spec.port_forwards:
+        fields.append("port_forwards=" + ",".join(sorted(spec.port_forwards)))
     # nested enters the payload only when true: profiles that never set it keep
     # the fingerprint they had before the knob existed (no spurious NEEDS-REBUILD
     # on upgrade), while toggling it flips the hash in both directions.

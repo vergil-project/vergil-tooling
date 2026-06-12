@@ -209,6 +209,7 @@ def create_vm(
     packages: list[str] | None = None,
     apt_repos: list[dict[str, str]] | None = None,
     vagrant_plugins: list[str] | None = None,
+    port_forwards: list[str] | None = None,
     fingerprint: str | None = None,
     nested: bool = False,
 ) -> None:
@@ -249,6 +250,10 @@ def create_vm(
         args.append(f'--set=.param.APT_REPOS = "{encoded}"')
     if vagrant_plugins:
         args.append(f'--set=.param.VAGRANT_PLUGINS = "{" ".join(vagrant_plugins)}"')
+    if port_forwards:
+        # Each record "<port>|<host:port>"; records joined by ";" to match the
+        # template's IFS=';' / IFS='|' parser (vergil-vm #170).
+        args.append(f'--set=.param.PORT_FORWARDS = "{";".join(port_forwards)}"')
     if fingerprint:
         args.append(f'--set=.param.SPEC_FINGERPRINT = "{fingerprint}"')
     if nested:
