@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -8,6 +9,7 @@ from vergil_tooling.lib.update_deps.context import UpdateDepsContext, UpdateDeps
 from vergil_tooling.lib.update_deps.updaters.vergil_eco import (
     VergilUpdater,
     format_version,
+    normalize_claude_ref,
     normalize_refs,
     read_source_version,
     set_source_version,
@@ -118,3 +120,48 @@ def test_apply_bump_rewrites_source_and_refs(tmp_path: Path) -> None:
     assert result.commit_message == "chore(deps): bump vergil to v2.2"
     assert 'vergil = "v2.2"' in (tmp_path / "vergil.toml").read_text()
     assert "@v2.2" in (tmp_path / ".github" / "workflows" / "ci.yml").read_text()
+
+
+def _seed_settings(base: Path, ref: str | None = None) -> None:
+    src: dict[str, str] = {
+        "source": "github",
+        "repo": "vergil-project/vergil-claude-plugin",
+    }
+    if ref is not None:
+        src["ref"] = ref
+    settings = {
+        "permissions": {"allow": ["Bash(vrg-*)"]},
+        "extraKnownMarketplaces": {"vergil-marketplace": {"source": src}},
+        "enabledPlugins": {"vergil@vergil-marketplace": True},
+    }
+    claude = base / ".claude"
+    claude.mkdir(parents=True, exist_ok=True)
+    (claude / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+
+
+def test_normalize_claude_ref_inserts_missing_ref(tmp_path: Path) -> None:
+    _seed_settings(tmp_path, ref=None)
+    changed = normalize_claude_ref(tmp_path, "v2.0")
+    assert changed == tmp_path / ".claude" / "settings.json"
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
+    assert src["ref"] == "v2.0"
+    assert data["enabledPlugins"] == {"vergil@vergil-marketplace": True}
+    assert src["repo"] == "vergil-project/vergil-claude-plugin"
+
+
+def test_normalize_claude_ref_rewrites_drifted_ref(tmp_path: Path) -> None:
+    _seed_settings(tmp_path, ref="develop")
+    changed = normalize_claude_ref(tmp_path, "v2.1")
+    assert changed is not None
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "v2.1"
+
+
+def test_normalize_claude_ref_idempotent(tmp_path: Path) -> None:
+    _seed_settings(tmp_path, ref="v2.0")
+    assert normalize_claude_ref(tmp_path, "v2.0") is None
+
+
+def test_normalize_claude_ref_no_settings_file(tmp_path: Path) -> None:
+    assert normalize_claude_ref(tmp_path, "v2.0") is None

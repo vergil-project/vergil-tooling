@@ -9,10 +9,12 @@ first rewrites the source of truth, then normalizes.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.update_deps.updater import UpdateResult
 from vergil_tooling.lib.vergil_refs import (
+    MARKETPLACE_NAME,
     _REF_RE,
     _SOURCE_RE,
     format_version,
@@ -58,6 +60,30 @@ def normalize_refs(base: Path, target: str) -> list[Path]:
             path.write_text(new)
             changed.append(path)
     return changed
+
+
+def normalize_claude_ref(base: Path, target: str) -> Path | None:
+    """Set the marketplace ``source.ref`` in ``.claude/settings.json`` to *target*.
+
+    *target* is the derived ``vX.Y`` (or ``develop`` for the source repo). The
+    file is edited structurally (parsed JSON, re-dumped at indent 2) because the
+    ref may need to be *inserted* where none exists — a regex cannot do that
+    safely. Returns the path if changed, else ``None``. A missing file or
+    missing marketplace entry is a clean no-op.
+    """
+    settings_path = base / ".claude" / "settings.json"
+    if not settings_path.is_file():
+        return None
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
+    try:
+        source = data["extraKnownMarketplaces"][MARKETPLACE_NAME]["source"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(source, dict) or source.get("ref") == target:
+        return None
+    source["ref"] = target
+    settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return settings_path
 
 
 def _base(ctx: UpdateDepsContext) -> Path:
