@@ -161,9 +161,8 @@ def render_claude_settings(vergil_version: str) -> str:
     the same vergil version it declares in vergil.toml.
     """
     data = json.loads(_load_data_file("claude_settings.json"))
-    data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = (
-        vergil_version
-    )
+    market = data["extraKnownMarketplaces"]["vergil-marketplace"]
+    market["source"]["ref"] = vergil_version
     return json.dumps(data, indent=2) + "\n"
 
 
@@ -760,9 +759,7 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     claude_dir = wd / ".claude"
     claude_dir.mkdir(exist_ok=True)
     # marketplace ref seeded from the chosen vergil version (consumer repos)
-    (claude_dir / "settings.json").write_text(
-        render_claude_settings(ctx.vergil_version)
-    )
+    (claude_dir / "settings.json").write_text(render_claude_settings(ctx.vergil_version))
 
     # .claude/hooks/guard.sh
     hooks_dir = claude_dir / "hooks"

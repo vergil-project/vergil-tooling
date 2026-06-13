@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -13,6 +13,9 @@ from vergil_tooling.lib.vergil_refs import (
     iter_workflow_refs,
     read_source_version,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _seed_toml(base: Path, version: str) -> None:

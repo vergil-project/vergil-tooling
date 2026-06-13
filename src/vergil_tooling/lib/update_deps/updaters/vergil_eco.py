@@ -14,9 +14,9 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.update_deps.updater import UpdateResult
 from vergil_tooling.lib.vergil_refs import (
-    MARKETPLACE_NAME,
     _REF_RE,
     _SOURCE_RE,
+    MARKETPLACE_NAME,
     format_version,
     is_marketplace_source_repo,
     read_source_version,

@@ -461,9 +461,7 @@ class TestMarketplaceRef:
         ref: str | None,
         self_repo: bool = False,
     ) -> None:
-        (base / "vergil.toml").write_text(
-            _MINIMAL_VERGIL_TOML_VER.format(version=version)
-        )
+        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version=version))
         if self_repo:
             (base / ".claude-plugin").mkdir()
             (base / ".claude-plugin" / "marketplace.json").write_text("{}")
@@ -488,18 +486,14 @@ class TestMarketplaceRef:
     def test_consumer_ref_missing_flagged(self, tmp_path: Path) -> None:
         self._write(tmp_path, version="v2.0", ref=None)
         diff = audit_local_config(tmp_path)
-        flagged = [
-            i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"
-        ]
+        flagged = [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
         assert len(flagged) == 1
         assert "v2.0" in str(flagged[0].expected)
 
     def test_consumer_ref_wrong_flagged(self, tmp_path: Path) -> None:
         self._write(tmp_path, version="v2.1", ref="v2.0")
         diff = audit_local_config(tmp_path)
-        assert [
-            i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"
-        ]
+        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
 
     def test_self_repo_requires_develop(self, tmp_path: Path) -> None:
         self._write(tmp_path, version="v2.1", ref="develop", self_repo=True)
@@ -509,21 +503,16 @@ class TestMarketplaceRef:
     def test_self_repo_version_ref_flagged(self, tmp_path: Path) -> None:
         self._write(tmp_path, version="v2.1", ref="v2.1", self_repo=True)
         diff = audit_local_config(tmp_path)
-        assert [
-            i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"
-        ]
+        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
 
 
 class TestWorkflowRefs:
     def _write_wf(self, base: Path, version: str, pin: str) -> None:
-        (base / "vergil.toml").write_text(
-            _MINIMAL_VERGIL_TOML_VER.format(version=version)
-        )
+        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version=version))
         wf = base / ".github" / "workflows"
         wf.mkdir(parents=True)
         (wf / "ci.yml").write_text(
-            "jobs:\n  a:\n"
-            f"    uses: vergil-project/vergil-actions/.github/workflows/ci.yml@{pin}\n"
+            f"jobs:\n  a:\n    uses: vergil-project/vergil-actions/.github/workflows/ci.yml@{pin}\n"
         )
 
     def test_matching_pin_clean(self, tmp_path: Path) -> None:
@@ -540,8 +529,6 @@ class TestWorkflowRefs:
         assert "v2.0" in str(flagged[0].actual)
 
     def test_no_workflows_no_flag(self, tmp_path: Path) -> None:
-        (tmp_path / "vergil.toml").write_text(
-            _MINIMAL_VERGIL_TOML_VER.format(version="v2.0")
-        )
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.0"))
         diff = audit_local_config(tmp_path)
         assert not [i for i in diff.items if i.field == "local.workflow_ref"]

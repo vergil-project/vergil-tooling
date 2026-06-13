@@ -261,9 +261,7 @@ def _check_marketplace_ref(
     canonical template, so a wrong repo or source kind is still caught.
     """
     expected_source = (
-        template.get("extraKnownMarketplaces", {})
-        .get(MARKETPLACE_NAME, {})
-        .get("source", {})
+        template.get("extraKnownMarketplaces", {}).get(MARKETPLACE_NAME, {}).get("source", {})
     )
     section = raw.get("extraKnownMarketplaces", {})
     entry = section.get(MARKETPLACE_NAME) if isinstance(section, dict) else None

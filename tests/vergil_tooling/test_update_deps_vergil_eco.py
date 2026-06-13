@@ -167,6 +167,21 @@ def test_normalize_claude_ref_no_settings_file(tmp_path: Path) -> None:
     assert normalize_claude_ref(tmp_path, "v2.0") is None
 
 
+def test_normalize_claude_ref_missing_marketplace_entry(tmp_path: Path) -> None:
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text(json.dumps({"extraKnownMarketplaces": {}}))
+    assert normalize_claude_ref(tmp_path, "v2.0") is None
+
+
+def test_normalize_claude_ref_non_dict_source(tmp_path: Path) -> None:
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    settings = {"extraKnownMarketplaces": {"vergil-marketplace": {"source": "bad"}}}
+    (claude / "settings.json").write_text(json.dumps(settings))
+    assert normalize_claude_ref(tmp_path, "v2.0") is None
+
+
 def _mark_self_repo(base: Path) -> None:
     (base / ".claude-plugin").mkdir()
     (base / ".claude-plugin" / "marketplace.json").write_text("{}")
@@ -187,9 +202,7 @@ def test_apply_normalize_self_repo_uses_develop(tmp_path: Path) -> None:
     _seed_settings(tmp_path, ref=None)
     VergilUpdater().apply(_ctx(tmp_path))
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert (
-        data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "develop"
-    )
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "develop"
 
 
 def test_apply_bump_sets_ref_to_bumped_version(tmp_path: Path) -> None:
