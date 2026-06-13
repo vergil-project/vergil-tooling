@@ -13,7 +13,12 @@ from typing import TYPE_CHECKING, Any
 from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
-from vergil_tooling.lib.vergil_refs import MARKETPLACE_NAME, expected_claude_ref
+from vergil_tooling.lib.vergil_refs import (
+    MARKETPLACE_NAME,
+    expected_claude_ref,
+    iter_workflow_refs,
+    read_source_version,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -47,6 +52,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_hook_guard_shim(repo_root, items)
     _check_claude_md(repo_root, items)
     _check_claude_settings(repo_root, items)
+    _check_workflow_refs(repo_root, items)
     return ConfigDiff(items=items)
 
 
@@ -303,6 +309,28 @@ def _check_marketplace_ref(
                 actual=f"ref = {actual_ref}",
             )
         )
+
+
+def _check_workflow_refs(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert every vergil-* reusable-workflow pin matches the vergil.toml version.
+
+    Unlike the marketplace ref, workflow pins use the version even for the
+    marketplace source repo — the plugin repo still consumes vergil-actions at a
+    pinned version.
+    """
+    try:
+        expected = read_source_version(repo_root)
+    except (UpdateDepsError, OSError, ValueError):
+        return  # vergil.toml problems are reported by _check_vergil_toml
+    for path, actual in iter_workflow_refs(repo_root):
+        if actual != expected:
+            items.append(
+                DiffItem(
+                    field="local.workflow_ref",
+                    expected=f"{path.name}: {expected}",
+                    actual=f"{path.name}: {actual}",
+                )
+            )
 
 
 def _check_settings_section(
