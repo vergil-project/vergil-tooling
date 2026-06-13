@@ -165,3 +165,38 @@ def test_normalize_claude_ref_idempotent(tmp_path: Path) -> None:
 
 def test_normalize_claude_ref_no_settings_file(tmp_path: Path) -> None:
     assert normalize_claude_ref(tmp_path, "v2.0") is None
+
+
+def _mark_self_repo(base: Path) -> None:
+    (base / ".claude-plugin").mkdir()
+    (base / ".claude-plugin" / "marketplace.json").write_text("{}")
+
+
+def test_apply_normalize_sets_consumer_ref(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.0"\n')
+    _seed_settings(tmp_path, ref=None)
+    result = VergilUpdater().apply(_ctx(tmp_path))
+    assert result.changed is True
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "v2.0"
+
+
+def test_apply_normalize_self_repo_uses_develop(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.1"\n')
+    _mark_self_repo(tmp_path)
+    _seed_settings(tmp_path, ref=None)
+    VergilUpdater().apply(_ctx(tmp_path))
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert (
+        data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "develop"
+    )
+
+
+def test_apply_bump_sets_ref_to_bumped_version(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.0"\n')
+    _seed_settings(tmp_path, ref="v2.0")
+    ctx = _ctx(tmp_path)
+    ctx.vergil_bump = "2.1"
+    VergilUpdater().apply(ctx)
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "v2.1"

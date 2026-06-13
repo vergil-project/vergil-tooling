@@ -18,6 +18,7 @@ from vergil_tooling.lib.vergil_refs import (
     _REF_RE,
     _SOURCE_RE,
     format_version,
+    is_marketplace_source_repo,
     read_source_version,
 )
 
@@ -101,19 +102,22 @@ class VergilUpdater:
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         base = _base(ctx)
+        is_self = is_marketplace_source_repo(base)
         if ctx.vergil_bump is not None:
             target = format_version(ctx.vergil_bump)
             bumped = set_source_version(base, target)
             normalized = normalize_refs(base, target)
+            claude = normalize_claude_ref(base, "develop" if is_self else target)
             return UpdateResult(
                 updater=self.name,
-                changed=bumped or bool(normalized),
+                changed=bumped or bool(normalized) or claude is not None,
                 summary=f"bump vergil to {target}",
                 commit_message=f"chore(deps): bump vergil to {target}",
             )
         target = read_source_version(base)
         normalized = normalize_refs(base, target)
-        changed = bool(normalized)
+        claude = normalize_claude_ref(base, "develop" if is_self else target)
+        changed = bool(normalized) or claude is not None
         return UpdateResult(
             updater=self.name,
             changed=changed,
