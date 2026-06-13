@@ -154,6 +154,19 @@ def _load_data_file(filename: str) -> str:
     return ref.read_text(encoding="utf-8")
 
 
+def render_claude_settings(vergil_version: str) -> str:
+    """Return the .claude/settings.json text with the marketplace ref seeded.
+
+    The packaged template is ref-less; a consuming repo pins the marketplace to
+    the same vergil version it declares in vergil.toml.
+    """
+    data = json.loads(_load_data_file("claude_settings.json"))
+    data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = (
+        vergil_version
+    )
+    return json.dumps(data, indent=2) + "\n"
+
+
 def _load_license(license_type: str) -> str:
     """Load a license template from vergil_tooling.data.licenses."""
     filename_map = {
@@ -746,8 +759,10 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # .claude/settings.json
     claude_dir = wd / ".claude"
     claude_dir.mkdir(exist_ok=True)
-    settings = _load_data_file("claude_settings.json")
-    (claude_dir / "settings.json").write_text(settings)
+    # marketplace ref seeded from the chosen vergil version (consumer repos)
+    (claude_dir / "settings.json").write_text(
+        render_claude_settings(ctx.vergil_version)
+    )
 
     # .claude/hooks/guard.sh
     hooks_dir = claude_dir / "hooks"

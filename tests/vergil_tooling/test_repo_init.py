@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import subprocess
 import tomllib
 from pathlib import Path
@@ -25,6 +26,7 @@ from vergil_tooling.lib.repo_init import (
     render_cd_workflow,
     render_ci_workflow,
     render_claude_md,
+    render_claude_settings,
     render_gitignore,
     render_mkdocs_yml,
     render_readme,
@@ -1239,3 +1241,17 @@ class TestRunWizard:
             ),
         ):
             run_wizard(ctx)
+
+
+def test_render_claude_settings_injects_ref() -> None:
+    text = render_claude_settings("v2.1")
+    data = json.loads(text)
+    src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
+    assert src["ref"] == "v2.1"
+    assert text.endswith("\n")
+
+
+def test_render_claude_settings_other_version() -> None:
+    data = json.loads(render_claude_settings("v2.0"))
+    src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
+    assert src["ref"] == "v2.0"
