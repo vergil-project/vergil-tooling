@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.36] - 2026-06-14
+
+### Bug fixes
+
+- self-heal poisoned uv cache in the in-VM tooling install (#1657)
+
+### Documentation
+
+- add vergil-forge local host design (#1655)
+
 ## [2.1.35] - 2026-06-12
 
 ### Features
