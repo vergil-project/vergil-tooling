@@ -534,16 +534,40 @@ def get_tooling_version(instance: str) -> str | None:
     return None
 
 
+def _uv_tool_install(instance: str, install_spec: str, *, reinstall: bool) -> None:
+    """Run ``uv tool install`` inside the VM, self-healing a poisoned uv cache.
+
+    A corrupt cache entry — e.g. a zero-byte wheel ``METADATA`` left behind by
+    an unclean VM stop — makes ``uv tool install`` fail with "wheel is invalid".
+    On the reinstall path uv removes the existing tool *before* it fails, so a
+    poisoned cache leaves the VM with no tooling at all and bricks every future
+    ``vrg-vm session`` until the cache is cleared by hand. So on failure, clear
+    the VM's uv cache and retry the install once.
+    """
+    flag = "--reinstall " if reinstall else ""
+    install_cmd = f'export PATH="$HOME/.local/bin:$PATH" && uv tool install {flag}"{install_spec}"'
+    try:
+        shell_run(instance, "bash", "-c", install_cmd)
+        return
+    except subprocess.CalledProcessError:
+        print(
+            "  uv tool install failed — clearing the VM uv cache and retrying once...",
+            file=sys.stderr,
+        )
+        shell_run(
+            instance,
+            "bash",
+            "-c",
+            'export PATH="$HOME/.local/bin:$PATH" && uv cache clean',
+        )
+        shell_run(instance, "bash", "-c", install_cmd)
+
+
 def install_tooling(instance: str, tag: str) -> None:
     """Install vergil-tooling inside the VM and record the tag."""
     install_spec = _TOOLING_INSTALL.format(tag=tag)
     print(f"  Installing vergil-tooling ({tag})...")
-    shell_run(
-        instance,
-        "bash",
-        "-c",
-        f'export PATH="$HOME/.local/bin:$PATH" && uv tool install "{install_spec}"',
-    )
+    _uv_tool_install(instance, install_spec, reinstall=False)
     shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
     shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
@@ -567,12 +591,7 @@ def update_tooling(instance: str, tag: str | None = None, *, fallback_tag: str =
         raise SystemExit(1)
     install_spec = _TOOLING_INSTALL.format(tag=tag)
     print(f"  Updating vergil-tooling ({tag})...")
-    shell_run(
-        instance,
-        "bash",
-        "-c",
-        f'export PATH="$HOME/.local/bin:$PATH" && uv tool install --reinstall "{install_spec}"',
-    )
+    _uv_tool_install(instance, install_spec, reinstall=True)
     if not explicit:
         shell_run(instance, "bash", "-c", f"mkdir -p $(dirname {_TOOLING_TAG_FILE})")
         shell_pipe(instance, f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
@@ -752,11 +771,27 @@ def try_update_tooling(
     *,
     fallback_tag: str = "",
 ) -> bool:
-    """Update vergil-tooling, returning False on failure instead of aborting."""
+    """Update vergil-tooling, returning False on failure instead of aborting.
+
+    A soft failure is only safe when a working install remains: continuing into
+    a session with *no* tooling installed would leave the user with no ``vrg-*``
+    commands. So when the update fails, check what is actually installed — warn
+    and continue only if a version is still present, otherwise abort loudly.
+    """
     try:
         update_tooling(instance, tag, fallback_tag=fallback_tag)
         return True
     except (subprocess.CalledProcessError, SystemExit):
+        if get_tooling_version(instance) is None:
+            print(
+                "ERROR: vergil-tooling update failed and no working tooling "
+                "remains in the VM (the uv cache is likely corrupt).\n"
+                "Recover by rebuilding the VM, or clear the cache manually:\n"
+                "  limactl shell <instance> -- bash -c "
+                "'export PATH=\"$HOME/.local/bin:$PATH\" && uv cache clean'",
+                file=sys.stderr,
+            )
+            raise SystemExit(1) from None
         print(
             "WARNING: vergil-tooling update failed — continuing with installed version",
             file=sys.stderr,
