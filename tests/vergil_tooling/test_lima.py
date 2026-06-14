@@ -1082,9 +1082,13 @@ class TestTryUpdateTooling:
         assert result is True
         mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
 
+    @patch("vergil_tooling.lib.lima.get_tooling_version", return_value="v2.0.63")
     @patch("vergil_tooling.lib.lima.update_tooling")
     def test_returns_false_on_subprocess_error(
-        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_update: MagicMock,
+        _mock_version: MagicMock,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
         result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
@@ -1092,9 +1096,13 @@ class TestTryUpdateTooling:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
 
+    @patch("vergil_tooling.lib.lima.get_tooling_version", return_value="v2.0.63")
     @patch("vergil_tooling.lib.lima.update_tooling")
     def test_returns_false_on_system_exit(
-        self, mock_update: MagicMock, capsys: pytest.CaptureFixture[str]
+        self,
+        mock_update: MagicMock,
+        _mock_version: MagicMock,
+        capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_update.side_effect = SystemExit(1)
         result = try_update_tooling("vergil-agent", fallback_tag="v2.0")
@@ -1102,10 +1110,71 @@ class TestTryUpdateTooling:
         captured = capsys.readouterr()
         assert "WARNING" in captured.err
 
+    @patch("vergil_tooling.lib.lima.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.lib.lima.update_tooling")
+    def test_raises_when_no_tooling_remains_after_failure(
+        self,
+        mock_update: MagicMock,
+        _mock_version: MagicMock,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
+        with pytest.raises(SystemExit):
+            try_update_tooling("vergil-agent", fallback_tag="v2.0")
+        captured = capsys.readouterr()
+        assert "no working tooling" in captured.err.lower()
+
     @patch("vergil_tooling.lib.lima.update_tooling")
     def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
         try_update_tooling("vergil-agent", tag="v2.1", fallback_tag="v2.0")
         mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
+
+
+class TestToolingInstallSelfHeal:
+    """A corrupt uv cache must not permanently brick the install: on failure
+    the VM's uv cache is cleared and the install is retried once."""
+
+    @staticmethod
+    def _cmds(mock_run: MagicMock) -> list[str]:
+        return [" ".join(str(a) for a in call[0]) for call in mock_run.call_args_list]
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_update_clears_cache_and_retries_on_failure(
+        self, mock_run: MagicMock, _mock_pipe: MagicMock
+    ) -> None:
+        ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        mock_run.side_effect = [subprocess.CalledProcessError(1, "uv"), ok, ok]
+        update_tooling("vergil-agent", "v2.0")
+        cmds = self._cmds(mock_run)
+        assert any("uv cache clean" in c for c in cmds)
+        assert sum("uv tool install" in c for c in cmds) == 2
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_update_propagates_when_retry_also_fails(
+        self, mock_run: MagicMock, _mock_pipe: MagicMock
+    ) -> None:
+        ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        mock_run.side_effect = [
+            subprocess.CalledProcessError(1, "uv"),
+            ok,
+            subprocess.CalledProcessError(1, "uv"),
+        ]
+        with pytest.raises(subprocess.CalledProcessError):
+            update_tooling("vergil-agent", "v2.0")
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_install_clears_cache_and_retries_on_failure(
+        self, mock_run: MagicMock, _mock_pipe: MagicMock
+    ) -> None:
+        ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        mock_run.side_effect = [subprocess.CalledProcessError(1, "uv"), ok, ok, ok]
+        install_tooling("vergil-agent", "v2.0")
+        cmds = self._cmds(mock_run)
+        assert any("uv cache clean" in c for c in cmds)
+        assert sum("uv tool install" in c for c in cmds) == 2
 
 
 class TestCreateVmProfileParams:
