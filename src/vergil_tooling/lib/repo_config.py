@@ -12,6 +12,13 @@ from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
+from vergil_tooling.lib.update_deps.context import UpdateDepsError
+from vergil_tooling.lib.vergil_refs import (
+    MARKETPLACE_NAME,
+    expected_claude_ref,
+    iter_workflow_refs,
+    read_source_version,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -45,6 +52,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_hook_guard_shim(repo_root, items)
     _check_claude_md(repo_root, items)
     _check_claude_settings(repo_root, items)
+    _check_workflow_refs(repo_root, items)
     return ConfigDiff(items=items)
 
 
@@ -229,13 +237,7 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
         return
 
     template = _load_settings_template()
-    _check_settings_section(
-        raw,
-        template,
-        key="extraKnownMarketplaces",
-        field="local.claude_settings.marketplace",
-        items=items,
-    )
+    _check_marketplace_ref(repo_root, raw, template, items)
     _check_settings_section(
         raw,
         template,
@@ -243,6 +245,90 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
         field="local.claude_settings.plugin",
         items=items,
     )
+
+
+def _check_marketplace_ref(
+    repo_root: Path,
+    raw: dict[str, Any],
+    template: dict[str, Any],
+    items: list[DiffItem],
+) -> None:
+    """Assert the marketplace matches the template (except its version-derived
+    ``source.ref``) and carries the expected ref.
+
+    The ref is ``develop`` for the marketplace source repo, else the version
+    from ``vergil.toml``. Everything else under the entry must equal the
+    canonical template, so a wrong repo or source kind is still caught.
+    """
+    expected_source = (
+        template.get("extraKnownMarketplaces", {}).get(MARKETPLACE_NAME, {}).get("source", {})
+    )
+    section = raw.get("extraKnownMarketplaces", {})
+    entry = section.get(MARKETPLACE_NAME) if isinstance(section, dict) else None
+    if not isinstance(entry, dict):
+        items.append(
+            DiffItem(
+                field="local.claude_settings.marketplace",
+                expected=f"{MARKETPLACE_NAME} present",
+                actual="missing",
+            )
+        )
+        return
+    source = entry.get("source")
+    if not isinstance(source, dict):
+        items.append(
+            DiffItem(
+                field="local.claude_settings.marketplace",
+                expected="source object",
+                actual=f"source = {json.dumps(source, sort_keys=True)}",
+            )
+        )
+        return
+    source_without_ref = {k: v for k, v in source.items() if k != "ref"}
+    if source_without_ref != expected_source:
+        items.append(
+            DiffItem(
+                field="local.claude_settings.marketplace",
+                expected=f"source = {json.dumps(expected_source, sort_keys=True)}",
+                actual=f"source = {json.dumps(source_without_ref, sort_keys=True)}",
+            )
+        )
+        return
+    try:
+        expected_ref = expected_claude_ref(repo_root)
+    except (UpdateDepsError, OSError, ValueError):
+        return  # vergil.toml problems are reported by _check_vergil_toml
+    actual_ref = source.get("ref")
+    if actual_ref != expected_ref:
+        items.append(
+            DiffItem(
+                field="local.claude_settings.marketplace_ref",
+                expected=f"ref = {expected_ref}",
+                actual=f"ref = {actual_ref}",
+            )
+        )
+
+
+def _check_workflow_refs(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert every vergil-* reusable-workflow pin matches the vergil.toml version.
+
+    Unlike the marketplace ref, workflow pins use the version even for the
+    marketplace source repo — the plugin repo still consumes vergil-actions at a
+    pinned version.
+    """
+    try:
+        expected = read_source_version(repo_root)
+    except (UpdateDepsError, OSError, ValueError):
+        return  # vergil.toml problems are reported by _check_vergil_toml
+    for path, actual in iter_workflow_refs(repo_root):
+        if actual != expected:
+            items.append(
+                DiffItem(
+                    field="local.workflow_ref",
+                    expected=f"{path.name}: {expected}",
+                    actual=f"{path.name}: {actual}",
+                )
+            )
 
 
 def _check_settings_section(

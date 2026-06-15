@@ -1,61 +1,40 @@
 """Vergil ecosystem updater: normalize internal refs, optionally bump the version.
 
-The source of truth is ``[dependencies].vergil`` in ``vergil.toml``. Every
-secondary reference — workflow ``uses: vergil-*/...@vX.Y`` — must match it.
+The source of truth is ``[dependencies].vergil`` in ``vergil.toml`` (see
+``vergil_tooling.lib.vergil_refs``). Every secondary reference — workflow
+``uses: vergil-*/...@vX.Y`` and the Claude marketplace ref — must match it.
 ``normalize`` rewrites drifting refs to the source-of-truth version; ``bump``
 first rewrites the source of truth, then normalizes.
 """
 
 from __future__ import annotations
 
-import re
-import tomllib
+import json
 from typing import TYPE_CHECKING
 
-from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.update_deps.updater import UpdateResult
+from vergil_tooling.lib.vergil_refs import (
+    _REF_RE,
+    _SOURCE_RE,
+    MARKETPLACE_NAME,
+    format_version,
+    is_marketplace_source_repo,
+    read_source_version,
+)
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     from vergil_tooling.lib.update_deps.context import UpdateDepsContext
 
-# A vergil-internal reusable-workflow ref: owner starts with ``vergil-`` (e.g.
-# vergil-project), pinned to a ``vX.Y`` tag. Third-party actions (actions/...,
-# docker/..., github/...) do not match and are left alone.
-_REF_RE = re.compile(r"(uses:\s*vergil-[\w.-]+/[^@\s]+@)v\d+\.\d+")
-
-# The ``vergil = "..."`` line in vergil.toml's [dependencies] table.
-_SOURCE_RE = re.compile(r'(?m)^(vergil\s*=\s*)"[^"]*"')
-
-_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)$")
-
-
-def format_version(raw: str) -> str:
-    """Normalize a user-supplied version (``2.2`` or ``v2.2``) to ``vX.Y``."""
-    match = _VERSION_RE.match(raw.strip())
-    if match is None:
-        raise UpdateDepsError(
-            phase="vergil",
-            command="format_version",
-            message=f"invalid vergil version '{raw}' (expected X.Y, e.g. 2.2).",
-        )
-    return f"v{match.group(1)}.{match.group(2)}"
-
-
-def read_source_version(base: Path) -> str:
-    """Return ``[dependencies].vergil`` (the source of truth) from vergil.toml."""
-    with (base / "vergil.toml").open("rb") as handle:
-        raw = tomllib.load(handle)
-    try:
-        value: str = raw["dependencies"]["vergil"]
-    except KeyError as exc:
-        raise UpdateDepsError(
-            phase="vergil",
-            command="read_source_version",
-            message="vergil.toml [dependencies].vergil not found.",
-        ) from exc
-    return value
+# Re-exported from vergil_refs for back-compatibility with existing importers.
+__all__ = [
+    "VergilUpdater",
+    "format_version",
+    "normalize_refs",
+    "read_source_version",
+    "set_source_version",
+]
 
 
 def set_source_version(base: Path, target: str) -> bool:
@@ -84,6 +63,30 @@ def normalize_refs(base: Path, target: str) -> list[Path]:
     return changed
 
 
+def normalize_claude_ref(base: Path, target: str) -> Path | None:
+    """Set the marketplace ``source.ref`` in ``.claude/settings.json`` to *target*.
+
+    *target* is the derived ``vX.Y`` (or ``develop`` for the source repo). The
+    file is edited structurally (parsed JSON, re-dumped at indent 2) because the
+    ref may need to be *inserted* where none exists — a regex cannot do that
+    safely. Returns the path if changed, else ``None``. A missing file or
+    missing marketplace entry is a clean no-op.
+    """
+    settings_path = base / ".claude" / "settings.json"
+    if not settings_path.is_file():
+        return None
+    data = json.loads(settings_path.read_text(encoding="utf-8"))
+    try:
+        source = data["extraKnownMarketplaces"][MARKETPLACE_NAME]["source"]
+    except (KeyError, TypeError):
+        return None
+    if not isinstance(source, dict) or source.get("ref") == target:
+        return None
+    source["ref"] = target
+    settings_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    return settings_path
+
+
 def _base(ctx: UpdateDepsContext) -> Path:
     """The directory updaters operate on — the worktree once preflight made it."""
     return ctx.worktree_path if ctx.worktree_path is not None else ctx.repo_root
@@ -99,19 +102,22 @@ class VergilUpdater:
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         base = _base(ctx)
+        is_self = is_marketplace_source_repo(base)
         if ctx.vergil_bump is not None:
             target = format_version(ctx.vergil_bump)
             bumped = set_source_version(base, target)
             normalized = normalize_refs(base, target)
+            claude = normalize_claude_ref(base, "develop" if is_self else target)
             return UpdateResult(
                 updater=self.name,
-                changed=bumped or bool(normalized),
+                changed=bumped or bool(normalized) or claude is not None,
                 summary=f"bump vergil to {target}",
                 commit_message=f"chore(deps): bump vergil to {target}",
             )
         target = read_source_version(base)
         normalized = normalize_refs(base, target)
-        changed = bool(normalized)
+        claude = normalize_claude_ref(base, "develop" if is_self else target)
+        changed = bool(normalized) or claude is not None
         return UpdateResult(
             updater=self.name,
             changed=changed,
