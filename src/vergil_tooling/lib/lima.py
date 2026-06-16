@@ -824,9 +824,7 @@ def read_fingerprint(instance: str) -> str | None:
     VM is not a drifted VM.
     """
     try:
-        result = shell_run(
-            instance, "bash", "-c", f"cat {_FINGERPRINT_PATH} 2>/dev/null || true"
-        )
+        result = shell_run(instance, "bash", "-c", f"cat {_FINGERPRINT_PATH} 2>/dev/null || true")
     except subprocess.CalledProcessError as exc:
         raise VmUnreachableError(instance) from exc
     value = result.stdout.strip()
