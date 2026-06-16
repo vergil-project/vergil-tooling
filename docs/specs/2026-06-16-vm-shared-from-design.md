@@ -1,4 +1,4 @@
-# Borrowing Another Repo's VM via `[vm] shared-from`
+# Borrowing Another Repo's VM via `[vm] shared_from`
 
 **Issue:** #1668
 **Date:** 2026-06-16
@@ -46,7 +46,7 @@ borrower's checkout and the lender's checkout are siblings inside any VM.
 
 So the feature reduces to a single idea:
 
-> When the requested repo declares `shared-from`, redirect **instance + spec**
+> When the requested repo declares `shared_from`, redirect **instance + spec**
 > resolution to the lender, and leave the **working directory** on the
 > borrower's checkout.
 
@@ -59,7 +59,7 @@ A borrower declares the redirect in its own `vergil.toml`:
 
 ```toml
 [vm]
-shared-from = "logical-minds-foundry/mq-resiliency-lab"
+shared_from = "logical-minds-foundry/mq-resiliency-lab"
 ```
 
 Parsing changes in `lib/config.py`:
@@ -72,14 +72,14 @@ Parsing changes in `lib/config.py`:
   always explicit about the org so it reads the same regardless of the
   borrower's own org and supports cross-org borrowing without a special
   case.
-- **Mutual exclusivity.** When `shared-from` is present it must be the
+- **Mutual exclusivity.** When `shared_from` is present it must be the
   *only* key under `[vm]`. Any footprint or package key (`cpus`, `memory`,
   `disk`, `stale_days`, `packages`, `apt_repos`, `vagrant_plugins`,
   `port_forwards`, `nested`) or any `[vm.<role>]` overlay present alongside
   it is a `ConfigError`. A repo either *describes* a box or *borrows* one;
   describing both is contradictory and would silently diverge the
   borrower's box from the lender's. The error names the offending keys.
-- **Top-level only.** `shared-from` is rejected inside a `[vm.<role>]`
+- **Top-level only.** `shared_from` is rejected inside a `[vm.<role>]`
   overlay — a role cannot redirect.
 
 `shared_from` is **not** added to `_VM_KEYS` (the footprint key set used by
@@ -94,7 +94,7 @@ A single helper resolves the redirect once, reused by both resolver paths:
 resolve_borrow(identity, req_org, req_repo) -> Borrow | None
 ```
 
-It reads the requested repo's `vergil.toml`. If `[vm].shared-from` is set it
+It reads the requested repo's `vergil.toml`. If `[vm].shared_from` is set it
 validates and returns `Borrow(target_org, target_repo, target_stanza)`;
 otherwise it returns `None`. Validation (all hard errors, never a silent
 fallback):
@@ -104,7 +104,7 @@ fallback):
 2. **Missing lender.** The lender's directory, its `vergil.toml`, or its
    `[vm]` stanza is absent → error ("borrowed repo `<org>/<repo>` declares
    no VM").
-3. **Chains.** The lender's stanza itself declares `shared-from` → error.
+3. **Chains.** The lender's stanza itself declares `shared_from` → error.
    Borrowing is one hop only; a borrower must point at a repo that owns a
    real box, not at another borrower. This keeps resolution finite and the
    ownership model legible.
@@ -136,7 +136,7 @@ Each subcommand is classified **USE** (follow the redirect) or **MANAGE**
 *manage* its lifecycle — managing the shared box is done through the lender
 repo, which owns it.
 
-| Policy | Commands | Resolver | Behavior on a `shared-from` repo |
+| Policy | Commands | Resolver | Behavior on a `shared_from` repo |
 |---|---|---|---|
 | **USE** | `session`, `start` | `_resolve_target` | Redirect instance + spec to the lender; workspace stays the borrower's checkout. |
 | **MANAGE** | `create`, `rebuild` | `_resolve_target` | Block: error + exit 1. |
@@ -161,14 +161,14 @@ logical-minds-foundry/mq-resiliency-lab. Manage that box via the lender:
 - `_resolve_target` gains a `borrow_allowed: bool` parameter. `session` and
   `start` pass `True` (redirect); `create` and `rebuild` pass `False`
   (block). On a detected borrow with `borrow_allowed=False`, it raises
-  `BorrowBlocked`.
+  `BorrowError`.
 - `_resolve_instance` is used only by MANAGE commands (`stop`, `restart`,
   `update`, `destroy`). It currently reads no `vergil.toml` (so orphaned VMs
-  stay reachable). It gains a lightweight `shared-from` probe: if the
-  requested repo's config is readable and declares `shared-from`, raise
-  `BorrowBlocked`; if the config is missing (a true orphan), fall through to
+  stay reachable). It gains a lightweight `shared_from` probe: if the
+  requested repo's config is readable and declares `shared_from`, raise
+  `BorrowError`; if the config is missing (a true orphan), fall through to
   the existing instance-name behavior unchanged.
-- `BorrowBlocked` carries the preformatted message and is caught at the
+- `BorrowError` carries the preformatted message and is caught at the
   command-dispatch layer in `main`, which prints it to stderr and returns 1.
   This keeps each `_cmd_*` handler free of redirect bookkeeping.
 
@@ -190,10 +190,10 @@ logical-minds-foundry/mq-resiliency-lab. Manage that box via the lender:
 ## Testing
 
 - **`lib/config.py` parsing** (extend the config test suite):
-  - valid `shared-from` parses to `(org, repo)`;
+  - valid `shared_from` parses to `(org, repo)`;
   - bare-repo value rejected;
-  - `shared-from` + any footprint/package key rejected (mutual exclusivity);
-  - `shared-from` inside `[vm.<role>]` rejected;
+  - `shared_from` + any footprint/package key rejected (mutual exclusivity);
+  - `shared_from` inside `[vm.<role>]` rejected;
   - malformed value (empty side, extra slash, whitespace) rejected.
 - **Resolution** (extend `test_vrg_vm_resolve.py` / `test_vrg_vm.py`):
   - USE redirect — `_resolve_target` for a borrower yields the lender's
@@ -201,7 +201,7 @@ logical-minds-foundry/mq-resiliency-lab. Manage that box via the lender:
     borrower's path;
   - host override keyed by the lender applies;
   - MANAGE block — `create`/`rebuild`/`stop`/`restart`/`update`/`destroy`
-    on a borrower raise `BorrowBlocked` / exit 1 with a lender-pointing
+    on a borrower raise `BorrowError` / exit 1 with a lender-pointing
     message;
   - self-reference, chain, missing-lender, and missing-`[vm]` errors.
 
@@ -211,5 +211,5 @@ logical-minds-foundry/mq-resiliency-lab. Manage that box via the lender:
 - Overlaying borrower-specific packages on top of the lender's box (would
   diverge the fingerprint and defeat sharing; a repo that needs its own
   footprint should declare its own `[vm]`, not borrow).
-- Borrowing the base (non-dedicated) box — `shared-from` always names a
+- Borrowing the base (non-dedicated) box — `shared_from` always names a
   repo that owns a dedicated box.
