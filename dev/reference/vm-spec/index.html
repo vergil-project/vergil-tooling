@@ -5611,6 +5611,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#borrowing-a-vm-shared_from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Borrowing a VM (shared_from)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#port-forwards-port_forwards" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8421,6 +8432,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#borrowing-a-vm-shared_from" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Borrowing a VM (shared_from)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#port-forwards-port_forwards" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8567,6 +8589,12 @@ any <code>[vm]</code> key marks the spec customized, which gives the repo a dedi
 <td><code>false</code></td>
 <td>Nested virtualization (last-wins scalar; see below)</td>
 </tr>
+<tr>
+<td><code>shared_from</code></td>
+<td>string <code>"org/repo"</code></td>
+<td><em>(none)</em></td>
+<td>Borrow another repo's VM instead of declaring one. Mutually exclusive with every other <code>[vm]</code> key (see below)</td>
+</tr>
 </tbody>
 </table>
 <p>The vergil-vm template owns <em>how</em> declarative installs happen — repos
@@ -8590,6 +8618,26 @@ halves together:</p>
 <li><strong>In-guest check</strong> — the template verifies <code>/dev/kvm</code> exists and
    fails the build rather than degrading silently to TCG emulation.</li>
 </ol>
+<h2 id="borrowing-a-vm-shared_from">Borrowing a VM (<code>shared_from</code>)<a class="headerlink" href="#borrowing-a-vm-shared_from" title="Permanent link">&para;</a></h2>
+<p>A repo with no VM of its own can run its sessions inside another repo's
+dedicated VM:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[vm]</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">shared_from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;logical-minds-foundry/mq-resiliency-lab&quot;</span>
+</code></pre></div>
+<p><code>vrg-vm session &lt;org&gt;/&lt;borrower&gt;</code> then shells into the <strong>lender's</strong> box
+and <code>cd</code>s into the borrower's checkout (the whole projects directory is
+mounted into every VM, so both checkouts are present).</p>
+<ul>
+<li>The value must be a fully-qualified <code>org/repo</code>.</li>
+<li><code>shared_from</code> is the <strong>only</strong> key allowed under <code>[vm]</code> — combining it
+  with a footprint/package key or a <code>[vm.&lt;role&gt;]</code> overlay is a config
+  error. A repo either describes a VM or borrows one.</li>
+<li>The borrower may <strong>use</strong> the shared box (<code>session</code>, <code>start</code>) but not
+  <strong>manage</strong> it: <code>create</code>, <code>stop</code>, <code>restart</code>, <code>update</code>, <code>destroy</code>, and
+  <code>rebuild</code> on the borrower are refused and point at the lender repo,
+  which owns the box.</li>
+<li>One hop only — the lender may not itself declare <code>shared_from</code>.</li>
+</ul>
 <h2 id="port-forwards-port_forwards">Port forwards (<code>port_forwards</code>)<a class="headerlink" href="#port-forwards-port_forwards" title="Permanent link">&para;</a></h2>
 <p>Each record is <code>"&lt;port&gt;|&lt;host:port&gt;"</code>. The vergil-vm template
 (vergil-project/vergil-vm#170) provisions a <code>systemd-socket-proxyd</code>
