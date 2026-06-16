@@ -62,6 +62,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `vagrant_plugins` | list of strings | `[]` | Vagrant plugins to install (accumulates) |
 | `port_forwards` | list of strings | `[]` | `"<port>\|<host:port>"` relay records — bind `<port>` in the VM and proxy to `<host:port>` (accumulates; see below) |
 | `nested` | bool | `false` | Nested virtualization (last-wins scalar; see below) |
+| `shared_from` | string `"org/repo"` | *(none)* | Borrow another repo's VM instead of declaring one. Mutually exclusive with every other `[vm]` key (see below) |
 
 The vergil-vm template owns *how* declarative installs happen — repos
 never supply scripts.
@@ -85,6 +86,30 @@ Three-layer defense, outermost first:
 2. **Lima** — rejects `nestedVirtualization` on unsupported hosts.
 3. **In-guest check** — the template verifies `/dev/kvm` exists and
    fails the build rather than degrading silently to TCG emulation.
+
+## Borrowing a VM (`shared_from`)
+
+A repo with no VM of its own can run its sessions inside another repo's
+dedicated VM:
+
+```toml
+[vm]
+shared_from = "logical-minds-foundry/mq-resiliency-lab"
+```
+
+`vrg-vm session <org>/<borrower>` then shells into the **lender's** box
+and `cd`s into the borrower's checkout (the whole projects directory is
+mounted into every VM, so both checkouts are present).
+
+- The value must be a fully-qualified `org/repo`.
+- `shared_from` is the **only** key allowed under `[vm]` — combining it
+  with a footprint/package key or a `[vm.<role>]` overlay is a config
+  error. A repo either describes a VM or borrows one.
+- The borrower may **use** the shared box (`session`, `start`) but not
+  **manage** it: `create`, `stop`, `restart`, `update`, `destroy`, and
+  `rebuild` on the borrower are refused and point at the lender repo,
+  which owns the box.
+- One hop only — the lender may not itself declare `shared_from`.
 
 ## Port forwards (`port_forwards`)
 

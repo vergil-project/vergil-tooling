@@ -99,6 +99,77 @@ class Target:
     fingerprint: str
 
 
+class BorrowError(Exception):
+    """A vrg-vm command cannot proceed because of a [vm] shared_from redirect.
+
+    Raised for an invalid borrow (self-reference, chain, or a lender that declares
+    no VM) and for a MANAGE command invoked against a borrowing repo. Caught in
+    main(), which prints the message and returns 1.
+    """
+
+
+@dataclass
+class Borrow:
+    """A resolved redirect: the lender repo and its [vm] stanza."""
+
+    org: str
+    repo: str
+    stanza: VmStanza
+
+
+def _read_repo_vm(identity: Identity, org: str, repo: str) -> VmStanza | None:
+    """Return the [vm] stanza of projects_dir/<org>/<repo>, or None if no vergil.toml."""
+    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
+    try:
+        return read_config(repo_dir).vm
+    except FileNotFoundError:
+        return None
+
+
+def resolve_borrow(
+    identity: Identity,
+    req_org: str,
+    req_repo: str,
+    requested_vm: VmStanza | None,
+) -> Borrow | None:
+    """Resolve a [vm] shared_from redirect on the requested repo to its lender.
+
+    Returns None when the requested repo does not borrow. Raises BorrowError on a
+    self-reference, a borrow chain, or a lender that declares no VM.
+    """
+    if requested_vm is None or requested_vm.shared_from is None:
+        return None
+    lender_org, lender_repo = requested_vm.shared_from
+    if (lender_org, lender_repo) == (req_org, req_repo):
+        msg = f"{req_org}/{req_repo} cannot borrow its own VM (shared_from points at itself)"
+        raise BorrowError(msg)
+    lender_vm = _read_repo_vm(identity, lender_org, lender_repo)
+    if lender_vm is None:
+        msg = (
+            f"{req_org}/{req_repo} borrows the VM of {lender_org}/{lender_repo}, "
+            f"but that repo declares no [vm] stanza"
+        )
+        raise BorrowError(msg)
+    if lender_vm.shared_from is not None:
+        msg = (
+            f"{req_org}/{req_repo} borrows {lender_org}/{lender_repo}, which itself "
+            f"borrows another VM; shared_from chains are not allowed"
+        )
+        raise BorrowError(msg)
+    return Borrow(lender_org, lender_repo, lender_vm)
+
+
+def _borrow_block_msg(
+    command: str, req_org: str, req_repo: str, lender_org: str, lender_repo: str
+) -> str:
+    """Message for a MANAGE command blocked because the repo borrows a VM."""
+    return (
+        f"{req_org}/{req_repo} borrows the VM of {lender_org}/{lender_repo}.\n"
+        f"Manage that box via the lender:\n"
+        f"  vrg-vm {command} {lender_org}/{lender_repo}"
+    )
+
+
 def _base_footprint(identity: Identity) -> dict[str, object]:
     return {
         "cpus": identity.cpus if identity.cpus is not None else _BASE_CPUS,
@@ -124,8 +195,15 @@ def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     return parts[0], parts[1]
 
 
-def _resolve_target(args: argparse.Namespace) -> Target:
-    """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
+def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -> Target:
+    """Resolve (identity, optional org/repo) to a base or dedicated VM target.
+
+    When the requested repo declares ``[vm] shared_from`` and ``borrow_allowed`` is
+    True (USE commands: session, start), the instance and spec redirect to the
+    lender. With ``borrow_allowed`` False (MANAGE commands: create, rebuild) a
+    borrow raises ``BorrowError``. The session working directory is unaffected —
+    it is always derived from ``args.workspace`` by the caller.
+    """
     name, identity, config = _resolve(args)
     workspace = getattr(args, "workspace", None)
     base = _base_footprint(identity)
@@ -135,31 +213,42 @@ def _resolve_target(args: argparse.Namespace) -> Target:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
 
-    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
-    try:
-        stanza = read_config(repo_dir).vm
-    except FileNotFoundError:
-        stanza = None  # a repo with no vergil.toml needs no dedicated VM
-    override = identity.overrides.get((org, repo))
-    spec = compose_vm_spec(identity=name, base=base, stanza=stanza, override=override)
+    requested_vm = _read_repo_vm(identity, org, repo)
+    borrow = resolve_borrow(identity, org, repo, requested_vm)
+    eff_vm: VmStanza | None
+    if borrow is not None:
+        if not borrow_allowed:
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, borrow.org, borrow.repo))
+        eff_org, eff_repo, eff_vm = borrow.org, borrow.repo, borrow.stanza
+    else:
+        eff_org, eff_repo, eff_vm = org, repo, requested_vm
+
+    override = identity.overrides.get((eff_org, eff_repo))
+    spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
 
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
 
-    inst = instance_name(name, org, repo)
-    return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
+    inst = instance_name(name, eff_org, eff_repo)
+    return Target(name, identity, config, eff_org, eff_repo, spec, inst, spec_fingerprint(spec))
 
 
 def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
     """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
 
-    Unlike `_resolve_target`, this reads no repo `vergil.toml` and composes no spec — it only
-    needs the instance to act on. A 2-level `org/repo` names the dedicated instance directly,
-    so an orphaned VM (whose repo dropped its `[vm]`) is still reachable; anything else is base.
+    These are all MANAGE commands: if the requested repo borrows a VM via
+    ``[vm] shared_from`` they are blocked with ``BorrowError`` pointing at the
+    lender. A repo with no readable ``vergil.toml`` (a true orphan) is unaffected
+    and resolves to its own instance name, so an orphaned dedicated VM (whose repo
+    dropped its `[vm]`) stays reachable; anything else is base.
     """
     name, identity, config = _resolve(args)
     org, repo = _workspace_org_repo(getattr(args, "workspace", None))
     if org is not None and repo is not None:
+        requested_vm = _read_repo_vm(identity, org, repo)
+        if requested_vm is not None and requested_vm.shared_from is not None:
+            lender_org, lender_repo = requested_vm.shared_from
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, lender_org, lender_repo))
         instance = instance_name(name, org, repo)
     else:
         instance = identity.vm_instance
@@ -210,16 +299,27 @@ def _preflight_target(target: Target) -> int:
     # VM un-startable and falsely demanded a rebuild. For start (VM stopped) the check is
     # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
     # "drift only while running" contract.
-    if (
-        status == "Running"
-        and vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild"
-    ):
-        print(
-            f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
-            f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
-            file=sys.stderr,
-        )
-        return 1
+    if status == "Running":
+        spec_status = vm_spec_status(target.instance, target.fingerprint)
+        # 'unreachable' is not drift: Lima reports the box Running but the shell
+        # transport (SSH) refused, so the spec was never read. Telling the user to
+        # rebuild would be wrong — the VM may be mid-boot or wedged. Surface the
+        # reachability problem with a restart remediation instead.
+        if spec_status == "unreachable":
+            print(
+                f"ERROR: VM '{target.instance}' is reported Running but is not reachable "
+                f"over SSH — it may be mid-boot or wedged.\nTry: vrg-vm restart {workspace} "
+                f"--identity {target.identity_name} (or inspect with `limactl list`).",
+                file=sys.stderr,
+            )
+            return 1
+        if spec_status == "needs-rebuild":
+            print(
+                f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
+                f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
+                file=sys.stderr,
+            )
+            return 1
     _warn_under(target)
     return 0
 
@@ -304,6 +404,14 @@ class SpecDriftError(RuntimeError):
     """
 
 
+class SpecCheckUnreachableError(RuntimeError):
+    """Raised by the post-start spec-check stage when a freshly-started VM cannot
+    be reached over SSH to read its fingerprint. Surfaced as a non-fatal ⚠ like
+    SpecDriftError, but explicitly *not* drift: the spec was never read, so the
+    warning must never tell the user to rebuild.
+    """
+
+
 def _st_spec_check(state: _LifecycleState) -> None:
     # Post-start drift check. The fingerprint lives inside the guest and is only
     # readable now that it is up — the check _preflight_target cannot perform
@@ -313,9 +421,18 @@ def _st_spec_check(state: _LifecycleState) -> None:
     target = state.target
     if not target.spec.dedicated:
         return
-    if vm_spec_status(target.instance, target.fingerprint) != "needs-rebuild":
+    spec_status = vm_spec_status(target.instance, target.fingerprint)
+    if spec_status == "ok":
         return
     workspace = f"{target.org}/{target.repo}"
+    # 'unreachable' is not drift: the VM was just started but the shell transport
+    # could not read the fingerprint. Warn about reachability — never rebuild.
+    if spec_status == "unreachable":
+        msg = (
+            f"VM '{target.instance}' was started but could not be reached over SSH to "
+            f"verify its spec — it may still be settling. Re-run if the session fails to connect."
+        )
+        raise SpecCheckUnreachableError(msg)
     msg = (
         f"VM '{target.instance}' no longer meets {workspace}'s spec — "
         f"rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}"
@@ -484,7 +601,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
+    target = _resolve_target(args, borrow_allowed=True)
     name = target.identity_name
 
     if _preflight_target(target) != 0:
@@ -1071,7 +1188,7 @@ def _session_inner(
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
+    target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
 
     if _preflight_target(target) != 0:
@@ -1325,7 +1442,11 @@ def main(argv: list[str] | None = None) -> int:
         "list": _cmd_list,
         "session": _cmd_session,
     }
-    return dispatch[args.command](args)
+    try:
+        return dispatch[args.command](args)
+    except BorrowError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

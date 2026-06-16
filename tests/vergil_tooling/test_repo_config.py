@@ -24,6 +24,23 @@ versions = ["3.12"]
 vergil = "v2.0.7"
 """
 
+_MINIMAL_VERGIL_TOML_VER = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "python"
+
+[project.co-authors]
+
+[ci]
+versions = ["3.12"]
+
+[dependencies]
+vergil = "{version}"
+"""
+
 
 class TestVergilToml:
     def test_missing(self, tmp_path: Path) -> None:
@@ -403,7 +420,20 @@ def _write_compliant_repo(root: Path) -> None:
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
     (root / "CLAUDE.md").write_text("# CLAUDE.md\n\n" + _TEMPLATE_TEXT + "\n")
-    (root / ".claude" / "settings.json").write_text(json.dumps(_MINIMAL_SETTINGS))
+    compliant_settings = {
+        "extraKnownMarketplaces": {
+            "vergil-marketplace": {
+                "source": {
+                    "source": "github",
+                    "repo": "vergil-project/vergil-claude-plugin",
+                    # ref must match _MINIMAL_VERGIL_TOML's [dependencies].vergil
+                    "ref": "v2.0.7",
+                }
+            }
+        },
+        "enabledPlugins": {"vergil@vergil-marketplace": True},
+    }
+    (root / ".claude" / "settings.json").write_text(json.dumps(compliant_settings))
 
 
 class TestIntegration:
@@ -420,3 +450,85 @@ class TestIntegration:
         _write_compliant_repo(tmp_path)
         diff = audit_local_config(tmp_path)
         assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
+
+
+class TestMarketplaceRef:
+    def _write(
+        self,
+        base: Path,
+        *,
+        version: str,
+        ref: str | None,
+        self_repo: bool = False,
+    ) -> None:
+        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version=version))
+        if self_repo:
+            (base / ".claude-plugin").mkdir()
+            (base / ".claude-plugin" / "marketplace.json").write_text("{}")
+        src = {"source": "github", "repo": "vergil-project/vergil-claude-plugin"}
+        if ref is not None:
+            src["ref"] = ref
+        settings = {
+            "extraKnownMarketplaces": {"vergil-marketplace": {"source": src}},
+            "enabledPlugins": {"vergil@vergil-marketplace": True},
+        }
+        claude = base / ".claude"
+        claude.mkdir(parents=True, exist_ok=True)
+        (claude / "settings.json").write_text(json.dumps(settings))
+        (claude / "hooks").mkdir(parents=True, exist_ok=True)
+        (claude / "hooks" / "guard.sh").write_text("#!/bin/sh\n")
+
+    def test_consumer_ref_matches(self, tmp_path: Path) -> None:
+        self._write(tmp_path, version="v2.0", ref="v2.0")
+        diff = audit_local_config(tmp_path)
+        assert not [i for i in diff.items if "marketplace_ref" in i.field]
+
+    def test_consumer_ref_missing_flagged(self, tmp_path: Path) -> None:
+        self._write(tmp_path, version="v2.0", ref=None)
+        diff = audit_local_config(tmp_path)
+        flagged = [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+        assert len(flagged) == 1
+        assert "v2.0" in str(flagged[0].expected)
+
+    def test_consumer_ref_wrong_flagged(self, tmp_path: Path) -> None:
+        self._write(tmp_path, version="v2.1", ref="v2.0")
+        diff = audit_local_config(tmp_path)
+        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+
+    def test_self_repo_requires_develop(self, tmp_path: Path) -> None:
+        self._write(tmp_path, version="v2.1", ref="develop", self_repo=True)
+        diff = audit_local_config(tmp_path)
+        assert not [i for i in diff.items if "marketplace_ref" in i.field]
+
+    def test_self_repo_version_ref_flagged(self, tmp_path: Path) -> None:
+        self._write(tmp_path, version="v2.1", ref="v2.1", self_repo=True)
+        diff = audit_local_config(tmp_path)
+        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+
+
+class TestWorkflowRefs:
+    def _write_wf(self, base: Path, version: str, pin: str) -> None:
+        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version=version))
+        wf = base / ".github" / "workflows"
+        wf.mkdir(parents=True)
+        (wf / "ci.yml").write_text(
+            f"jobs:\n  a:\n    uses: vergil-project/vergil-actions/.github/workflows/ci.yml@{pin}\n"
+        )
+
+    def test_matching_pin_clean(self, tmp_path: Path) -> None:
+        self._write_wf(tmp_path, "v2.0", "v2.0")
+        diff = audit_local_config(tmp_path)
+        assert not [i for i in diff.items if i.field == "local.workflow_ref"]
+
+    def test_drifted_pin_flagged(self, tmp_path: Path) -> None:
+        self._write_wf(tmp_path, "v2.1", "v2.0")
+        diff = audit_local_config(tmp_path)
+        flagged = [i for i in diff.items if i.field == "local.workflow_ref"]
+        assert len(flagged) == 1
+        assert "v2.1" in str(flagged[0].expected)
+        assert "v2.0" in str(flagged[0].actual)
+
+    def test_no_workflows_no_flag(self, tmp_path: Path) -> None:
+        (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.0"))
+        diff = audit_local_config(tmp_path)
+        assert not [i for i in diff.items if i.field == "local.workflow_ref"]

@@ -802,12 +802,31 @@ def try_update_tooling(
 _FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
 
 
+class VmUnreachableError(RuntimeError):
+    """Raised when the Lima shell transport to a VM fails (e.g. SSH connection
+    refused) — the VM could not be contacted at all.
+
+    Distinct from an absent spec marker: an unreachable VM says nothing about
+    whether its spec drifted, so callers must not collapse this into the
+    "needs-rebuild" signal. Doing so misreports a reachability failure as spec
+    drift and tells the user to rebuild a VM that may just be mid-boot or wedged.
+    """
+
+
 def read_fingerprint(instance: str) -> str | None:
-    """Return the spec fingerprint stamped into the VM, or None if absent/unreadable."""
+    """Return the spec fingerprint stamped into the VM, or None if the marker is absent.
+
+    The in-guest read is masked (``cat ... 2>/dev/null || true``) so a missing
+    marker yields empty stdout from a zero exit rather than a non-zero exit. Any
+    remaining failure of the shell round-trip is therefore unambiguously a
+    transport failure (the VM is unreachable), which is raised as
+    ``VmUnreachableError`` instead of being collapsed into None — an unreachable
+    VM is not a drifted VM.
+    """
     try:
-        result = shell_run(instance, "cat", _FINGERPRINT_PATH)
-    except subprocess.CalledProcessError:
-        return None
+        result = shell_run(instance, "bash", "-c", f"cat {_FINGERPRINT_PATH} 2>/dev/null || true")
+    except subprocess.CalledProcessError as exc:
+        raise VmUnreachableError(instance) from exc
     value = result.stdout.strip()
     return value or None
 
@@ -816,9 +835,14 @@ def vm_spec_status(instance: str, expected_fingerprint: str) -> str:
     """Compare the VM's stamped fingerprint to the freshly composed one.
 
     Returns 'ok' on match, 'needs-rebuild' on drift (including a missing marker on a
-    box that should carry one).
+    box that should carry one), and 'unreachable' when the VM cannot be contacted
+    over the Lima shell transport. 'unreachable' is deliberately *not* drift: the
+    spec was never read, so the caller must remediate reachability, not rebuild.
     """
-    actual = read_fingerprint(instance)
+    try:
+        actual = read_fingerprint(instance)
+    except VmUnreachableError:
+        return "unreachable"
     return "ok" if actual == expected_fingerprint else "needs-rebuild"
 
 
