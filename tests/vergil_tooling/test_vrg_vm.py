@@ -12,17 +12,21 @@ from unittest.mock import MagicMock, call, patch
 import pytest
 
 from vergil_tooling.bin.vrg_vm import (
+    BorrowError,
     DedicatedRow,
     Target,
     _list_rows,
     _log_root,
     _preflight_target,
     _probe_running,
+    _read_repo_vm,
+    _resolve,
     _resolve_target,
     _target_ref,
     _warn_under,
     discover_dedicated,
     main,
+    resolve_borrow,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_spec import ComposedSpec
@@ -1833,6 +1837,121 @@ class TestResolveTarget:
         target = _resolve_target(_args(cfg, "/abs/path"))
         assert target.spec.dedicated is False
         assert target.instance == "vergil-user"
+
+    def test_borrow_redirects_instance_and_spec(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/tooling"), borrow_allowed=True)
+        # Instance + spec resolve to the LENDER, not the borrower.
+        assert target.org == "lmf"
+        assert target.repo == "lab"
+        assert target.instance == "vergil-user.lmf.lab"
+        assert target.spec.dedicated is True
+        assert target.spec.cpus == 12
+
+    def test_borrow_fingerprint_matches_lender(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        lender = _resolve_target(_args(cfg, "lmf/lab"))
+        borrower = _resolve_target(_args(cfg, "lmf/tooling"), borrow_allowed=True)
+        assert borrower.fingerprint == lender.fingerprint
+        assert borrower.instance == lender.instance
+
+
+_LENDER_VM = '\n[vm]\npackages = ["qemu-system-x86"]\ncpus = 12\n'
+_BORROW_VM = '\n[vm]\nshared_from = "lmf/lab"\n'
+
+
+class TestResolveBorrow:
+    def test_no_shared_from_returns_none(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _LENDER_VM)
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "lab")
+        assert resolve_borrow(identity, "lmf", "lab", requested_vm) is None
+
+    def test_borrow_resolves_to_lender(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _LENDER_VM)
+        _make_repo(projects, "lmf", "tooling", _BORROW_VM)
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "tooling")
+        borrow = resolve_borrow(identity, "lmf", "tooling", requested_vm)
+        assert borrow is not None
+        assert (borrow.org, borrow.repo) == ("lmf", "lab")
+        assert borrow.stanza.cpus == 12
+
+    def test_self_reference_raises(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/tooling"\n')
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "tooling")
+        with pytest.raises(BorrowError, match="its own VM"):
+            resolve_borrow(identity, "lmf", "tooling", requested_vm)
+
+    def test_missing_lender_raises(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "tooling", _BORROW_VM)  # lmf/lab does not exist
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "tooling")
+        with pytest.raises(BorrowError, match="declares no \\[vm\\] stanza"):
+            resolve_borrow(identity, "lmf", "tooling", requested_vm)
+
+    def test_lender_without_vm_raises(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab")  # vergil.toml but no [vm]
+        _make_repo(projects, "lmf", "tooling", _BORROW_VM)
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "tooling")
+        with pytest.raises(BorrowError, match="declares no \\[vm\\] stanza"):
+            resolve_borrow(identity, "lmf", "tooling", requested_vm)
+
+    def test_chain_raises(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", '\n[vm]\nshared_from = "lmf/base"\n')
+        _make_repo(projects, "lmf", "base", _LENDER_VM)
+        _make_repo(projects, "lmf", "tooling", _BORROW_VM)
+        cfg = _identities(tmp_path, projects)
+        _name, identity, _config = _resolve(_args(cfg, None))
+        requested_vm = _read_repo_vm(identity, "lmf", "tooling")
+        with pytest.raises(BorrowError, match="chains are not allowed"):
+            resolve_borrow(identity, "lmf", "tooling", requested_vm)
+
+
+class TestBorrowBlocks:
+    def _setup(self, tmp_path: Path) -> Path:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        return _identities(tmp_path, projects)
+
+    @pytest.mark.parametrize("command", ["create", "stop", "restart", "destroy", "rebuild"])
+    def test_manage_command_blocked_on_borrower(
+        self, command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._setup(tmp_path)
+        result = main([command, "lmf/tooling", "--config", str(cfg)])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "borrows the VM of lmf/lab" in err
+        assert f"vrg-vm {command} lmf/lab" in err
+
+    def test_update_blocked_on_borrower(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._setup(tmp_path)
+        result = main(["update", "lmf/tooling", "--config", str(cfg)])
+        assert result == 1
+        assert "borrows the VM of lmf/lab" in capsys.readouterr().err
 
 
 class TestCreateDedicated:
