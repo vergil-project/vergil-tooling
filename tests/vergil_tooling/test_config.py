@@ -795,9 +795,7 @@ class TestParseVmStanza:
         assert stanza is not None
         assert stanza.shared_from is None
 
-    def test_shared_from_not_flagged_unrecognized(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
+    def test_shared_from_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
         parse_vm_stanza({"vm": {"shared_from": "lmf/mq"}})
         assert "unrecognized" not in capsys.readouterr().err
 

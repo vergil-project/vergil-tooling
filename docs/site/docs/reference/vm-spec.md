@@ -62,7 +62,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `vagrant_plugins` | list of strings | `[]` | Vagrant plugins to install (accumulates) |
 | `port_forwards` | list of strings | `[]` | `"<port>\|<host:port>"` relay records — bind `<port>` in the VM and proxy to `<host:port>` (accumulates; see below) |
 | `nested` | bool | `false` | Nested virtualization (last-wins scalar; see below) |
-| `shared_from` | string `"org/repo"` | _(none)_ | Borrow another repo's VM instead of declaring one. Mutually exclusive with every other `[vm]` key (see below) |
+| `shared_from` | string `"org/repo"` | *(none)* | Borrow another repo's VM instead of declaring one. Mutually exclusive with every other `[vm]` key (see below) |
 
 The vergil-vm template owns *how* declarative installs happen — repos
 never supply scripts.

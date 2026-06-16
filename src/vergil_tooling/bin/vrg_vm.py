@@ -215,6 +215,7 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
+    eff_vm: VmStanza | None
     if borrow is not None:
         if not borrow_allowed:
             raise BorrowError(_borrow_block_msg(args.command, org, repo, borrow.org, borrow.repo))
