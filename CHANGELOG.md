@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.37] - 2026-06-16
+
+### Bug fixes
+
+- distinguish unreachable VM from spec drift in preflight (#1666)
+
+### Documentation
+
+- add vergil-forge observability design (#1661) (#1662)
+
+### Features
+
+- derive the Claude marketplace ref from the vergil.toml version (#1663)
+- borrow another repo's VM via [vm] shared_from (#1669)
+
 ## [2.1.36] - 2026-06-14
 
 ### Bug fixes
