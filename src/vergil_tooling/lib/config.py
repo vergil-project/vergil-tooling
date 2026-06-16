@@ -131,6 +131,7 @@ class VmStanza:
     port_forwards: list[str]
     roles: dict[str, RoleOverlay]
     nested: bool | None = None
+    shared_from: tuple[str, str] | None = None
 
 
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
@@ -155,7 +156,29 @@ _VM_KEYS = frozenset(
 )
 
 
+_SHARED_FROM_KEY = "shared_from"
+_ORG_REPO_PARTS = 2
+
+
+def _parse_shared_from(value: Any, source: str) -> tuple[str, str]:
+    """Validate a ``[vm].shared_from`` value and return ``(org, repo)``."""
+    if not isinstance(value, str):
+        msg = f"{source}: [vm].shared_from must be a string"
+        raise ConfigError(msg)
+    if any(c.isspace() for c in value):
+        msg = f"{source}: [vm].shared_from must not contain whitespace (got {value!r})"
+        raise ConfigError(msg)
+    parts = value.split("/")
+    if len(parts) != _ORG_REPO_PARTS or not all(parts):
+        msg = f"{source}: [vm].shared_from must be 'org/repo' (got {value!r})"
+        raise ConfigError(msg)
+    return (parts[0], parts[1])
+
+
 def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FILE) -> RoleOverlay:
+    if _SHARED_FROM_KEY in raw:
+        msg = f"{source}: shared_from is not allowed in a role overlay [vm.{name}]"
+        raise ConfigError(msg)
     for key in raw:
         if key not in _VM_KEYS:
             print(f"{source}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
@@ -179,13 +202,25 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         return None
     roles: dict[str, RoleOverlay] = {}
     fields: dict[str, Any] = {}
+    shared_from: tuple[str, str] | None = None
     for key, value in vm_raw.items():
-        if isinstance(value, dict):
+        if key == _SHARED_FROM_KEY:
+            shared_from = _parse_shared_from(value, source)
+        elif isinstance(value, dict):
             roles[key] = _parse_role_overlay(key, value, source)
         elif key in _VM_KEYS:
             fields[key] = value
         else:
             print(f"{source}: unrecognized key '{key}' in [vm]", file=sys.stderr)
+
+    if shared_from is not None and (fields or roles):
+        offenders = sorted([*fields, *(f"[vm.{r}]" for r in roles)])
+        msg = (
+            f"{source}: [vm].shared_from cannot be combined with other [vm] keys "
+            f"({', '.join(offenders)}); a repo either describes a VM or borrows one"
+        )
+        raise ConfigError(msg)
+
     return VmStanza(
         packages=list(fields.get("packages", [])),
         cpus=fields.get("cpus"),
@@ -197,6 +232,7 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         port_forwards=list(fields.get("port_forwards", [])),
         roles=roles,
         nested=fields.get("nested"),
+        shared_from=shared_from,
     )
 
 

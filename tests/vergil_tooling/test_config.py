@@ -783,6 +783,60 @@ class TestParseVmStanza:
         (tmp_path / "vergil.toml").write_text(_VALID_TOML)
         assert read_config(tmp_path).vm is None
 
+    def test_shared_from_parsed_to_org_repo(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"shared_from": "lmf/mq-resiliency-lab"}})
+        assert stanza is not None
+        assert stanza.shared_from == ("lmf", "mq-resiliency-lab")
+        assert stanza.packages == []
+        assert stanza.roles == {}
+
+    def test_shared_from_absent_is_none(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"packages": []}})
+        assert stanza is not None
+        assert stanza.shared_from is None
+
+    def test_shared_from_not_flagged_unrecognized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parse_vm_stanza({"vm": {"shared_from": "lmf/mq"}})
+        assert "unrecognized" not in capsys.readouterr().err
+
+    def test_shared_from_bare_repo_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="shared_from must be 'org/repo'"):
+            parse_vm_stanza({"vm": {"shared_from": "mq-resiliency-lab"}})
+
+    def test_shared_from_empty_side_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="shared_from must be 'org/repo'"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/"}})
+
+    def test_shared_from_extra_slash_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="shared_from must be 'org/repo'"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/mq/extra"}})
+
+    def test_shared_from_whitespace_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="whitespace"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf / mq"}})
+
+    def test_shared_from_non_string_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="must be a string"):
+            parse_vm_stanza({"vm": {"shared_from": 123}})
+
+    def test_shared_from_with_footprint_key_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="cannot be combined"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/mq", "cpus": 8}})
+
+    def test_shared_from_with_packages_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="cannot be combined"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/mq", "packages": ["x"]}})
+
+    def test_shared_from_with_role_overlay_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="cannot be combined"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/mq", "vergil-user": {"cpus": 8}}})
+
+    def test_shared_from_inside_role_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="shared_from is not allowed in a role"):
+            parse_vm_stanza({"vm": {"vergil-user": {"shared_from": "lmf/mq"}}})
+
 
 # -- [project] ghas key -------------------------------------------------------
 
