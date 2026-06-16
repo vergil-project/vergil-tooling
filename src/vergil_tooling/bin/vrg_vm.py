@@ -195,8 +195,15 @@ def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     return parts[0], parts[1]
 
 
-def _resolve_target(args: argparse.Namespace) -> Target:
-    """Resolve (identity, optional org/repo) to a base or dedicated VM target."""
+def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -> Target:
+    """Resolve (identity, optional org/repo) to a base or dedicated VM target.
+
+    When the requested repo declares ``[vm] shared_from`` and ``borrow_allowed`` is
+    True (USE commands: session, start), the instance and spec redirect to the
+    lender. With ``borrow_allowed`` False (MANAGE commands: create, rebuild) a
+    borrow raises ``BorrowError``. The session working directory is unaffected —
+    it is always derived from ``args.workspace`` by the caller.
+    """
     name, identity, config = _resolve(args)
     workspace = getattr(args, "workspace", None)
     base = _base_footprint(identity)
@@ -206,19 +213,23 @@ def _resolve_target(args: argparse.Namespace) -> Target:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
 
-    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
-    try:
-        stanza = read_config(repo_dir).vm
-    except FileNotFoundError:
-        stanza = None  # a repo with no vergil.toml needs no dedicated VM
-    override = identity.overrides.get((org, repo))
-    spec = compose_vm_spec(identity=name, base=base, stanza=stanza, override=override)
+    requested_vm = _read_repo_vm(identity, org, repo)
+    borrow = resolve_borrow(identity, org, repo, requested_vm)
+    if borrow is not None:
+        if not borrow_allowed:
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, borrow.org, borrow.repo))
+        eff_org, eff_repo, eff_vm = borrow.org, borrow.repo, borrow.stanza
+    else:
+        eff_org, eff_repo, eff_vm = org, repo, requested_vm
+
+    override = identity.overrides.get((eff_org, eff_repo))
+    spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
 
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
 
-    inst = instance_name(name, org, repo)
-    return Target(name, identity, config, org, repo, spec, inst, spec_fingerprint(spec))
+    inst = instance_name(name, eff_org, eff_repo)
+    return Target(name, identity, config, eff_org, eff_repo, spec, inst, spec_fingerprint(spec))
 
 
 def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
@@ -583,7 +594,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
 
 
 def _cmd_start(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
+    target = _resolve_target(args, borrow_allowed=True)
     name = target.identity_name
 
     if _preflight_target(target) != 0:
@@ -1170,7 +1181,7 @@ def _session_inner(
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
+    target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
 
     if _preflight_target(target) != 0:

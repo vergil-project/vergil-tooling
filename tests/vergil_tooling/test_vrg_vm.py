@@ -1838,6 +1838,29 @@ class TestResolveTarget:
         assert target.spec.dedicated is False
         assert target.instance == "vergil-user"
 
+    def test_borrow_redirects_instance_and_spec(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/tooling"), borrow_allowed=True)
+        # Instance + spec resolve to the LENDER, not the borrower.
+        assert target.org == "lmf"
+        assert target.repo == "lab"
+        assert target.instance == "vergil-user.lmf.lab"
+        assert target.spec.dedicated is True
+        assert target.spec.cpus == 12
+
+    def test_borrow_fingerprint_matches_lender(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        lender = _resolve_target(_args(cfg, "lmf/lab"))
+        borrower = _resolve_target(_args(cfg, "lmf/tooling"), borrow_allowed=True)
+        assert borrower.fingerprint == lender.fingerprint
+        assert borrower.instance == lender.instance
+
 
 _LENDER_VM = '\n[vm]\npackages = ["qemu-system-x86"]\ncpus = 12\n'
 _BORROW_VM = '\n[vm]\nshared_from = "lmf/lab"\n'
