@@ -235,13 +235,19 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
     """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
 
-    Unlike `_resolve_target`, this reads no repo `vergil.toml` and composes no spec — it only
-    needs the instance to act on. A 2-level `org/repo` names the dedicated instance directly,
-    so an orphaned VM (whose repo dropped its `[vm]`) is still reachable; anything else is base.
+    These are all MANAGE commands: if the requested repo borrows a VM via
+    ``[vm] shared_from`` they are blocked with ``BorrowError`` pointing at the
+    lender. A repo with no readable ``vergil.toml`` (a true orphan) is unaffected
+    and resolves to its own instance name, so an orphaned dedicated VM (whose repo
+    dropped its `[vm]`) stays reachable; anything else is base.
     """
     name, identity, config = _resolve(args)
     org, repo = _workspace_org_repo(getattr(args, "workspace", None))
     if org is not None and repo is not None:
+        requested_vm = _read_repo_vm(identity, org, repo)
+        if requested_vm is not None and requested_vm.shared_from is not None:
+            lender_org, lender_repo = requested_vm.shared_from
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, lender_org, lender_repo))
         instance = instance_name(name, org, repo)
     else:
         instance = identity.vm_instance
@@ -1435,7 +1441,11 @@ def main(argv: list[str] | None = None) -> int:
         "list": _cmd_list,
         "session": _cmd_session,
     }
-    return dispatch[args.command](args)
+    try:
+        return dispatch[args.command](args)
+    except BorrowError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

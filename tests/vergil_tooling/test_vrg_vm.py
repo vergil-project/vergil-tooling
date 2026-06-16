@@ -1927,6 +1927,33 @@ class TestResolveBorrow:
             resolve_borrow(identity, "lmf", "tooling", requested_vm)
 
 
+class TestBorrowBlocks:
+    def _setup(self, tmp_path: Path) -> Path:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _MQ_VM_SECTION)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        return _identities(tmp_path, projects)
+
+    @pytest.mark.parametrize("command", ["create", "stop", "restart", "destroy", "rebuild"])
+    def test_manage_command_blocked_on_borrower(
+        self, command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._setup(tmp_path)
+        result = main([command, "lmf/tooling", "--config", str(cfg)])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "borrows the VM of lmf/lab" in err
+        assert f"vrg-vm {command} lmf/lab" in err
+
+    def test_update_blocked_on_borrower(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._setup(tmp_path)
+        result = main(["update", "lmf/tooling", "--config", str(cfg)])
+        assert result == 1
+        assert "borrows the VM of lmf/lab" in capsys.readouterr().err
+
+
 class TestCreateDedicated:
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
