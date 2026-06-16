@@ -2120,6 +2120,18 @@ class TestPreflight:
     def test_dedicated_drift_aborts(self, _status: MagicMock, _spec: MagicMock) -> None:
         assert _preflight_target(_target(dedicated=True)) == 1
 
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="unreachable")
+    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
+    def test_dedicated_unreachable_aborts_without_rebuild(
+        self, _status: MagicMock, _spec: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # A Running-but-unreachable VM says nothing about its spec. The gate must
+        # abort with a reachability message and must NOT tell the user to rebuild.
+        assert _preflight_target(_target(dedicated=True)) == 1
+        err = capsys.readouterr().err
+        assert "reach" in err.lower()
+        assert "rebuild" not in err.lower()
+
     @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="needs-rebuild")
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_dedicated_stopped_defers_spec_check(
@@ -2547,6 +2559,21 @@ class TestSpecCheckStage:
             _st_spec_check(_LifecycleState(target=_target(dedicated=True)))
         # The warning must carry the actionable rebuild command.
         assert "rebuild" in str(exc.value).lower()
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="unreachable")
+    def test_warns_unreachable_not_drift(self, _spec: MagicMock) -> None:
+        from vergil_tooling.bin.vrg_vm import (
+            SpecCheckUnreachableError,
+            _LifecycleState,
+            _st_spec_check,
+        )
+
+        # Post-start, a VM we cannot reach must warn about reachability — never
+        # raise drift or suggest a rebuild (the spec was never read).
+        with pytest.raises(SpecCheckUnreachableError) as exc:
+            _st_spec_check(_LifecycleState(target=_target(dedicated=True)))
+        assert "reach" in str(exc.value).lower()
+        assert "rebuild" not in str(exc.value).lower()
 
     @patch("vergil_tooling.bin.vrg_vm.vm_spec_status", return_value="ok")
     def test_silent_when_in_spec(self, _spec: MagicMock) -> None:

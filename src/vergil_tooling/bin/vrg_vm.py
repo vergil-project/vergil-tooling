@@ -210,16 +210,27 @@ def _preflight_target(target: Target) -> int:
     # VM un-startable and falsely demanded a rebuild. For start (VM stopped) the check is
     # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
     # "drift only while running" contract.
-    if (
-        status == "Running"
-        and vm_spec_status(target.instance, target.fingerprint) == "needs-rebuild"
-    ):
-        print(
-            f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
-            f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
-            file=sys.stderr,
-        )
-        return 1
+    if status == "Running":
+        spec_status = vm_spec_status(target.instance, target.fingerprint)
+        # 'unreachable' is not drift: Lima reports the box Running but the shell
+        # transport (SSH) refused, so the spec was never read. Telling the user to
+        # rebuild would be wrong — the VM may be mid-boot or wedged. Surface the
+        # reachability problem with a restart remediation instead.
+        if spec_status == "unreachable":
+            print(
+                f"ERROR: VM '{target.instance}' is reported Running but is not reachable "
+                f"over SSH — it may be mid-boot or wedged.\nTry: vrg-vm restart {workspace} "
+                f"--identity {target.identity_name} (or inspect with `limactl list`).",
+                file=sys.stderr,
+            )
+            return 1
+        if spec_status == "needs-rebuild":
+            print(
+                f"ERROR: VM '{target.instance}' no longer meets {workspace}'s spec.\n"
+                f"Rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}",
+                file=sys.stderr,
+            )
+            return 1
     _warn_under(target)
     return 0
 
@@ -304,6 +315,14 @@ class SpecDriftError(RuntimeError):
     """
 
 
+class SpecCheckUnreachableError(RuntimeError):
+    """Raised by the post-start spec-check stage when a freshly-started VM cannot
+    be reached over SSH to read its fingerprint. Surfaced as a non-fatal ⚠ like
+    SpecDriftError, but explicitly *not* drift: the spec was never read, so the
+    warning must never tell the user to rebuild.
+    """
+
+
 def _st_spec_check(state: _LifecycleState) -> None:
     # Post-start drift check. The fingerprint lives inside the guest and is only
     # readable now that it is up — the check _preflight_target cannot perform
@@ -313,9 +332,18 @@ def _st_spec_check(state: _LifecycleState) -> None:
     target = state.target
     if not target.spec.dedicated:
         return
-    if vm_spec_status(target.instance, target.fingerprint) != "needs-rebuild":
+    spec_status = vm_spec_status(target.instance, target.fingerprint)
+    if spec_status == "ok":
         return
     workspace = f"{target.org}/{target.repo}"
+    # 'unreachable' is not drift: the VM was just started but the shell transport
+    # could not read the fingerprint. Warn about reachability — never rebuild.
+    if spec_status == "unreachable":
+        msg = (
+            f"VM '{target.instance}' was started but could not be reached over SSH to "
+            f"verify its spec — it may still be settling. Re-run if the session fails to connect."
+        )
+        raise SpecCheckUnreachableError(msg)
     msg = (
         f"VM '{target.instance}' no longer meets {workspace}'s spec — "
         f"rebuild it: vrg-vm rebuild {workspace} --identity {target.identity_name}"

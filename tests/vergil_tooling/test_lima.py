@@ -10,6 +10,7 @@ import pytest
 
 from vergil_tooling.lib.identity import Identity
 from vergil_tooling.lib.lima import (
+    VmUnreachableError,
     _inject_host_git_identity,
     _limactl,
     _nested_virt_unsupported_reason,
@@ -1245,13 +1246,27 @@ class TestFingerprintHelpers:
 
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_read_fingerprint_missing_marker_is_none(self, mock_shell: MagicMock) -> None:
-        mock_shell.side_effect = subprocess.CalledProcessError(1, "cat")
+        # The in-guest read is masked (`cat ... 2>/dev/null || true`), so an absent
+        # marker is empty stdout from a zero exit — never a non-zero exit. That is
+        # what distinguishes "marker gone" (drift) from "VM unreachable" (transport).
+        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         assert read_fingerprint("vergil-user") is None
 
     @patch("vergil_tooling.lib.lima.shell_run")
     def test_read_fingerprint_empty_marker_is_none(self, mock_shell: MagicMock) -> None:
         mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="\n", stderr="")
         assert read_fingerprint("vergil-user") is None
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_read_fingerprint_transport_failure_raises_unreachable(
+        self, mock_shell: MagicMock
+    ) -> None:
+        # The shell round-trip itself failing (SSH refused) is a transport failure,
+        # NOT an absent marker — it must surface as VmUnreachableError rather than
+        # collapse into None (which would be misread as drift).
+        mock_shell.side_effect = subprocess.CalledProcessError(255, "limactl")
+        with pytest.raises(VmUnreachableError):
+            read_fingerprint("vergil-user")
 
     @patch("vergil_tooling.lib.lima.read_fingerprint")
     def test_vm_spec_status_ok_on_match(self, mock_read: MagicMock) -> None:
@@ -1262,6 +1277,19 @@ class TestFingerprintHelpers:
     def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
         mock_read.return_value = "old"
         assert vm_spec_status("inst", "new") == "needs-rebuild"
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_needs_rebuild_on_missing_marker(self, mock_read: MagicMock) -> None:
+        # A reachable VM whose marker is genuinely absent is still drift.
+        mock_read.return_value = None
+        assert vm_spec_status("inst", "abc123") == "needs-rebuild"
+
+    @patch("vergil_tooling.lib.lima.read_fingerprint")
+    def test_vm_spec_status_unreachable_on_transport_failure(self, mock_read: MagicMock) -> None:
+        # An unreachable VM is not a drifted VM: the third state keeps callers from
+        # telling the user to rebuild when the real problem is reachability.
+        mock_read.side_effect = VmUnreachableError("inst")
+        assert vm_spec_status("inst", "abc123") == "unreachable"
 
 
 class TestOccupancy:
