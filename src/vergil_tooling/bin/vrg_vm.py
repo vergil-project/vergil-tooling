@@ -99,6 +99,77 @@ class Target:
     fingerprint: str
 
 
+class BorrowError(Exception):
+    """A vrg-vm command cannot proceed because of a [vm] shared_from redirect.
+
+    Raised for an invalid borrow (self-reference, chain, or a lender that declares
+    no VM) and for a MANAGE command invoked against a borrowing repo. Caught in
+    main(), which prints the message and returns 1.
+    """
+
+
+@dataclass
+class Borrow:
+    """A resolved redirect: the lender repo and its [vm] stanza."""
+
+    org: str
+    repo: str
+    stanza: VmStanza
+
+
+def _read_repo_vm(identity: Identity, org: str, repo: str) -> VmStanza | None:
+    """Return the [vm] stanza of projects_dir/<org>/<repo>, or None if no vergil.toml."""
+    repo_dir = Path(resolve_workspace(f"{org}/{repo}", identity.projects_dir))
+    try:
+        return read_config(repo_dir).vm
+    except FileNotFoundError:
+        return None
+
+
+def resolve_borrow(
+    identity: Identity,
+    req_org: str,
+    req_repo: str,
+    requested_vm: VmStanza | None,
+) -> Borrow | None:
+    """Resolve a [vm] shared_from redirect on the requested repo to its lender.
+
+    Returns None when the requested repo does not borrow. Raises BorrowError on a
+    self-reference, a borrow chain, or a lender that declares no VM.
+    """
+    if requested_vm is None or requested_vm.shared_from is None:
+        return None
+    lender_org, lender_repo = requested_vm.shared_from
+    if (lender_org, lender_repo) == (req_org, req_repo):
+        msg = f"{req_org}/{req_repo} cannot borrow its own VM (shared_from points at itself)"
+        raise BorrowError(msg)
+    lender_vm = _read_repo_vm(identity, lender_org, lender_repo)
+    if lender_vm is None:
+        msg = (
+            f"{req_org}/{req_repo} borrows the VM of {lender_org}/{lender_repo}, "
+            f"but that repo declares no [vm] stanza"
+        )
+        raise BorrowError(msg)
+    if lender_vm.shared_from is not None:
+        msg = (
+            f"{req_org}/{req_repo} borrows {lender_org}/{lender_repo}, which itself "
+            f"borrows another VM; shared_from chains are not allowed"
+        )
+        raise BorrowError(msg)
+    return Borrow(lender_org, lender_repo, lender_vm)
+
+
+def _borrow_block_msg(
+    command: str, req_org: str, req_repo: str, lender_org: str, lender_repo: str
+) -> str:
+    """Message for a MANAGE command blocked because the repo borrows a VM."""
+    return (
+        f"{req_org}/{req_repo} borrows the VM of {lender_org}/{lender_repo}.\n"
+        f"Manage that box via the lender:\n"
+        f"  vrg-vm {command} {lender_org}/{lender_repo}"
+    )
+
+
 def _base_footprint(identity: Identity) -> dict[str, object]:
     return {
         "cpus": identity.cpus if identity.cpus is not None else _BASE_CPUS,
