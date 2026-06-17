@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -16,7 +16,10 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
     _check_cd_workflow_status,
+    _parse_pr_list,
+    _resolve_open_prs,
     _resolve_strategy,
+    _run_finalize_batch,
     _stage_cd_check,
     _stage_merge,
     _stage_provenance,
@@ -1794,3 +1797,136 @@ def test_default_keeps_post_checks() -> None:
 
 def test_skip_post_checks_flag_parses() -> None:
     assert parse_args(["123", "--skip-post-checks"]).skip_post_checks is True
+
+
+_FIN_MOD = "vergil_tooling.bin.vrg_finalize_pr"
+
+
+def test_parse_pr_list_splits_and_trims() -> None:
+    assert _parse_pr_list("123, 124 ,125") == ["123", "124", "125"]
+    assert _parse_pr_list("123") == ["123"]
+
+
+def test_finalize_batch_runs_each_item_then_release_once() -> None:
+    runs: list[tuple[str, ...]] = []
+
+    def fake_run(cmd, **_kwargs):
+        runs.append(tuple(cmd))
+        return MagicMock(returncode=0)
+
+    with (
+        patch(_FIN_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_FIN_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_finalize_batch(
+            ["123", "124"],
+            root=Path("/repo"),
+            release=True,
+            install=False,
+            assume_yes=True,
+        )
+    assert rc == 0
+    assert ("vrg-finalize-pr", "123", "--skip-post-checks") in runs
+    assert ("vrg-finalize-pr", "124", "--skip-post-checks") in runs
+    assert ("vrg-finalize-pr", "--cleanup-only") in runs
+    assert ("vrg-release",) in runs
+
+
+def test_finalize_batch_stops_on_item_failure_no_release() -> None:
+    def fake_run(cmd, **_kwargs):
+        rc = 1 if "123" in cmd else 0
+        return MagicMock(returncode=rc)
+
+    with (
+        patch(_FIN_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_FIN_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_finalize_batch(
+            ["123", "124"],
+            root=Path("/repo"),
+            release=True,
+            install=False,
+            assume_yes=True,
+        )
+    assert rc == 1
+
+
+def test_resolve_open_prs_skips_worktrees_without_pr() -> None:
+    wts = [
+        Worktree(path=Path("/r/.worktrees/issue-2-b"), branch="feature/2-b"),
+        Worktree(path=Path("/r/.worktrees/issue-1-a"), branch="feature/1-a"),
+    ]
+
+    def pr_for(branch: str):
+        return {"url": f"https://x/{branch}"} if branch == "feature/1-a" else None
+
+    with (
+        patch(_FIN_MOD + ".worktrees.list_worktrees", return_value=wts),
+        patch(_FIN_MOD + ".github.pr_for_branch", side_effect=pr_for),
+    ):
+        # branch-sorted: feature/1-a precedes feature/2-b; only 1-a has a PR
+        assert _resolve_open_prs(Path("/r")) == ["https://x/feature/1-a"]
+
+
+def test_finalize_batch_validation_failure_reported() -> None:
+    def fake_run(cmd, **_kwargs):
+        rc = 1 if tuple(cmd)[:2] == ("vrg-finalize-pr", "--cleanup-only") else 0
+        return MagicMock(returncode=rc)
+
+    with (
+        patch(_FIN_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_FIN_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_finalize_batch(
+            ["123"], root=Path("/repo"), release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+
+
+def test_finalize_batch_release_failure_reported() -> None:
+    def fake_run(cmd, **_kwargs):
+        rc = 1 if tuple(cmd)[0] == "vrg-release" else 0
+        return MagicMock(returncode=rc)
+
+    with (
+        patch(_FIN_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_FIN_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_finalize_batch(
+            ["123"], root=Path("/repo"), release=True, install=False, assume_yes=True
+        )
+    assert rc == 1
+
+
+def test_main_all_routes_to_batch() -> None:
+    with (
+        patch(_FIN_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_FIN_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_FIN_MOD + "._resolve_open_prs", return_value=["u1", "u2"]),
+        patch(_FIN_MOD + "._run_finalize_batch", return_value=0) as run_batch,
+    ):
+        rc = main(["--all"])
+    assert rc == 0
+    run_batch.assert_called_once()
+
+
+def test_main_all_no_open_prs_returns_zero(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(_FIN_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_FIN_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_FIN_MOD + "._resolve_open_prs", return_value=[]),
+    ):
+        rc = main(["--all"])
+    assert rc == 0
+    assert "no open PRs" in capsys.readouterr().out
+
+
+def test_main_comma_list_routes_to_batch() -> None:
+    with (
+        patch(_FIN_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_FIN_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_FIN_MOD + "._run_finalize_batch", return_value=0) as run_batch,
+    ):
+        rc = main(["123,124"])
+    assert rc == 0
+    run_batch.assert_called_once()

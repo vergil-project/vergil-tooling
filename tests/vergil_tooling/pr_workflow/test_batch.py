@@ -151,3 +151,11 @@ def test_format_report_groups_buckets() -> None:
     assert "Failed:" in out
     assert "b — gate red" in out
     assert "Not started:" in out
+
+
+def test_format_report_includes_post_failure() -> None:
+    report = BatchReport(
+        items=[ItemResult("a", ItemOutcome.MERGED)],
+        post_failure="release: boom",
+    )
+    assert "Post-step failed: release: boom" in format_report(report)

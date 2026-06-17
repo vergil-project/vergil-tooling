@@ -309,6 +309,25 @@ def test_match_worktrees_unmatched_token_errors() -> None:
         match_worktrees([a], ["999"])
 
 
+def test_match_worktrees_skips_non_issue_named() -> None:
+    # A worktree name that is not canonical issue-<N>-... is matched only by
+    # directory name; it never populates the issue-number index.
+    a = _wt("scratch", "feature/scratch")
+    assert match_worktrees([a], ["scratch"]) == [a]
+
+
+def test_match_worktrees_ambiguous_issue_number_errors() -> None:
+    a = _wt("issue-5-a", "feature/5-a")
+    b = _wt("issue-5-b", "feature/5-b")
+    with pytest.raises(ValueError, match="ambiguous .multiple worktrees.: 5"):
+        match_worktrees([a, b], ["5"])
+
+
+def test_select_worktrees_empty_raises() -> None:
+    with pytest.raises(ValueError, match="at least one candidate"):
+        select_worktrees([], purpose="p", labels=[])
+
+
 def test_rebase_onto_fetches_then_rebases() -> None:
     wt = _wt("issue-1-a", "feature/1-a")
     with patch(_MOD + ".git.run") as run:

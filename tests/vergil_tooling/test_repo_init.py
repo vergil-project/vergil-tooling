@@ -1277,3 +1277,9 @@ def test_multi_choice_reprompts_on_out_of_range(capsys: pytest.CaptureFixture[st
     with patch("builtins.input", side_effect=["9", "2"]):
         assert prompt_multi_choice("pick", ["a", "b", "c"]) == [1]
     assert "between 1 and 3" in capsys.readouterr().out
+
+
+def test_multi_choice_reprompts_on_non_integer(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("builtins.input", side_effect=["x", "2"]):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [1]
+    assert "between 1 and 3" in capsys.readouterr().out
