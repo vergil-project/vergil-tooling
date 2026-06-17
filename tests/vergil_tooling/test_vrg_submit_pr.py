@@ -5,12 +5,13 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _run_submit_batch,
     _submit_one,
     _target_branch,
     main,
@@ -18,6 +19,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
 )
 from vergil_tooling.lib import pr_template, worktrees
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError
+from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1359,3 +1361,59 @@ def test_submit_one_pushes_creates_records_and_returns_url() -> None:
     push.assert_called_once_with("feature/1673-x")
     create.assert_called_once()
     record.assert_called_once()
+
+
+def _batch_wt(name: str) -> Worktree:
+    num = name.split("-")[1]
+    return Worktree(path=Path(f"/repo/.worktrees/{name}"), branch=f"feature/{num}-x")
+
+
+def test_submit_batch_rebases_submits_then_finalizes_each_and_releases_once() -> None:
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    finalize_calls: list[tuple[str, ...]] = []
+
+    def fake_run(cmd, **_kwargs):
+        finalize_calls.append(tuple(cmd))
+        return MagicMock(returncode=0)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto") as rebase,
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", side_effect=["https://x/pull/1", "https://x/pull/2"]),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=True, release=True, install=False, assume_yes=True
+        )
+    assert rc == 0
+    assert rebase.call_count == 2
+    assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in finalize_calls
+    assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in finalize_calls
+    assert ("vrg-finalize-pr", "--cleanup-only") in finalize_calls
+    assert ("vrg-release",) in finalize_calls
+
+
+def test_submit_batch_rebase_conflict_stops_batch() -> None:
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    with (
+        patch(
+            _MOD + ".worktrees.rebase_onto",
+            side_effect=subprocess.CalledProcessError(1, "git"),
+        ),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one") as submit,
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=True, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+    submit.assert_not_called()
+
+
+def test_all_and_select_flags_parse() -> None:
+    assert parse_args(["--all"]).all_worktrees is True
+    assert parse_args(["--select", "1,2"]).select == "1,2"
