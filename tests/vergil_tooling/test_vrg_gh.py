@@ -452,7 +452,6 @@ class TestAgentDenials:
         [
             ("issue", "close"),
             ("issue", "reopen"),
-            ("issue", "edit"),
             ("pr", "edit"),
             ("pr", "merge"),
         ],
@@ -463,6 +462,20 @@ class TestAgentDenials:
         assert main([top, sub]) != 0
         err = capsys.readouterr().err
         assert "denied" in err.lower()
+
+    def test_issue_edit_allowed_for_user_agent(self) -> None:
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "edit", "42", "--add-label", "chore"])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args[:3] == ["gh", "issue", "edit"]
 
     def test_issue_close_says_human_maintainer(self, capsys: pytest.CaptureFixture[str]) -> None:
         main(["issue", "close", "42"])
@@ -595,6 +608,7 @@ class TestAuditAllowlist:
             ("issue", "view"),
             ("issue", "list"),
             ("issue", "create"),
+            ("issue", "edit"),
             ("run", "list"),
             ("repo", "view"),
             ("label", "list"),
