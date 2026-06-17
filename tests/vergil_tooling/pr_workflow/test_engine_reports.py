@@ -80,6 +80,24 @@ def _run_review(
             )
 
 
+def test_apply_submitted_records_the_pr_marker() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    engine.apply_submitted(
+        state,
+        pr_url="https://github.com/o/r/pull/312",
+        pr_number=312,
+        now="2026-06-08T01:00:00Z",
+    )
+    assert state.submitted == {
+        "pr_url": "https://github.com/o/r/pull/312",
+        "pr_number": 312,
+        "at": "2026-06-08T01:00:00Z",
+    }
+    assert state.updated_at == "2026-06-08T01:00:00Z"
+    assert state.history[-1]["action"] == "submitted"
+
+
 def test_report_ready_paired_hands_to_audit() -> None:
     state = _paired_owned_by_user()
     _ready(state)

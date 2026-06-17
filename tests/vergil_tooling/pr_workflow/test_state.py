@@ -54,7 +54,19 @@ def test_to_dict_has_stable_top_level_keys() -> None:
         "escalation",
         "error",
         "history",
+        "submitted",
     }
+
+
+def test_roundtrip_preserves_submitted_marker() -> None:
+    state = _minimal()
+    state.submitted = {
+        "pr_url": "https://github.com/o/r/pull/312",
+        "pr_number": 312,
+        "at": "2026-06-08T15:01:00Z",
+    }
+    restored = WorkflowState.from_json(state.to_json())
+    assert restored.submitted == state.submitted
 
 
 def test_from_json_rejects_non_json() -> None:

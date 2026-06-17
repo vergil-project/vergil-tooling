@@ -59,6 +59,7 @@ class WorkflowState:
     participants: dict[str, Any]
     git: dict[str, Any]
     pr_metadata: dict[str, str] | None = None
+    submitted: dict[str, Any] | None = None
     escalation: dict[str, Any] | None = None
     error: dict[str, Any] | None = None
     checks: list[dict[str, Any]] = field(default_factory=list)
@@ -83,6 +84,7 @@ class WorkflowState:
             "participants": self.participants,
             "pr_metadata": self.pr_metadata,
             "git": self.git,
+            "submitted": self.submitted,
             "checks": self.checks,
             "escalation": self.escalation,
             "error": self.error,
@@ -115,6 +117,7 @@ class WorkflowState:
             participants=data["participants"],
             git=data["git"],
             pr_metadata=data.get("pr_metadata"),
+            submitted=data.get("submitted"),
             escalation=data.get("escalation"),
             error=data.get("error"),
             checks=data.get("checks", []),
