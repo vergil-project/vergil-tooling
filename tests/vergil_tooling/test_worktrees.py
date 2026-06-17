@@ -16,6 +16,7 @@ from vergil_tooling.lib.worktrees import (
     gather_worktree_status,
     list_worktrees,
     match_worktrees,
+    rebase_onto,
     require_tty,
     select_worktree,
     select_worktrees,
@@ -306,3 +307,21 @@ def test_match_worktrees_unmatched_token_errors() -> None:
     a = _wt("issue-1-a", "feature/1-a")
     with pytest.raises(ValueError, match="no ready worktree matches: 999"):
         match_worktrees([a], ["999"])
+
+
+def test_rebase_onto_fetches_then_rebases() -> None:
+    wt = _wt("issue-1-a", "feature/1-a")
+    with patch(_MOD + ".git.run") as run:
+        rebase_onto(wt, "develop")
+    assert run.call_args_list[0].args == ("-C", str(wt.path), "fetch", "origin", "develop")
+    assert run.call_args_list[1].args == ("-C", str(wt.path), "rebase", "origin/develop")
+
+
+def test_rebase_onto_propagates_conflict() -> None:
+    wt = _wt("issue-1-a", "feature/1-a")
+    err = subprocess.CalledProcessError(1, ["git", "rebase"])
+    with (
+        patch(_MOD + ".git.run", side_effect=[None, err]),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        rebase_onto(wt, "develop")

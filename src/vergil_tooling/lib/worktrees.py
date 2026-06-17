@@ -278,3 +278,18 @@ def match_worktrees(candidates: list[Worktree], tokens: list[str]) -> list[Workt
             parts.append(f"ambiguous (multiple worktrees): {', '.join(ambiguous)}")
         raise ValueError("; ".join(parts))
     return selected
+
+
+def rebase_onto(worktree: Worktree, base: str) -> None:
+    """Fetch *base* from origin and rebase *worktree*'s branch onto it.
+
+    Run via ``git -C`` so the batch orchestrator can process each worktree
+    without changing the process CWD. This is the step that makes a batch's
+    CI gate run exactly once: rebasing onto the current ``develop`` before
+    the PR opens means the gate runs against the final state and the later
+    merge is not ``BEHIND``. A rebase conflict raises
+    ``subprocess.CalledProcessError`` for the caller to convert to a
+    ``BatchAbort``.
+    """
+    git.run("-C", str(worktree.path), "fetch", "origin", base)
+    git.run("-C", str(worktree.path), "rebase", f"origin/{base}")
