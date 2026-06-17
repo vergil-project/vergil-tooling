@@ -6096,6 +6096,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-mode-all-select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch mode (--all / --select)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8572,6 +8583,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-mode-all-select" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch mode (--all / --select)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8752,6 +8774,33 @@ failure modes split cleanly:</p>
 </ul>
 <p>Like the rest of the tool, <code>--finalize</code> is human-only — the agent
 identity gate runs before either mode.</p>
+<h2 id="batch-mode-all-select">Batch mode (<code>--all</code> / <code>--select</code>)<a class="headerlink" href="#batch-mode-all-select" title="Permanent link">&para;</a></h2>
+<p>Selecting two or more ready worktrees submits them as a single
+serialized batch (issue #1673). Use <code>--all</code> for every ready worktree,
+or <code>--select &lt;tokens&gt;</code> for a comma-separated subset matched by issue
+number or worktree directory name (e.g. <code>--select 1673,1681</code>); an
+unmatched or ambiguous token is a hard error that names it. A single
+selection runs the unchanged single-PR path.</p>
+<p>The batch is optimized so each expensive CI gate runs <strong>exactly once</strong>.
+For each worktree in turn it:</p>
+<ol>
+<li><strong>rebases the branch onto the latest <code>develop</code></strong> — the step that
+   guarantees the gate runs against the final state, so a later merge
+   is never <code>BEHIND</code> and never re-runs CI;</li>
+<li>submits the PR;</li>
+<li>with <code>--finalize</code>/<code>--release</code>/<code>--install</code>, finalizes it
+   (<code>vrg-finalize-pr &lt;url&gt; --skip-post-checks</code> — merge and cleanup,
+   deferring validation).</li>
+</ol>
+<p>After every item merges, post-merge validation and the CD check run
+<strong>once</strong>, then — with <code>--release</code>/<code>--install</code> — a single <code>vrg-release</code>
+ships all the changes in one version bump.</p>
+<p>The batch asks <strong>one</strong> confirmation up front (skipped with <code>--yes</code>),
+then runs unattended. It is <strong>fail-fast</strong>: the first failure (rebase
+conflict, red gate, merge conflict, provenance violation) stops the
+batch and prints a <code>merged</code> / <code>failed</code> / <code>not started</code> summary.
+Already-merged PRs stay merged; re-running picks up only the remaining
+ready worktrees.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
