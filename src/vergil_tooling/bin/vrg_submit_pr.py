@@ -49,7 +49,7 @@ from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import submission
-from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -280,25 +280,34 @@ def _choose_submit_worktree(root: Path) -> Path:
     worktrees.require_tty("vrg-submit-pr from the repo root")
 
     ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
-    skipped: list[str] = []
+    in_flight: list[str] = []
+    not_ready: list[str] = []
     for wt in worktrees.list_worktrees(root):
         try:
             fields = submission.read_pr_fields(wt.path)
+        except AlreadySubmittedError as exc:
+            ref = f"PR #{exc.pr_number}" if exc.pr_number is not None else "open PR"
+            in_flight.append(f"{wt.path.name}: {ref} ({exc.pr_url})")
+            continue
         except FileNotFoundError:
-            skipped.append(
-                f"{wt.path.name}: no .vergil/pr-workflow.json or pr-template.yml — not ready"
-            )
+            not_ready.append(f"{wt.path.name}: no .vergil/pr-workflow.json or pr-template.yml")
             continue
         except (pr_template.TemplateError, WorkflowError) as exc:
-            skipped.append(f"{wt.path.name}: {exc}")
+            not_ready.append(f"{wt.path.name}: {exc}")
             continue
         ready.append((wt, fields))
 
     if not ready:
         lines = ["vrg-submit-pr: no submittable worktrees found."]
-        if skipped:
-            lines.extend(f"  {reason}" for reason in skipped)
-        else:
+        if in_flight:
+            lines.append("")
+            lines.append("  In flight (open PR — nothing to do):")
+            lines.extend(f"    {entry}" for entry in in_flight)
+        if not_ready:
+            lines.append("")
+            lines.append("  Not ready (no submission metadata yet):")
+            lines.extend(f"    {entry}" for entry in not_ready)
+        if not in_flight and not not_ready:
             lines.append("  (no .worktrees/ entries exist)")
         raise SystemExit("\n".join(lines))
 
@@ -329,6 +338,12 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     try:
         fields = submission.read_pr_fields(root)
+    except AlreadySubmittedError as exc:
+        print(
+            f"vrg-submit-pr: this worktree's PR is already submitted — {exc}.\n"
+            "  Nothing to do; the PR is in flight. Use vrg-finalize-pr to merge it.",
+        )
+        return 0
     except FileNotFoundError:
         print(
             "vrg-submit-pr: No .vergil/pr-workflow.json or .vergil/pr-template.yml found,\n"
@@ -391,7 +406,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
 
     print("Creating PR...")
     pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
-    submission.delete_submission(root)
+    submission.record_submission(root, pr_url=pr_url)
     print(f"PR created: {pr_url}")
     if args.finalize:
         rc = _chain_finalize(pr_url, release=args.release, install=args.install)
