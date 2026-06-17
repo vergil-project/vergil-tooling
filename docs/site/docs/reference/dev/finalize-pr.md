@@ -158,9 +158,34 @@ Inspects the most recent CD workflow run on the target branch and fails
 if it did not succeed. Docs publishing is async and used to fail
 silently (issue #303).
 
+## Batch mode (comma-list / `--all`)
+
+A comma-separated PR argument (`vrg-finalize-pr 123,124,125`) or `--all`
+(every open PR in `.worktrees/`) finalizes several PRs as a single
+serialized batch (issue #1673). Each item runs
+`vrg-finalize-pr <pr> --skip-post-checks` (merge + cleanup, deferring
+the post-merge checks); after every item merges, one end-of-batch
+`vrg-finalize-pr --cleanup-only` runs validation and the CD check, then
+— with `--release`/`--install` — a single `vrg-release`.
+
+Unlike `vrg-submit-pr`'s batch, these PRs are already open, so each one
+that lands behind another will `update-branch` and re-run its gate
+(the normal serialized-merge cost). For zero-waste CI, submit the batch
+with `vrg-submit-pr --all --finalize` instead, which rebases each branch
+before opening its PR.
+
+The batch asks **one** confirmation up front (skipped with `--yes`) and
+is **fail-fast**: the first failure stops it and prints a
+`merged` / `failed` / `not started` summary. The single-PR modes are
+unchanged.
+
+The `--skip-post-checks` flag (used internally by the batch) finalizes a
+PR but skips the validation and CD-check stages and never chains a
+release — the batch runs those once at the end.
+
 ## Exit Codes
 
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, or failed CD run |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed |

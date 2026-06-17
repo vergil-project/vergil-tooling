@@ -48,7 +48,7 @@ from vergil_tooling.lib import git, github, identity_mode, pr_template, worktree
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
-from vergil_tooling.lib.pr_workflow import submission
+from vergil_tooling.lib.pr_workflow import batch, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 
 
@@ -84,6 +84,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Run the full cascade through the install step: implies --release "
         "(hence --finalize) and passes --install through so vrg-release runs the "
         "consumer-refresh install commands (issue #1643)",
+    )
+    parser.add_argument(
+        "--all",
+        dest="all_worktrees",
+        action="store_true",
+        help="Select every ready worktree for a batch submission (issue #1673).",
+    )
+    parser.add_argument(
+        "--select",
+        default=None,
+        help="Comma-separated list of ready worktrees to batch-submit, by issue "
+        "number or worktree directory name (issue #1673).",
     )
     add_yes_argument(parser)
     return parser.parse_args(argv)
@@ -262,23 +274,13 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     return 0
 
 
-def _choose_submit_worktree(root: Path) -> Path:
-    """At the repo root, pick the template-ready worktree to submit from.
+def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str]]]:
+    """Return submittable ``(worktree, fields)`` pairs, or SystemExit if none.
 
-    Candidates are worktrees with submittable PR fields — a valid
-    ``.vergil/pr-workflow.json`` (with PR metadata) or the legacy
-    ``.vergil/pr-template.yml`` — the agent-written signal that the issue
-    is ready for submission.
-    One candidate is auto-picked (the existing y/N preview still
-    confirms); several prompt a menu; none is an error that names each
-    skipped worktree and why.
-
-    Root launches are interactive by requirement regardless of how many
-    candidates exist — even the auto-picked path ends in a y/N confirm —
-    so the TTY guard fires up front, not per-prompt.
+    Same classification (ready / in-flight / not-ready) and same
+    no-submittable-worktrees error as the single-select path; shared by the
+    single picker and the batch selector (issue #1673).
     """
-    worktrees.require_tty("vrg-submit-pr from the repo root")
-
     ready: list[tuple[worktrees.Worktree, dict[str, str]]] = []
     in_flight: list[str] = []
     not_ready: list[str] = []
@@ -310,6 +312,19 @@ def _choose_submit_worktree(root: Path) -> Path:
         if not in_flight and not not_ready:
             lines.append("  (no .worktrees/ entries exist)")
         raise SystemExit("\n".join(lines))
+    return ready
+
+
+def _choose_submit_worktree(root: Path) -> Path:
+    """At the repo root, pick the single template-ready worktree to submit from.
+
+    One candidate is auto-picked (the existing y/N preview still confirms);
+    several prompt a menu; none is an error that names each skipped worktree
+    and why. Root launches are interactive by requirement, so the TTY guard
+    fires up front, not per-prompt.
+    """
+    worktrees.require_tty("vrg-submit-pr from the repo root")
+    ready = _ready_worktrees(root)
 
     if len(ready) == 1:
         wt, fields = ready[0]
@@ -325,6 +340,171 @@ def _choose_submit_worktree(root: Path) -> Path:
     return chosen.path
 
 
+def _select_batch_worktrees(root: Path, args: argparse.Namespace) -> list[worktrees.Worktree]:
+    """Resolve the batch's worktrees from --all, --select, or a checkbox menu."""
+    ready = _ready_worktrees(root)
+    candidates = [wt for wt, _ in ready]
+    fields_by_name = {wt.path.name: f for wt, f in ready}
+    if args.all_worktrees:
+        return candidates
+    if args.select is not None:
+        tokens = [t.strip() for t in args.select.split(",") if t.strip()]
+        try:
+            return worktrees.match_worktrees(candidates, tokens)
+        except ValueError as exc:
+            raise SystemExit(f"vrg-submit-pr --select: {exc}") from exc
+    labels = [
+        f"{wt.path.name} — issue {fields_by_name[wt.path.name]['issue']}: "
+        f"{fields_by_name[wt.path.name]['title']}"
+        for wt in candidates
+    ]
+    return worktrees.select_worktrees(
+        candidates, purpose="Select worktrees to batch-submit", labels=labels
+    )
+
+
+def _run_submit_batch(
+    selected: list[worktrees.Worktree],
+    *,
+    base: str,
+    finalize: bool,
+    release: bool,
+    install: bool,
+    assume_yes: bool,
+) -> int:
+    """Submit (and optionally finalize) *selected* worktrees as a serial batch.
+
+    Per item: rebase the branch on the latest *base* (the zero-waste-CI step),
+    chdir in, submit, chdir back, and — when *finalize* — shell out to
+    ``vrg-finalize-pr <url> --skip-post-checks``. On full success, one
+    end-of-batch validation and a single release run if requested (#1673).
+    """
+    main_root = git.main_worktree_root()
+
+    def _process(wt: worktrees.Worktree) -> None:
+        try:
+            worktrees.rebase_onto(wt, base)
+        except subprocess.CalledProcessError as exc:
+            raise batch.BatchAbortError(f"rebase onto origin/{base} failed: {exc}") from exc
+        os.chdir(wt.path)
+        try:
+            pr_url = _submit_one(wt.path, base_override=base, assume_yes=True)
+        finally:
+            os.chdir(main_root)
+        if finalize:
+            result = subprocess.run(  # noqa: S603
+                ("vrg-finalize-pr", pr_url, "--skip-post-checks"),  # noqa: S607
+                cwd=main_root,
+                check=False,
+            )
+            if result.returncode != 0:
+                raise batch.BatchAbortError(
+                    f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
+                )
+
+    def _validate() -> None:
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
+            cwd=main_root,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
+
+    def _release() -> None:
+        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+
+    post_steps: list[batch.PostStep] = []
+    if finalize:
+        post_steps.append(batch.PostStep("validation", _validate))
+        if release:
+            post_steps.append(batch.PostStep("release", _release))
+
+    plan = [
+        f"rebase + submit {wt.path.name}" + (" + finalize" if finalize else "") for wt in selected
+    ]
+    if finalize:
+        plan.append("then: validate develop once" + (", then release" if release else ""))
+
+    report = batch.run_batch(
+        selected,
+        _process,
+        label=lambda wt: wt.path.name,
+        plan=plan,
+        assume_yes=assume_yes,
+        post_steps=post_steps,
+    )
+    print(batch.format_report(report))
+    return 0 if report.all_merged and report.post_failure is None else 1
+
+
+def _push_create_record(
+    *,
+    worktree_root: Path,
+    branch: str,
+    target: str,
+    title: str,
+    pr_body: str,
+) -> str:
+    """Push the branch, create the PR, record submission, return the URL.
+
+    The shared submit tail used by both single-PR template mode and the batch
+    ``_submit_one``. Pushes with the human's host credentials (the superset of
+    any agent's rights) so a branch touching ``.github/workflows/`` still
+    pushes.
+    """
+    print(f"Ensuring branch '{branch}' is pushed to origin...")
+    _push_branch(branch)
+    print("Creating PR...")
+    pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
+    submission.record_submission(worktree_root, pr_url=pr_url)
+    print(f"PR created: {pr_url}")
+    return pr_url
+
+
+def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: bool) -> str:
+    """Read the worktree's PR fields, push, create the PR, record it, return URL.
+
+    Self-contained submit for one worktree, used by the batch orchestrator.
+    Propagates ``AlreadySubmittedError`` / ``FileNotFoundError`` /
+    ``TemplateError`` / ``WorkflowError`` from the field readers and raises
+    ``SystemExit`` on a forbidden linkage or a declined confirm. The per-PR
+    confirm is pre-answered when *assume_yes* — the batch path passes True so
+    the single up-front batch confirm is the only gate (issue #1673).
+    """
+    fields = submission.read_pr_fields(worktree_root)
+    issue_ref = resolve_issue_ref(fields["issue"])
+    branch = git.current_branch()
+    target = _target_branch(base_override, fields.get("base"))
+    linkage = fields.get("linkage", "Ref")
+    if linkage not in ALLOWED_LINKAGES:
+        msg = (
+            f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
+            f"allowed; use: {', '.join(ALLOWED_LINKAGES)}."
+        )
+        raise SystemExit(msg)
+    pr_body = build_pr_body(
+        summary=fields["summary"],
+        linkage=linkage,
+        issue_ref=issue_ref,
+        notes=fields.get("notes", ""),
+    )
+    print(f"=== Submitting issue {issue_ref}: {fields['title']} ===")
+    print(f"    base {target}, branch {branch}")
+    if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
+        raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
+    return _push_create_record(
+        worktree_root=worktree_root,
+        branch=branch,
+        target=target,
+        title=fields["title"],
+        pr_body=pr_body,
+    )
+
+
 def _run_template_mode(args: argparse.Namespace) -> int:
     root = Path(git.repo_root())
 
@@ -332,6 +512,21 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     # which `.worktrees/` worktree to submit from and move there. The
     # invoking shell is unaffected — chdir applies to this process only.
     if git.is_main_worktree():
+        # Batch when --all/--select is given. A single selection falls through
+        # to the unchanged single-PR path below (issue #1673). Interactive
+        # no-flag multi-select is a deliberate follow-up: the no-flag path
+        # stays single-select via _choose_submit_worktree.
+        if args.all_worktrees or args.select is not None:
+            selected = _select_batch_worktrees(root, args)
+            base = _target_branch(args.base) if args.base else "develop"
+            return _run_submit_batch(
+                selected,
+                base=base,
+                finalize=args.finalize,
+                release=args.release,
+                install=args.install,
+                assume_yes=args.yes,
+            )
         wt_path = _choose_submit_worktree(root)
         os.chdir(wt_path)
         root = wt_path
@@ -397,17 +592,13 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         print("Aborted.")
         return 1
 
-    # Ensure-pushed: push with the human's host credentials before creating
-    # the PR. The human is the superset of any agent's rights, so this push
-    # succeeds even for branches that touch .github/workflows/ — which the
-    # agent's own push would have been rejected for.
-    print(f"Ensuring branch '{branch}' is pushed to origin...")
-    _push_branch(branch)
-
-    print("Creating PR...")
-    pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
-    submission.record_submission(root, pr_url=pr_url)
-    print(f"PR created: {pr_url}")
+    pr_url = _push_create_record(
+        worktree_root=root,
+        branch=branch,
+        target=target,
+        title=title,
+        pr_body=pr_body,
+    )
     if args.finalize:
         rc = _chain_finalize(pr_url, release=args.release, install=args.install)
         if rc != 0:
