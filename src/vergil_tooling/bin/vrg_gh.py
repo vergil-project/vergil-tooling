@@ -44,7 +44,6 @@ _DENIED_AGENT: dict[str, dict[str, str]] = {
     "issue": {
         "close": "Issue close requires a human maintainer.",
         "reopen": "Issue reopen requires a human maintainer.",
-        "edit": "Issue edit requires a human maintainer.",
     },
 }
 
