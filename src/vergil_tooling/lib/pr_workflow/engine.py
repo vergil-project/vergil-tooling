@@ -172,6 +172,30 @@ def apply_report_fixes(
     return state
 
 
+def apply_submitted(
+    state: WorkflowState, *, pr_url: str, pr_number: int | None, now: str
+) -> WorkflowState:
+    """Mark the workflow submitted after ``vrg-submit-pr`` opens the PR.
+
+    The state file is retained (not deleted) so the worktree scanner can report
+    the worktree as in-flight rather than re-submitting it. This is a terminal
+    annotation written by the human's submit step, not an agent turn, so it does
+    not require ownership and leaves ``status``/``owner`` untouched."""
+    state.submitted = {"pr_url": pr_url, "pr_number": pr_number, "at": now}
+    state.updated_at = now
+    state.history.append(
+        {
+            "round": state.round,
+            "at": now,
+            "actor": "human",
+            "action": "submitted",
+            "pr_url": pr_url,
+            "pr_number": pr_number,
+        }
+    )
+    return state
+
+
 def apply_error(state: WorkflowState, *, by: str, reason: str, now: str) -> WorkflowState:
     """Record a terminal error (a graceful give-up). The counterpart's wait
     detects ``state.error`` and stops with a complementary exception (spec §9)."""

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.38] - 2026-06-17
+
+### Bug fixes
+
+- report in-flight worktrees instead of 'not ready' after submission (#1675)
+
+### Chores
+
+- pin Claude marketplace ref to v2.1 in .claude/settings.json (#1677)
+
 ## [2.1.37] - 2026-06-16
 
 ### Bug fixes

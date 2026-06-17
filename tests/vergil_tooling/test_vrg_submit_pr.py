@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     parse_args,
 )
 from vergil_tooling.lib import pr_template, worktrees
+from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -352,6 +353,33 @@ class TestTemplateMode:
     def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
         monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_already_submitted_worktree_does_not_resubmit(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Running submit-pr inside a worktree whose PR is already submitted must
+        not push a duplicate PR; it reports the existing PR and exits cleanly."""
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch(
+                _MOD + ".submission.read_pr_fields",
+                side_effect=AlreadySubmittedError(
+                    pr_url="https://github.com/o/r/pull/312", pr_number=312
+                ),
+            ),
+            patch(_MOD + ".github.create_pr") as create_pr,
+        ):
+            result = main([])
+        assert result == 0
+        create_pr.assert_not_called()
+        captured = capsys.readouterr()
+        combined = captured.out + captured.err
+        assert "already submitted" in combined
+        assert "312" in combined
 
     def test_template_dry_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
         vergil = tmp_path / ".vergil"
@@ -759,6 +787,35 @@ class TestRootLaunch:
             pytest.raises(SystemExit, match="missing required field"),
         ):
             main(["--dry-run"])
+
+    def test_root_separates_in_flight_from_not_ready(self) -> None:
+        submitted = self._wt("issue-141-spike", "feature/141-spike")
+        not_ready = self._wt("issue-211-bootstrap", "feature/211-bootstrap")
+        with (
+            patch(_MOD + ".git.is_main_worktree", return_value=True),
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.require_tty"),
+            patch(
+                _MOD + ".worktrees.list_worktrees",
+                return_value=[submitted, not_ready],
+            ),
+            patch(
+                _MOD + ".submission.read_pr_fields",
+                side_effect=[
+                    AlreadySubmittedError(pr_url="https://github.com/o/r/pull/312", pr_number=312),
+                    FileNotFoundError("x"),
+                ],
+            ),
+            pytest.raises(SystemExit) as exc,
+        ):
+            main(["--dry-run"])
+        msg = str(exc.value)
+        assert "In flight" in msg
+        assert "issue-141-spike" in msg
+        assert "PR #312" in msg
+        assert "https://github.com/o/r/pull/312" in msg
+        assert "Not ready" in msg
+        assert "issue-211-bootstrap" in msg
 
     def test_root_no_worktrees_at_all_errors(self) -> None:
         with (

@@ -8,7 +8,7 @@ import pytest
 
 from vergil_tooling.lib import pr_template
 from vergil_tooling.lib.pr_workflow import engine, submission
-from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 
 if TYPE_CHECKING:
@@ -78,13 +78,32 @@ def test_read_pr_fields_raises_when_neither_exists(tmp_path: Path) -> None:
         submission.read_pr_fields(tmp_path)
 
 
-def test_delete_submission_removes_the_state_file(tmp_path: Path) -> None:
+def test_record_submission_retains_and_marks_the_state_file(tmp_path: Path) -> None:
     _write_state(tmp_path, with_metadata=True)
-    submission.delete_submission(tmp_path)
-    assert not (tmp_path / ".vergil" / "pr-workflow.json").exists()
+    submission.record_submission(tmp_path, pr_url="https://github.com/o/r/pull/312")
+    # The file is kept (not deleted) so the scanner can report it as in-flight.
+    state_path = tmp_path / ".vergil" / "pr-workflow.json"
+    assert state_path.is_file()
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
+
+    state = WorkflowState.from_json(state_path.read_text())
+    assert state.submitted is not None
+    assert state.submitted["pr_url"] == "https://github.com/o/r/pull/312"
+    assert state.submitted["pr_number"] == 312
 
 
-def test_delete_submission_removes_the_template_when_no_state(tmp_path: Path) -> None:
+def test_record_submission_makes_read_pr_fields_raise_already_submitted(tmp_path: Path) -> None:
+    _write_state(tmp_path, with_metadata=True)
+    submission.record_submission(tmp_path, pr_url="https://github.com/o/r/pull/312")
+    with pytest.raises(AlreadySubmittedError) as exc:
+        submission.read_pr_fields(tmp_path)
+    assert exc.value.pr_number == 312
+    assert exc.value.pr_url == "https://github.com/o/r/pull/312"
+
+
+def test_record_submission_deletes_the_legacy_template(tmp_path: Path) -> None:
+    # The legacy template carries no state to mark, so it is deleted (no
+    # in-flight tracking for the legacy path).
     pr_template.write_template(
         tmp_path,
         issue="42",
@@ -92,5 +111,5 @@ def test_delete_submission_removes_the_template_when_no_state(tmp_path: Path) ->
         summary="did y",
         notes="m",
     )
-    submission.delete_submission(tmp_path)
+    submission.record_submission(tmp_path, pr_url="https://github.com/o/r/pull/9")
     assert not (tmp_path / ".vergil" / "pr-template.yml").exists()
