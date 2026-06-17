@@ -15,8 +15,11 @@ from vergil_tooling.lib.worktrees import (
     classify_worktree,
     gather_worktree_status,
     list_worktrees,
+    match_worktrees,
+    rebase_onto,
     require_tty,
     select_worktree,
+    select_worktrees,
     worktree_for_branch,
 )
 
@@ -272,3 +275,72 @@ def test_gather_pr_lookup_failure_is_unknown() -> None:
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.UNKNOWN
     assert "boom" in (status.detail or "")
+
+
+def _wt(name: str, branch: str) -> Worktree:
+    return Worktree(path=Path(f"/repo/.worktrees/{name}"), branch=branch)
+
+
+def test_select_worktrees_single_skips_prompt() -> None:
+    wt = _wt("issue-1-foo", "feature/1-foo")
+    assert select_worktrees([wt], purpose="p", labels=["foo"]) == [wt]
+
+
+def test_select_worktrees_multi_uses_prompt_indices() -> None:
+    a = _wt("issue-1-a", "feature/1-a")
+    b = _wt("issue-2-b", "feature/2-b")
+    c = _wt("issue-3-c", "feature/3-c")
+    with (
+        patch(_MOD + ".require_tty"),
+        patch(_MOD + ".prompt_multi_choice", return_value=[0, 2]),
+    ):
+        assert select_worktrees([a, b, c], purpose="p", labels=["a", "b", "c"]) == [a, c]
+
+
+def test_match_worktrees_by_issue_number_and_name_in_token_order() -> None:
+    a = _wt("issue-1673-foo", "feature/1673-foo")
+    b = _wt("issue-1681-bar", "feature/1681-bar")
+    assert match_worktrees([a, b], ["1681", "issue-1673-foo"]) == [b, a]
+
+
+def test_match_worktrees_unmatched_token_errors() -> None:
+    a = _wt("issue-1-a", "feature/1-a")
+    with pytest.raises(ValueError, match="no ready worktree matches: 999"):
+        match_worktrees([a], ["999"])
+
+
+def test_match_worktrees_skips_non_issue_named() -> None:
+    # A worktree name that is not canonical issue-<N>-... is matched only by
+    # directory name; it never populates the issue-number index.
+    a = _wt("scratch", "feature/scratch")
+    assert match_worktrees([a], ["scratch"]) == [a]
+
+
+def test_match_worktrees_ambiguous_issue_number_errors() -> None:
+    a = _wt("issue-5-a", "feature/5-a")
+    b = _wt("issue-5-b", "feature/5-b")
+    with pytest.raises(ValueError, match="ambiguous .multiple worktrees.: 5"):
+        match_worktrees([a, b], ["5"])
+
+
+def test_select_worktrees_empty_raises() -> None:
+    with pytest.raises(ValueError, match="at least one candidate"):
+        select_worktrees([], purpose="p", labels=[])
+
+
+def test_rebase_onto_fetches_then_rebases() -> None:
+    wt = _wt("issue-1-a", "feature/1-a")
+    with patch(_MOD + ".git.run") as run:
+        rebase_onto(wt, "develop")
+    assert run.call_args_list[0].args == ("-C", str(wt.path), "fetch", "origin", "develop")
+    assert run.call_args_list[1].args == ("-C", str(wt.path), "rebase", "origin/develop")
+
+
+def test_rebase_onto_propagates_conflict() -> None:
+    wt = _wt("issue-1-a", "feature/1-a")
+    err = subprocess.CalledProcessError(1, ["git", "rebase"])
+    with (
+        patch(_MOD + ".git.run", side_effect=[None, err]),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        rebase_onto(wt, "develop")

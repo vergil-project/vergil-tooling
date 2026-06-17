@@ -22,6 +22,7 @@ from vergil_tooling.lib.repo_init import (
     prompt_choice,
     prompt_free_text,
     prompt_language,
+    prompt_multi_choice,
     prompt_yes_no,
     render_cd_workflow,
     render_ci_workflow,
@@ -1255,3 +1256,30 @@ def test_render_claude_settings_other_version() -> None:
     data = json.loads(render_claude_settings("v2.0"))
     src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
     assert src["ref"] == "v2.0"
+
+
+def test_multi_choice_numbers() -> None:
+    with patch("builtins.input", return_value="1,3"):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [0, 2]
+
+
+def test_multi_choice_all() -> None:
+    with patch("builtins.input", return_value="all"):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [0, 1, 2]
+
+
+def test_multi_choice_space_separated_and_dedup_sorted() -> None:
+    with patch("builtins.input", return_value="3 1 1"):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [0, 2]
+
+
+def test_multi_choice_reprompts_on_out_of_range(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("builtins.input", side_effect=["9", "2"]):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [1]
+    assert "between 1 and 3" in capsys.readouterr().out
+
+
+def test_multi_choice_reprompts_on_non_integer(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch("builtins.input", side_effect=["x", "2"]):
+        assert prompt_multi_choice("pick", ["a", "b", "c"]) == [1]
+    assert "between 1 and 3" in capsys.readouterr().out

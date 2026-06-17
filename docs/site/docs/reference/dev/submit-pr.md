@@ -127,6 +127,37 @@ failure modes split cleanly:
 Like the rest of the tool, `--finalize` is human-only — the agent
 identity gate runs before either mode.
 
+## Batch mode (`--all` / `--select`)
+
+Selecting two or more ready worktrees submits them as a single
+serialized batch (issue #1673). Use `--all` for every ready worktree,
+or `--select <tokens>` for a comma-separated subset matched by issue
+number or worktree directory name (e.g. `--select 1673,1681`); an
+unmatched or ambiguous token is a hard error that names it. A single
+selection runs the unchanged single-PR path.
+
+The batch is optimized so each expensive CI gate runs **exactly once**.
+For each worktree in turn it:
+
+1. **rebases the branch onto the latest `develop`** — the step that
+   guarantees the gate runs against the final state, so a later merge
+   is never `BEHIND` and never re-runs CI;
+2. submits the PR;
+3. with `--finalize`/`--release`/`--install`, finalizes it
+   (`vrg-finalize-pr <url> --skip-post-checks` — merge and cleanup,
+   deferring validation).
+
+After every item merges, post-merge validation and the CD check run
+**once**, then — with `--release`/`--install` — a single `vrg-release`
+ships all the changes in one version bump.
+
+The batch asks **one** confirmation up front (skipped with `--yes`),
+then runs unattended. It is **fail-fast**: the first failure (rebase
+conflict, red gate, merge conflict, provenance violation) stops the
+batch and prints a `merged` / `failed` / `not started` summary.
+Already-merged PRs stay merged; re-running picks up only the remaining
+ready worktrees.
+
 ## Exit Codes
 
 | Code | Meaning |

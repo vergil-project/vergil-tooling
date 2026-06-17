@@ -16,7 +16,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from vergil_tooling.lib import git, github
-from vergil_tooling.lib.repo_init import prompt_choice
+from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 
 
 @dataclass(frozen=True)
@@ -218,3 +218,78 @@ def select_worktree(
     require_tty(purpose)
     chosen = prompt_choice(purpose, labels)
     return candidates[labels.index(chosen)]
+
+
+def select_worktrees(
+    candidates: list[Worktree],
+    *,
+    purpose: str,
+    labels: list[str],
+) -> list[Worktree]:
+    """Choose one or more candidate worktrees via a checkbox-style menu.
+
+    A single candidate is returned without prompting. With several, a TTY is
+    required and a multi-select menu (numbers or 'all') is shown. ``labels``
+    parallels ``candidates`` one-to-one.
+    """
+    if not candidates:
+        msg = "select_worktrees requires at least one candidate"
+        raise ValueError(msg)
+    if len(candidates) == 1:
+        return [candidates[0]]
+    require_tty(purpose)
+    return [candidates[i] for i in prompt_multi_choice(purpose, labels)]
+
+
+def match_worktrees(candidates: list[Worktree], tokens: list[str]) -> list[Worktree]:
+    """Resolve *tokens* (issue numbers or worktree dir names) to worktrees.
+
+    Each token matches a candidate by directory name (``wt.path.name``) or by
+    the issue number in a canonical ``issue-<N>-<slug>`` name. Result order
+    follows *tokens*. Unmatched or ambiguous tokens raise ``ValueError``
+    naming them — never a silent skip.
+    """
+    by_name = {wt.path.name: wt for wt in candidates}
+    by_issue: dict[str, list[Worktree]] = {}
+    for wt in candidates:
+        name = wt.path.name
+        if name.startswith("issue-") and len(name.split("-", 2)) >= 2:
+            by_issue.setdefault(name.split("-", 2)[1], []).append(wt)
+
+    selected: list[Worktree] = []
+    unmatched: list[str] = []
+    ambiguous: list[str] = []
+    for raw in tokens:
+        tok = raw.strip()
+        if tok in by_name:
+            selected.append(by_name[tok])
+        elif tok in by_issue and len(by_issue[tok]) == 1:
+            selected.append(by_issue[tok][0])
+        elif tok in by_issue:
+            ambiguous.append(tok)
+        else:
+            unmatched.append(tok)
+
+    if unmatched or ambiguous:
+        parts = []
+        if unmatched:
+            parts.append(f"no ready worktree matches: {', '.join(unmatched)}")
+        if ambiguous:
+            parts.append(f"ambiguous (multiple worktrees): {', '.join(ambiguous)}")
+        raise ValueError("; ".join(parts))
+    return selected
+
+
+def rebase_onto(worktree: Worktree, base: str) -> None:
+    """Fetch *base* from origin and rebase *worktree*'s branch onto it.
+
+    Run via ``git -C`` so the batch orchestrator can process each worktree
+    without changing the process CWD. This is the step that makes a batch's
+    CI gate run exactly once: rebasing onto the current ``develop`` before
+    the PR opens means the gate runs against the final state and the later
+    merge is not ``BEHIND``. A rebase conflict raises
+    ``subprocess.CalledProcessError`` for the caller to convert to a
+    ``BatchAbortError``.
+    """
+    git.run("-C", str(worktree.path), "fetch", "origin", base)
+    git.run("-C", str(worktree.path), "rebase", f"origin/{base}")

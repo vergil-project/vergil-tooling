@@ -79,6 +79,31 @@ def prompt_choice(label: str, options: list[str], *, default: str = "") -> str:
         print(f"  Enter a number between 1 and {len(options)}.")
 
 
+def prompt_multi_choice(label: str, options: list[str]) -> list[int]:
+    """Present a numbered list; return the chosen 0-based indices.
+
+    Accepts a comma- or space-separated list of numbers, or ``all`` for
+    every option. Re-prompts on invalid or out-of-range input or an empty
+    selection — the caller wants at least one.
+    """
+    print(f"\n{label}:")
+    for i, opt in enumerate(options, 1):
+        print(f"  {i}. {opt}")
+    while True:
+        raw = input("  Select (comma-separated numbers, or 'all'): ").strip().lower()
+        if raw == "all":
+            return list(range(len(options)))
+        tokens = [t for t in raw.replace(",", " ").split() if t]
+        try:
+            chosen = sorted({int(t) for t in tokens})
+        except ValueError:
+            print(f"  Enter numbers between 1 and {len(options)}, or 'all'.")
+            continue
+        if chosen and all(1 <= n <= len(options) for n in chosen):
+            return [n - 1 for n in chosen]
+        print(f"  Enter numbers between 1 and {len(options)}, or 'all'.")
+
+
 def prompt_language(*, default: str = "") -> str:
     """Prompt for the primary language, with an explicit no-language option.
 

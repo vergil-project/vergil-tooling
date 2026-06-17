@@ -5,18 +5,22 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _run_submit_batch,
+    _select_batch_worktrees,
+    _submit_one,
     _target_branch,
     main,
     parse_args,
 )
 from vergil_tooling.lib import pr_template, worktrees
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError
+from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1331,3 +1335,237 @@ class TestInstallFlag:
         assert result != 0
         mock_run.assert_not_called()
         assert "human maintainer" in capsys.readouterr().err.lower()
+
+
+def test_submit_one_pushes_creates_records_and_returns_url() -> None:
+    fields = {
+        "issue": "1673",
+        "title": "Batch",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+        "base": "origin/develop",
+    }
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".git.current_branch", return_value="feature/1673-x"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + "._create_pr", return_value="https://example/pull/9") as create,
+        patch(_MOD + ".submission.record_submission") as record,
+        patch(_MOD + ".resolve_issue_ref", return_value="#1673"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+    ):
+        url = _submit_one(
+            Path("/repo/.worktrees/issue-1673-x"), base_override=None, assume_yes=True
+        )
+    assert url == "https://example/pull/9"
+    push.assert_called_once_with("feature/1673-x")
+    create.assert_called_once()
+    record.assert_called_once()
+
+
+def _batch_wt(name: str) -> Worktree:
+    num = name.split("-")[1]
+    return Worktree(path=Path(f"/repo/.worktrees/{name}"), branch=f"feature/{num}-x")
+
+
+def test_submit_batch_rebases_submits_then_finalizes_each_and_releases_once() -> None:
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    finalize_calls: list[tuple[str, ...]] = []
+
+    def fake_run(cmd, **_kwargs):
+        finalize_calls.append(tuple(cmd))
+        return MagicMock(returncode=0)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto") as rebase,
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", side_effect=["https://x/pull/1", "https://x/pull/2"]),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=True, release=True, install=False, assume_yes=True
+        )
+    assert rc == 0
+    assert rebase.call_count == 2
+    assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in finalize_calls
+    assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in finalize_calls
+    assert ("vrg-finalize-pr", "--cleanup-only") in finalize_calls
+    assert ("vrg-release",) in finalize_calls
+
+
+def test_submit_batch_rebase_conflict_stops_batch() -> None:
+    a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
+    with (
+        patch(
+            _MOD + ".worktrees.rebase_onto",
+            side_effect=subprocess.CalledProcessError(1, "git"),
+        ),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one") as submit,
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a, b], base="develop", finalize=True, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+    submit.assert_not_called()
+
+
+def test_all_and_select_flags_parse() -> None:
+    assert parse_args(["--all"]).all_worktrees is True
+    assert parse_args(["--select", "1,2"]).select == "1,2"
+
+
+def _ready_pair(name: str, num: str) -> tuple[Worktree, dict[str, str]]:
+    wt = Worktree(path=Path(f"/r/.worktrees/{name}"), branch=f"feature/{num}-x")
+    return (wt, {"issue": num, "title": "T"})
+
+
+def test_select_batch_all_returns_all_candidates() -> None:
+    ready = [_ready_pair("issue-1-a", "1"), _ready_pair("issue-2-b", "2")]
+    with patch(_MOD + "._ready_worktrees", return_value=ready):
+        out = _select_batch_worktrees(Path("/r"), parse_args(["--all"]))
+    assert [w.path.name for w in out] == ["issue-1-a", "issue-2-b"]
+
+
+def test_select_batch_select_tokens() -> None:
+    ready = [_ready_pair("issue-1-a", "1"), _ready_pair("issue-2-b", "2")]
+    with patch(_MOD + "._ready_worktrees", return_value=ready):
+        out = _select_batch_worktrees(Path("/r"), parse_args(["--select", "2"]))
+    assert [w.path.name for w in out] == ["issue-2-b"]
+
+
+def test_select_batch_bad_token_exits() -> None:
+    ready = [_ready_pair("issue-1-a", "1")]
+    with (
+        patch(_MOD + "._ready_worktrees", return_value=ready),
+        pytest.raises(SystemExit, match="--select"),
+    ):
+        _select_batch_worktrees(Path("/r"), parse_args(["--select", "999"]))
+
+
+def test_select_batch_interactive_uses_multi_select() -> None:
+    ready = [_ready_pair("issue-1-a", "1"), _ready_pair("issue-2-b", "2")]
+    with (
+        patch(_MOD + "._ready_worktrees", return_value=ready),
+        patch(_MOD + ".worktrees.select_worktrees", return_value=[ready[0][0]]) as sw,
+    ):
+        out = _select_batch_worktrees(Path("/r"), parse_args([]))
+    assert out == [ready[0][0]]
+    sw.assert_called_once()
+
+
+def test_submit_one_bad_linkage_exits() -> None:
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Closes"}
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".resolve_issue_ref", return_value="#1"),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        pytest.raises(SystemExit, match="linkage"),
+    ):
+        _submit_one(Path("/r"), base_override=None, assume_yes=True)
+
+
+def test_submit_one_declined_exits() -> None:
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".resolve_issue_ref", return_value="#1"),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + ".confirm", return_value=False),
+        pytest.raises(SystemExit, match="declined"),
+    ):
+        _submit_one(Path("/r"), base_override=None, assume_yes=False)
+
+
+def test_submit_batch_finalize_failure_stops() -> None:
+    a = _batch_wt("issue-1-a")
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=1)),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a], base="develop", finalize=True, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+
+
+def test_submit_batch_validation_failure_reported() -> None:
+    a = _batch_wt("issue-1-a")
+
+    def fake_run(cmd, **_kwargs):
+        rc = 1 if tuple(cmd)[:2] == ("vrg-finalize-pr", "--cleanup-only") else 0
+        return MagicMock(returncode=rc)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a], base="develop", finalize=True, release=False, install=False, assume_yes=True
+        )
+    assert rc == 1
+
+
+def test_submit_batch_release_install_failure_reported() -> None:
+    a = _batch_wt("issue-1-a")
+
+    def fake_run(cmd, **_kwargs):
+        rc = 1 if tuple(cmd)[0] == "vrg-release" else 0
+        return MagicMock(returncode=rc)
+
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a], base="develop", finalize=True, release=True, install=True, assume_yes=True
+        )
+    assert rc == 1
+
+
+def test_submit_batch_no_finalize_just_submits() -> None:
+    a = _batch_wt("issue-1-a")
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".subprocess.run", return_value=MagicMock(returncode=0)) as run,
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [a], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    assert rc == 0
+    run.assert_not_called()  # no finalize, no post-steps
+
+
+def test_main_batch_routes_to_run_submit_batch() -> None:
+    with (
+        patch(_MOD + ".identity_mode.is_agent", return_value=False),
+        patch(_MOD + ".git.is_main_worktree", return_value=True),
+        patch(_MOD + ".git.repo_root", return_value="/r"),
+        patch(_MOD + "._select_batch_worktrees", return_value=["wt"]),
+        patch(_MOD + "._run_submit_batch", return_value=0) as run_batch,
+    ):
+        rc = main(["--all", "--finalize", "--base", "develop"])
+    assert rc == 0
+    run_batch.assert_called_once()

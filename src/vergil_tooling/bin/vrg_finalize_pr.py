@@ -55,6 +55,7 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container_cache import clean_branch_images
+from vergil_tooling.lib.pr_workflow import batch
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
 
@@ -68,6 +69,87 @@ _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "library-release": ["develop", "main"],
     "application-promotion": ["develop", "release", "main"],
 }
+
+
+def _parse_pr_list(value: str) -> list[str]:
+    """Split a comma-separated PR argument into trimmed, non-empty tokens."""
+    return [tok.strip() for tok in value.split(",") if tok.strip()]
+
+
+def _resolve_open_prs(root: Path) -> list[str]:
+    """Return the URLs of every open PR in canonical worktrees, branch-sorted.
+
+    Deterministic order (by branch name) so a batch is reproducible. Skips
+    worktrees with no open PR, printing why — no silent exclusions.
+    """
+    urls: list[str] = []
+    for wt in sorted(worktrees.list_worktrees(root), key=lambda w: w.branch):
+        pr = github.pr_for_branch(wt.branch)
+        if pr is None:
+            print(f"  {wt.path.name}: no open PR for {wt.branch} — skipping")
+            continue
+        urls.append(pr["url"])
+    return urls
+
+
+def _run_finalize_batch(
+    prs: list[str],
+    *,
+    root: Path,
+    release: bool,
+    install: bool,
+    assume_yes: bool,
+) -> int:
+    """Finalize *prs* serially, fail-fast, then validate + release once.
+
+    Each item shells out to ``vrg-finalize-pr <pr> --skip-post-checks`` (merge
+    + cleanup, no validation). On full success, one end-of-batch
+    ``vrg-finalize-pr --cleanup-only`` runs validation + the CD check, then a
+    single ``vrg-release [--install]`` if requested (issue #1673).
+    """
+
+    def _finalize_item(pr: str) -> None:
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", pr, "--skip-post-checks"),  # noqa: S607
+            cwd=root,
+            check=False,
+        )
+        if result.returncode != 0:
+            msg = f"vrg-finalize-pr {pr} --skip-post-checks exited {result.returncode}"
+            raise batch.BatchAbortError(msg)
+
+    def _validate() -> None:
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
+            cwd=root,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
+
+    def _release() -> None:
+        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        result = subprocess.run(cmd, cwd=root, check=False)  # noqa: S603,S607
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+
+    post_steps = [batch.PostStep("validation", _validate)]
+    if release:
+        post_steps.append(batch.PostStep("release", _release))
+
+    plan = [f"finalize PR {pr}" for pr in prs]
+    plan.append("then: validate develop once" + (", then release" if release else ""))
+
+    report = batch.run_batch(
+        prs,
+        _finalize_item,
+        label=lambda pr: f"PR {pr}",
+        plan=plan,
+        assume_yes=assume_yes,
+        post_steps=post_steps,
+    )
+    print(batch.format_report(report))
+    return 0 if report.all_merged and report.post_failure is None else 1
 
 
 class FinalizeError(Exception):
@@ -106,6 +188,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip PR inference and merge; run cleanup without prompting "
         "or reading stdin (non-interactive release path).",
     )
+    target.add_argument(
+        "--all",
+        dest="all_prs",
+        action="store_true",
+        help="Finalize every open PR found in .worktrees/ as a serial batch (issue #1673).",
+    )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
         "--strategy",
@@ -137,6 +225,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Extend the cascade one step further: implies --release and passes "
         "--install through, so vrg-release runs the consumer-refresh install "
         "step (issue #1643)",
+    )
+    parser.add_argument(
+        "--skip-post-checks",
+        action="store_true",
+        help="Skip the post-merge validation and CD-status stages (and any "
+        "release chain). Used by the batch orchestrator, which runs those "
+        "once at the end of the batch (issue #1673).",
     )
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
@@ -565,26 +660,24 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     raise FinalizeError("most recent CD workflow run did not succeed")
 
 
-def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
+def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple[Stage, ...]:
     """Assemble the pipeline for the resolved mode.
 
-    provenance/merge run only when a PR was given or inferred; cleanup,
-    validation, and cd-check always run. validation and cd-check are
-    fail_defer so a validation failure still surfaces the CD status —
+    provenance/merge run only when a PR was given or inferred; cleanup always
+    runs. validation and cd-check run unless *include_post_checks* is False
+    (the batch path defers them to one end-of-batch run, issue #1673); they
+    are fail_defer so a validation failure still surfaces the CD status —
     matching the pre-pipeline control flow.
     """
-    common = (
-        Stage("cleanup", _stage_cleanup, "fail_fast"),
-        Stage("validation", _stage_validation, "fail_defer"),
-        Stage("cd-check", _stage_cd_check, "fail_defer"),
-    )
-    if not include_pr:
-        return common
-    return (
-        Stage("provenance", _stage_provenance, "fail_fast"),
-        Stage("merge", _stage_merge, "fail_fast"),
-        *common,
-    )
+    stages: list[Stage] = []
+    if include_pr:
+        stages.append(Stage("provenance", _stage_provenance, "fail_fast"))
+        stages.append(Stage("merge", _stage_merge, "fail_fast"))
+    stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
+    if include_post_checks:
+        stages.append(Stage("validation", _stage_validation, "fail_defer"))
+        stages.append(Stage("cd-check", _stage_cd_check, "fail_defer"))
+    return tuple(stages)
 
 
 def _chain_release(root: Path, *, install: bool = False) -> int:
@@ -644,6 +737,23 @@ def main(argv: list[str] | None = None) -> int:
 
     root = git.repo_root()
 
+    # Batch mode (issue #1673): an explicit comma-list or --all finalizes
+    # several PRs serially. A single PR (or none) falls through to the
+    # unchanged single-PR pipeline below.
+    if args.all_prs:
+        prs = _resolve_open_prs(root)
+        if not prs:
+            print("vrg-finalize-pr --all: no open PRs found in worktrees.")
+            return 0
+        return _run_finalize_batch(
+            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+        )
+    if args.pr is not None and "," in args.pr:
+        prs = _parse_pr_list(args.pr)
+        return _run_finalize_batch(
+            prs, root=root, release=args.release, install=args.install, assume_yes=args.yes
+        )
+
     # --cleanup-only is the scriptable release path: no inference, no
     # prompts, no stdin reads — args.pr stays None and only the
     # cleanup/validation/cd-check stages run (issue #1448).
@@ -661,7 +771,10 @@ def main(argv: list[str] | None = None) -> int:
     ctx = FinalizeContext(args=args, root=root)
     rc = progress.run_pipeline(
         ctx,
-        build_stages(include_pr=args.pr is not None),
+        build_stages(
+            include_pr=args.pr is not None,
+            include_post_checks=not args.skip_post_checks,
+        ),
         command="vrg-finalize-pr",
         label="vrg-finalize-pr",
         args=args,
@@ -671,8 +784,10 @@ def main(argv: list[str] | None = None) -> int:
     # --release cascade (issue #1634): chain into vrg-release only after a
     # clean finalize. A non-zero pipeline must not trigger a release, and the
     # hand-off happens here — after run_pipeline has closed its live display —
-    # so the two renderers never nest (cf. issue #1470).
-    if rc != 0 or not args.release:
+    # so the two renderers never nest (cf. issue #1470). --skip-post-checks
+    # never chains: release is the batch orchestrator's single end-of-batch
+    # step (issue #1673).
+    if rc != 0 or not args.release or args.skip_post_checks:
         return rc
     if args.dry_run:
         target = "vrg-release --install" if args.install else "vrg-release"
