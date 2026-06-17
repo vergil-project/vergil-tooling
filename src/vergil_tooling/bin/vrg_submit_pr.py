@@ -325,6 +325,70 @@ def _choose_submit_worktree(root: Path) -> Path:
     return chosen.path
 
 
+def _push_create_record(
+    *,
+    worktree_root: Path,
+    branch: str,
+    target: str,
+    title: str,
+    pr_body: str,
+) -> str:
+    """Push the branch, create the PR, record submission, return the URL.
+
+    The shared submit tail used by both single-PR template mode and the batch
+    ``_submit_one``. Pushes with the human's host credentials (the superset of
+    any agent's rights) so a branch touching ``.github/workflows/`` still
+    pushes.
+    """
+    print(f"Ensuring branch '{branch}' is pushed to origin...")
+    _push_branch(branch)
+    print("Creating PR...")
+    pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
+    submission.record_submission(worktree_root, pr_url=pr_url)
+    print(f"PR created: {pr_url}")
+    return pr_url
+
+
+def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: bool) -> str:
+    """Read the worktree's PR fields, push, create the PR, record it, return URL.
+
+    Self-contained submit for one worktree, used by the batch orchestrator.
+    Propagates ``AlreadySubmittedError`` / ``FileNotFoundError`` /
+    ``TemplateError`` / ``WorkflowError`` from the field readers and raises
+    ``SystemExit`` on a forbidden linkage or a declined confirm. The per-PR
+    confirm is pre-answered when *assume_yes* — the batch path passes True so
+    the single up-front batch confirm is the only gate (issue #1673).
+    """
+    fields = submission.read_pr_fields(worktree_root)
+    issue_ref = resolve_issue_ref(fields["issue"])
+    branch = git.current_branch()
+    target = _target_branch(base_override, fields.get("base"))
+    linkage = fields.get("linkage", "Ref")
+    if linkage not in ALLOWED_LINKAGES:
+        msg = (
+            f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
+            f"allowed; use: {', '.join(ALLOWED_LINKAGES)}."
+        )
+        raise SystemExit(msg)
+    pr_body = build_pr_body(
+        summary=fields["summary"],
+        linkage=linkage,
+        issue_ref=issue_ref,
+        notes=fields.get("notes", ""),
+    )
+    print(f"=== Submitting issue {issue_ref}: {fields['title']} ===")
+    print(f"    base {target}, branch {branch}")
+    if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
+        raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
+    return _push_create_record(
+        worktree_root=worktree_root,
+        branch=branch,
+        target=target,
+        title=fields["title"],
+        pr_body=pr_body,
+    )
+
+
 def _run_template_mode(args: argparse.Namespace) -> int:
     root = Path(git.repo_root())
 
@@ -397,17 +461,13 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         print("Aborted.")
         return 1
 
-    # Ensure-pushed: push with the human's host credentials before creating
-    # the PR. The human is the superset of any agent's rights, so this push
-    # succeeds even for branches that touch .github/workflows/ — which the
-    # agent's own push would have been rejected for.
-    print(f"Ensuring branch '{branch}' is pushed to origin...")
-    _push_branch(branch)
-
-    print("Creating PR...")
-    pr_url = _create_pr(target_branch=target, title=title, pr_body=pr_body)
-    submission.record_submission(root, pr_url=pr_url)
-    print(f"PR created: {pr_url}")
+    pr_url = _push_create_record(
+        worktree_root=root,
+        branch=branch,
+        target=target,
+        title=title,
+        pr_body=pr_body,
+    )
     if args.finalize:
         rc = _chain_finalize(pr_url, release=args.release, install=args.install)
         if rc != 0:

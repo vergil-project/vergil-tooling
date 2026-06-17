@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _submit_one,
     _target_branch,
     main,
     parse_args,
@@ -1331,3 +1332,30 @@ class TestInstallFlag:
         assert result != 0
         mock_run.assert_not_called()
         assert "human maintainer" in capsys.readouterr().err.lower()
+
+
+def test_submit_one_pushes_creates_records_and_returns_url() -> None:
+    fields = {
+        "issue": "1673",
+        "title": "Batch",
+        "summary": "s",
+        "notes": "",
+        "linkage": "Ref",
+        "base": "origin/develop",
+    }
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".git.current_branch", return_value="feature/1673-x"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + "._create_pr", return_value="https://example/pull/9") as create,
+        patch(_MOD + ".submission.record_submission") as record,
+        patch(_MOD + ".resolve_issue_ref", return_value="#1673"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+    ):
+        url = _submit_one(
+            Path("/repo/.worktrees/issue-1673-x"), base_override=None, assume_yes=True
+        )
+    assert url == "https://example/pull/9"
+    push.assert_called_once_with("feature/1673-x")
+    create.assert_called_once()
+    record.assert_called_once()
