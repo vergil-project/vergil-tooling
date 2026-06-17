@@ -15,8 +15,10 @@ from vergil_tooling.lib.worktrees import (
     classify_worktree,
     gather_worktree_status,
     list_worktrees,
+    match_worktrees,
     require_tty,
     select_worktree,
+    select_worktrees,
     worktree_for_branch,
 )
 
@@ -272,3 +274,35 @@ def test_gather_pr_lookup_failure_is_unknown() -> None:
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.UNKNOWN
     assert "boom" in (status.detail or "")
+
+
+def _wt(name: str, branch: str) -> Worktree:
+    return Worktree(path=Path(f"/repo/.worktrees/{name}"), branch=branch)
+
+
+def test_select_worktrees_single_skips_prompt() -> None:
+    wt = _wt("issue-1-foo", "feature/1-foo")
+    assert select_worktrees([wt], purpose="p", labels=["foo"]) == [wt]
+
+
+def test_select_worktrees_multi_uses_prompt_indices() -> None:
+    a = _wt("issue-1-a", "feature/1-a")
+    b = _wt("issue-2-b", "feature/2-b")
+    c = _wt("issue-3-c", "feature/3-c")
+    with (
+        patch(_MOD + ".require_tty"),
+        patch(_MOD + ".prompt_multi_choice", return_value=[0, 2]),
+    ):
+        assert select_worktrees([a, b, c], purpose="p", labels=["a", "b", "c"]) == [a, c]
+
+
+def test_match_worktrees_by_issue_number_and_name_in_token_order() -> None:
+    a = _wt("issue-1673-foo", "feature/1673-foo")
+    b = _wt("issue-1681-bar", "feature/1681-bar")
+    assert match_worktrees([a, b], ["1681", "issue-1673-foo"]) == [b, a]
+
+
+def test_match_worktrees_unmatched_token_errors() -> None:
+    a = _wt("issue-1-a", "feature/1-a")
+    with pytest.raises(ValueError, match="no ready worktree matches: 999"):
+        match_worktrees([a], ["999"])
