@@ -874,6 +874,8 @@
       
         
       
+        
+      
     
     
     
@@ -926,6 +928,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.39/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.39
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6246,6 +6276,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-mode-comma-list-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch mode (comma-list / --all)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8704,6 +8745,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#batch-mode-comma-list-all" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Batch mode (comma-list / --all)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#exit-codes" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8900,6 +8952,26 @@ the target branch before the next PR is created.</p>
 <p>Inspects the most recent CD workflow run on the target branch and fails
 if it did not succeed. Docs publishing is async and used to fail
 silently (issue #303).</p>
+<h2 id="batch-mode-comma-list-all">Batch mode (comma-list / <code>--all</code>)<a class="headerlink" href="#batch-mode-comma-list-all" title="Permanent link">&para;</a></h2>
+<p>A comma-separated PR argument (<code>vrg-finalize-pr 123,124,125</code>) or <code>--all</code>
+(every open PR in <code>.worktrees/</code>) finalizes several PRs as a single
+serialized batch (issue #1673). Each item runs
+<code>vrg-finalize-pr &lt;pr&gt; --skip-post-checks</code> (merge + cleanup, deferring
+the post-merge checks); after every item merges, one end-of-batch
+<code>vrg-finalize-pr --cleanup-only</code> runs validation and the CD check, then
+— with <code>--release</code>/<code>--install</code> — a single <code>vrg-release</code>.</p>
+<p>Unlike <code>vrg-submit-pr</code>'s batch, these PRs are already open, so each one
+that lands behind another will <code>update-branch</code> and re-run its gate
+(the normal serialized-merge cost). For zero-waste CI, submit the batch
+with <code>vrg-submit-pr --all --finalize</code> instead, which rebases each branch
+before opening its PR.</p>
+<p>The batch asks <strong>one</strong> confirmation up front (skipped with <code>--yes</code>) and
+is <strong>fail-fast</strong>: the first failure stops it and prints a
+<code>merged</code> / <code>failed</code> / <code>not started</code> summary. The single-PR modes are
+unchanged.</p>
+<p>The <code>--skip-post-checks</code> flag (used internally by the batch) finalizes a
+PR but skips the validation and CD-check stages and never chains a
+release — the batch runs those once at the end.</p>
 <h2 id="exit-codes">Exit Codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -8915,7 +8987,7 @@ silently (issue #303).</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, or failed CD run</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed</td>
 </tr>
 </tbody>
 </table>
