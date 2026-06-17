@@ -289,7 +289,7 @@ def rebase_onto(worktree: Worktree, base: str) -> None:
     the PR opens means the gate runs against the final state and the later
     merge is not ``BEHIND``. A rebase conflict raises
     ``subprocess.CalledProcessError`` for the caller to convert to a
-    ``BatchAbort``.
+    ``BatchAbortError``.
     """
     git.run("-C", str(worktree.path), "fetch", "origin", base)
     git.run("-C", str(worktree.path), "rebase", f"origin/{base}")

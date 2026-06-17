@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
 
 
-class BatchAbort(Exception):
+class BatchAbortError(Exception):
     """A per-item step (or post-step) failed; the message is the reason.
 
     Callers convert expected failures (rebase conflict, gate red, merge
@@ -75,9 +75,9 @@ def run_batch(
 
     Prints *plan* and asks exactly one confirmation (skipped with
     *assume_yes*). On decline, returns an all-NOT_STARTED report and runs
-    nothing. Each item that raises ``BatchAbort`` stops the batch: it is
+    nothing. Each item that raises ``BatchAbortError`` stops the batch: it is
     recorded FAILED and the remaining items NOT_STARTED. ``post_steps`` run
-    in order only when every item merged; a post-step ``BatchAbort`` is
+    in order only when every item merged; a post-step ``BatchAbortError`` is
     recorded in ``post_failure`` (never un-doing a merge) and stops the
     remaining post-steps.
     """
@@ -98,7 +98,7 @@ def run_batch(
             continue
         try:
             process(it)
-        except BatchAbort as exc:
+        except BatchAbortError as exc:
             report.items.append(ItemResult(label(it), ItemOutcome.FAILED, str(exc)))
             stopped = True
         else:
@@ -108,7 +108,7 @@ def run_batch(
         for step in post_steps:
             try:
                 step.run()
-            except BatchAbort as exc:
+            except BatchAbortError as exc:
                 report.post_failure = f"{step.name}: {exc}"
                 break
 

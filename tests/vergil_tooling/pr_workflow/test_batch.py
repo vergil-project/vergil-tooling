@@ -5,7 +5,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from vergil_tooling.lib.pr_workflow.batch import (
-    BatchAbort,
+    BatchAbortError,
     BatchReport,
     ItemOutcome,
     ItemResult,
@@ -55,7 +55,7 @@ def test_all_items_processed_in_order_on_success() -> None:
 def test_first_failure_stops_and_marks_rest_not_started() -> None:
     def process(it: str) -> None:
         if it == "b":
-            raise BatchAbort("gate red")
+            raise BatchAbortError("gate red")
 
     with _confirm_yes():
         report = run_batch(
@@ -92,7 +92,7 @@ def test_post_steps_skipped_when_any_item_failed() -> None:
     calls: list[str] = []
 
     def process(it: str) -> None:
-        raise BatchAbort("nope")
+        raise BatchAbortError("nope")
 
     with _confirm_yes():
         report = run_batch(
@@ -109,7 +109,7 @@ def test_post_steps_skipped_when_any_item_failed() -> None:
 
 def test_post_step_failure_recorded_not_raised() -> None:
     def boom() -> None:
-        raise BatchAbort("release blew up")
+        raise BatchAbortError("release blew up")
 
     with _confirm_yes():
         report = run_batch(
