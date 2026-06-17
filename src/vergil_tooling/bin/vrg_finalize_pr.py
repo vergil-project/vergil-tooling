@@ -192,8 +192,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--all",
         dest="all_prs",
         action="store_true",
-        help="Finalize every open PR found in .worktrees/ as a serial batch "
-        "(issue #1673).",
+        help="Finalize every open PR found in .worktrees/ as a serial batch (issue #1673).",
     )
     parser.add_argument("--target-branch", default="develop", help="Target branch to switch to")
     parser.add_argument(
