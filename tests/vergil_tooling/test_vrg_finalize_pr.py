@@ -1778,3 +1778,19 @@ def test_install_failure_points_at_release_install_rerun(
         result = main(["--install"])
     assert result == 2
     assert "vrg-release --install" in capsys.readouterr().err
+
+
+def test_skip_post_checks_drops_validation_and_cd() -> None:
+    names = {s.name for s in build_stages(include_pr=True, include_post_checks=False)}
+    assert "validation" not in names
+    assert "cd-check" not in names
+    assert {"provenance", "merge", "cleanup"} <= names
+
+
+def test_default_keeps_post_checks() -> None:
+    names = {s.name for s in build_stages(include_pr=True, include_post_checks=True)}
+    assert {"validation", "cd-check"} <= names
+
+
+def test_skip_post_checks_flag_parses() -> None:
+    assert parse_args(["123", "--skip-post-checks"]).skip_post_checks is True

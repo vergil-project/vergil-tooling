@@ -138,6 +138,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--install through, so vrg-release runs the consumer-refresh install "
         "step (issue #1643)",
     )
+    parser.add_argument(
+        "--skip-post-checks",
+        action="store_true",
+        help="Skip the post-merge validation and CD-status stages (and any "
+        "release chain). Used by the batch orchestrator, which runs those "
+        "once at the end of the batch (issue #1673).",
+    )
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
     return parser.parse_args(argv)
@@ -565,26 +572,24 @@ def _stage_cd_check(ctx: FinalizeContext) -> None:
     raise FinalizeError("most recent CD workflow run did not succeed")
 
 
-def build_stages(*, include_pr: bool) -> tuple[Stage, ...]:
+def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple[Stage, ...]:
     """Assemble the pipeline for the resolved mode.
 
-    provenance/merge run only when a PR was given or inferred; cleanup,
-    validation, and cd-check always run. validation and cd-check are
-    fail_defer so a validation failure still surfaces the CD status —
+    provenance/merge run only when a PR was given or inferred; cleanup always
+    runs. validation and cd-check run unless *include_post_checks* is False
+    (the batch path defers them to one end-of-batch run, issue #1673); they
+    are fail_defer so a validation failure still surfaces the CD status —
     matching the pre-pipeline control flow.
     """
-    common = (
-        Stage("cleanup", _stage_cleanup, "fail_fast"),
-        Stage("validation", _stage_validation, "fail_defer"),
-        Stage("cd-check", _stage_cd_check, "fail_defer"),
-    )
-    if not include_pr:
-        return common
-    return (
-        Stage("provenance", _stage_provenance, "fail_fast"),
-        Stage("merge", _stage_merge, "fail_fast"),
-        *common,
-    )
+    stages: list[Stage] = []
+    if include_pr:
+        stages.append(Stage("provenance", _stage_provenance, "fail_fast"))
+        stages.append(Stage("merge", _stage_merge, "fail_fast"))
+    stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
+    if include_post_checks:
+        stages.append(Stage("validation", _stage_validation, "fail_defer"))
+        stages.append(Stage("cd-check", _stage_cd_check, "fail_defer"))
+    return tuple(stages)
 
 
 def _chain_release(root: Path, *, install: bool = False) -> int:
@@ -661,7 +666,10 @@ def main(argv: list[str] | None = None) -> int:
     ctx = FinalizeContext(args=args, root=root)
     rc = progress.run_pipeline(
         ctx,
-        build_stages(include_pr=args.pr is not None),
+        build_stages(
+            include_pr=args.pr is not None,
+            include_post_checks=not args.skip_post_checks,
+        ),
         command="vrg-finalize-pr",
         label="vrg-finalize-pr",
         args=args,
@@ -671,8 +679,10 @@ def main(argv: list[str] | None = None) -> int:
     # --release cascade (issue #1634): chain into vrg-release only after a
     # clean finalize. A non-zero pipeline must not trigger a release, and the
     # hand-off happens here — after run_pipeline has closed its live display —
-    # so the two renderers never nest (cf. issue #1470).
-    if rc != 0 or not args.release:
+    # so the two renderers never nest (cf. issue #1470). --skip-post-checks
+    # never chains: release is the batch orchestrator's single end-of-batch
+    # step (issue #1673).
+    if rc != 0 or not args.release or args.skip_post_checks:
         return rc
     if args.dry_run:
         target = "vrg-release --install" if args.install else "vrg-release"
