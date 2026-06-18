@@ -1,0 +1,11 @@
+# Canonical ansible-lint config for all managed repositories.
+#
+# Bundled with vergil-tooling and passed explicitly to ansible-lint by
+# `vrg-validate` so every repo lints Ansible content against the same
+# ruleset rather than per-repo drift (issue #1667).
+#
+# The embedded yamllint pass is left enabled (we accept the overlap with
+# the standalone yamllint check for now); the standalone pass only walks
+# repo-root, `.github/`, and `docs/site/mkdocs.yml`, so the practical
+# overlap is limited to a root-level `galaxy.yml`.
+profile: production

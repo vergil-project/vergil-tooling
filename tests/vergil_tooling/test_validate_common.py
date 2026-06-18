@@ -11,6 +11,7 @@ from vergil_tooling.bin.validate_common import (
     _find_markdown_files,
     _find_shell_files,
     _find_yaml_files,
+    _has_ansible_content,
     main,
 )
 
@@ -654,6 +655,135 @@ def test_main_actionlint_fails(tmp_path: Path) -> None:
         patch(
             "vergil_tooling.bin.validate_common.subprocess.run",
             side_effect=mock_run,
+        ),
+    ):
+        assert main() == 1
+
+
+# -- _has_ansible_content ----------------------------------------------------
+
+
+def test_has_ansible_content_none(tmp_path: Path) -> None:
+    assert _has_ansible_content(tmp_path) is False
+
+
+def test_has_ansible_content_ansible_cfg(tmp_path: Path) -> None:
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_ansible_lint_config(tmp_path: Path) -> None:
+    (tmp_path / ".ansible-lint").write_text("profile: production\n")
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_ansible_lint_config_yml(tmp_path: Path) -> None:
+    (tmp_path / ".ansible-lint.yml").write_text("profile: production\n")
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_galaxy(tmp_path: Path) -> None:
+    (tmp_path / "galaxy.yml").write_text("namespace: acme\n")
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_meta_main(tmp_path: Path) -> None:
+    meta = tmp_path / "meta"
+    meta.mkdir()
+    (meta / "main.yml").write_text("galaxy_info: {}\n")
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_playbooks_dir(tmp_path: Path) -> None:
+    (tmp_path / "playbooks").mkdir()
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_roles_dir(tmp_path: Path) -> None:
+    (tmp_path / "roles").mkdir()
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_signal_file_must_be_file(tmp_path: Path) -> None:
+    # A directory named like a file signal must not count as content.
+    (tmp_path / "ansible.cfg").mkdir()
+    assert _has_ansible_content(tmp_path) is False
+
+
+def test_has_ansible_content_dir_signal_must_be_dir(tmp_path: Path) -> None:
+    # A file named like a directory signal must not count as content.
+    (tmp_path / "roles").write_text("not a dir\n")
+    assert _has_ansible_content(tmp_path) is False
+
+
+# -- main: ansible-lint path -------------------------------------------------
+
+
+def test_main_ansible_lint_runs_with_bundled_config(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    mock_run.assert_called_once()
+    call_args = mock_run.call_args[0][0]
+    assert call_args[0] == "ansible-lint"
+    assert call_args[1] == "-c"
+    assert call_args[2].endswith("ansible-lint.yaml")
+    assert "vergil_tooling" in call_args[2]
+
+
+def test_main_ansible_lint_skipped_without_content(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    tool_names = [call[0][0][0] for call in mock_run.call_args_list]
+    assert "ansible-lint" not in tool_names
+
+
+def test_main_ansible_lint_fails(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "ansible.cfg").write_text("[defaults]\n")
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=1),
         ),
     ):
         assert main() == 1
