@@ -81,6 +81,22 @@ def test_main_returns_pipeline_exit_code() -> None:
         assert main([]) == 1
 
 
+def test_main_aborts_under_agent_identity(capsys: pytest.CaptureFixture[str]) -> None:
+    """vrg-release is human-only (release/merge/finalize are human actions).
+    An agent identity (user/audit) must hard-abort before any side effect —
+    no repo resolution, no pipeline — mirroring vrg-submit-pr (issue #1694)."""
+    with (
+        patch(_MOD + ".identity_mode.is_agent", return_value=True),
+        patch(_MOD + ".git") as m_git,
+        patch(_MOD + ".progress.run_pipeline") as m_pipeline,
+    ):
+        rc = main(["--output-format", "plain"])
+    assert rc == 1
+    m_pipeline.assert_not_called()
+    m_git.repo_root.assert_not_called()
+    assert "human" in capsys.readouterr().err.lower()
+
+
 def test_main_resume_with_bump_errors(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(_MOD + ".git"):
         assert main(["minor", "--resume"]) == 1

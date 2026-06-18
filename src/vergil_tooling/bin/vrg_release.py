@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import git, github, progress
+from vergil_tooling.lib import git, github, identity_mode, progress
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.handoff import run_consumer_refresh
 from vergil_tooling.lib.release.orchestrator import ReleaseState, build_stages
@@ -57,6 +57,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # The release workflow — branch, tag, merge, finalize — is a human
+    # action, like vrg-submit-pr. Hard-abort under any agent identity before
+    # any side effect, so an agent VM cannot drive a release (issue #1694).
+    if identity_mode.is_agent():
+        print(
+            "vrg-release: releasing is a human maintainer action. Agents cannot run vrg-release.",
+            file=sys.stderr,
+        )
+        return 1
+
     repo_root = git.repo_root()
 
     resume_requested = args.resume is not None
