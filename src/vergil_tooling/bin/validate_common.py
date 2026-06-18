@@ -9,6 +9,8 @@ Runs inside the dev container via ``vrg-container-run``:
      the bundled canonical config (issue #302, #590)
   5. hadolint on Dockerfile* files at the repo root
   6. actionlint on ``.github/workflows/``
+  7. ansible-lint when the repo carries Ansible content, using the
+     bundled canonical config (issue #1667)
 """
 
 from __future__ import annotations
@@ -103,6 +105,36 @@ def _find_yaml_files(repo_root: Path) -> list[str]:
     return sorted(set(found))
 
 
+# Explicit signal files/directories that mark a repo as carrying Ansible
+# content. Ansible playbooks are plain YAML with no unique extension, so
+# detection is heuristic — we gate on concrete, deterministic signals
+# rather than deferring to ansible-lint's own auto-detection (issue #1667).
+_ANSIBLE_FILE_SIGNALS = (
+    "ansible.cfg",
+    ".ansible-lint",
+    ".ansible-lint.yml",
+    ".ansible-lint.yaml",
+    "galaxy.yml",
+)
+_ANSIBLE_DIR_SIGNALS = ("playbooks", "roles")
+
+
+def _has_ansible_content(repo_root: Path) -> bool:
+    """Return True when the repo carries Ansible content.
+
+    Detection is signal-based: a recognized config/manifest file at the
+    repo root (``ansible.cfg``, ``.ansible-lint*``, ``galaxy.yml``), a
+    role/collection metadata file (``meta/main.yml``), or a ``playbooks/``
+    or ``roles/`` directory. Mirrors the conditional-skip behavior of the
+    other common checks — no Ansible content means the check is skipped.
+    """
+    if any((repo_root / name).is_file() for name in _ANSIBLE_FILE_SIGNALS):
+        return True
+    if (repo_root / "meta" / "main.yml").is_file():
+        return True
+    return any((repo_root / name).is_dir() for name in _ANSIBLE_DIR_SIGNALS)
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     repo_root = git.repo_root()
 
@@ -157,6 +189,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         print("Running: actionlint")
         result = subprocess.run(  # noqa: S603
             ["actionlint"],  # noqa: S607
+            check=False,
+        )
+        if result.returncode != 0:
+            return result.returncode
+
+    if _has_ansible_content(repo_root):
+        print("Running: ansible-lint")
+        ansible_config = files("vergil_tooling.configs") / "ansible-lint.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["ansible-lint", "-c", str(ansible_config)],  # noqa: S607
             check=False,
         )
         if result.returncode != 0:
