@@ -954,6 +954,75 @@ class TestList:
         for row in lines[2:]:
             assert row[state_col:].startswith(("active", "idle"))
 
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=1700000000.0)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_column_order_and_sort(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        _age: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Columns render IDENTITY -> WORKSPACE -> SLOT, and rows sort by
+        # workspace first then slot (identity is only the final tiebreaker).
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {
+                        "identity": "vergil-user",
+                        "slot": 2,
+                        "path": "alpha/repo",
+                        "sessionId": "s1",
+                        "state": "idle",
+                        "lastActive": 1700000000.0,
+                    },
+                    {
+                        "identity": "vergil",
+                        "slot": 1,
+                        "path": "beta/repo",
+                        "sessionId": "s2",
+                        "state": "idle",
+                        "lastActive": 1700000000.0,
+                    },
+                    {
+                        "identity": "vergil-user",
+                        "slot": 1,
+                        "path": "alpha/repo",
+                        "sessionId": "s3",
+                        "state": "idle",
+                        "lastActive": 1700000000.0,
+                    },
+                ]
+            )
+        )
+        mock_names.return_value = {
+            "s1": "vergil-user:02:alpha/repo",
+            "s2": "vergil:01:beta/repo",
+            "s3": "vergil-user:01:alpha/repo",
+        }
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        out = capsys.readouterr().out
+        lines = [line for line in out.splitlines() if line.strip()]
+        header = lines[0]
+        # Column order: IDENTITY, then WORKSPACE, then SLOT, then STATE.
+        assert (
+            header.index("IDENTITY")
+            < header.index("WORKSPACE")
+            < header.index("SLOT")
+            < header.index("STATE")
+        )
+        # Data rows (after header + divider) sort by workspace then slot:
+        # both alpha/repo rows precede beta/repo, slot 01 before slot 02.
+        data = lines[2:]
+        assert "alpha/repo" in data[0] and "01" in data[0]
+        assert "alpha/repo" in data[1] and "02" in data[1]
+        assert "beta/repo" in data[2]
+
 
 class TestUpdate:
     # vrg-vm update refreshes plugins too (via _update_instance); mock it so the

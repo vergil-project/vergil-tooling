@@ -1128,18 +1128,21 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
 
     wanted = _selected_states(args)
     rows = [r for r in rows if r["state"] in wanted]
-    rows.sort(key=lambda r: (str(r["identity"]), cast("int", r["slot"]), str(r["path"])))
+    # Group by workspace first, then slot within a workspace; identity is the
+    # final tiebreaker so same-workspace/same-slot rows stay stably ordered.
+    rows.sort(key=lambda r: (str(r["path"]), cast("int", r["slot"]), str(r["identity"])))
 
     now = datetime.datetime.now(tz=datetime.UTC).timestamp()
     # Size the WORKSPACE column to the longest path present (36 floor), so a
-    # path wider than the historical fixed width keeps STATE/LAST ACTIVE aligned.
+    # path wider than the historical fixed width keeps SLOT/STATE/LAST ACTIVE
+    # aligned.
     ws = max([36, *(len(str(r["path"])) for r in rows)])
-    print(f"{'IDENTITY':<16} {'SLOT':<6} {'WORKSPACE':<{ws}} {'STATE':<9} {'LAST ACTIVE':<12}")
-    print(f"{'─' * 16} {'─' * 6} {'─' * ws} {'─' * 9} {'─' * 12}")
+    print(f"{'IDENTITY':<16} {'WORKSPACE':<{ws}} {'SLOT':<6} {'STATE':<9} {'LAST ACTIVE':<12}")
+    print(f"{'─' * 16} {'─' * ws} {'─' * 6} {'─' * 9} {'─' * 12}")
     for r in rows:
         slot = f"{cast('int', r['slot']):02d}"
         age = _format_age(cast("float | None", r.get("lastActive")), now)
-        print(f"{r['identity']!s:<16} {slot:<6} {r['path']!s:<{ws}} {r['state']!s:<9} {age:<12}")
+        print(f"{r['identity']!s:<16} {r['path']!s:<{ws}} {slot:<6} {r['state']!s:<9} {age:<12}")
 
     return 0
 
