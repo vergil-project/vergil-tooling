@@ -208,7 +208,9 @@ Shared validation checks for all repos: repository profile
 validation, markdownlint on published markdown (`docs/site/**/*.md`
 and `README.md`) using the bundled canonical config, shellcheck on
 `scripts/`, yamllint on `.github/` and `docs/` YAML files, hadolint
-on `Dockerfile*`, and actionlint on `.github/workflows/`.
+on `Dockerfile*`, actionlint on `.github/workflows/`, and
+ansible-lint (using the bundled canonical config) when the repo
+carries Ansible content.
 
 | Attribute | Value |
 |---|---|
