@@ -233,13 +233,23 @@ def main(argv: list[str] | None = None) -> int:
         all_compliant = False
 
     repo = _resolve_repo(args)
+    # Exit codes are a contract for callers (e.g. vrg-release): 0 = compliant,
+    # 1 = genuinely non-compliant, 2 = the audit could not complete. Config
+    # resolution and the GitHub state fetch can fail operationally (missing
+    # vergil.toml, HTTP 403 reading actions/permissions under an App token);
+    # those are exit 2 with a clean diagnostic, never a false "non-compliant"
+    # verdict or a raw traceback (#1691).
     try:
         config = _load_local_config(args.config) if args.config else _resolve_config(repo)
     except RuntimeError as exc:
         emit_error(str(exc))
-        return 1
+        return 2
 
-    github_diff = _audit_repo(repo, config)
+    try:
+        github_diff = _audit_repo(repo, config)
+    except (github.GitHubAPIError, RuntimeError) as exc:
+        emit_error(f"Could not audit {repo}: {exc}")
+        return 2
     _print_diff(repo, github_diff)
     if not github_diff.is_compliant():
         all_compliant = False

@@ -534,6 +534,14 @@ def run_pipeline(
                 result = StageResult(stage.name, status, time.monotonic() - start, cause)
                 log.write(f"=== {stage.name}: {status} ({cause}) ===")
                 log.write(traceback.format_exc())
+                # Verbose context (e.g. a captured subprocess' stdout/stderr)
+                # rides on the exception's ``detail`` attribute but is absent
+                # from both ``str(exc)`` and the traceback. Record it in the
+                # full log so the summary's "full log →" pointer actually leads
+                # to the real reason instead of just the headline (#1691).
+                detail = getattr(exc, "detail", None)
+                if isinstance(detail, str) and detail.strip():
+                    log.write(detail)
                 renderer.end_stage(result)
                 results.append(result)
                 if stage.mode == "fail_fast":

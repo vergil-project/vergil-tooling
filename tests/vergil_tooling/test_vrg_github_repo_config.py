@@ -221,9 +221,12 @@ def test_apply_github_noncompliant_applies() -> None:
     mock_apply.assert_called_once()
 
 
-def test_main_remote_config_error_exits_one_without_traceback(
+def test_main_remote_config_error_exits_two_without_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
+    """A config-resolution failure means the audit could not run — exit 2
+    (could-not-complete), distinct from exit 1 (genuinely non-compliant),
+    so callers like vrg-release don't mislabel it (issue #1691)."""
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
@@ -235,13 +238,39 @@ def test_main_remote_config_error_exits_one_without_traceback(
         patch(f"{_MODULE}._audit_repo") as mock_audit,
     ):
         result = main(["apply", "--repo", "o/r"])
-    assert result == 1
+    assert result == 2
     mock_audit.assert_not_called()
     err = capsys.readouterr().err
     # The actionable message reaches stderr, emitted cleanly (no traceback).
     # Assert on substance, not the prefix: emit_error formats differ between
     # interactive (`ERROR: ...`) and CI (`::error ::...`) environments.
     assert "--config" in err
+    assert "Traceback" not in err
+
+
+def test_audit_github_api_error_exits_two_without_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An API/auth failure while fetching GitHub state (e.g. HTTP 403 reading
+    actions/permissions under an App token) exits 2 with a clean diagnostic,
+    not a raw traceback and not a false 'non-compliant' verdict (issue #1691)."""
+    api_error = GitHubAPIError(
+        1,
+        ("gh", "api", "repos/o/r/actions/permissions"),
+        '{"message":"Resource not accessible by integration","status":"403"}',
+        "gh: Resource not accessible by integration (HTTP 403)",
+    )
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=_mock_local_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+        patch(f"{_MODULE}._audit_repo", side_effect=api_error),
+    ):
+        result = main(["audit", "--repo", "o/r"])
+    assert result == 2
+    err = capsys.readouterr().err
+    assert "403" in err
     assert "Traceback" not in err
 
 
