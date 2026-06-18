@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.41] - 2026-06-18
+
+### Bug fixes
+
+- surface audit-stage failure detail and distinguish audit crash from non-compliance (#1693)
+- abort vrg-release under agent identity (#1696)
+
+### Features
+
+- add ansible-lint conditional common check (#1695)
+- order sessions list by workspace then slot (#1692)
+
 ## [2.1.40] - 2026-06-17
 
 ### Features
