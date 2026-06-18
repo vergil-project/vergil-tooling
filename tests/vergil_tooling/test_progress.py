@@ -542,6 +542,39 @@ def test_pipeline_traceback_in_log(tmp_path: Path) -> None:
     assert "Traceback" in log.read_text()
 
 
+class _DetailedError(Exception):
+    """Exception carrying a verbose ``detail`` attribute, like ReleaseError."""
+
+    def __init__(self) -> None:
+        self.detail = "actions.permissions: expected='selected', actual='all'"
+        super().__init__("Repository configuration is non-compliant.")
+
+
+def _boom_with_detail(ctx: object) -> None:
+    raise _DetailedError
+
+
+def test_pipeline_writes_exception_detail_to_log(tmp_path: Path) -> None:
+    """A failing stage's exception ``detail`` is recorded in the full log so
+    the real reason survives where the summary's 'full log →' pointer sends
+    the user (issue #1691)."""
+    stages = [Stage("audit", _boom_with_detail, mode="fail_fast")]
+    _pipeline(tmp_path, stages, _args())
+    log_text = next((tmp_path / ".vergil").glob("test-cmd-*.log")).read_text()
+    assert "actions.permissions: expected='selected', actual='all'" in log_text
+
+
+def test_pipeline_detail_kept_out_of_one_line_status(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The verbose detail goes to the log, not the one-line failure summary."""
+    stages = [Stage("audit", _boom_with_detail, mode="fail_fast")]
+    _pipeline(tmp_path, stages, _args())
+    out = capsys.readouterr().out
+    assert "audit — _DetailedError: Repository configuration is non-compliant." in out
+    assert "expected='selected'" not in out
+
+
 def test_add_progress_args_generates_flags() -> None:
     parser = argparse.ArgumentParser()
     stages = [Stage("audit", lambda ctx: None, mode="fail_fast", skip_flag="skip_audit")]

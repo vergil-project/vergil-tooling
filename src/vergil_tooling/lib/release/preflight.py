@@ -195,13 +195,22 @@ def audit_repo_config(repo: str) -> None:
         capture_output=True,
         text=True,
     )
-    if result.returncode != 0:
-        raise ReleaseError(
-            phase="preflight",
-            command=f"vrg-github-repo-config audit --repo {repo}",
-            message="Repository configuration is non-compliant.",
-            detail=result.stdout + result.stderr,
-        )
+    if result.returncode == 0:
+        return
+    # Exit 1 is a genuine compliance diff; anything else means the audit
+    # could not complete (auth/API failure, missing config). Don't conflate
+    # the two — a crash is not a non-compliance verdict (#1691). Either way
+    # the captured output rides along as detail so the real reason survives.
+    if result.returncode == 1:
+        message = "Repository configuration is non-compliant."
+    else:
+        message = "Repository configuration audit could not complete."
+    raise ReleaseError(
+        phase="preflight",
+        command=f"vrg-github-repo-config audit --repo {repo}",
+        message=message,
+        detail=result.stdout + result.stderr,
+    )
 
 
 def _check_version_not_tagged(ver: str) -> None:

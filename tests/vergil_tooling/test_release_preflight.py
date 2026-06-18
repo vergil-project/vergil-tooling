@@ -218,13 +218,39 @@ def testaudit_repo_config_fails() -> None:
             return_value=CompletedProcess(
                 args=(),
                 returncode=1,
-                stdout="non-compliant",
+                stdout="  o/r: NON-COMPLIANT (1 issues)",
                 stderr="",
             ),
         ),
-        pytest.raises(ReleaseError, match="non-compliant"),
+        pytest.raises(ReleaseError, match="non-compliant") as exc_info,
     ):
         audit_repo_config("owner/repo")
+    # The captured audit output is carried as detail so it can be surfaced.
+    assert "NON-COMPLIANT" in (exc_info.value.detail or "")
+
+
+def testaudit_repo_config_distinguishes_crash_from_noncompliance() -> None:
+    """A non-1 exit means the audit could not complete (crash / auth / API),
+    not that the repo is non-compliant — the headline must say so, and the
+    captured output must ride along as detail (issue #1691)."""
+    from subprocess import CompletedProcess
+
+    from vergil_tooling.lib.release.preflight import audit_repo_config
+
+    with (
+        patch(
+            _MOD + ".subprocess.run",
+            return_value=CompletedProcess(
+                args=(),
+                returncode=2,
+                stdout="",
+                stderr="gh: Resource not accessible by integration (HTTP 403)",
+            ),
+        ),
+        pytest.raises(ReleaseError, match="could not complete") as exc_info,
+    ):
+        audit_repo_config("owner/repo")
+    assert "403" in (exc_info.value.detail or "")
 
 
 def test_check_version_not_tagged_passes() -> None:
