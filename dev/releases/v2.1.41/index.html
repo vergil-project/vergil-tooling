@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.13/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.11/">
+        <link rel="next" href="../v2.1.40/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.12 - VERGIL Tooling</title>
+        <title>2.1.41 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2012-2026-05-15" class="md-skip">
+        <a href="#release-2141-2026-06-18" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.12
+              2.1.41
             
           </span>
         </div>
@@ -948,10 +948,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.41/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.41
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -967,6 +994,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3916,37 +3985,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.12
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.12/" class="md-nav__link">
         
   
   
@@ -3962,48 +4004,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8490,10 +8490,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chores
+        Features
       
     </span>
   </a>
@@ -8517,14 +8517,48 @@
 
 
 
-<h1 id="release-2012-2026-05-15">Release 2.0.12 (2026-05-15)<a class="headerlink" href="#release-2012-2026-05-15" title="Permanent link">&para;</a></h1>
+<h1 id="release-2141-2026-06-18">Release 2.1.41 (2026-06-18)<a class="headerlink" href="#release-2141-2026-06-18" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>use human credentials for all operations while agent account is flagged (#799)</strong></li>
+<li><strong>surface audit-stage failure detail and distinguish audit crash from non-compliance (#1693)</strong>
+The vrg-release audit stage reported only 'Repository configuration is non-compliant', discarding the real reason. ReleaseError.detail carried the captured audit output, but progress.run_pipeline built the failure cause from str(exc) (the headline only) and logged just the traceback — so the detail reached neither the terminal nor the full log.</li>
 </ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<p>Three fixes:</p>
 <ul>
-<li><strong>bump version to 2.0.12</strong></li>
+<li>progress.py: write a failing stage's exception detail to the run log, so the summary's 'full log -&gt;' pointer leads to the real reason.</li>
+<li>vrg-github-repo-config: give the audit a real exit-code contract — 0 compliant, 1 non-compliant, 2 could-not-complete. Config-resolution and GitHub-state-fetch failures (e.g. HTTP 403 reading actions/permissions under an App token) now exit 2 with a clean diagnostic instead of a raw traceback or a false non-compliant verdict.</li>
+<li>
+<p>preflight.audit_repo_config: branch on the exit code so a crash is labelled 'audit could not complete', not 'non-compliant', and always carry the captured output as detail.</p>
+</li>
+<li>
+<p><strong>abort vrg-release under agent identity (#1696)</strong>
+vrg-release is documented human-only — branch, tag, merge and finalize are human maintainer actions — but unlike its sibling vrg-submit-pr it had no identity guard. An agent running under the user or audit identity could invoke it and proceed straight into preflight and the release pipeline.</p>
+</li>
+</ul>
+<p>Add the guard at the top of main(), immediately after parse_args and before git.repo_root() or any other side effect, mirroring vrg-submit-pr: if identity_mode.is_agent(), print a release-specific message to stderr and return 1.</p>
+<p>Surfaced while debugging #1691, where a user-mode agent run of vrg-release reached the audit stage and hit HTTP 403 on actions/permissions — a wall it should never have reached, because the workflow is not an agent action.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>add ansible-lint conditional common check (#1695)</strong>
+Add ansible-lint as a sixth conditional common check in validate_common,
+following the existing run-it-wherever-it-applies model used by the other
+common linters. A signal-based discovery helper gates the check: it runs
+only when the repo carries Ansible content (ansible.cfg, .ansible-lint*,
+galaxy.yml, meta/main.yml, or a playbooks/ or roles/ directory), and is a
+no-op otherwise - mirroring how hadolint/actionlint skip repos without
+Dockerfiles/workflows.</li>
+</ul>
+<p>The check uses a bundled canonical config (configs/ansible-lint.yaml)
+pinning the production profile, so every repo lints against the same
+ruleset rather than per-repo drift. ansible-lint's embedded yamllint is
+left enabled; the standalone yamllint pass only walks repo-root, .github/,
+and docs/site/mkdocs.yml, so the practical overlap is limited.</p>
+<p>PR CI runs the same vrg-validate driver, so parity is automatic once the
+dev image ships the binary (tracked in vergil-docker#342). This repo has
+no Ansible content, so the check stays skipped here.</p>
+<ul>
+<li><strong>order sessions list by workspace then slot (#1692)</strong>
+Reorder the 'vrg-vm list --sessions' table so workspace is the primary axis: WORKSPACE now renders before SLOT (IDENTITY/WORKSPACE/SLOT/STATE/LAST ACTIVE), and rows sort by workspace first, then slot, with identity as the final tiebreaker. This groups every session for a given workspace together so triaging parallel sessions per repo is a single scan. Refs #1690.</li>
 </ul>
 
 
