@@ -8718,16 +8718,16 @@
 proper issue linkage. Has two modes:</p>
 <ul>
 <li><strong>Template mode</strong> (no arguments) — the normal path. Reads
-  <code>.vergil/pr-template.yml</code> (written by the agent), shows a preview,
-  asks for confirmation, pushes the branch, creates the PR, and emits
-  the <code>/vergil:pr-watch</code> handoff line.</li>
+  <code>.vergil/pr-workflow.json</code> (the oracle state file the agent records via
+  <code>vrg-pr-workflow</code>), shows a preview, asks for confirmation, pushes the
+  branch, creates the PR, and emits the <code>/vergil:pr-watch</code> handoff line.</li>
 <li><strong>CLI mode</strong> (<code>--issue/--summary/--title</code>) — direct invocation for
   human emergency use.</li>
 </ul>
 <div class="admonition warning">
 <p class="admonition-title">Human-run tool</p>
 <p>PR submission is a human action. Agent identities are blocked;
-agents hand off via <code>.vergil/pr-template.yml</code> instead.</p>
+agents hand off via <code>.vergil/pr-workflow.json</code> instead.</p>
 </div>
 <h2 id="prerequisites">Prerequisites<a class="headerlink" href="#prerequisites" title="Permanent link">&para;</a></h2>
 <p>When running inside a dev container, <code>GH_TOKEN</code> must be set so <code>gh</code> can
@@ -8746,7 +8746,7 @@ container.</p>
 <p>In template mode, <code>vrg-submit-pr</code> may be run from the repo root — it
 resolves the target worktree itself:</p>
 <ul>
-<li><strong>One submittable worktree</strong> (contains <code>.vergil/pr-template.yml</code>):
+<li><strong>One submittable worktree</strong> (contains <code>.vergil/pr-workflow.json</code>):
   announced and entered automatically; the usual preview + <code>[y/N]</code>
   confirmation follows.</li>
 <li><strong>Several submittable worktrees:</strong> a numbered menu shows each
@@ -8830,7 +8830,7 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 <ol>
 <li>Template mode from the repo root: resolves the target worktree
    (see above) and moves into it — the invoking shell is unaffected.</li>
-<li>Reads <code>.vergil/pr-template.yml</code> (template mode) or validates CLI
+<li>Reads <code>.vergil/pr-workflow.json</code> (template mode) or validates CLI
    arguments, including the issue reference format.</li>
 <li>Detects target branch from the current branch:<ul>
 <li><code>release/*</code> branches target <code>main</code></li>
