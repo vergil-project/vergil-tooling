@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.44] - 2026-06-19
+
+### Bug fixes
+
+- expand ~ in identity projects_dir at config load (#1711)
+
 ## [2.1.43] - 2026-06-19
 
 ### Features
