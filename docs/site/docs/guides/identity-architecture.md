@@ -86,7 +86,8 @@ Workflows access, so neither can push changes under
 - Commit and push to feature branches (`contents: write`)
 - Create and comment on issues (`issues: write`)
 - Read PR and CI status (`pull_requests: read`)
-- Write `.vergil/pr-template.yml` to stage a PR for the human
+- Record PR metadata in `.vergil/pr-workflow.json` (via `vrg-pr-workflow`)
+  to stage a PR for the human
 
 ### What the user agent cannot do
 
