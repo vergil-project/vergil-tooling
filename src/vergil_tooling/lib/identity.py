@@ -62,6 +62,19 @@ def _validate_session_thresholds(
         raise SystemExit(1)
 
 
+_VALID_AUTH_TYPES = ("app", "none")
+
+
+def _validate_auth_type(name: str, identity: Identity) -> None:
+    if identity.auth_type not in _VALID_AUTH_TYPES:
+        print(
+            f"ERROR: identity '{name}': auth_type must be one of "
+            f"{', '.join(_VALID_AUTH_TYPES)}, got {identity.auth_type!r}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
 def _validate_identity_resources(name: str, identity: Identity) -> None:
     if identity.cpus is not None and (not isinstance(identity.cpus, int) or identity.cpus < 1):
         print(
@@ -141,6 +154,7 @@ def load_config(path: Path) -> IdentityConfig:
             disk=data.get("disk"),
             overrides=overrides,
         )
+        _validate_auth_type(name, identities[name])
         _validate_identity_resources(name, identities[name])
         _validate_session_thresholds(
             name, identities[name], session_stale_days, session_archive_days
