@@ -399,6 +399,13 @@ def _inject_host_git_identity(instance: str) -> None:
 
 def inject_credentials(instance: str, identity: Identity) -> None:
     """Inject GitHub App and Claude Code credentials into a running VM."""
+    if identity.auth_type == "none":
+        # Credential-less identity: skip the entire stage. No App key, no
+        # app.env, no identity-mode file, no git identity, no HTTPS rewrite,
+        # no Claude token. The box can only touch local files.
+        print("  Skipping credential injection (credential-less identity)")
+        return
+
     key_path = Path(identity.private_key_path).expanduser()
     if not key_path.exists():
         print(f"ERROR: private key not found: {key_path}", file=sys.stderr)

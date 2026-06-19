@@ -705,6 +705,24 @@ class TestInjectCredentials:
         inject_credentials("vergil-agent", identity)
         mock_id.assert_called_once_with("vergil-agent")
 
+    @patch("vergil_tooling.lib.lima._inject_host_git_identity")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    def test_skips_all_injection_for_credential_less_identity(
+        self, mock_pipe: MagicMock, mock_run: MagicMock, mock_id: MagicMock
+    ) -> None:
+        # A credential-less identity has no key and no derivable mode — which
+        # would normally abort. With auth_type="none" the whole stage is a
+        # clean no-op: no key, no app.env, no mode file, no git identity, no
+        # HTTPS rewrite, no Claude token.
+        identity = Identity(vm_instance="anonymous", auth_type="none")
+
+        inject_credentials("anonymous--logical-minds-foundry--mq-cluster-tooling", identity)
+
+        mock_run.assert_not_called()
+        mock_pipe.assert_not_called()
+        mock_id.assert_not_called()
+
 
 class TestReadHostGitConfig:
     @patch("vergil_tooling.lib.lima.subprocess.run")

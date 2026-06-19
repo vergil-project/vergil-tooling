@@ -106,6 +106,32 @@ def test_load_config_mode_empty_when_underivable(config_file: Path) -> None:
     assert cfg.identities["vergil"].mode == ""
 
 
+def test_load_config_accepts_none_auth_type(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.anonymous]
+        vm_instance = "anonymous"
+        auth_type = "none"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["anonymous"].auth_type == "none"
+
+
+def test_load_config_rejects_unknown_auth_type(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.anonymous]
+        vm_instance = "anonymous"
+        auth_type = "non"
+    """)
+    )
+    with pytest.raises(SystemExit):
+        load_config(p)
+
+
 def test_missing_config_file(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         load_config(tmp_path / "nonexistent.toml")
