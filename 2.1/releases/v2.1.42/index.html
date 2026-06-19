@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.8/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.6/">
+        <link rel="next" href="../v2.1.41/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.7 - VERGIL Tooling</title>
+        <title>2.1.42 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-217-2026-06-04" class="md-skip">
+        <a href="#release-2142-2026-06-19" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.7
+              2.1.42
             
           </span>
         </div>
@@ -950,10 +950,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.42/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.42
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -969,6 +996,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1874,37 +1932,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.7
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.7/" class="md-nav__link">
         
   
   
@@ -1920,37 +1951,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8498,10 +8498,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#refactoring" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Refactoring
       
     </span>
   </a>
@@ -8525,12 +8525,19 @@
 
 
 
-<h1 id="release-217-2026-06-04">Release 2.1.7 (2026-06-04)<a class="headerlink" href="#release-217-2026-06-04" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2142-2026-06-19">Release 2.1.42 (2026-06-19)<a class="headerlink" href="#release-2142-2026-06-19" title="Permanent link">&para;</a></h1>
+<h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>join dedicated-VM instance name tiers with '.' not '--'</strong>
-Lima's instance-name validator requires single separators (regex ^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$), so the '--' tier join produced names limactl rejects — dedicated VMs (org/repo targets) were never creatable. Join identity/org/repo with a single '.' instead, parse with split('.', 2) so a repo name containing dots round-trips, and reject identity/org tiers that contain a dot so the codec stays unambiguous. Base-box VMs are unaffected and no migration is needed (the '--' names never existed on disk). Ref #1399.</li>
+<li><strong>remove the legacy pr-template.yml workflow (#1701)</strong></li>
+<li>refactor(submit-pr): remove the legacy pr-template.yml submission path</li>
 </ul>
+<p>vrg-submit-pr read PR metadata from .vergil/pr-workflow.json (the oracle state file) but still fell back to the legacy .vergil/pr-template.yml. That dual-mode path, plus the docs and error messages naming it, kept steering agents back into the old hand-off instead of the current vrg-pr-workflow flow.</p>
+<p>Make the oracle state file the sole source: drop the fallback in submission.read_pr_fields and the legacy delete-on-submit in record_submission, delete lib/pr_template.py, and remove the pr_template import, TemplateError catches, and pr-template.yml mentions from vrg-submit-pr's error messages.</p>
+<p>Migrate the submit-pr tests off the pr-template.yml fixture onto a pr-workflow.json state-file helper, and update the retention assertions (the state file is now retained and marked submitted rather than deleted). Closes the issue's code scope; historical references in specs/plans/releases are intentionally left intact.</p>
+<ul>
+<li>docs(submit-pr): drop legacy pr-template.yml references from active docs</li>
+</ul>
+<p>Update the active docs to describe only the vrg-pr-workflow / pr-workflow.json hand-off: rewrite the CLAUDE.md PR-handoff steps around the oracle, fix the CLI-tools bullet, and update the submit-pr reference and identity-architecture guide. Linkage guidance now notes that vrg-submit-pr (not the oracle) enforces the Ref-only rule, matching the code. Historical specs, plans, and release notes are left unchanged.</p>
 
 
 
