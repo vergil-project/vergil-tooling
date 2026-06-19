@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import textwrap
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 from vergil_tooling.lib.identity import (
     Identity,
@@ -117,6 +114,52 @@ def test_load_config_accepts_none_auth_type(tmp_path: Path) -> None:
     )
     cfg = load_config(p)
     assert cfg.identities["anonymous"].auth_type == "none"
+
+
+def test_load_config_expands_tilde_in_projects_dir(tmp_path: Path) -> None:
+    # A leading ~ must be expanded at load so every consumer (Lima mountPoint,
+    # which rejects ~, and on-disk vergil.toml lookups) gets an absolute path.
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.anonymous]
+        vm_instance = "anonymous"
+        auth_type = "none"
+        projects_dir = "~/dev/projects"
+    """)
+    )
+    cfg = load_config(p)
+    projects_dir = cfg.identities["anonymous"].projects_dir
+    assert not projects_dir.startswith("~")
+    assert projects_dir == str(Path.home() / "dev" / "projects")
+
+
+def test_load_config_preserves_empty_projects_dir(tmp_path: Path) -> None:
+    # Empty must stay empty — a downstream check treats "" as "not configured".
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.anonymous]
+        vm_instance = "anonymous"
+        auth_type = "none"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["anonymous"].projects_dir == ""
+
+
+def test_load_config_leaves_absolute_projects_dir_unchanged(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.anonymous]
+        vm_instance = "anonymous"
+        auth_type = "none"
+        projects_dir = "/Users/someone/dev/projects"
+    """)
+    )
+    cfg = load_config(p)
+    assert cfg.identities["anonymous"].projects_dir == "/Users/someone/dev/projects"
 
 
 def test_load_config_rejects_unknown_auth_type(tmp_path: Path) -> None:
