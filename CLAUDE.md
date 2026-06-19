@@ -136,19 +136,16 @@ signals disagree.
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
-1. The agent writes `.vergil/pr-template.yml` with `issue`, `title`,
-   `summary`, and `notes` — all required and non-empty; `read_template`
-   and `write_template` reject a missing or blank field. Multi-line
-   prose must use a YAML literal block (`|`); folded scalars (`>`) are
-   rejected because the minimal parser cannot fold them. `linkage` is
-   optional and defaults to `Ref`; if present it must be `Ref` — GitHub
-   auto-close keywords (`Closes`/`Fixes`/`Resolves`) are banned
-   repo-wide because issues
-   stay open until post-merge workflows succeed. Both
-   `pr_template.write_template()` and `vrg-submit-pr` reject any
-   other value.
+1. The agent records the PR metadata through the `vrg-pr-workflow`
+   oracle — `report-ready --title --summary --notes` (with an optional
+   `--linkage`) — which writes it to `.vergil/pr-workflow.json`. `title`,
+   `summary`, and `notes` are required and non-empty. `linkage` defaults
+   to `Ref` and must stay `Ref`: GitHub auto-close keywords
+   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues stay
+   open until post-merge workflows succeed, and `vrg-submit-pr` rejects
+   any non-`Ref` value before building the PR body.
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
-   template, previews the PR, and submits after confirmation.
+   state file, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
 
 ## Project Overview
@@ -250,7 +247,7 @@ CLI tools installed as `vrg-*` console scripts:
   and protected branches, refuses a foreign author without
   `--allow-foreign-author`, and pushes the rewrite with `--force-with-lease`
 - **`vrg-submit-pr`** — Create standards-compliant PRs (manual merge;
-  human-run — agents hand off via `.vergil/pr-template.yml`)
+  human-run — agents hand off via `.vergil/pr-workflow.json`)
 - **`vrg-pr-fix-body`** — Regenerate a PR body from corrected fields via
   the validated builder; the agent-safe path to fix body-level standards
   failures on its own PR during pr-watch (pushes an empty commit to
