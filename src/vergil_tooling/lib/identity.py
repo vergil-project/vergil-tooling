@@ -136,6 +136,13 @@ def load_config(path: Path) -> IdentityConfig:
                 if isinstance(repo_val, dict):
                     overrides[(org_key, repo_key)] = repo_val
 
+        # Expand a leading ~ at load so every consumer gets an absolute path:
+        # Lima rejects a mountPoint starting with ~, and on-disk vergil.toml
+        # lookups (Path joins) won't resolve a literal ~. Keep "" as "" so the
+        # downstream "no projects_dir configured" check still fires.
+        raw_projects_dir = data.get("projects_dir", "")
+        projects_dir = str(Path(raw_projects_dir).expanduser()) if raw_projects_dir else ""
+
         identities[name] = Identity(
             vm_instance=data["vm_instance"],
             auth_type=data.get("auth_type", "app"),
@@ -143,7 +150,7 @@ def load_config(path: Path) -> IdentityConfig:
             app_id=str(data.get("app_id", "")),
             private_key_path=data.get("private_key_path", ""),
             claude_token_path=data.get("claude_token_path", ""),
-            projects_dir=data.get("projects_dir", ""),
+            projects_dir=projects_dir,
             vergil=data.get("vergil", ""),
             vergil_vm=data.get("vergil-vm", ""),
             model=data.get("model", ""),
