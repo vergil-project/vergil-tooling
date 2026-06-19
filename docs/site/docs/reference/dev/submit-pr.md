@@ -8,15 +8,15 @@ Wrapper that creates standards-compliant pull requests with
 proper issue linkage. Has two modes:
 
 - **Template mode** (no arguments) — the normal path. Reads
-  `.vergil/pr-template.yml` (written by the agent), shows a preview,
-  asks for confirmation, pushes the branch, creates the PR, and emits
-  the `/vergil:pr-watch` handoff line.
+  `.vergil/pr-workflow.json` (the oracle state file the agent records via
+  `vrg-pr-workflow`), shows a preview, asks for confirmation, pushes the
+  branch, creates the PR, and emits the `/vergil:pr-watch` handoff line.
 - **CLI mode** (`--issue/--summary/--title`) — direct invocation for
   human emergency use.
 
 !!! warning "Human-run tool"
     PR submission is a human action. Agent identities are blocked;
-    agents hand off via `.vergil/pr-template.yml` instead.
+    agents hand off via `.vergil/pr-workflow.json` instead.
 
 ## Prerequisites
 
@@ -41,7 +41,7 @@ vrg-submit-pr --issue NUMBER --summary TEXT --title TEXT [options]
 In template mode, `vrg-submit-pr` may be run from the repo root — it
 resolves the target worktree itself:
 
-- **One submittable worktree** (contains `.vergil/pr-template.yml`):
+- **One submittable worktree** (contains `.vergil/pr-workflow.json`):
   announced and entered automatically; the usual preview + `[y/N]`
   confirmation follows.
 - **Several submittable worktrees:** a numbered menu shows each
@@ -92,7 +92,7 @@ vrg-submit-pr --finalize
 
 1. Template mode from the repo root: resolves the target worktree
    (see above) and moves into it — the invoking shell is unaffected.
-2. Reads `.vergil/pr-template.yml` (template mode) or validates CLI
+2. Reads `.vergil/pr-workflow.json` (template mode) or validates CLI
    arguments, including the issue reference format.
 3. Detects target branch from the current branch:
     - `release/*` branches target `main`

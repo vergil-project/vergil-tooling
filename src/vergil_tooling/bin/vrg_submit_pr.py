@@ -2,8 +2,7 @@
 
 Supports two modes:
 - **Template mode** (no CLI args): reads the PR workflow state file
-  (``.vergil/pr-workflow.json``), falling back to the legacy
-  ``.vergil/pr-template.yml``; shows a summary, prompts for
+  (``.vergil/pr-workflow.json``); shows a summary, prompts for
   confirmation, pushes the branch, and creates the PR.
 - **CLI argument mode** (args provided): existing direct invocation
   for human emergency use.
@@ -44,7 +43,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import git, github, identity_mode, pr_template, worktrees
+from vergil_tooling.lib import git, github, identity_mode, worktrees
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
@@ -292,9 +291,9 @@ def _ready_worktrees(root: Path) -> list[tuple[worktrees.Worktree, dict[str, str
             in_flight.append(f"{wt.path.name}: {ref} ({exc.pr_url})")
             continue
         except FileNotFoundError:
-            not_ready.append(f"{wt.path.name}: no .vergil/pr-workflow.json or pr-template.yml")
+            not_ready.append(f"{wt.path.name}: no .vergil/pr-workflow.json")
             continue
-        except (pr_template.TemplateError, WorkflowError) as exc:
+        except WorkflowError as exc:
             not_ready.append(f"{wt.path.name}: {exc}")
             continue
         ready.append((wt, fields))
@@ -470,8 +469,8 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
 
     Self-contained submit for one worktree, used by the batch orchestrator.
     Propagates ``AlreadySubmittedError`` / ``FileNotFoundError`` /
-    ``TemplateError`` / ``WorkflowError`` from the field readers and raises
-    ``SystemExit`` on a forbidden linkage or a declined confirm. The per-PR
+    ``WorkflowError`` from the field reader and raises ``SystemExit`` on a
+    forbidden linkage or a declined confirm. The per-PR
     confirm is pre-answered when *assume_yes* — the batch path passes True so
     the single up-front batch confirm is the only gate (issue #1673).
     """
@@ -541,13 +540,13 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         return 0
     except FileNotFoundError:
         print(
-            "vrg-submit-pr: No .vergil/pr-workflow.json or .vergil/pr-template.yml found,\n"
+            "vrg-submit-pr: No .vergil/pr-workflow.json found,\n"
             "  and no CLI arguments provided. Either provide --issue, --summary, and\n"
             "  --title, or ensure the agent has run the workflow through to approval.",
             file=sys.stderr,
         )
         return 1
-    except (pr_template.TemplateError, WorkflowError) as exc:
+    except WorkflowError as exc:
         print(f"vrg-submit-pr: cannot read PR submission fields:\n  {exc}", file=sys.stderr)
         return 1
 
@@ -558,9 +557,9 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     linkage = fields.get("linkage", "Ref")
     notes = fields.get("notes", "")
 
-    # Belt-and-suspenders: read_template validates linkage, but guard the
-    # value used to build the PR body so a forbidden auto-close keyword can
-    # never reach the PR regardless of how the fields were obtained.
+    # Belt-and-suspenders: the oracle validates linkage at report-ready, but
+    # guard the value used to build the PR body so a forbidden auto-close
+    # keyword can never reach the PR regardless of how the fields were obtained.
     if linkage not in ALLOWED_LINKAGES:
         print(
             f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
