@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.43] - 2026-06-19
+
+### Features
+
+- credential-less VM identity (auth_type=none) (#1707)
+
 ## [2.1.42] - 2026-06-19
 
 ### Refactoring
