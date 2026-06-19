@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.42] - 2026-06-19
+
+### Refactoring
+
+- remove the legacy pr-template.yml workflow (#1701)
+
 ## [2.1.41] - 2026-06-18
 
 ### Bug fixes
