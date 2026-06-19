@@ -18,14 +18,64 @@ from vergil_tooling.bin.vrg_submit_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import pr_template, worktrees
-from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError
+from vergil_tooling.lib import worktrees
+from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _MOD = "vergil_tooling.bin.vrg_submit_pr"
+
+
+def _write_workflow_state(
+    root: Path,
+    *,
+    issue: str = "42",
+    branch: str = "feature/x",
+    base: str = "develop",
+    title: str = "fix: bug",
+    summary: str = "Fix the bug",
+    notes: str = "Verified locally",
+    linkage: str = "Ref",
+) -> None:
+    """Write a ready-to-submit ``.vergil/pr-workflow.json`` state file.
+
+    This is the sole metadata source vrg-submit-pr reads in template mode
+    (issue #1700).
+    """
+    from vergil_tooling.lib.pr_workflow import engine
+    from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+    now = "2026-06-08T00:00:00Z"
+    state = engine.init_state(
+        issue=issue,
+        branch=branch,
+        base=base,
+        mode="solo",
+        head_sha="h0",
+        base_sha="b0",
+        user_token="u-1",
+        now=now,
+    )
+    engine.apply_report_ready(
+        state,
+        title=title,
+        summary=summary,
+        notes=notes,
+        linkage=linkage,
+        head_sha="h0",
+        now=now,
+    )
+    LocalFileTransport(root, base=base).write(state)
+
+
+def _state_submitted(root: Path) -> bool:
+    """True if the worktree's state file is marked submitted (in-flight)."""
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
+
+    path = root / ".vergil" / "pr-workflow.json"
+    return path.is_file() and WorkflowState.from_json(path.read_text()).submitted is not None
 
 
 @pytest.fixture(autouse=True)
@@ -351,7 +401,7 @@ class TestIdentityGate:
 
 
 class TestTemplateMode:
-    """Template mode reads .vergil/pr-template.yml when no CLI args given."""
+    """Template mode reads .vergil/pr-workflow.json when no CLI args given."""
 
     @pytest.fixture(autouse=True)
     def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -386,12 +436,7 @@ class TestTemplateMode:
         assert "312" in combined
 
     def test_template_dry_run(self, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\n"
-            "notes: Verified locally\nlinkage: Ref\n"
-        )
+        _write_workflow_state(tmp_path)
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -492,11 +537,7 @@ class TestTemplateMode:
         assert mock_pr.call_args.kwargs["base"] == "develop"
 
     def test_template_creates_pr_on_confirm(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path)
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -513,16 +554,14 @@ class TestTemplateMode:
             result = main([])
         assert result == 0
         mock_pr.assert_called_once()
-        assert not (vergil / "pr-template.yml").exists()
+        # The state file is retained and marked submitted (in-flight tracking),
+        # not deleted as the legacy template was.
+        assert _state_submitted(tmp_path)
 
     def test_template_yes_flag_submits_without_prompting(self, tmp_path: Path) -> None:
         """--yes pre-answers the submit confirmation, so the PR is created
         without reading stdin (issue #1644)."""
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: 'fix: bug'\nsummary: Fix the bug\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path)
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -544,11 +583,7 @@ class TestTemplateMode:
     def test_template_prints_pr_watch_oneliner(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -569,11 +604,7 @@ class TestTemplateMode:
     def test_template_rejects_forbidden_linkage(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\nlinkage: Closes\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix", linkage="Closes")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -600,12 +631,36 @@ class TestTemplateMode:
         assert "linkage" in err.lower()
         assert "Ref" in err
 
-    def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
+    def test_template_mode_reports_unready_workflow(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A state file with no PR metadata yet (the USER agent has not run
+        `report-ready`) surfaces the WorkflowError cleanly and exits non-zero,
+        rather than crashing."""
+        from vergil_tooling.lib.pr_workflow import engine
+        from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+        state = engine.init_state(
+            issue="42",
+            branch="feature/x",
+            base="develop",
+            mode="solo",
+            head_sha="h0",
+            base_sha="b0",
+            user_token="u-1",
+            now="2026-06-08T00:00:00Z",
         )
+        LocalFileTransport(tmp_path, base="develop").write(state)
+        with (
+            patch(_MOD + ".git.repo_root", return_value=tmp_path),
+            patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        ):
+            result = main([])
+        assert result == 1
+        assert "cannot read PR submission fields" in capsys.readouterr().err
+
+    def test_template_aborts_on_decline(self, tmp_path: Path) -> None:
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -616,14 +671,12 @@ class TestTemplateMode:
         ):
             result = main([])
         assert result == 1
-        assert (vergil / "pr-template.yml").exists()
+        # Declining leaves the state file in place and un-submitted.
+        assert not _state_submitted(tmp_path)
+        assert (tmp_path / ".vergil" / "pr-workflow.json").is_file()
 
     def test_template_aborts_on_eof(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -634,7 +687,8 @@ class TestTemplateMode:
         ):
             result = main([])
         assert result == 1
-        assert (vergil / "pr-template.yml").exists()
+        assert not _state_submitted(tmp_path)
+        assert (tmp_path / ".vergil" / "pr-workflow.json").is_file()
 
     def test_missing_issue_arg_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
         result = main(["--summary", "Fix", "--title", "fix: bug"])
@@ -643,11 +697,7 @@ class TestTemplateMode:
         assert "--issue" in err
 
     def test_template_ensures_pushed(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -666,13 +716,13 @@ class TestTemplateMode:
         assert push_calls, "expected vrg-submit-pr to push the branch"
         mock_pr.assert_called_once()
 
-    def test_no_template_and_no_args_errors(
+    def test_no_metadata_and_no_args_errors(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         with patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path):
             result = main([])
         assert result != 0
-        assert "pr-template.yml" in capsys.readouterr().err
+        assert "pr-workflow.json" in capsys.readouterr().err
 
     def test_partial_cli_args_errors(self, capsys: pytest.CaptureFixture[str]) -> None:
         result = main(["--issue", "42"])
@@ -682,11 +732,7 @@ class TestTemplateMode:
     def test_template_base_override(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
             patch(
@@ -777,7 +823,7 @@ class TestRootLaunch:
         assert rc == 0
         chdir.assert_called_once_with(wts[1].path)
 
-    def test_root_malformed_template_skipped_with_reason(self) -> None:
+    def test_root_unready_workflow_skipped_with_reason(self) -> None:
         wt = self._wt("issue-7-foo", "feature/7-foo")
         with (
             patch(_MOD + ".git.is_main_worktree", return_value=True),
@@ -785,10 +831,10 @@ class TestRootLaunch:
             patch(_MOD + ".worktrees.require_tty"),
             patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
             patch(
-                _MOD + ".pr_template.read_template",
-                side_effect=pr_template.TemplateError("missing required field: issue"),
+                _MOD + ".submission.read_pr_fields",
+                side_effect=WorkflowError("the workflow has no PR metadata yet"),
             ),
-            pytest.raises(SystemExit, match="missing required field"),
+            pytest.raises(SystemExit, match="no PR metadata yet"),
         ):
             main(["--dry-run"])
 
@@ -965,11 +1011,7 @@ class TestFinalizeFlag:
         assert "vrg-finalize-pr" in capsys.readouterr().out
 
     def test_template_mode_chains_into_finalize(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -987,14 +1029,10 @@ class TestFinalizeFlag:
         assert result == 0
         mock_run.assert_called_once()
         assert mock_run.call_args.args[0] == ("vrg-finalize-pr", "https://github.com/pr/7")
-        assert not (vergil / "pr-template.yml").exists()
+        assert _state_submitted(tmp_path)
 
     def test_template_mode_decline_never_reaches_finalize(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -1008,11 +1046,7 @@ class TestFinalizeFlag:
     def test_template_dry_run_notes_finalize(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -1159,11 +1193,7 @@ class TestReleaseFlag:
         assert "vrg-finalize-pr --release" in capsys.readouterr().out
 
     def test_template_mode_chains_into_finalize_with_release(self, tmp_path: Path) -> None:
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -1188,11 +1218,7 @@ class TestReleaseFlag:
     ) -> None:
         """A failed cascade from template mode returns the child's code and
         never prints a success summary — the failure helper reported the PR."""
-        vergil = tmp_path / ".vergil"
-        vergil.mkdir()
-        (vergil / "pr-template.yml").write_text(
-            "issue: 42\ntitle: fix\nsummary: Fix\nnotes: Verified locally\n"
-        )
+        _write_workflow_state(tmp_path, title="fix", summary="Fix")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),

@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from vergil_tooling.lib import pr_template
 from vergil_tooling.lib.pr_workflow import engine, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -60,20 +59,7 @@ def test_read_pr_fields_errors_when_state_has_no_metadata(tmp_path: Path) -> Non
         submission.read_pr_fields(tmp_path)
 
 
-def test_read_pr_fields_falls_back_to_template(tmp_path: Path) -> None:
-    pr_template.write_template(
-        tmp_path,
-        issue="42",
-        title="fix: y",
-        summary="did y",
-        notes="m",
-    )
-    fields = submission.read_pr_fields(tmp_path)
-    assert fields["issue"] == "42"
-    assert fields["title"] == "fix: y"
-
-
-def test_read_pr_fields_raises_when_neither_exists(tmp_path: Path) -> None:
+def test_read_pr_fields_raises_when_state_file_absent(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         submission.read_pr_fields(tmp_path)
 
@@ -101,15 +87,6 @@ def test_record_submission_makes_read_pr_fields_raise_already_submitted(tmp_path
     assert exc.value.pr_url == "https://github.com/o/r/pull/312"
 
 
-def test_record_submission_deletes_the_legacy_template(tmp_path: Path) -> None:
-    # The legacy template carries no state to mark, so it is deleted (no
-    # in-flight tracking for the legacy path).
-    pr_template.write_template(
-        tmp_path,
-        issue="42",
-        title="fix: y",
-        summary="did y",
-        notes="m",
-    )
-    submission.record_submission(tmp_path, pr_url="https://github.com/o/r/pull/9")
-    assert not (tmp_path / ".vergil" / "pr-template.yml").exists()
+def test_record_submission_raises_when_state_file_absent(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError):
+        submission.record_submission(tmp_path, pr_url="https://github.com/o/r/pull/9")
