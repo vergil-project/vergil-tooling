@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
@@ -12,6 +13,31 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.config import RoleOverlay, VmStanza
 
 _DEFAULT_STALE_DAYS = 3
+
+# Backend dispatch values. "local" is the default Lima driver; "off-platform" is the
+# remote cloud (OpenTofu) driver (vergil-vm #199). The set is closed and tooling-owned
+# — an unrecognized backend is a typo and must fail loudly (no-silent-failures).
+_BACKEND_LOCAL = "local"
+_BACKEND_OFF_PLATFORM = "off-platform"
+_VALID_BACKENDS = (_BACKEND_LOCAL, _BACKEND_OFF_PLATFORM)
+
+# Keys an off-platform profile must declare (the composer hard-errors if any is
+# missing). `provider`/`region`/`instance` are provider-native opaque strings — the
+# tooling does NOT enumerate them, so adding a provider stays a vergil-vm module
+# change with no code change here. `volume` is the persistent-disk size and is
+# format-checked (`<N>GiB`); it never falls back to `disk` (`disk` is not a cloud knob).
+_OFF_PLATFORM_REQUIRED = ("provider", "region", "instance", "volume")
+
+_SIZE_RE = re.compile(r"^\d+GiB$")
+
+
+class SpecError(Exception):
+    """A composed VM spec is internally invalid (e.g. a misconfigured off-platform profile).
+
+    Raised by ``compose_vm_spec`` for a profile that cannot describe a buildable VM —
+    an unknown ``backend``, or ``backend = "off-platform"`` missing a required key.
+    Callers (``vrg-vm``) catch it and print the message rather than crash.
+    """
 
 
 def _gib(value: str) -> int:
@@ -38,6 +64,21 @@ class ComposedSpec:
     # Per-profile nested virtualization (issue #1447): default off, last-wins
     # through the [vm]/[vm.<role>] cascade like the footprint scalars.
     nested: bool = False
+    # Off-platform (cloud) backend (vergil-vm #199 / #1706). `backend` defaults to
+    # "local" (Lima); "off-platform" flips the downstream dispatcher to the OpenTofu
+    # driver. provider/region/instance/volume are required when off-platform and
+    # empty otherwise. `disk` (the Lima single-disk knob) is ignored on the
+    # off-platform path — `volume` is the authoritative persistent-disk size.
+    backend: str = _BACKEND_LOCAL
+    provider: str = ""
+    region: str = ""
+    instance: str = ""
+    volume: str = ""
+
+    @property
+    def off_platform(self) -> bool:
+        """True when this spec resolves to the remote cloud (OpenTofu) backend."""
+        return self.backend == _BACKEND_OFF_PLATFORM
 
 
 @dataclass
@@ -54,6 +95,13 @@ class _Acc:
     port_forwards: list[str]
     customized: bool
     nested: bool
+    # Off-platform backend scalars, last-wins through the cascade. backend starts at
+    # the "local" default; the rest are empty until a tier declares them.
+    backend: str
+    provider: str
+    region: str
+    instance: str
+    volume: str
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
     declared_cpus: int | None
@@ -92,6 +140,22 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     if overlay.nested is not None:
         acc.nested = overlay.nested
         acc.customized = True
+    # Off-platform scalars: last-wins, and any declaration dedicates the box.
+    if overlay.backend is not None:
+        acc.backend = overlay.backend
+        acc.customized = True
+    if overlay.provider is not None:
+        acc.provider = overlay.provider
+        acc.customized = True
+    if overlay.region is not None:
+        acc.region = overlay.region
+        acc.customized = True
+    if overlay.instance is not None:
+        acc.instance = overlay.instance
+        acc.customized = True
+    if overlay.volume is not None:
+        acc.volume = overlay.volume
+        acc.customized = True
 
 
 def compose_vm_spec(
@@ -114,6 +178,11 @@ def compose_vm_spec(
         port_forwards=[],
         customized=False,
         nested=False,
+        backend=_BACKEND_LOCAL,
+        provider="",
+        region="",
+        instance="",
+        volume="",
         declared_cpus=None,
         declared_mem=None,
         declared_disk=None,
@@ -144,6 +213,13 @@ def compose_vm_spec(
                 under.append("disk")
         if "stale_days" in override:
             acc.stale_days = cast("int", override["stale_days"])
+        # The off-platform scalars also cascade through the host-override tier
+        # (built-in → identity → [vm] → [vm.<identity>] → identities.toml override).
+        for key in ("backend", "provider", "region", "instance", "volume"):
+            if key in override:
+                setattr(acc, key, str(override[key]))
+
+    _validate_backend(identity, acc)
 
     return ComposedSpec(
         cpus=acc.cpus,
@@ -157,7 +233,40 @@ def compose_vm_spec(
         dedicated=acc.customized,
         under=tuple(under),
         nested=acc.nested,
+        backend=acc.backend,
+        provider=acc.provider,
+        region=acc.region,
+        instance=acc.instance,
+        volume=acc.volume,
     )
+
+
+def _validate_backend(identity: str, acc: _Acc) -> None:
+    """Enforce the backend enum and the off-platform required-key contract.
+
+    Runs after the full cascade is resolved, so a profile can legitimately split the
+    keys across tiers (e.g. ``backend`` in ``[vm]``, ``instance`` in ``[vm.<identity>]``).
+    Fails loudly — never silently defaults a missing cloud key.
+    """
+    if acc.backend not in _VALID_BACKENDS:
+        valid = ", ".join(repr(b) for b in _VALID_BACKENDS)
+        msg = f"identity {identity!r}: [vm] backend must be one of {valid}, got {acc.backend!r}"
+        raise SpecError(msg)
+    if acc.backend != _BACKEND_OFF_PLATFORM:
+        return
+    missing = [key for key in _OFF_PLATFORM_REQUIRED if not getattr(acc, key)]
+    if missing:
+        msg = (
+            f'identity {identity!r}: backend = "off-platform" requires '
+            f"{', '.join(_OFF_PLATFORM_REQUIRED)}; missing: {', '.join(missing)}"
+        )
+        raise SpecError(msg)
+    if not _SIZE_RE.fullmatch(acc.volume):
+        msg = (
+            f"identity {identity!r}: [vm] volume must be '<number>GiB' "
+            f'(e.g. "300GiB"), got {acc.volume!r}'
+        )
+        raise SpecError(msg)
 
 
 # Lima instance names must match ^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$ — single
@@ -206,12 +315,22 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
     fields = [
         f"cpus={spec.cpus}",
         f"memory={spec.memory}",
-        f"disk={spec.disk}",
-        f"stale_days={spec.stale_days}",
-        "packages=" + ",".join(sorted(spec.packages)),
-        "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
-        "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
     ]
+    # `disk` is the Lima single-disk knob and is NOT a cloud knob: on the off-platform
+    # path it is ignored (the persistent `volume` is authoritative), so it stays out of
+    # the off-platform payload — editing it on a cloud profile must not trip a rebuild.
+    # On the local path it remains in its historical position, byte-for-byte, so every
+    # Lima fingerprint stored before this change stays valid.
+    if not spec.off_platform:
+        fields.append(f"disk={spec.disk}")
+    fields.extend(
+        (
+            f"stale_days={spec.stale_days}",
+            "packages=" + ",".join(sorted(spec.packages)),
+            "apt_repos=" + ",".join(sorted(_repo_key(r) for r in spec.apt_repos)),
+            "vagrant_plugins=" + ",".join(sorted(spec.vagrant_plugins)),
+        )
+    )
     # port_forwards enters the payload only when non-empty, for the same reason
     # as nested below: profiles that never declare forwards keep the fingerprint
     # they had before the knob existed (no spurious NEEDS-REBUILD on upgrade),
@@ -223,5 +342,15 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
     # on upgrade), while toggling it flips the hash in both directions.
     if spec.nested:
         fields.append("nested=true")
+    # The off-platform keys enter only when backend = "off-platform", so every local
+    # (Lima) profile keeps its pre-existing fingerprint — the local default is byte-for-
+    # byte unchanged (issue #1706 acceptance: the Lima path is untouched). Flipping a
+    # repo Lima→cloud, or resizing the instance/volume, trips NEEDS-REBUILD as expected.
+    if spec.off_platform:
+        fields.append(f"backend={spec.backend}")
+        fields.append(f"provider={spec.provider}")
+        fields.append(f"region={spec.region}")
+        fields.append(f"instance={spec.instance}")
+        fields.append(f"volume={spec.volume}")
     payload = "\n".join(fields)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
