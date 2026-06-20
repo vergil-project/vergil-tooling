@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.44"
+version = "2.1.45"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -60,6 +60,14 @@ vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
 dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+
+[tool.uv]
+# Security floors for TRANSITIVE dependencies. These are not direct dependencies —
+# they only raise the resolver's floor so a known-vulnerable version cannot be locked
+# (now or on a future re-resolve). Each entry cites the advisory it closes.
+#   msgpack: reaches us via pip-audit[filecache] -> cachecontrol -> msgpack.
+#   <1.2.1 is GHSA-6v7p-g79w-8964; 1.2.1 is the fix.
+constraint-dependencies = ["msgpack>=1.2.1"]
 
 [tool.setuptools]
 package-dir = {"" = "src"}

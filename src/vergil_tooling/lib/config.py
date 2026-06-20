@@ -117,6 +117,15 @@ class RoleOverlay:
     vagrant_plugins: list[str]
     port_forwards: list[str]
     nested: bool | None = None
+    # Off-platform (cloud) backend keys (vergil-vm #199 / #1706). Scalars, last-wins
+    # through the [vm] ⊕ [vm.<identity>] cascade. They carry no driver behaviour at
+    # this layer; backend = "off-platform" is what flips the downstream dispatcher
+    # from Lima to OpenTofu. compose_vm_spec validates the required-key set.
+    backend: str | None = None
+    provider: str | None = None
+    region: str | None = None
+    instance: str | None = None
+    volume: str | None = None
 
 
 @dataclass
@@ -132,6 +141,12 @@ class VmStanza:
     roles: dict[str, RoleOverlay]
     nested: bool | None = None
     shared_from: tuple[str, str] | None = None
+    # Off-platform (cloud) backend keys — see RoleOverlay.
+    backend: str | None = None
+    provider: str | None = None
+    region: str | None = None
+    instance: str | None = None
+    volume: str | None = None
 
 
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
@@ -152,8 +167,30 @@ _VM_KEYS = frozenset(
         "vagrant_plugins",
         "port_forwards",
         "nested",
+        "backend",
+        "provider",
+        "region",
+        "instance",
+        "volume",
     }
 )
+
+# The off-platform string scalars. Type is checked at parse time (each must be a
+# string when present); the *required-when-off-platform* contract and the value
+# enums/formats are enforced at composition (compose_vm_spec), where the cascade
+# is resolved to one effective value per key.
+_VM_STR_SCALARS = ("backend", "provider", "region", "instance", "volume")
+
+
+def _vm_str_scalar(raw: dict[str, Any], key: str, ctx: str, source: str) -> str | None:
+    """Return a [vm]/[vm.<role>] string scalar, erroring if present but non-string."""
+    if key not in raw:
+        return None
+    value = raw[key]
+    if not isinstance(value, str):
+        msg = f"{source}: {ctx} '{key}' must be a string (got {type(value).__name__})"
+        raise ConfigError(msg)
+    return value
 
 
 _SHARED_FROM_KEY = "shared_from"
@@ -182,6 +219,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FIL
     for key in raw:
         if key not in _VM_KEYS:
             print(f"{source}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
+    scalars = {k: _vm_str_scalar(raw, k, f"[vm.{name}]", source) for k in _VM_STR_SCALARS}
     return RoleOverlay(
         packages=list(raw.get("packages", [])),
         cpus=raw.get("cpus"),
@@ -192,6 +230,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FIL
         vagrant_plugins=list(raw.get("vagrant_plugins", [])),
         port_forwards=list(raw.get("port_forwards", [])),
         nested=raw.get("nested"),
+        **scalars,
     )
 
 
@@ -221,6 +260,7 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         )
         raise ConfigError(msg)
 
+    scalars = {k: _vm_str_scalar(fields, k, "[vm]", source) for k in _VM_STR_SCALARS}
     return VmStanza(
         packages=list(fields.get("packages", [])),
         cpus=fields.get("cpus"),
@@ -233,6 +273,7 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         roles=roles,
         nested=fields.get("nested"),
         shared_from=shared_from,
+        **scalars,
     )
 
 

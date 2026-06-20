@@ -63,6 +63,11 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `port_forwards` | list of strings | `[]` | `"<port>\|<host:port>"` relay records — bind `<port>` in the VM and proxy to `<host:port>` (accumulates; see below) |
 | `nested` | bool | `false` | Nested virtualization (last-wins scalar; see below) |
 | `shared_from` | string `"org/repo"` | *(none)* | Borrow another repo's VM instead of declaring one. Mutually exclusive with every other `[vm]` key (see below) |
+| `backend` | string | `"local"` | VM backend: `"local"` (Lima) or `"off-platform"` (remote cloud). Last-wins scalar; selects the driver (see below) |
+| `provider` | string | *(none)* | Cloud provider when `backend = "off-platform"` (e.g. `"gcp"`, `"azure"`) — selects the OpenTofu module (see below) |
+| `region` | string | *(none)* | Provider-native region when off-platform (e.g. `"us-central1"`) |
+| `instance` | string | *(none)* | Provider-native, nested-virt-capable instance type when off-platform (e.g. `"n2-standard-16"`) |
+| `volume` | string `"<N>GiB"` | *(none)* | **Persistent** block-volume size when off-platform — created once, reused, outlives the VM. Does **not** fall back to `disk` |
 
 The vergil-vm template owns *how* declarative installs happen — repos
 never supply scripts.
@@ -111,6 +116,50 @@ mounted into every VM, so both checkouts are present).
   which owns the box.
 - One hop only — the lender may not itself declare `shared_from`.
 
+## Off-platform (cloud) backend (`backend`, `provider`, `region`, `instance`, `volume`)
+
+By default a repo's VM is a local macOS Lima box (`backend = "local"`).
+Setting `backend = "off-platform"` switches it to a **remote
+native-x86 cloud host** driven by OpenTofu — for repos that genuinely
+need native x86 (nested KVM, not TCG emulation). The backend, modules,
+and provisioning live in vergil-vm
+([#199](https://github.com/vergil-project/vergil-vm/issues/199)); the
+design spec is
+[`vergil-vm docs/specs/2026-06-19-off-platform-vm-backend-design.md`](https://github.com/vergil-project/vergil-vm/blob/main/docs/specs/2026-06-19-off-platform-vm-backend-design.md).
+
+```toml
+[vm.vergil-user]
+backend  = "off-platform"
+provider = "gcp"              # selects the OpenTofu module
+region   = "us-central1"      # provider-native region
+instance = "n2-standard-16"   # provider-native, nested-virt-capable
+volume   = "300GiB"           # PERSISTENT volume — outlives the VM
+nested   = true               # /dev/kvm in the cloud box too
+cpus     = 12                 # request / under-provision intent (see below)
+memory   = "64GiB"
+```
+
+- The five keys are **last-wins scalars** that ride the same five-tier
+  cascade as the footprint keys. Declaring any of them dedicates the box.
+  Because the cascade is resolved before validation, you may split them
+  across tiers (e.g. `backend` in `[vm]`, `instance` in `[vm.<role>]`).
+- `backend = "off-platform"` **requires** `provider`, `region`,
+  `instance`, and `volume`. A missing key is a loud config error — no
+  silent default. `volume` must be `"<N>GiB"` and never falls back to
+  `disk`.
+- `provider`/`region`/`instance` are **opaque provider-native strings**
+  — the tooling does not enumerate them, so adding a provider is a
+  vergil-vm module change with no tooling change.
+- **`disk` is ignored off-platform.** On cloud there are two disks with
+  opposite lifecycles: the ephemeral VM boot disk (a fixed module
+  default) and the persistent `volume` declared above. Only `volume` is
+  author-facing.
+- **`instance` is authoritative over `cpus`/`memory` on cloud.** They
+  stay in the spec as human-readable intent; a session-time
+  under-provisioning warning (instance smaller than the declared
+  `cpus`/`memory`) is part of the backend dispatcher, not this schema
+  layer (it needs the provider's instance specs).
+
 ## Port forwards (`port_forwards`)
 
 Each record is `"<port>|<host:port>"`. The vergil-vm template
@@ -135,3 +184,12 @@ on any drift. Editing any declarative key — including toggling
 the fingerprint payload only when set (true / non-empty), so profiles
 that never declare them kept their fingerprints when the knobs were
 introduced.
+
+The off-platform keys (`backend`, `provider`, `region`, `instance`,
+`volume`) follow the same rule: they enter the payload **only when
+`backend = "off-platform"`**, and on that path `disk` is dropped from
+the payload (it is not a cloud knob). A local profile therefore keeps
+its byte-for-byte fingerprint from before these keys existed — existing
+Lima VMs never falsely read `NEEDS-REBUILD` — while flipping a repo
+Lima→cloud, or resizing the `instance`/`volume`, trips `NEEDS-REBUILD`
+as expected.
