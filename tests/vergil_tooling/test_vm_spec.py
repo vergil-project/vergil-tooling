@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib.config import RoleOverlay, VmStanza
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
+    SpecError,
     compose_vm_spec,
     instance_name,
     parse_instance_name,
@@ -222,6 +223,158 @@ class TestComposeVmSpec:
         assert spec.under == ()
 
 
+def _off_platform_stanza(**role_over: Any) -> VmStanza:
+    """A canonical off-platform [vm] with backend at the [vm] tier and the rest in the role.
+
+    `role_over` overrides the vergil-user role's keys (e.g. to omit one for a
+    missing-required test). Defaults compose to a complete, valid off-platform profile.
+    """
+    role_fields: dict[str, Any] = {
+        "provider": "gcp",
+        "region": "us-central1",
+        "instance": "n2-standard-16",
+        "volume": "300GiB",
+    }
+    role_fields.update(role_over)
+    return VmStanza(
+        packages=[],
+        cpus=None,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        backend="off-platform",
+        roles={
+            "vergil-user": RoleOverlay(
+                packages=[],
+                cpus=None,
+                memory=None,
+                disk=None,
+                stale_days=None,
+                apt_repos=[],
+                vagrant_plugins=[],
+                port_forwards=[],
+                **role_fields,
+            ),
+        },
+    )
+
+
+class TestOffPlatformCompose:
+    def test_local_is_the_default_backend(self) -> None:
+        spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=None, override=None)
+        assert spec.backend == "local"
+        assert spec.off_platform is False
+        assert spec.provider == ""
+        assert spec.volume == ""
+
+    def test_off_platform_keys_compose_across_tiers(self) -> None:
+        # backend declared at the [vm] tier, the rest at the role tier — last-wins merge.
+        spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
+        )
+        assert spec.off_platform is True
+        assert spec.backend == "off-platform"
+        assert spec.provider == "gcp"
+        assert spec.region == "us-central1"
+        assert spec.instance == "n2-standard-16"
+        assert spec.volume == "300GiB"
+        assert spec.dedicated is True  # declaring a backend dedicates the box
+
+    def test_disk_is_carried_but_volume_is_authoritative_on_cloud(self) -> None:
+        # `disk` stays at the base footprint (Lima knob); `volume` is the cloud size.
+        spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
+        )
+        assert spec.disk == "50GiB"  # untouched base — ignored on the cloud path
+        assert spec.volume == "300GiB"
+
+    def test_missing_required_key_raises(self) -> None:
+        # The role declares everything except `instance` → off-platform is missing one key.
+        stanza = _off_platform_stanza(instance=None)
+        with pytest.raises(SpecError, match="missing: instance"):
+            compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+
+    def test_missing_multiple_required_keys_listed(self) -> None:
+        stanza = VmStanza(
+            packages=[],
+            cpus=None,
+            memory=None,
+            disk=None,
+            stale_days=None,
+            apt_repos=[],
+            vagrant_plugins=[],
+            port_forwards=[],
+            backend="off-platform",
+            roles={},
+        )
+        with pytest.raises(SpecError, match="provider, region, instance, volume"):
+            compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+
+    def test_unknown_backend_raises(self) -> None:
+        stanza = VmStanza(
+            packages=[],
+            cpus=None,
+            memory=None,
+            disk=None,
+            stale_days=None,
+            apt_repos=[],
+            vagrant_plugins=[],
+            port_forwards=[],
+            backend="frobnicate",
+            roles={},
+        )
+        with pytest.raises(SpecError, match="backend must be one of"):
+            compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+
+    def test_bad_volume_format_raises(self) -> None:
+        with pytest.raises(SpecError, match="volume must be '<number>GiB'"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(volume="300"),
+                override=None,
+            )
+
+    def test_audit_role_without_keys_does_not_satisfy_required(self) -> None:
+        # backend is all-identity ([vm] tier) but the cloud keys live only in the
+        # vergil-user role; vergil-audit therefore composes off-platform WITHOUT them
+        # and must fail loudly rather than build an underspecified box.
+        with pytest.raises(SpecError, match="missing: provider, region, instance, volume"):
+            compose_vm_spec(
+                identity="vergil-audit", base=BASE, stanza=_off_platform_stanza(), override=None
+            )
+
+    def test_host_override_can_flip_to_off_platform(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=None,
+            override={
+                "backend": "off-platform",
+                "provider": "azure",
+                "region": "eastus",
+                "instance": "Standard_D16s_v5",
+                "volume": "500GiB",
+            },
+        )
+        assert spec.off_platform is True
+        assert spec.provider == "azure"
+        assert spec.instance == "Standard_D16s_v5"
+
+    def test_host_override_can_resize_instance(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(),
+            override={"instance": "n2-standard-32"},
+        )
+        assert spec.instance == "n2-standard-32"
+        assert spec.provider == "gcp"  # unchanged tiers survive
+
+
 # Lima's instance-name validator. A valid identifier starts with an alphanumeric
 # run and uses single '.', '_', or '-' separators, each followed by an alphanumeric
 # run. Consecutive separators (e.g. '--') are rejected.
@@ -377,3 +530,92 @@ class TestFingerprint:
         )
         expected = hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()
         assert spec_fingerprint(self._spec(nested=False)) == expected
+
+    # -- off-platform (cloud) keys (vergil-vm #199 / #1706) ------------------
+
+    _CLOUD = {
+        "backend": "off-platform",
+        "provider": "gcp",
+        "region": "us-central1",
+        "instance": "n2-standard-16",
+        "volume": "300GiB",
+    }
+
+    def _op_spec(self, **over: Any) -> ComposedSpec:
+        return self._spec(**{**self._CLOUD, **over})
+
+    def test_default_backend_keeps_legacy_fingerprint(self) -> None:
+        """A local (default-backend) profile keeps its exact pre-#1706 fingerprint.
+
+        Pins the acceptance invariant: the Lima path is byte-for-byte unchanged, so
+        existing local VMs never falsely read NEEDS-REBUILD after this upgrade.
+        """
+        legacy_payload = "\n".join(
+            (
+                "cpus=12",
+                "memory=64GiB",
+                "disk=300GiB",
+                "stale_days=7",
+                "packages=a,b",
+                "apt_repos=" + "|".join(f"{k}={_REPO[k]}" for k in sorted(_REPO)),
+                "vagrant_plugins=vagrant-libvirt",
+            )
+        )
+        expected = hashlib.sha256(legacy_payload.encode("utf-8")).hexdigest()
+        assert spec_fingerprint(self._spec()) == expected
+
+    def test_flip_local_to_off_platform_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._spec()) != spec_fingerprint(self._op_spec())
+
+    def test_instance_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(instance="n2-standard-16")) != spec_fingerprint(
+            self._op_spec(instance="n2-standard-32")
+        )
+
+    def test_volume_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(volume="300GiB")) != spec_fingerprint(
+            self._op_spec(volume="500GiB")
+        )
+
+    def test_provider_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(provider="gcp")) != spec_fingerprint(
+            self._op_spec(provider="azure")
+        )
+
+    def test_region_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(region="us-central1")) != spec_fingerprint(
+            self._op_spec(region="us-east1")
+        )
+
+    def test_disk_ignored_in_off_platform_fingerprint(self) -> None:
+        # `disk` is not a cloud knob: editing it on an off-platform profile must NOT
+        # trip NEEDS-REBUILD.
+        assert spec_fingerprint(self._op_spec(disk="300GiB")) == spec_fingerprint(
+            self._op_spec(disk="999GiB")
+        )
+
+    def test_disk_still_matters_on_local(self) -> None:
+        # The Lima path keeps `disk` in the fingerprint, unchanged.
+        assert spec_fingerprint(self._spec(disk="300GiB")) != spec_fingerprint(
+            self._spec(disk="500GiB")
+        )
+
+    def test_off_platform_payload_pinned(self) -> None:
+        """Pins the off-platform encoding: no `disk`, cloud keys appended at the end."""
+        payload = "\n".join(
+            (
+                "cpus=12",
+                "memory=64GiB",
+                "stale_days=7",
+                "packages=a,b",
+                "apt_repos=" + "|".join(f"{k}={_REPO[k]}" for k in sorted(_REPO)),
+                "vagrant_plugins=vagrant-libvirt",
+                "backend=off-platform",
+                "provider=gcp",
+                "region=us-central1",
+                "instance=n2-standard-16",
+                "volume=300GiB",
+            )
+        )
+        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        assert spec_fingerprint(self._op_spec()) == expected

@@ -64,6 +64,7 @@ from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
+    SpecError,
     compose_vm_spec,
     instance_name,
     parse_instance_name,
@@ -1447,7 +1448,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return dispatch[args.command](args)
-    except BorrowError as exc:
+    except (BorrowError, SpecError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

@@ -835,6 +835,76 @@ class TestParseVmStanza:
         with pytest.raises(ConfigError, match="shared_from is not allowed in a role"):
             parse_vm_stanza({"vm": {"vergil-user": {"shared_from": "lmf/mq"}}})
 
+    # -- off-platform (cloud) keys (vergil-vm #199 / #1706) -------------------
+
+    def test_off_platform_keys_parsed_at_vm_tier(self) -> None:
+        raw = {
+            "vm": {
+                "backend": "off-platform",
+                "provider": "gcp",
+                "region": "us-central1",
+                "instance": "n2-standard-16",
+                "volume": "300GiB",
+            }
+        }
+        stanza = parse_vm_stanza(raw)
+        assert stanza is not None
+        assert stanza.backend == "off-platform"
+        assert stanza.provider == "gcp"
+        assert stanza.region == "us-central1"
+        assert stanza.instance == "n2-standard-16"
+        assert stanza.volume == "300GiB"
+
+    def test_off_platform_keys_parsed_at_role_tier(self) -> None:
+        raw = {
+            "vm": {
+                "backend": "off-platform",
+                "vergil-user": {"instance": "n2-standard-16", "volume": "300GiB"},
+            }
+        }
+        stanza = parse_vm_stanza(raw)
+        assert stanza is not None
+        assert stanza.backend == "off-platform"
+        overlay = stanza.roles["vergil-user"]
+        assert overlay.instance == "n2-standard-16"
+        assert overlay.volume == "300GiB"
+        assert overlay.backend is None  # only the [vm] tier declared it
+
+    def test_off_platform_keys_absent_are_none(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"packages": []}})
+        assert stanza is not None
+        assert stanza.backend is None
+        assert stanza.provider is None
+        assert stanza.region is None
+        assert stanza.instance is None
+        assert stanza.volume is None
+
+    def test_off_platform_keys_not_flagged_unrecognized(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        parse_vm_stanza(
+            {
+                "vm": {
+                    "backend": "off-platform",
+                    "provider": "gcp",
+                    "vergil-user": {"region": "us-central1"},
+                }
+            }
+        )
+        assert "unrecognized" not in capsys.readouterr().err
+
+    def test_backend_non_string_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="'backend' must be a string"):
+            parse_vm_stanza({"vm": {"backend": 1}})
+
+    def test_provider_non_string_in_role_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="'provider' must be a string"):
+            parse_vm_stanza({"vm": {"vergil-user": {"provider": ["gcp"]}}})
+
+    def test_shared_from_with_backend_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="cannot be combined"):
+            parse_vm_stanza({"vm": {"shared_from": "lmf/mq", "backend": "off-platform"}})
+
 
 # -- [project] ghas key -------------------------------------------------------
 
