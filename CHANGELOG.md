@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.47] - 2026-06-21
+
+### Bug fixes
+
+- auto-recover a poisoned uv cache instead of bricking the VM (#1725)
+
 ## [2.1.46] - 2026-06-21
 
 ### Bug fixes
