@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.69/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.67/">
+        <link rel="next" href="../v2.1.45/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.68 - VERGIL Tooling</title>
+        <title>2.1.46 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2068-2026-05-28" class="md-skip">
+        <a href="#release-2146-2026-06-21" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.68
+              2.1.46
             
           </span>
         </div>
@@ -958,10 +958,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.46/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.46
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -977,6 +1004,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2554,37 +2612,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.68
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.68/" class="md-nav__link">
         
   
   
@@ -2600,59 +2631,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8650,28 +8628,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -8689,22 +8645,14 @@
 
 
 
-<h1 id="release-2068-2026-05-28">Release 2.0.68 (2026-05-28)<a class="headerlink" href="#release-2068-2026-05-28" title="Permanent link">&para;</a></h1>
+<h1 id="release-2146-2026-06-21">Release 2.1.46 (2026-06-21)<a class="headerlink" href="#release-2146-2026-06-21" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>fetch tags and guard promote when --skip-cd is used</strong></li>
-<li><strong>accept base as a valid language in validate-inputs</strong>
-Non-language projects (e.g. vergil-claude-plugin) pass base as the language identifier from cd-release.yml. The validator now recognizes non-language project types and skips ecosystem-specific checks while still rejecting incompatible flags like --registry-publish and --container-tag. Ref #1266</li>
+<li><strong>guard cleanup sweep against reused branch names (#1719) (#1720)</strong>
+The vrg-finalize-pr worktree-arm sweep classified a branch as MERGED whenever a same-named closed/merged PR existed, matching by branch name alone. A name reused after a prior same-named PR merged was therefore deleted as 'merged' even though its current tip carried unmerged commits — a silent work-in-progress data-loss path.</li>
 </ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>trigger CI after v2.0 tag rollback</strong></li>
-<li><strong>trigger CI with updated vergil-actions v2.0</strong></li>
-</ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>replace --skip-cd with --skip-cd-docs</strong></li>
-</ul>
+<p>gather_worktree_status now compares the closed/merged PR's head SHA against the branch's current tip. When they differ (or the head SHA is missing), the merged verdict is withheld and the branch is classified by its local commits (NO_PR/DRAFT) — never removable — so the sweep cannot delete unmerged work. The mismatch is recorded in the status detail and surfaced by vrg-worktree-status rather than swallowed.</p>
+<p>closed_pr_for_branch/pr_for_branch now include headRefOid to support the check. The ancestry arm already required the tip to be a true ancestor of the target, so a reused branch's non-ancestor tip was never listed there; no change needed.</p>
 
 
 
