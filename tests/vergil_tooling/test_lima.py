@@ -497,9 +497,12 @@ class TestStartStopVm:
             start_vm("vergil-agent")
         mock.assert_called_once()
 
+    @patch("vergil_tooling.lib.lima.shell_run")
     @patch("vergil_tooling.lib.lima._limactl")
     @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
-    def test_stop_calls_limactl(self, _status: MagicMock, mock: MagicMock) -> None:
+    def test_stop_calls_limactl(
+        self, _status: MagicMock, mock: MagicMock, _mock_shell: MagicMock
+    ) -> None:
         stop_vm("vergil-agent")
         mock.assert_called_once_with("stop", "vergil-agent")
 
@@ -508,6 +511,45 @@ class TestStartStopVm:
     def test_stop_skips_if_stopped(self, _status: MagicMock, mock: MagicMock) -> None:
         stop_vm("vergil-agent")
         mock.assert_not_called()
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
+    def test_stop_syncs_guest_before_stopping(
+        self, _status: MagicMock, mock_limactl: MagicMock, mock_shell: MagicMock
+    ) -> None:
+        # Flush the guest page cache before the VM stops so the just-written uv
+        # cache/receipt are not truncated by a non-synced shutdown.
+        manager = MagicMock()
+        manager.attach_mock(mock_shell, "shell_run")
+        manager.attach_mock(mock_limactl, "limactl")
+        stop_vm("vergil-agent")
+        mock_shell.assert_called_once_with("vergil-agent", "sync")
+        mock_limactl.assert_called_once_with("stop", "vergil-agent")
+        assert [c[0] for c in manager.mock_calls] == ["shell_run", "limactl"]
+
+    @patch(
+        "vergil_tooling.lib.lima.shell_run",
+        side_effect=subprocess.CalledProcessError(1, "sync"),
+    )
+    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima.vm_status", return_value="Running")
+    def test_stop_proceeds_when_sync_fails(
+        self, _status: MagicMock, mock_limactl: MagicMock, _mock_shell: MagicMock
+    ) -> None:
+        # The sync is best-effort: a failed flush must never block the stop.
+        stop_vm("vergil-agent")
+        mock_limactl.assert_called_once_with("stop", "vergil-agent")
+
+    @patch("vergil_tooling.lib.lima.shell_run")
+    @patch("vergil_tooling.lib.lima._limactl")
+    @patch("vergil_tooling.lib.lima.vm_status", return_value="Stopped")
+    def test_stop_skips_sync_if_stopped(
+        self, _status: MagicMock, mock_limactl: MagicMock, mock_shell: MagicMock
+    ) -> None:
+        stop_vm("vergil-agent")
+        mock_shell.assert_not_called()
+        mock_limactl.assert_not_called()
 
 
 class TestDeleteVm:
@@ -1168,6 +1210,25 @@ class TestToolingInstallSelfHeal:
         cmds = self._cmds(mock_run)
         assert any("uv cache clean" in c for c in cmds)
         assert sum("uv tool install" in c for c in cmds) == 2
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
+    def test_retry_forces_over_orphaned_executables(
+        self, mock_run: MagicMock, _mock_pipe: MagicMock
+    ) -> None:
+        # A poisoned cache + invalid receipt leaves orphaned `vrg-*` executables
+        # in ~/.local/bin. Clearing the cache fixes the wheel, but the retry then
+        # dies on "Executable already exists" unless it forces. So the retry must
+        # escalate to --force; the first attempt must not (a healthy version bump
+        # should not force-replace entry points).
+        ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        mock_run.side_effect = [subprocess.CalledProcessError(1, "uv"), ok, ok]
+        update_tooling("vergil-agent", "v2.0")
+        installs = [c for c in self._cmds(mock_run) if "uv tool install" in c]
+        assert len(installs) == 2
+        first_attempt, retry = installs
+        assert "--force" not in first_attempt
+        assert "--force" in retry
 
     @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")

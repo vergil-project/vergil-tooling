@@ -363,6 +363,19 @@ def stop_vm(instance: str) -> None:
     status = vm_status(instance)
     if status != "Running":
         return
+    # Flush the guest page cache before stopping. A non-synced shutdown can
+    # truncate files written just before the stop — notably the uv cache and
+    # tool receipt that `install_tooling` writes immediately before the
+    # rebuild's terminal `cycle-ssh` stop — which then poisons the next
+    # `vrg-vm session` update (see `_uv_tool_install`). Best-effort: a failed
+    # sync must never block the stop, but surface it rather than swallow it.
+    try:
+        shell_run(instance, "sync")
+    except subprocess.CalledProcessError:
+        print(
+            f"  WARNING: guest sync before stop failed for '{instance}' — stopping anyway",
+            file=sys.stderr,
+        )
     _limactl("stop", instance)
 
 
@@ -550,9 +563,21 @@ def _uv_tool_install(instance: str, install_spec: str, *, reinstall: bool) -> No
     poisoned cache leaves the VM with no tooling at all and bricks every future
     ``vrg-vm session`` until the cache is cleared by hand. So on failure, clear
     the VM's uv cache and retry the install once.
+
+    The retry escalates to ``--force``. The same unclean stop also corrupts the
+    tool *receipt*: uv removes the entry but, unable to read the receipt, cannot
+    enumerate the tool's entry points, so the ``vrg-*`` executables orphan in
+    ``~/.local/bin``. Clearing the cache fixes the wheel, but the retry would
+    then die with "Executable already exists" — only ``--force`` replaces
+    existing entry points (``--reinstall`` alone does not), so the retry must
+    force to fully recover.
     """
     flag = "--reinstall " if reinstall else ""
     install_cmd = f'export PATH="$HOME/.local/bin:$PATH" && uv tool install {flag}"{install_spec}"'
+    retry_cmd = (
+        'export PATH="$HOME/.local/bin:$PATH" && '
+        f'uv tool install --force --reinstall "{install_spec}"'
+    )
     try:
         shell_run(instance, "bash", "-c", install_cmd)
         return
@@ -567,7 +592,7 @@ def _uv_tool_install(instance: str, install_spec: str, *, reinstall: bool) -> No
             "-c",
             'export PATH="$HOME/.local/bin:$PATH" && uv cache clean',
         )
-        shell_run(instance, "bash", "-c", install_cmd)
+        shell_run(instance, "bash", "-c", retry_cmd)
 
 
 def install_tooling(instance: str, tag: str) -> None:
