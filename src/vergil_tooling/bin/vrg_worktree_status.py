@@ -91,9 +91,10 @@ def main(argv: list[str] | None = None) -> int:
     print(_render_table([_row(s) for s in statuses]))
     print()
     print(_summary(statuses))
-    # Surface UNKNOWN detail so a failed lookup is never silently hidden.
+    # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a
+    # reused-branch-name mismatch (issue #1719) is silently hidden.
     for status in statuses:
-        if status.state is WorktreeState.UNKNOWN and status.detail:
+        if status.detail:
             print(f"  note: {status.worktree.branch}: {status.detail}")
     return 0
 
