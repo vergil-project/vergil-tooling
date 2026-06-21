@@ -1589,6 +1589,44 @@ def test_sweep_worktree_delete_decline_does_not_record(tmp_path: Path) -> None:
     deleter.assert_called_once_with("feature/3-z", tmp_path, dry_run=False)
 
 
+def test_sweep_keeps_reused_branch_name_worktree(tmp_path: Path) -> None:
+    """Issue #1719: a branch name reused after a same-named PR merged keeps a
+    worktree whose tip carries unmerged commits. Driving the REAL
+    gather_worktree_status (only its git/github primitives are stubbed)
+    proves the worktree arm withholds the merged verdict and never deletes
+    the in-progress branch."""
+    _make_profile(tmp_path, "library-release")
+    wt = Worktree(
+        path=tmp_path / ".worktrees" / "issue-286-build-buckets",
+        branch="feature/286-build-buckets",
+    )
+    _wt_mod = "vergil_tooling.lib.worktrees"
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        # The reused branch tip is NOT an ancestor of develop, so the
+        # ancestry arm never lists it — only the worktree arm can see it.
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        # Real gather_worktree_status: stub only its primitives.
+        patch(_wt_mod + ".git.commits_ahead", return_value=9),
+        patch(_wt_mod + ".git.read_output", return_value=""),
+        patch(_wt_mod + ".git.commit_sha", return_value="7ead128"),
+        patch(_wt_mod + ".github.pr_for_branch", return_value=None),
+        patch(
+            _wt_mod + ".github.closed_pr_for_branch",
+            return_value={"number": "293", "url": "", "title": "docs", "headRefOid": "0ldd0cs"},
+        ),
+        patch(_wt_mod + ".github.pr_state", return_value="MERGED"),
+        patch(_MOD + "._delete_branch_and_worktree") as deleter,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main(["--cleanup-only"])
+    assert result == 0
+    deleter.assert_not_called()
+
+
 def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
     """A worktree checked out on an eternal branch is never classified or
     swept — the eternal guard short-circuits before gather_worktree_status."""

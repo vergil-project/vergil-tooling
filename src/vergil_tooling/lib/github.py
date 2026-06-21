@@ -628,9 +628,15 @@ def pr_state(pr: str) -> str:
 
 
 def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
-    """Return the first PR in *state* whose head is *branch*, or None."""
+    """Return the first PR in *state* whose head is *branch*, or None.
+
+    ``headRefOid`` is included so callers can confirm a name-matched PR's
+    head actually corresponds to the branch's current tip — a branch name
+    reused after a same-named PR merged matches by name but not by tip
+    (issue #1719).
+    """
     result = read_json(
-        "pr", "list", "--head", branch, "--state", state, "--json", "number,url,title"
+        "pr", "list", "--head", branch, "--state", state, "--json", "number,url,title,headRefOid"
     )
     if not isinstance(result, list) or not result:
         return None
@@ -641,6 +647,7 @@ def _first_pr_for_branch(branch: str, state: str) -> dict[str, str] | None:
         "number": str(first.get("number") or ""),
         "url": str(first.get("url") or ""),
         "title": str(first.get("title") or ""),
+        "headRefOid": str(first.get("headRefOid") or ""),
     }
 
 

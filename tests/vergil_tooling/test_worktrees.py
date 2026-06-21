@@ -145,6 +145,7 @@ def _classify(
     ahead: int = 0,
     dirty: bool = False,
     detail: str | None = None,
+    merged_head_matches_tip: bool = True,
 ) -> WorktreeStatus:
     return classify_worktree(
         _SAMPLE_WT,
@@ -154,6 +155,7 @@ def _classify(
         ahead=ahead,
         dirty=dirty,
         detail=detail,
+        merged_head_matches_tip=merged_head_matches_tip,
     )
 
 
@@ -200,6 +202,32 @@ def test_classify_lookup_failure_is_unknown() -> None:
     assert status.detail == "gh exploded"
 
 
+def test_classify_merged_head_mismatch_with_commits_is_stalled() -> None:
+    """Issue #1719: a merged PR whose head no longer matches the branch tip
+    (name reused) must drop to NO_PR, never MERGED/removable."""
+    status = _classify(pr_number=293, pr_state="MERGED", ahead=9, merged_head_matches_tip=False)
+    assert status.state is WorktreeState.NO_PR
+    assert status.removable is False
+
+
+def test_classify_merged_head_mismatch_zero_commits_is_draft() -> None:
+    status = _classify(pr_number=293, pr_state="MERGED", ahead=0, merged_head_matches_tip=False)
+    assert status.state is WorktreeState.DRAFT
+    assert status.removable is False
+
+
+def test_classify_closed_head_mismatch_is_not_removable() -> None:
+    status = _classify(pr_number=293, pr_state="CLOSED", ahead=4, merged_head_matches_tip=False)
+    assert status.state is WorktreeState.NO_PR
+    assert status.removable is False
+
+
+def test_classify_merged_head_match_remains_removable() -> None:
+    status = _classify(pr_number=11, pr_state="MERGED", ahead=2, merged_head_matches_tip=True)
+    assert status.state is WorktreeState.MERGED
+    assert status.removable is True
+
+
 # -- gather_worktree_status (I/O wrapper) ------------------------------------
 
 
@@ -223,10 +251,11 @@ def test_gather_merged_pr_is_removable() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
             _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t"},
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
         ),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
@@ -240,15 +269,59 @@ def test_gather_dirty_overlay_blocks_removal() -> None:
     with (
         patch(_MOD + ".git.commits_ahead", return_value=1),
         patch(_MOD + ".git.read_output", return_value=" M file.py"),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
         patch(_MOD + ".github.pr_for_branch", return_value=None),
         patch(
             _MOD + ".github.closed_pr_for_branch",
-            return_value={"number": "11", "url": "", "title": "t"},
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
         ),
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
     ):
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.MERGED
     assert status.dirty is True
+    assert status.removable is False
+
+
+def test_gather_reused_branch_name_is_not_removable() -> None:
+    """Issue #1719: a branch name reused after a same-named PR merged must
+    not be classified MERGED — its current tip carries unmerged work."""
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=9),
+        patch(_MOD + ".git.read_output", return_value=""),
+        # The local tip is a fresh commit; the merged PR points at an old one.
+        patch(_MOD + ".git.commit_sha", return_value="7ead128"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "293", "url": "", "title": "docs", "headRefOid": "0ldd0cs"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.NO_PR
+    assert status.removable is False
+    assert status.detail is not None
+    assert "#293" in status.detail
+    assert "reused" in status.detail
+
+
+def test_gather_missing_head_sha_withholds_removal() -> None:
+    """Without a head SHA to prove the merge covers this tip, removal is
+    withheld — never delete unproven-merged work (issue #1719)."""
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=2),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commit_sha", return_value="7ead128"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": ""},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.NO_PR
     assert status.removable is False
 
 

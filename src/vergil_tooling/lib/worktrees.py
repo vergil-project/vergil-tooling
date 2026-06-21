@@ -68,16 +68,30 @@ def classify_worktree(
     ahead: int,
     dirty: bool,
     detail: str | None = None,
+    merged_head_matches_tip: bool = True,
 ) -> WorktreeStatus:
     """Map already-gathered signals to a WorktreeStatus. Pure: no I/O.
 
     A failed PR lookup yields UNKNOWN with *detail* — never a silent
     downgrade to NO_PR, which would mislabel real work as stalled.
+
+    ``merged_head_matches_tip`` guards against a reused branch name
+    (issue #1719). A closed/merged PR is matched to a branch by *name*,
+    but a name reused after that PR merged points at an entirely new tip
+    whose commits were never merged. When the merged PR's head no longer
+    equals the branch tip, the MERGED/CLOSED verdict is dropped and the
+    branch is classified by its local commits (NO_PR / DRAFT) — never
+    removable — so the straggler sweep cannot delete unmerged work.
     """
     if pr_lookup_failed:
         state = WorktreeState.UNKNOWN
     elif pr_state == "OPEN":
         state = WorktreeState.OPEN_PR
+    elif pr_state in ("MERGED", "CLOSED") and not merged_head_matches_tip:
+        # Name-matched a merged/closed PR, but the branch tip has moved
+        # past it — the name was reused. Treat the current tip as unmerged
+        # work: stalled if it has commits, an empty draft otherwise.
+        state = WorktreeState.NO_PR if ahead > 0 else WorktreeState.DRAFT
     elif pr_state == "MERGED":
         state = WorktreeState.MERGED
     elif pr_state == "CLOSED":
@@ -96,20 +110,29 @@ def classify_worktree(
     )
 
 
-def _resolve_pr_state(branch: str) -> tuple[int | None, str | None]:
-    """Resolve ``(pr_number, pr_state)`` for *branch*.
+def _resolve_pr_state(branch: str) -> tuple[int | None, str | None, str | None]:
+    """Resolve ``(pr_number, pr_state, pr_head_sha)`` for *branch*.
 
     An open PR wins; otherwise the most recent closed/merged PR (whose
     ``MERGED`` vs ``CLOSED`` state is read explicitly); otherwise
-    ``(None, None)`` for a branch with no PR.
+    ``(None, None, None)`` for a branch with no PR.
+
+    ``pr_head_sha`` is the closed/merged PR's head commit, used to confirm
+    the PR actually corresponds to the branch's current tip rather than a
+    same-named PR that merged before the name was reused (issue #1719). It
+    is ``None`` for an open PR, where the name match is authoritative.
     """
     open_pr = github.pr_for_branch(branch)
     if open_pr is not None:
-        return int(open_pr["number"]), "OPEN"
+        return int(open_pr["number"]), "OPEN", None
     closed = github.closed_pr_for_branch(branch)
     if closed is not None:
-        return int(closed["number"]), github.pr_state(closed["number"])
-    return None, None
+        return (
+            int(closed["number"]),
+            github.pr_state(closed["number"]),
+            closed.get("headRefOid") or None,
+        )
+    return None, None, None
 
 
 def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus:
@@ -119,11 +142,18 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
     ``vrg-finalize-pr`` straggler sweep. A failed ``gh`` PR lookup is
     surfaced as ``UNKNOWN`` with the captured reason — never a silent
     failure that would misclassify the worktree.
+
+    For a closed/merged PR, the PR's head SHA is compared against the
+    branch's current tip. When they differ — the branch name was reused
+    after a same-named PR merged (issue #1719) — the merged verdict is
+    withheld so the branch is never classified removable; the mismatch is
+    recorded in ``detail`` rather than swallowed.
     """
     ahead = git.commits_ahead(target, worktree.branch)
     dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
+    detail: str | None = None
     try:
-        pr_number, pr_state = _resolve_pr_state(worktree.branch)
+        pr_number, pr_state, pr_head_sha = _resolve_pr_state(worktree.branch)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or str(exc)).strip()
         return classify_worktree(
@@ -135,6 +165,22 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
             dirty=dirty,
             detail=detail,
         )
+
+    merged_head_matches_tip = True
+    if pr_state in ("MERGED", "CLOSED"):
+        tip = git.commit_sha(worktree.branch)
+        # A missing head SHA is treated as a mismatch: without positive
+        # proof the PR covers this tip, withholding removal is the safe
+        # default (never delete unproven-merged work — issue #1719).
+        merged_head_matches_tip = pr_head_sha is not None and pr_head_sha == tip
+        if not merged_head_matches_tip:
+            shown = (pr_head_sha or "unknown")[:8]
+            detail = (
+                f"closed PR #{pr_number} head {shown} does not match branch "
+                f"tip {tip[:8]} — branch name reused after that PR merged "
+                f"(issue #1719); current commits are unmerged"
+            )
+
     return classify_worktree(
         worktree,
         pr_number=pr_number,
@@ -142,6 +188,8 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
         pr_lookup_failed=False,
         ahead=ahead,
         dirty=dirty,
+        detail=detail,
+        merged_head_matches_tip=merged_head_matches_tip,
     )
 
 
