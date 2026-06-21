@@ -75,3 +75,28 @@ def test_main_surfaces_unknown_detail(capsys: pytest.CaptureFixture[str]) -> Non
     assert "gh boom" in out
     assert "0 cruft" in out
     assert "Run vrg-finalize-pr" not in out
+
+
+def test_main_surfaces_reused_branch_detail(capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #1719: a reused-branch mismatch lands as NO_PR with a detail
+    note — surfaced too, not just UNKNOWN, so the reuse never hides."""
+    statuses = [
+        _status(
+            "feature/286-build-buckets",
+            WorktreeState.NO_PR,
+            pr=293,
+            ahead=9,
+            detail="closed PR #293 head 0ldd0cs does not match branch tip 7ead128 — reused",
+        )
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "note: feature/286-build-buckets:" in out
+    assert "#293" in out
+    assert "0 cruft" in out

@@ -1429,13 +1429,21 @@ class TestGetInstallationToken:
 
 
 def test_pr_for_branch_returns_first_open_pr() -> None:
-    payload = [{"number": 1423, "url": "https://github.com/o/r/pull/1423", "title": "T"}]
+    payload = [
+        {
+            "number": 1423,
+            "url": "https://github.com/o/r/pull/1423",
+            "title": "T",
+            "headRefOid": "abc123",
+        }
+    ]
     with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
         result = github.pr_for_branch("feature/1423-pr-interface")
     assert result == {
         "number": "1423",
         "url": "https://github.com/o/r/pull/1423",
         "title": "T",
+        "headRefOid": "abc123",
     }
     rj.assert_called_once_with(
         "pr",
@@ -1445,7 +1453,7 @@ def test_pr_for_branch_returns_first_open_pr() -> None:
         "--state",
         "open",
         "--json",
-        "number,url,title",
+        "number,url,title,headRefOid",
     )
 
 
@@ -1478,13 +1486,21 @@ def test_pr_for_branch_none_when_payload_not_dict() -> None:
 
 
 def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
-    payload = [{"number": 1445, "url": "https://github.com/o/r/pull/1445", "title": "T"}]
+    payload = [
+        {
+            "number": 1445,
+            "url": "https://github.com/o/r/pull/1445",
+            "title": "T",
+            "headRefOid": "deadbeef",
+        }
+    ]
     with patch("vergil_tooling.lib.github.read_json", return_value=payload) as rj:
         result = github.closed_pr_for_branch("feature/1445-finalize-cleanup-race")
     assert result == {
         "number": "1445",
         "url": "https://github.com/o/r/pull/1445",
         "title": "T",
+        "headRefOid": "deadbeef",
     }
     rj.assert_called_once_with(
         "pr",
@@ -1494,7 +1510,7 @@ def test_closed_pr_for_branch_returns_first_closed_pr() -> None:
         "--state",
         "closed",
         "--json",
-        "number,url,title",
+        "number,url,title,headRefOid",
     )
 
 
