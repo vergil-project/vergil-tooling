@@ -373,8 +373,7 @@ def stop_vm(instance: str) -> None:
         shell_run(instance, "sync")
     except subprocess.CalledProcessError:
         print(
-            f"  WARNING: guest sync before stop failed for '{instance}' — "
-            "stopping anyway",
+            f"  WARNING: guest sync before stop failed for '{instance}' — stopping anyway",
             file=sys.stderr,
         )
     _limactl("stop", instance)
