@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.46] - 2026-06-21
+
+### Bug fixes
+
+- guard cleanup sweep against reused branch names (#1719) (#1720)
+
 ## [2.1.45] - 2026-06-20
 
 ### Features
