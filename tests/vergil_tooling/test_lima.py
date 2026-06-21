@@ -1171,6 +1171,25 @@ class TestToolingInstallSelfHeal:
 
     @patch("vergil_tooling.lib.lima.shell_pipe")
     @patch("vergil_tooling.lib.lima.shell_run")
+    def test_retry_forces_over_orphaned_executables(
+        self, mock_run: MagicMock, _mock_pipe: MagicMock
+    ) -> None:
+        # A poisoned cache + invalid receipt leaves orphaned `vrg-*` executables
+        # in ~/.local/bin. Clearing the cache fixes the wheel, but the retry then
+        # dies on "Executable already exists" unless it forces. So the retry must
+        # escalate to --force; the first attempt must not (a healthy version bump
+        # should not force-replace entry points).
+        ok = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        mock_run.side_effect = [subprocess.CalledProcessError(1, "uv"), ok, ok]
+        update_tooling("vergil-agent", "v2.0")
+        installs = [c for c in self._cmds(mock_run) if "uv tool install" in c]
+        assert len(installs) == 2
+        first_attempt, retry = installs
+        assert "--force" not in first_attempt
+        assert "--force" in retry
+
+    @patch("vergil_tooling.lib.lima.shell_pipe")
+    @patch("vergil_tooling.lib.lima.shell_run")
     def test_update_propagates_when_retry_also_fails(
         self, mock_run: MagicMock, _mock_pipe: MagicMock
     ) -> None:
