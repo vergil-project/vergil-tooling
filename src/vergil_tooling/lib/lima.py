@@ -363,6 +363,20 @@ def stop_vm(instance: str) -> None:
     status = vm_status(instance)
     if status != "Running":
         return
+    # Flush the guest page cache before stopping. A non-synced shutdown can
+    # truncate files written just before the stop — notably the uv cache and
+    # tool receipt that `install_tooling` writes immediately before the
+    # rebuild's terminal `cycle-ssh` stop — which then poisons the next
+    # `vrg-vm session` update (see `_uv_tool_install`). Best-effort: a failed
+    # sync must never block the stop, but surface it rather than swallow it.
+    try:
+        shell_run(instance, "sync")
+    except subprocess.CalledProcessError:
+        print(
+            f"  WARNING: guest sync before stop failed for '{instance}' — "
+            "stopping anyway",
+            file=sys.stderr,
+        )
     _limactl("stop", instance)
 
 
