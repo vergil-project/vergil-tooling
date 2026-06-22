@@ -100,6 +100,24 @@ class TestLimaTransport:
         assert "--workdir=/work" in cmd
         assert cmd[-3:] == ["bash", "-c", "exec bash"]
 
+    @patch("vergil_tooling.lib.vm_transport.subprocess.Popen")
+    def test_popen_streams_via_limactl_shell(self, mock_popen: MagicMock) -> None:
+        LimaTransport("vm-x").popen("tail", "-f", "/log", workdir="/work")
+        args = mock_popen.call_args[0][0]
+        assert args == [
+            "limactl",
+            "shell",
+            "--workdir",
+            "/work",
+            "vm-x",
+            "--",
+            "tail",
+            "-f",
+            "/log",
+        ]
+        assert mock_popen.call_args[1]["stdout"] == subprocess.PIPE
+        assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
+
 
 class TestIapTransport:
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
@@ -182,3 +200,14 @@ class TestIapTransport:
         assert cmd[:4] == ["gcloud", "compute", "ssh", "vergil@inst"]
         assert "--tunnel-through-iap" in cmd
         assert cmd[-3:] == ["--", "-t", "cd /work && exec bash"]
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.Popen")
+    def test_popen_streams_over_iap_tunnel(self, mock_popen: MagicMock) -> None:
+        IapTransport("inst", "z", "p", "vergil").popen(
+            "sudo", "tail", "-f", "/var/log/cloud-init-output.log", workdir="/work"
+        )
+        args = mock_popen.call_args[0][0]
+        assert args[:4] == ["gcloud", "compute", "ssh", "vergil@inst"]
+        assert args[-1] == "--command=cd /work && sudo tail -f /var/log/cloud-init-output.log"
+        assert mock_popen.call_args[1]["stdout"] == subprocess.PIPE
+        assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT

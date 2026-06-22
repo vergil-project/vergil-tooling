@@ -359,26 +359,99 @@ class TestBootstrap:
         assert ["git", "-C", "/vergil/projects/org/repo", "fetch", "--all"] in cmds
 
 
+def _done(stdout: str = "status: done\n") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, stdout=stdout, stderr="")
+
+
+class TestParseCloudInitStatus:
+    def test_extracts_status_and_detail(self) -> None:
+        out = "----\nstatus: running\ndetail: running modules:config\nboot: enabled\n"
+        assert vm_cloud._parse_cloud_init_status(out) == ("running", "running modules:config")
+
+    def test_status_only_leaves_detail_empty(self) -> None:
+        assert vm_cloud._parse_cloud_init_status("status: done\n") == ("done", "")
+
+    def test_no_status_line_is_empty(self) -> None:
+        # A bare SSH/connection failure prints no status line at all.
+        assert vm_cloud._parse_cloud_init_status("ssh: connect: connection refused\n") == ("", "")
+
+
+class TestPollCloudInitStatus:
+    def test_parses_successful_call(self) -> None:
+        transport = MagicMock()
+        transport.run.return_value = _done("status: running\ndetail: foo\n")
+        assert vm_cloud._poll_cloud_init_status(transport) == ("running", "foo")
+
+    def test_parses_status_from_nonzero_exit(self) -> None:
+        # cloud-init exits 1/2 for error/degraded but still prints the status line.
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(
+            1, "cloud-init", output="status: error\ndetail: boom\n"
+        )
+        assert vm_cloud._poll_cloud_init_status(transport) == ("error", "boom")
+
+    def test_connection_failure_yields_empty_status(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(255, "ssh")
+        assert vm_cloud._poll_cloud_init_status(transport) == ("", "")
+
+
 class TestAwaitReadiness:
     def test_passes_when_cloud_init_done_and_marker_matches(self) -> None:
         transport = MagicMock()
         transport.run.side_effect = [
-            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
-            subprocess.CompletedProcess([], 0, stdout="fp123\n", stderr=""),
+            _done("status: done\n"),
+            _done("fp123\n"),
         ]
         await_readiness(transport, "fp123")  # no raise
 
-    def test_raises_when_cloud_init_fails(self) -> None:
+    def test_raises_when_cloud_init_reports_error(self) -> None:
         transport = MagicMock()
-        transport.run.side_effect = subprocess.CalledProcessError(1, "cloud-init")
-        with pytest.raises(RuntimeError):
+        transport.run.return_value = _done("status: error\ndetail: provision failed\n")
+        with pytest.raises(RuntimeError, match="error"):
             await_readiness(transport, "fp123")
+
+    def test_raises_when_cloud_init_degraded(self) -> None:
+        transport = MagicMock()
+        transport.run.return_value = _done("status: degraded done\n")
+        with pytest.raises(RuntimeError, match="degraded done"):
+            await_readiness(transport, "fp123")
+
+    def test_polls_through_running_then_done(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Two "running" polls (each emits a heartbeat) before "done", then marker.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        emitted: list[str] = []
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", emitted.append)
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _done("status: running\ndetail: config\n"),
+            _done("status: running\ndetail: final\n"),
+            _done("status: done\n"),
+            _done("fp123\n"),
+        ]
+        await_readiness(transport, "fp123")
+        beats = [line for line in emitted if line.startswith("[cloud-init]")]
+        assert len(beats) == 2
+        assert "elapsed" in beats[0]
+        assert "config" in beats[0]
+
+    def test_tolerates_transient_connection_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # An early SSH failure (no status) must not abort — keep polling to done.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", lambda _line: None)
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CalledProcessError(255, "ssh"),
+            _done("status: done\n"),
+            _done("fp123\n"),
+        ]
+        await_readiness(transport, "fp123")  # no raise
 
     def test_raises_when_marker_mismatched(self) -> None:
         transport = MagicMock()
         transport.run.side_effect = [
-            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
-            subprocess.CompletedProcess([], 0, stdout="different\n", stderr=""),
+            _done("status: done\n"),
+            _done("different\n"),
         ]
         with pytest.raises(RuntimeError):
             await_readiness(transport, "fp123")
@@ -386,11 +459,57 @@ class TestAwaitReadiness:
     def test_raises_when_marker_read_fails(self) -> None:
         transport = MagicMock()
         transport.run.side_effect = [
-            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            _done("status: done\n"),
             subprocess.CalledProcessError(1, "cat"),
         ]
         with pytest.raises(RuntimeError):
             await_readiness(transport, "fp123")
+
+    def test_verbose_streams_log_tail(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # verbose=True attaches a live tail; its lines are relayed and it is
+        # terminated once cloud-init is done.
+        emitted: list[str] = []
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", emitted.append)
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _done("status: done\n"),
+            _done("fp123\n"),
+        ]
+        fake_proc = MagicMock()
+        # A blank line in the stream is skipped (not relayed as an empty beat).
+        fake_proc.stdout = iter(["Cloud-init running module foo\n", "\n", "package installed\n"])
+        transport.popen.return_value = fake_proc
+        await_readiness(transport, "fp123", verbose=True)
+        popen_args = list(transport.popen.call_args.args)
+        assert "tail" in popen_args
+        assert vm_cloud._CLOUD_INIT_LOG in popen_args
+        assert "[cloud-init] Cloud-init running module foo" in emitted
+        fake_proc.terminate.assert_called_once()
+
+    def test_non_verbose_does_not_tail(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _done("status: done\n"),
+            _done("fp123\n"),
+        ]
+        await_readiness(transport, "fp123")
+        transport.popen.assert_not_called()
+
+    def test_verbose_tail_failure_degrades_to_heartbeat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # If spawning the tail tunnel fails, the gate must still complete on the
+        # heartbeat path rather than aborting the build.
+        emitted: list[str] = []
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", emitted.append)
+        transport = MagicMock()
+        transport.popen.side_effect = OSError("no gcloud")
+        transport.run.side_effect = [
+            _done("status: done\n"),
+            _done("fp123\n"),
+        ]
+        await_readiness(transport, "fp123", verbose=True)  # no raise
+        assert any("live tail unavailable" in line for line in emitted)
 
 
 class TestCloudClaudeLayout:
