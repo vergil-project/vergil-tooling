@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.52] - 2026-06-22
+
+### Bug fixes
+
+- fetch opentofu modules from the v-tag git archive, not a release asset (#1755) (#1756)
+
 ## [2.1.51] - 2026-06-22
 
 ### Bug fixes
