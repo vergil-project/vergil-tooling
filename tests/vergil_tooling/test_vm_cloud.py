@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.vm_cloud import (
+    bootstrap_volume,
     cloud_labels,
     cloud_resource_name,
     fetch_modules,
@@ -282,3 +283,41 @@ class TestPreflight:
 
         mock_run.side_effect = _run
         preflight()  # no raise
+
+
+class TestBootstrap:
+    def test_skips_for_credential_less_identity(self, capsys: pytest.CaptureFixture[str]) -> None:
+        transport = MagicMock()
+        identity = MagicMock()
+        identity.auth_type = "none"
+        bootstrap_volume(transport, identity, "org", "repo")
+        transport.run.assert_not_called()
+        assert "skipping checkout" in capsys.readouterr().out.lower()
+
+    def test_clones_when_absent(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CalledProcessError(1, "test"),  # path absent
+            MagicMock(),  # clone
+            MagicMock(),  # mkdir
+        ]
+        identity = MagicMock()
+        identity.auth_type = "app"
+        bootstrap_volume(transport, identity, "org", "repo")
+        cloned = " ".join(c for call in transport.run.call_args_list for c in call.args)
+        assert "clone" in cloned
+        assert "https://github.com/org/repo.git" in cloned
+        assert "/vergil/projects/org/repo" in cloned
+        assert "/vergil/claude" in cloned
+
+    def test_fetches_when_present(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            MagicMock(),  # test -d succeeds (present)
+            MagicMock(),  # fetch
+        ]
+        identity = MagicMock()
+        identity.auth_type = "app"
+        bootstrap_volume(transport, identity, "org", "repo")
+        cmds = [list(call.args) for call in transport.run.call_args_list]
+        assert ["git", "-C", "/vergil/projects/org/repo", "fetch", "--all"] in cmds

@@ -13,6 +13,11 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.identity import Identity
+    from vergil_tooling.lib.vm_transport import Transport
 
 _MAX_NAME = 59  # GCP instance name <=63; the module appends "-ssh" to the firewall name.
 _HASH_LEN = 6
@@ -182,3 +187,25 @@ def preflight() -> None:
             file=sys.stderr,
         )
         raise SystemExit(1) from None
+
+
+def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: str) -> None:
+    """Clone the repo onto the persistent volume, reattach (fetch), or skip.
+
+    - ``auth_type == "none"``: credential-less identity — skip checkout, logged.
+    - existing ``/vergil/projects/<org>/<repo>``: reattached volume — fetch only.
+    - absent: fresh volume — in-guest ``vrg-git clone`` + seed ``/vergil/claude``.
+    """
+    if identity.auth_type == "none":
+        print("  Skipping checkout (credential-less identity)")
+        return
+    path = f"/vergil/projects/{org}/{repo}"
+    try:
+        transport.run("test", "-d", path)
+    except subprocess.CalledProcessError:
+        print(f"  Cloning {org}/{repo} onto the volume...")
+        transport.run("vrg-git", "clone", f"https://github.com/{org}/{repo}.git", path)
+        transport.run("mkdir", "-p", "/vergil/claude")
+    else:
+        print(f"  Reattaching existing checkout for {org}/{repo}...")
+        transport.run("git", "-C", path, "fetch", "--all")
