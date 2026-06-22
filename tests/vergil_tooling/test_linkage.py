@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vergil_tooling.lib.linkage import extract_tracking_issue
+from vergil_tooling.lib.linkage import extract_tracking_issue, normalize_linkage
 
 
 def test_ref_simple() -> None:
@@ -56,3 +56,48 @@ def test_multiple_refs_raises_value_error() -> None:
 
 def test_autoclose_keyword_not_matched() -> None:
     assert extract_tracking_issue("Fixes #42") is None
+
+
+def test_normalize_bare_keyword_no_warning() -> None:
+    assert normalize_linkage("Ref") == ("Ref", None)
+
+
+def test_normalize_bare_keyword_trims_whitespace() -> None:
+    assert normalize_linkage("  Ref  ") == ("Ref", None)
+
+
+def test_normalize_strips_issue_number_and_warns() -> None:
+    canonical, warning = normalize_linkage("Ref #1761")
+    assert canonical == "Ref"
+    assert warning is not None
+    assert "Ref #1761" in warning
+    assert "Ref" in warning
+
+
+def test_normalize_strips_cross_repo_reference() -> None:
+    canonical, warning = normalize_linkage("Ref org/repo#42")
+    assert canonical == "Ref"
+    assert warning is not None
+
+
+def test_normalize_rejects_wrong_keyword_with_number() -> None:
+    """The 'Refs #N' round-trip case: wrong keyword, clear contract message."""
+    with pytest.raises(ValueError, match="bare keyword") as exc:
+        normalize_linkage("Refs #1761")
+    assert "Refs #1761" in str(exc.value)
+    assert "Ref" in str(exc.value)
+
+
+def test_normalize_rejects_autoclose_keyword() -> None:
+    with pytest.raises(ValueError, match="bare keyword"):
+        normalize_linkage("Closes")
+
+
+def test_normalize_rejects_empty_string() -> None:
+    with pytest.raises(ValueError, match="bare keyword"):
+        normalize_linkage("")
+
+
+def test_normalize_rejects_trailing_garbage() -> None:
+    with pytest.raises(ValueError, match="bare keyword"):
+        normalize_linkage("Ref #1761 extra")

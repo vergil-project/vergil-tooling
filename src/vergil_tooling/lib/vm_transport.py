@@ -31,6 +31,10 @@ class Transport(Protocol):
         self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR
     ) -> None: ...  # pragma: no cover
 
+    def popen(
+        self, *args: str, workdir: str = _DEFAULT_WORKDIR
+    ) -> subprocess.Popen[str]: ...  # pragma: no cover
+
     def exec_session(self, workdir: str, inner: str) -> NoReturn: ...  # pragma: no cover
 
 
@@ -76,6 +80,14 @@ class LimaTransport:
             if exc.stderr:
                 print(exc.stderr, end="", file=sys.stderr)
             raise
+
+    def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
+        return subprocess.Popen(  # noqa: S603
+            ["limactl", "shell", "--workdir", workdir, self.instance, "--", *args],  # noqa: S607
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
         os.environ["LIMA_SHELLENV_ALLOW"] = _TERMINAL_ENV_VARS
@@ -147,6 +159,19 @@ class IapTransport:
             if exc.stderr:
                 print(exc.stderr, end="", file=sys.stderr)
             raise
+
+    def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
+        remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
+        # Long-running streaming child (e.g. ``tail -f``): the caller drains
+        # stdout line-by-line and terminates it. stderr is folded into stdout so
+        # a guest-side error (missing log, permission denied) surfaces in the
+        # stream rather than vanishing.
+        return subprocess.Popen(  # noqa: S603
+            [*self._base(), f"--command={remote}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
         remote = f"cd {workdir} && {inner}"

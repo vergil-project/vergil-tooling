@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git, identity_mode
 from vergil_tooling.lib.identity_mode import IdentityMode
+from vergil_tooling.lib.linkage import normalize_linkage
 from vergil_tooling.lib.pr_workflow import engine, registry, settings
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -160,17 +161,24 @@ def _next_audit(args: argparse.Namespace, transport: LocalFileTransport) -> int:
 
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = _require_state(transport)
+    try:
+        linkage, linkage_warning = normalize_linkage(args.linkage)
+    except ValueError as exc:
+        raise WorkflowError(f"report-ready: {exc}") from exc
     engine.apply_report_ready(
         state,
         title=args.title,
         summary=args.summary,
         notes=args.notes,
-        linkage=args.linkage,
+        linkage=linkage,
         head_sha=transport.head_sha(),
         now=_now(),
     )
     transport.write(state)
-    _emit({"ok": True, "status": state.status, "owner": state.owner})
+    response: dict[str, object] = {"ok": True, "status": state.status, "owner": state.owner}
+    if linkage_warning:
+        response["warning"] = linkage_warning
+    _emit(response)
     return 0
 
 

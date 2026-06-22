@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -11,6 +12,8 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -131,9 +134,32 @@ def provision_params(
     return params
 
 
+# Every provision/*.sh sources provision.env under ``set -u`` and reads these keys
+# directly (no ``${VAR:-}`` default), so the body must DEFINE all of them even when the
+# spec leaves them unset — otherwise the script aborts on an unbound variable. The set and
+# its empty defaults mirror Lima's ``agent.yaml.skel`` ``param:`` block byte-for-byte (the
+# backend-neutral contract): Lima's template substitutes every ``.Param.*`` to empty, so
+# the cloud writer must do the same. ``provision_params`` omits unset keys (correct for
+# Lima's ``--set`` path), so we re-establish the full set here.
+_PROVISION_ENV_DEFAULTS = {
+    "EXTRA_PACKAGES": "",
+    "APT_REPOS": "",
+    "VAGRANT_PLUGINS": "",
+    "SPEC_FINGERPRINT": "",
+    "NESTED_VIRT": "",
+    "PORT_FORWARDS": "",
+}
+
+
 def render_provision_env(params: dict[str, str], *, vergil_user: str, home: str) -> str:
-    """Render the cloud ``provision.env`` body: the shared params plus VERGIL_USER/HOME."""
-    lines = [f"{key}={value}" for key, value in params.items()]
+    """Render the cloud ``provision.env`` body: the full canonical key set plus VERGIL_USER/HOME.
+
+    ``params`` (from ``provision_params``, which omits unset keys) overrides the empty
+    ``_PROVISION_ENV_DEFAULTS`` so every key the provision scripts source is always defined
+    — provisioning runs under ``set -u`` and aborts on any unbound variable.
+    """
+    merged = {**_PROVISION_ENV_DEFAULTS, **params}
+    lines = [f"{key}={value}" for key, value in merged.items()]
     lines.append(f"VERGIL_USER={vergil_user}")
     lines.append(f"HOME={home}")
     return "\n".join(lines)
@@ -221,19 +247,147 @@ def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: s
 
 
 _FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
+_CLOUD_INIT_LOG = "/var/log/cloud-init-output.log"
+
+# How often the readiness gate re-queries cloud-init and emits an elapsed
+# heartbeat. cloud-init provisioning on a fresh box runs many minutes, so a
+# ~20s cadence gives the operator a steady "still alive" signal without
+# hammering the IAP tunnel.
+_READINESS_POLL_SECS = 20.0
+
+# cloud-init's terminal states (``cloud-init status`` output). "done" is the
+# only clean success; "error" and "degraded done" mean provisioning finished
+# with faults — both of which the old blocking ``status --wait`` surfaced as a
+# nonzero exit, so we preserve that by treating them as hard failures.
+_CLOUD_INIT_DONE = "done"
+_CLOUD_INIT_FAILED = frozenset({"error", "degraded done"})
 
 
-def await_readiness(transport: Transport, fingerprint: str) -> None:
-    """Synthesize a hard-fail readiness gate for a cloud box.
+def _parse_cloud_init_status(stdout: str) -> tuple[str, str]:
+    """Pull ``(status, detail)`` from ``cloud-init status --long`` output.
 
-    Waits for cloud-init to finish, then confirms the stamped spec fingerprint
-    matches the freshly composed one. Either failure raises ``RuntimeError`` so
-    the create pipeline aborts loudly (no half-ready box).
+    Returns empty strings for any field not present — e.g. a transient SSH
+    failure yields no ``status:`` line, which the caller reads as "not ready
+    yet" and keeps polling.
+    """
+    status = ""
+    detail = ""
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("status:"):
+            status = line.split(":", 1)[1].strip()
+        elif line.startswith("detail:"):
+            detail = line.split(":", 1)[1].strip()
+    return status, detail
+
+
+def _poll_cloud_init_status(transport: Transport) -> tuple[str, str]:
+    """Query cloud-init once and return its ``(status, detail)``.
+
+    ``cloud-init status`` exits nonzero for the error(1)/degraded(2) states, but
+    the status line still rides on stdout — so we parse the captured output of a
+    failed call too. A genuine connectivity failure (SSH not up yet) produces no
+    status line, which parses to an empty status the poll loop treats as
+    non-terminal. The transport already echoes the child's stderr, so a real
+    failure is never silent.
     """
     try:
-        transport.run("cloud-init", "status", "--wait")
+        result = transport.run("cloud-init", "status", "--long")
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError("cloud-init did not complete on the cloud box — rebuild the VM") from exc
+        return _parse_cloud_init_status(exc.stdout or "")
+    return _parse_cloud_init_status(result.stdout)
+
+
+def _readiness_heartbeat(elapsed: float, status: str, detail: str) -> str:
+    """One elapsed-vs-stage line, mirroring the Lima backend's ``[elapsed]`` beat."""
+    stage = detail or status or "connecting"
+    return f"[cloud-init] {progress.format_elapsed(elapsed)} elapsed — {stage}"
+
+
+class _CloudInitTail:
+    """Background ``tail -f`` of the guest cloud-init log, relayed to the renderer.
+
+    Opt-in (``--verbose`` / ``VERGIL_VM_VERBOSE``) live provisioning output. The
+    poll loop owns readiness; this is display-only, so a tail that never starts
+    (older box, missing log) degrades to heartbeats rather than failing the gate.
+    """
+
+    def __init__(self, transport: Transport) -> None:
+        self._transport = transport
+        self._proc: subprocess.Popen[str] | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        # Spawn synchronously so ``_proc`` is set before the poll loop runs —
+        # the thread only drains stdout, keeping ``stop()`` race-free.
+        try:
+            # ``-n +1`` replays the log from the top so output already written
+            # before we attached is not lost.
+            self._proc = self._transport.popen("sudo", "tail", "-n", "+1", "-f", _CLOUD_INIT_LOG)
+        except OSError as exc:  # spawning the tunnel failed — degrade to heartbeats
+            progress.emit(f"[cloud-init] live tail unavailable: {exc}")
+            return
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+        self._thread.start()
+
+    def _drain(self) -> None:
+        assert self._proc is not None  # noqa: S101 — start() set it before spawning the thread
+        assert self._proc.stdout is not None  # noqa: S101 — Popen(stdout=PIPE) guarantees it
+        for raw in self._proc.stdout:
+            line = raw.rstrip("\n")
+            if line:
+                progress.emit(f"[cloud-init] {line}")
+
+    def stop(self) -> None:
+        if self._proc is not None:
+            self._proc.terminate()
+            with contextlib.suppress(subprocess.TimeoutExpired):
+                self._proc.wait(timeout=5)
+        if self._thread is not None:
+            self._thread.join(timeout=5)
+
+
+def _wait_for_cloud_init(
+    transport: Transport, *, verbose: bool, poll_secs: float = _READINESS_POLL_SECS
+) -> None:
+    """Poll cloud-init to completion, emitting an elapsed heartbeat each cycle.
+
+    Replaces a single blocking ``cloud-init status --wait`` (silent for the whole
+    provisioning window) with a poll loop so the create pipeline shows steady
+    progress. There is deliberately no timeout — matching ``--wait``'s
+    wait-forever semantics — because the heartbeat itself is the signal the
+    operator uses to decide a box is wedged and abort by hand. Raises
+    ``RuntimeError`` on any cloud-init failure state so the gate still hard-fails.
+    """
+    tail = _CloudInitTail(transport) if verbose else None
+    if tail is not None:
+        tail.start()
+    started = time.monotonic()
+    try:
+        while True:
+            status, detail = _poll_cloud_init_status(transport)
+            if status == _CLOUD_INIT_DONE:
+                return
+            if status in _CLOUD_INIT_FAILED:
+                raise RuntimeError(
+                    f"cloud-init reported '{status}' on the cloud box — rebuild the VM"
+                )
+            progress.emit(_readiness_heartbeat(time.monotonic() - started, status, detail))
+            time.sleep(poll_secs)
+    finally:
+        if tail is not None:
+            tail.stop()
+
+
+def await_readiness(transport: Transport, fingerprint: str, *, verbose: bool = False) -> None:
+    """Synthesize a hard-fail readiness gate for a cloud box.
+
+    Waits for cloud-init to finish — emitting an elapsed/stage heartbeat each
+    poll, plus a live log tail when ``verbose`` — then confirms the stamped spec
+    fingerprint matches the freshly composed one. Either failure raises
+    ``RuntimeError`` so the create pipeline aborts loudly (no half-ready box).
+    """
+    _wait_for_cloud_init(transport, verbose=verbose)
     try:
         result = transport.run("cat", _FINGERPRINT_PATH)
     except subprocess.CalledProcessError as exc:

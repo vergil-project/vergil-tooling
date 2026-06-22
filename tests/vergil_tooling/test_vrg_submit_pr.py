@@ -631,6 +631,32 @@ class TestTemplateMode:
         assert "linkage" in err.lower()
         assert "Ref" in err
 
+    def test_template_strips_issue_number_from_linkage_and_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A linkage carrying the issue number is stripped to the bare keyword,
+        warned about, and the PR proceeds — no hard fail (issue #1765)."""
+        _write_workflow_state(tmp_path, title="fix", summary="Fix", linkage="Ref #1761")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/8",
+            ),
+            patch("builtins.input", return_value="y"),
+        ):
+            result = main([])
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Ref #1761" in captured.err
+        # The rendered body carries the bare keyword with the auto-appended number.
+        assert "Ref #42" in captured.out
+
     def test_template_mode_reports_unready_workflow(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -1491,9 +1517,28 @@ def test_submit_one_bad_linkage_exits() -> None:
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
-        pytest.raises(SystemExit, match="linkage"),
+        pytest.raises(SystemExit, match="bare keyword"),
     ):
         _submit_one(Path("/r"), base_override=None, assume_yes=True)
+
+
+def test_submit_one_strips_issue_number_from_linkage_and_warns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A linkage carrying the issue number is unambiguous: strip it, warn, proceed."""
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref #1761"}
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".resolve_issue_ref", return_value="#1"),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".build_pr_body", return_value="BODY") as build,
+        patch(_MOD + ".confirm", return_value=True),
+        patch(_MOD + "._push_create_record", return_value="https://example/pull/1"),
+    ):
+        url = _submit_one(Path("/r"), base_override=None, assume_yes=True)
+    assert url == "https://example/pull/1"
+    assert build.call_args.kwargs["linkage"] == "Ref"
+    assert "Ref #1761" in capsys.readouterr().err
 
 
 def test_submit_one_declined_exits() -> None:
