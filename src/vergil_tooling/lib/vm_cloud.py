@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
+import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -120,3 +123,62 @@ def render_provision_env(params: dict[str, str], *, vergil_user: str, home: str)
     lines.append(f"VERGIL_USER={vergil_user}")
     lines.append(f"HOME={home}")
     return "\n".join(lines)
+
+
+_TOFU_MIN = (1, 8, 0)
+
+
+def _tofu_version_ok(stdout: str) -> bool:
+    try:
+        data = json.loads(stdout)
+        raw = str(data["terraform_version"])
+        parts = tuple(int(p) for p in raw.split("."))
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return False
+    return parts >= _TOFU_MIN
+
+
+def preflight() -> None:
+    """Verify the cloud host prerequisites: OpenTofu >= 1.8.0, gcloud, and ADC.
+
+    Each missing or unusable piece aborts with its own specific remediation
+    rather than letting an opaque ``tofu``/``gcloud`` error surface later.
+    """
+    if shutil.which("tofu") is None:
+        print("ERROR: OpenTofu not found — install OpenTofu >= 1.8.0", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        result = subprocess.run(  # noqa: S603
+            ["tofu", "version", "-json"],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(
+            "ERROR: could not query OpenTofu version — install OpenTofu >= 1.8.0",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+    if not _tofu_version_ok(result.stdout):
+        print("ERROR: OpenTofu too old — install OpenTofu >= 1.8.0", file=sys.stderr)
+        raise SystemExit(1)
+
+    if shutil.which("gcloud") is None:
+        print("ERROR: gcloud not found — install the gcloud CLI", file=sys.stderr)
+        raise SystemExit(1)
+
+    try:
+        subprocess.run(  # noqa: S603
+            ["gcloud", "auth", "application-default", "print-access-token"],  # noqa: S607
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        print(
+            "ERROR: no application-default credentials — run: "
+            "gcloud auth application-default login",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None

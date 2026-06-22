@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -10,6 +11,7 @@ from vergil_tooling.lib.vm_cloud import (
     cloud_labels,
     cloud_resource_name,
     fetch_modules,
+    preflight,
     provision_params,
     render_provision_env,
 )
@@ -188,3 +190,95 @@ class TestProvisionEnv:
         assert "SPEC_FINGERPRINT=abc" in lines
         assert "VERGIL_USER=vergil" in lines
         assert "HOME=/home/vergil" in lines
+
+
+class TestPreflight:
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which", return_value=None)
+    def test_missing_tofu_aborts_with_remediation(
+        self, _which: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "OpenTofu" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_old_tofu_aborts(
+        self, mock_which: MagicMock, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_which.return_value = "/usr/bin/tofu"
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout='{"terraform_version": "1.7.0"}', stderr=""
+        )
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "OpenTofu" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_unparseable_tofu_version_aborts(
+        self, mock_which: MagicMock, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_which.return_value = "/usr/bin/tofu"
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="not-json", stderr="")
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "OpenTofu" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_tofu_version_query_failure_aborts(
+        self, mock_which: MagicMock, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_which.return_value = "/usr/bin/tofu"
+        mock_run.side_effect = subprocess.CalledProcessError(1, "tofu")
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "OpenTofu" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_missing_gcloud_aborts(
+        self, mock_which: MagicMock, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_which.side_effect = lambda name: "/usr/bin/tofu" if name == "tofu" else None
+        mock_run.return_value = subprocess.CompletedProcess(
+            [], 0, stdout='{"terraform_version": "1.8.0"}', stderr=""
+        )
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "gcloud CLI" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_missing_adc_aborts(
+        self, mock_which: MagicMock, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_which.return_value = "/usr/bin/x"
+
+        def _run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if args[0] == "tofu":
+                return subprocess.CompletedProcess(
+                    [], 0, stdout='{"terraform_version": "1.9.0"}', stderr=""
+                )
+            raise subprocess.CalledProcessError(1, "gcloud")
+
+        mock_run.side_effect = _run
+        with pytest.raises(SystemExit):
+            preflight()
+        assert "application-default login" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_cloud.subprocess.run")
+    @patch("vergil_tooling.lib.vm_cloud.shutil.which")
+    def test_all_present_passes(self, mock_which: MagicMock, mock_run: MagicMock) -> None:
+        mock_which.return_value = "/usr/bin/x"
+
+        def _run(args: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+            if args[0] == "tofu":
+                return subprocess.CompletedProcess(
+                    [], 0, stdout='{"terraform_version": "1.8.0"}', stderr=""
+                )
+            return subprocess.CompletedProcess([], 0, stdout="token", stderr="")
+
+        mock_run.side_effect = _run
+        preflight()  # no raise
