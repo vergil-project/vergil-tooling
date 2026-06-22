@@ -7,7 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
@@ -29,7 +29,21 @@ from vergil_tooling.bin.vrg_vm import (
     resolve_borrow,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
+from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec
+from vergil_tooling.lib.vm_transport import LimaTransport
+
+
+def _assert_transport(mock: MagicMock, instance: str) -> None:
+    """Assert the mock's first positional arg was a LimaTransport for ``instance``.
+
+    The guest helpers (inject_credentials, update_tooling, vm_probe, …) now take a
+    Transport first instead of an instance string; this verifies the routed
+    transport addresses the expected VM without coupling to its identity.
+    """
+    transport = mock.call_args.args[0]
+    assert isinstance(transport, LimaTransport)
+    assert transport.instance == instance
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -205,7 +219,8 @@ class TestCreate:
 
         main(["create", "--config", str(config_file), "--tag", "v3.0"])
         mock_fetch.assert_called_once_with("v3.0")
-        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+        mock_install.assert_called_once_with(ANY, "v2.0")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_create_fails_without_vergil_version(self, _status: MagicMock, tmp_path: Path) -> None:
@@ -255,7 +270,8 @@ class TestCreate:
 
         main(["create", "--config", str(p)])
         mock_fetch.assert_called_once_with("v2.2")
-        mock_install.assert_called_once_with("vergil-agent", "v2.2")
+        mock_install.assert_called_once_with(ANY, "v2.2")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -292,7 +308,8 @@ class TestCreate:
 
         main(["create", "--config", str(p)])
         mock_fetch.assert_called_once_with("v2.1")
-        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+        mock_install.assert_called_once_with(ANY, "v2.0")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -1040,7 +1057,8 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1065,7 +1083,8 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file), "--tag", "v2.1"])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, "v2.1", fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_update_fails_if_not_running(self, _status: MagicMock, config_file: Path) -> None:
@@ -1169,9 +1188,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", None, fallback_tag="v2.0"),
-            call("vergil.acme.widgets", None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.0"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1237,7 +1259,8 @@ class TestUpdateAll:
         ]
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
         out = capsys.readouterr().out
         assert "Skipping VM 'vergil.acme.widgets' (status: Stopped)" in out
         assert "1 skipped" in out
@@ -1260,7 +1283,8 @@ class TestUpdateAll:
         ]
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1279,9 +1303,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file_multi)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", None, fallback_tag="v2.0"),
-            call("audit-agent", None, fallback_tag="v2.5"),
+            call(ANY, None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.5"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "audit-agent"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1300,9 +1327,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--tag", "v2.1", "--config", str(config_file)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", "v2.1", fallback_tag="v2.0"),
-            call("vergil.acme.widgets", "v2.1", fallback_tag="v2.0"),
+            call(ANY, "v2.1", fallback_tag="v2.0"),
+            call(ANY, "v2.1", fallback_tag="v2.0"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
@@ -1424,7 +1454,8 @@ class TestSession:
         config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "."])
-        mock_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "limactl"
@@ -2023,6 +2054,42 @@ class TestBorrowBlocks:
         assert "borrows the VM of lmf/lab" in capsys.readouterr().err
 
 
+_OFF_PLATFORM_VM = """
+[vm]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+"""
+
+
+class TestOffPlatformDispatch:
+    @pytest.mark.parametrize("command", ["create", "session", "start", "rebuild"])
+    def test_off_platform_repo_errors_at_resolve(
+        self, command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # select_backend() raises NotImplementedError for an off-platform spec at
+        # resolve time; main() catches it, prints ERROR, and returns 1. No Lima
+        # command is ever attempted.
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        # --config precedes the workspace so session's REMAINDER `cmd` does not eat it.
+        result = main([command, "--config", str(cfg), "lmf/cloud"])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert err.startswith("ERROR:")
+        assert "off-platform" in err
+
+    def test_resolve_target_raises_not_implemented(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        with pytest.raises(NotImplementedError, match="off-platform"):
+            _resolve_target(_args(cfg, "lmf/cloud"))
+
+
 class TestCreateDedicated:
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -2288,11 +2355,20 @@ def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = 
         under=under,
     )
     cfg = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+    backend = select_backend(spec)
     if dedicated:
         return Target(
-            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user.lmf.mq", fingerprint
+            "vergil-user",
+            ident,
+            cfg,
+            "lmf",
+            "mq",
+            spec,
+            "vergil-user.lmf.mq",
+            fingerprint,
+            backend,
         )
-    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "")
+    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "", backend)
 
 
 class TestPreflight:
@@ -2558,7 +2634,7 @@ class TestProbeRunning:
     def test_probes_running_only_with_fingerprint_for_present(
         self, mock_probe: MagicMock, tmp_path: Path
     ) -> None:
-        mock_probe.side_effect = lambda _inst, *, fingerprint=False: (
+        mock_probe.side_effect = lambda _transport, *, fingerprint=False: (
             (1, 0, "fp") if fingerprint else (1, 0, None)
         )
         identities = {"vergil-user": self._identity(tmp_path)}
@@ -2581,12 +2657,15 @@ class TestProbeRunning:
             "vergil-user.lmf.mq": (1, 0, "fp"),
             "vergil-user.o.gone": (1, 0, None),
         }
-        wants = {c.args[0]: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
+        wants = {c.args[0].instance: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
         assert wants == {
             "vergil-user": False,  # base: occupancy only
             "vergil-user.lmf.mq": True,  # present dedicated: combined probe
             "vergil-user.o.gone": False,  # orphaned: no spec to compare
         }
+        assert all(
+            isinstance(c.args[0], LimaTransport) for c in mock_probe.call_args_list
+        )
 
     @patch("vergil_tooling.bin.vrg_vm.vm_probe")
     def test_nothing_running_probes_nothing(self, mock_probe: MagicMock, tmp_path: Path) -> None:
@@ -2628,7 +2707,8 @@ def _lifecycle_target(tmp_path: Path) -> Any:
         stanza=None,
         override=None,
     )
-    return Target("vergil", identity, config, None, None, spec, "vergil-agent", "")
+    backend = select_backend(spec)
+    return Target("vergil", identity, config, None, None, spec, "vergil-agent", "", backend)
 
 
 class TestLifecycleStages:
@@ -2708,7 +2788,8 @@ class TestLifecycleStages:
         state = _LifecycleState(target=_lifecycle_target(tmp_path))
         with patch("vergil_tooling.bin.vrg_vm.update_tooling") as m_update:
             _st_update_tooling(state)
-        m_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+        m_update.assert_called_once_with(ANY, fallback_tag="v2.0")
+        _assert_transport(m_update, "vergil-agent")
 
     def test_st_cycle_ssh_stops_then_starts(self, tmp_path: Path) -> None:
         # The cycle must be a stop *then* a start: only a full power cycle is

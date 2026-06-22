@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, cast
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
+    from vergil_tooling.lib.vm_backend import Backend
+
 from vergil_tooling.bin.vrg_vm_resolve import (
     _archived_rows,
     _last_activity,
@@ -39,29 +41,33 @@ from vergil_tooling.lib.identity import (
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
-    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
-    get_tooling_version,
-    inject_credentials,
-    install_tooling,
-    link_claude_dirs,
     list_vms,
     nested_virt_unsupported_reason,
     shell_run,
     start_vm,
     stop_vm,
-    try_update_tooling,
     update_plugins,
-    update_tooling,
     vm_age_days,
-    vm_probe,
-    vm_spec_status,
     vm_status,
 )
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
+from vergil_tooling.lib.vm_backend import select_backend
+from vergil_tooling.lib.vm_guest import (
+    copy_claude_config,
+    get_tooling_version,
+    inject_credentials,
+    install_tooling,
+    link_claude_dirs,
+    try_update_tooling,
+    update_tooling,
+    vm_probe,
+    vm_spec_status,
+)
+from vergil_tooling.lib.vm_transport import LimaTransport
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     SpecError,
@@ -98,6 +104,7 @@ class Target:
     spec: ComposedSpec
     instance: str
     fingerprint: str
+    backend: Backend
 
 
 class BorrowError(Exception):
@@ -212,7 +219,10 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     if org is None or repo is None:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
-        return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
+        backend = select_backend(spec)
+        return Target(
+            name, identity, config, None, None, spec, identity.vm_instance, "", backend
+        )
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
@@ -226,12 +236,25 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     override = identity.overrides.get((eff_org, eff_repo))
     spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
+    backend = select_backend(spec)
 
     if not spec.dedicated:
-        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
+        return Target(
+            name, identity, config, org, repo, spec, identity.vm_instance, "", backend
+        )
 
     inst = instance_name(name, eff_org, eff_repo)
-    return Target(name, identity, config, eff_org, eff_repo, spec, inst, spec_fingerprint(spec))
+    return Target(
+        name,
+        identity,
+        config,
+        eff_org,
+        eff_repo,
+        spec,
+        inst,
+        spec_fingerprint(spec),
+        backend,
+    )
 
 
 def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
@@ -301,7 +324,8 @@ def _preflight_target(target: Target) -> int:
     # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
     # "drift only while running" contract.
     if status == "Running":
-        spec_status = vm_spec_status(target.instance, target.fingerprint)
+        transport = target.backend.transport(target.instance)
+        spec_status = vm_spec_status(transport, target.fingerprint)
         # 'unreachable' is not drift: Lima reports the box Running but the shell
         # transport (SSH) refused, so the spec was never read. Telling the user to
         # rebuild would be wrong — the VM may be mid-boot or wedged. Surface the
@@ -422,7 +446,8 @@ def _st_spec_check(state: _LifecycleState) -> None:
     target = state.target
     if not target.spec.dedicated:
         return
-    spec_status = vm_spec_status(target.instance, target.fingerprint)
+    transport = target.backend.transport(target.instance)
+    spec_status = vm_spec_status(transport, target.fingerprint)
     if spec_status == "ok":
         return
     workspace = f"{target.org}/{target.repo}"
@@ -442,21 +467,25 @@ def _st_spec_check(state: _LifecycleState) -> None:
 
 
 def _st_link_config(state: _LifecycleState) -> None:
-    link_claude_dirs(state.target.instance, Path.home() / ".claude")
+    transport = state.target.backend.transport(state.target.instance)
+    link_claude_dirs(transport, Path.home() / ".claude")
 
 
 def _st_credentials(state: _LifecycleState) -> None:
-    inject_credentials(state.target.instance, state.target.identity)
+    transport = state.target.backend.transport(state.target.instance)
+    inject_credentials(transport, state.target.identity)
 
 
 def _st_install_tooling(state: _LifecycleState) -> None:
-    install_tooling(state.target.instance, state.vergil_version)
+    transport = state.target.backend.transport(state.target.instance)
+    install_tooling(transport, state.vergil_version)
 
 
 def _st_copy_config(state: _LifecycleState) -> None:
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(state.target.instance, claude_dir)
-    link_claude_dirs(state.target.instance, claude_dir)
+    transport = state.target.backend.transport(state.target.instance)
+    copy_claude_config(transport, claude_dir)
+    link_claude_dirs(transport, claude_dir)
 
 
 def _st_update_tooling(state: _LifecycleState) -> None:
@@ -464,7 +493,8 @@ def _st_update_tooling(state: _LifecycleState) -> None:
     # and the start continues — the same warn-and-continue contract
     # try_update_tooling provided before the pipeline port.
     fallback = resolve_vergil_version(state.target.config, state.target.identity)
-    update_tooling(state.target.instance, fallback_tag=fallback)
+    transport = state.target.backend.transport(state.target.instance)
+    update_tooling(transport, fallback_tag=fallback)
 
 
 def _st_update_plugins(state: _LifecycleState) -> None:
@@ -653,7 +683,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     start_vm(instance)
 
     print("Injecting credentials...")
-    inject_credentials(instance, identity)
+    inject_credentials(LimaTransport(instance), identity)
 
     print(f"VM '{instance}' is running.")
     return 0
@@ -663,9 +693,10 @@ def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -
     """Update tooling and plugins in one running VM, printing the version transition."""
     print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
-    before = get_tooling_version(instance)
-    update_tooling(instance, tag, fallback_tag=fallback)
-    after = get_tooling_version(instance)
+    transport = LimaTransport(instance)
+    before = get_tooling_version(transport)
+    update_tooling(transport, tag, fallback_tag=fallback)
+    after = get_tooling_version(transport)
 
     if before and after:
         if before == after:
@@ -931,7 +962,7 @@ def _probe_running(
         return {}
     with ThreadPoolExecutor(max_workers=len(wants)) as pool:
         futures = {
-            instance: pool.submit(vm_probe, instance, fingerprint=want_fp)
+            instance: pool.submit(vm_probe, LimaTransport(instance), fingerprint=want_fp)
             for instance, want_fp in wants.items()
         }
         return {instance: future.result() for instance, future in futures.items()}
@@ -1212,11 +1243,12 @@ def _cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     fallback = resolve_vergil_version(config, identity)
-    try_update_tooling(target.instance, fallback_tag=fallback)
+    transport = target.backend.transport(target.instance)
+    try_update_tooling(transport, fallback_tag=fallback)
 
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(target.instance, claude_dir)
-    link_claude_dirs(target.instance, claude_dir)
+    copy_claude_config(transport, claude_dir)
+    link_claude_dirs(transport, claude_dir)
 
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -1448,7 +1480,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     try:
         return dispatch[args.command](args)
-    except (BorrowError, SpecError) as exc:
+    except (BorrowError, SpecError, NotImplementedError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
