@@ -602,6 +602,10 @@ def _create_from_target(target: Target, template: Path) -> None:
             fingerprint=target.fingerprint,
             nested=target.spec.nested,
         )
+        # Persist (identity, org, repo) so recover_triple can reverse the name
+        # even after it has been truncated+hashed to fit UNIX_PATH_MAX.
+        assert target.org is not None and target.repo is not None  # dedicated invariant  # noqa: S101
+        write_instance_meta(target.instance, target.identity_name, target.org, target.repo)
     else:
         create_vm(
             target.instance,
