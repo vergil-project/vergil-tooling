@@ -160,6 +160,41 @@ memory   = "64GiB"
   `cpus`/`memory`) is part of the backend dispatcher, not this schema
   layer (it needs the provider's instance specs).
 
+### Lifecycle and access (off-platform)
+
+The same `vrg-vm` verbs work, dispatched on the resolved `backend`:
+
+- `create` — `tofu apply`s the persistent `volume` (idempotent — a
+  no-op if it already exists), then the ephemeral VM pinned to that
+  volume's zone, blocks until cloud-init provisioning is done, injects
+  GitHub App + Claude credentials over the tunnel, and clones the repo
+  onto the volume (first time) or fetches (reattach). Refuses to stand
+  up a second VM for a repo that already has one running.
+- `session` — opens the session over the tunnel into
+  `/vergil/projects/<org>/<repo>` on the volume.
+- `destroy` — tears down the **ephemeral VM only**. The persistent
+  volume (the repo checkout and `.claude` session history) survives.
+  This is the routine end-of-day teardown.
+- `rebuild` — `destroy` + recreate the VM against the **existing**
+  volume; the data reattaches intact.
+- `destroy-volume` — the **only** command that deletes the persistent
+  volume. Guarded: retype `org/repo` to confirm, or pass `--yes`.
+- `update` — maps to `rebuild` (off-platform is rebuild-not-update).
+- `stop` / `start` / `restart` — **not supported**. Off-platform VMs
+  are ephemeral; use `destroy` / `create`.
+- `list` — gains a `BACKEND` column (`local` for Lima rows, the
+  provider for cloud rows). Without cloud credentials a cloud row's
+  status degrades to `unknown (no <provider> creds)` rather than
+  erroring or hiding the row.
+
+Access is via the provider's identity-aware tunnel (GCP IAP) — there is
+**no public IP** and no operator-IP allow-list; authentication is the
+operator's existing cloud IAM/ADC. Host prerequisites are therefore
+OpenTofu (≥ 1.8.0) and the provider CLI (`gcloud`, with ADC); cloud
+verbs preflight both and fail with a clear remediation. The in-guest
+login user defaults to the cloud image's default user and can be
+overridden with `VRG_OFF_PLATFORM_SSH_USER`.
+
 ## Port forwards (`port_forwards`)
 
 Each record is `"<port>|<host:port>"`. The vergil-vm template

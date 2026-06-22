@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.50] - 2026-06-22
+
+### Bug fixes
+
+- force non-interactive editors for rebase (#1745)
+
+### Chores
+
+- bump default VM-build staleness floor from 3 to 7 days (#1746)
+
+### Documentation
+
+- capture Apple container vs Lima local-backend research (#1741)
+
+### Features
+
+- vrg-vm off-platform (cloud) VM backend dispatch (#1706) (#1744)
+
 ## [2.1.49] - 2026-06-22
 
 ### Features

@@ -7,7 +7,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 from typing import TYPE_CHECKING
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
 
@@ -15,6 +15,10 @@ from vergil_tooling.bin.vrg_vm import (
     BorrowError,
     DedicatedRow,
     Target,
+    _cloud_backend,
+    _CloudState,
+    _cs_credentials,
+    _cs_tofu_volume,
     _list_rows,
     _log_root,
     _preflight_target,
@@ -29,7 +33,22 @@ from vergil_tooling.bin.vrg_vm import (
     resolve_borrow,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
+from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec
+from vergil_tooling.lib.vm_transport import LimaTransport
+
+
+def _assert_transport(mock: MagicMock, instance: str) -> None:
+    """Assert the mock's first positional arg was a LimaTransport for ``instance``.
+
+    The guest helpers (inject_credentials, update_tooling, vm_probe, …) now take a
+    Transport first instead of an instance string; this verifies the routed
+    transport addresses the expected VM without coupling to its identity.
+    """
+    transport = mock.call_args.args[0]
+    assert isinstance(transport, LimaTransport)
+    assert transport.instance == instance
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -205,7 +224,8 @@ class TestCreate:
 
         main(["create", "--config", str(config_file), "--tag", "v3.0"])
         mock_fetch.assert_called_once_with("v3.0")
-        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+        mock_install.assert_called_once_with(ANY, "v2.0")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
     def test_create_fails_without_vergil_version(self, _status: MagicMock, tmp_path: Path) -> None:
@@ -255,7 +275,8 @@ class TestCreate:
 
         main(["create", "--config", str(p)])
         mock_fetch.assert_called_once_with("v2.2")
-        mock_install.assert_called_once_with("vergil-agent", "v2.2")
+        mock_install.assert_called_once_with(ANY, "v2.2")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -292,7 +313,8 @@ class TestCreate:
 
         main(["create", "--config", str(p)])
         mock_fetch.assert_called_once_with("v2.1")
-        mock_install.assert_called_once_with("vergil-agent", "v2.0")
+        mock_install.assert_called_once_with(ANY, "v2.0")
+        _assert_transport(mock_install, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -408,7 +430,7 @@ class TestStartStaleness:
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_start_rejects_stale_vm(
         self,
@@ -424,14 +446,14 @@ class TestStartStaleness:
         result = main(["start", "--config", str(config_file)])
         assert result == 1
         captured = capsys.readouterr()
-        assert "5 days old" in captured.err
+        assert "9 days old" in captured.err
         assert "--allow-stale-vm" in captured.err
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_start_allows_stale_with_override(
         self,
@@ -1040,7 +1062,8 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1065,7 +1088,8 @@ class TestUpdate:
     ) -> None:
         result = main(["update", "--config", str(config_file), "--tag", "v2.1"])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", "v2.1", fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, "v2.1", fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_update_fails_if_not_running(self, _status: MagicMock, config_file: Path) -> None:
@@ -1169,9 +1193,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", None, fallback_tag="v2.0"),
-            call("vergil.acme.widgets", None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.0"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1237,7 +1264,8 @@ class TestUpdateAll:
         ]
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
         out = capsys.readouterr().out
         assert "Skipping VM 'vergil.acme.widgets' (status: Stopped)" in out
         assert "1 skipped" in out
@@ -1260,7 +1288,8 @@ class TestUpdateAll:
         ]
         result = main(["update", "--all", "--config", str(config_file)])
         assert result == 0
-        mock_update.assert_called_once_with("vergil-agent", None, fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1279,9 +1308,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--config", str(config_file_multi)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", None, fallback_tag="v2.0"),
-            call("audit-agent", None, fallback_tag="v2.5"),
+            call(ANY, None, fallback_tag="v2.0"),
+            call(ANY, None, fallback_tag="v2.5"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "audit-agent"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -1300,9 +1332,12 @@ class TestUpdateAll:
         result = main(["update", "--all", "--tag", "v2.1", "--config", str(config_file)])
         assert result == 0
         assert mock_update.call_args_list == [
-            call("vergil-agent", "v2.1", fallback_tag="v2.0"),
-            call("vergil.acme.widgets", "v2.1", fallback_tag="v2.0"),
+            call(ANY, "v2.1", fallback_tag="v2.0"),
+            call(ANY, "v2.1", fallback_tag="v2.0"),
         ]
+        instances = [c.args[0].instance for c in mock_update.call_args_list]
+        assert instances == ["vergil-agent", "vergil.acme.widgets"]
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_update.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
@@ -1353,7 +1388,7 @@ class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_rejects_stale_vm(
         self,
         _age: MagicMock,
@@ -1373,7 +1408,7 @@ class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_allows_stale_with_override(
         self,
         _age: MagicMock,
@@ -1424,7 +1459,8 @@ class TestSession:
         config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "."])
-        mock_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+        mock_update.assert_called_once_with(ANY, fallback_tag="v2.0")
+        _assert_transport(mock_update, "vergil-agent")
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "limactl"
@@ -2023,6 +2059,31 @@ class TestBorrowBlocks:
         assert "borrows the VM of lmf/lab" in capsys.readouterr().err
 
 
+_OFF_PLATFORM_VM = """
+[vm]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+"""
+
+
+class TestOffPlatformDispatch:
+    def test_resolve_target_selects_off_platform_backend(self, tmp_path: Path) -> None:
+        # An off-platform repo now resolves to a real OffPlatformBackend carrying the
+        # cloud spec; the cloud lifecycle stages themselves land in a later task.
+        from vergil_tooling.lib.vm_cloud import OffPlatformBackend
+
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/cloud"))
+        assert isinstance(target.backend, OffPlatformBackend)
+        assert target.backend.provider_label == "gcp"
+        assert target.spec.off_platform
+
+
 class TestCreateDedicated:
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
@@ -2288,11 +2349,20 @@ def _target(*, dedicated: bool, under: tuple[str, ...] = (), fingerprint: str = 
         under=under,
     )
     cfg = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+    backend = select_backend(spec)
     if dedicated:
         return Target(
-            "vergil-user", ident, cfg, "lmf", "mq", spec, "vergil-user.lmf.mq", fingerprint
+            "vergil-user",
+            ident,
+            cfg,
+            "lmf",
+            "mq",
+            spec,
+            "vergil-user.lmf.mq",
+            fingerprint,
+            backend,
         )
-    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "")
+    return Target("vergil-user", ident, cfg, None, None, spec, "vergil-user", "", backend)
 
 
 class TestPreflight:
@@ -2558,7 +2628,7 @@ class TestProbeRunning:
     def test_probes_running_only_with_fingerprint_for_present(
         self, mock_probe: MagicMock, tmp_path: Path
     ) -> None:
-        mock_probe.side_effect = lambda _inst, *, fingerprint=False: (
+        mock_probe.side_effect = lambda _transport, *, fingerprint=False: (
             (1, 0, "fp") if fingerprint else (1, 0, None)
         )
         identities = {"vergil-user": self._identity(tmp_path)}
@@ -2581,12 +2651,13 @@ class TestProbeRunning:
             "vergil-user.lmf.mq": (1, 0, "fp"),
             "vergil-user.o.gone": (1, 0, None),
         }
-        wants = {c.args[0]: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
+        wants = {c.args[0].instance: c.kwargs["fingerprint"] for c in mock_probe.call_args_list}
         assert wants == {
             "vergil-user": False,  # base: occupancy only
             "vergil-user.lmf.mq": True,  # present dedicated: combined probe
             "vergil-user.o.gone": False,  # orphaned: no spec to compare
         }
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_probe.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.vm_probe")
     def test_nothing_running_probes_nothing(self, mock_probe: MagicMock, tmp_path: Path) -> None:
@@ -2628,7 +2699,8 @@ def _lifecycle_target(tmp_path: Path) -> Any:
         stanza=None,
         override=None,
     )
-    return Target("vergil", identity, config, None, None, spec, "vergil-agent", "")
+    backend = select_backend(spec)
+    return Target("vergil", identity, config, None, None, spec, "vergil-agent", "", backend)
 
 
 class TestLifecycleStages:
@@ -2708,7 +2780,8 @@ class TestLifecycleStages:
         state = _LifecycleState(target=_lifecycle_target(tmp_path))
         with patch("vergil_tooling.bin.vrg_vm.update_tooling") as m_update:
             _st_update_tooling(state)
-        m_update.assert_called_once_with("vergil-agent", fallback_tag="v2.0")
+        m_update.assert_called_once_with(ANY, fallback_tag="v2.0")
+        _assert_transport(m_update, "vergil-agent")
 
     def test_st_cycle_ssh_stops_then_starts(self, tmp_path: Path) -> None:
         # The cycle must be a stop *then* a start: only a full power cycle is
@@ -2874,3 +2947,383 @@ class TestPluginStage:
         assert "update-plugins" in names
         stage = next(s for s in _rebuild_stages() if s.name == "update-plugins")
         assert stage.mode == "warn"
+
+
+# --- Off-platform (cloud) lifecycle ------------------------------------------
+
+
+@pytest.fixture()
+def _cloud_repo(tmp_path: Path) -> Path:
+    """An identities.toml whose lmf/cloud repo declares an off-platform [vm]."""
+    projects = tmp_path / "projects"
+    _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+    return _identities(tmp_path, projects)
+
+
+class _CloudPatches:
+    """Bundle of patches that stub the entire cloud engine + backend surface.
+
+    Patches ``vm_cloud.*`` module functions (vrg_vm calls them via the module),
+    the credential/tooling helpers imported by name into vrg_vm, and the
+    OffPlatformBackend methods that talk to gcloud/tofu.
+    """
+
+    def __init__(self, state_dir: Path, *, status: str = "") -> None:
+        self.state_dir = state_dir
+        self.status = status
+
+    def __enter__(self) -> dict[str, MagicMock]:
+        self._ctx = []
+        mocks: dict[str, MagicMock] = {}
+
+        _unset = object()
+
+        def _patch(target: str, return_value: object = _unset) -> MagicMock:
+            if return_value is _unset:
+                p = patch(target)
+            else:
+                p = patch(target, return_value=return_value)
+            mock = p.start()
+            mocks[target.rsplit(".", 1)[-1]] = mock
+            self._ctx.append(p)
+            return mock
+
+        modules_root = self.state_dir / "modules"
+        modules_root.mkdir(parents=True, exist_ok=True)
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.fetch_modules", return_value=modules_root)
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            return_value=("vol-123", "us-central1-a"),
+        )
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_vm",
+            return_value={"host": "cloud-host"},
+        )
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.bootstrap_volume")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_volume")
+        _patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+        _patch("vergil_tooling.bin.vrg_vm.install_tooling")
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.state_dir",
+            return_value=self.state_dir,
+        )
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.status",
+            return_value=self.status,
+        )
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.transport",
+            return_value=MagicMock(),
+        )
+        return mocks
+
+    def __exit__(self, *exc: object) -> None:
+        for p in reversed(self._ctx):
+            p.stop()
+
+
+class TestCloudStageGuards:
+    def _state(self, tmp_path: Path) -> _CloudState:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/cloud"))
+        return _CloudState(
+            target=target,
+            backend=_cloud_backend(target),
+            state_dir=tmp_path / "state",
+        )
+
+    def test_require_modules_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="fetch-modules did not run"):
+            _cs_tofu_volume(self._state(tmp_path))
+
+    def test_require_transport_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="tofu-vm did not run"):
+            _cs_credentials(self._state(tmp_path))
+
+
+class TestCloudCreate:
+    def test_cloud_create_happy_path(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        m["preflight"].assert_called_once()
+        m["fetch_modules"].assert_called_once_with("v2.0")
+        m["apply_volume"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+        m["await_readiness"].assert_called_once()
+        m["inject_credentials"].assert_called_once()
+        m["install_tooling"].assert_called_once()
+        m["bootstrap_volume"].assert_called_once()
+        m["link_cloud_claude_dirs"].assert_called_once()
+        m["destroy_vm"].assert_not_called()
+
+    def test_cloud_create_cleans_up_modules(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        state = tmp_path / "state"
+        with _CloudPatches(state):
+            main(["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"])
+        # The fetched modules' parent temp dir is removed in the finally.
+        assert not (state / "modules").exists()
+
+    def test_cloud_create_concurrency_guard(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state", status="Running") as m:
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 1
+        assert "already exists" in capsys.readouterr().err
+        m["apply_volume"].assert_not_called()
+
+
+class TestCloudDestroy:
+    def test_cloud_destroy_calls_destroy_vm(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(["destroy", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 0
+        m["destroy_vm"].assert_called_once()
+        m["destroy_volume"].assert_not_called()
+        assert "destroyed" in capsys.readouterr().out
+
+
+class TestCloudRebuild:
+    def test_cloud_rebuild_destroys_then_builds(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # Rebuild is allowed even when Running: it destroys the disposable VM first.
+        with _CloudPatches(tmp_path / "state", status="Running") as m:
+            result = main(
+                ["rebuild", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        m["destroy_vm"].assert_called_once()
+        m["apply_volume"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+
+
+class TestCloudSession:
+    def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["preflight"].assert_called_once()
+        transport.exec_session.assert_called_once()
+        kwargs = transport.exec_session.call_args.kwargs
+        assert kwargs["workdir"] == "/vergil/projects/lmf/cloud"
+        assert "vrg-vm-resolve-session" in kwargs["inner"]
+
+
+class TestCloudUpdate:
+    def test_cloud_update_delegates_to_rebuild(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                ["update", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        # update -> rebuild -> destroy_vm + re-apply
+        m["destroy_vm"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+
+
+class TestCloudStopStartUnsupported:
+    @pytest.mark.parametrize("verb", ["stop", "restart", "start"])
+    def test_ephemeral_message(
+        self,
+        verb: str,
+        _cloud_repo: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with _CloudPatches(tmp_path / "state"):
+            result = main([verb, "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 1
+        assert "ephemeral" in capsys.readouterr().err
+
+
+class TestDestroyVolume:
+    def test_requires_off_platform(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)  # Lima dedicated repo
+        cfg = _identities(tmp_path, projects)
+        result = main(["destroy-volume", "lmf/mq", "--config", str(cfg), "--yes"])
+        assert result == 1
+        assert "only for off-platform" in capsys.readouterr().err
+
+    def test_confirmation_mismatch_aborts(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m, patch("builtins.input", return_value="nope"):
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 1
+        assert "did not match" in capsys.readouterr().err
+        m["destroy_volume"].assert_not_called()
+
+    def test_confirmation_match_destroys(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch("builtins.input", return_value="lmf/cloud"),
+        ):
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 0
+        m["destroy_volume"].assert_called_once()
+
+    def test_yes_flag_skips_prompt(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo), "--yes"])
+        assert result == 0
+        m["destroy_volume"].assert_called_once()
+
+
+class TestCloudList:
+    def test_backend_column_present(self, config_file: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            patch("vergil_tooling.bin.vrg_vm._cloud_list_rows", return_value=[]),
+        ):
+            assert _cloud_list_rows is not None  # imported symbol exists
+            # exercise the printed header
+            import io
+            from contextlib import redirect_stdout
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        assert "BACKEND" in buf.getvalue()
+        assert "local" in buf.getvalue()
+
+    def test_cloud_rows_enumerated_with_degraded_status(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Build a fake tofu state tree: ~/.config/vergil/tofu/<key>/<provider>/volume.tfstate
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            # No persisted zone -> read_zone raises -> degraded placeholder.
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        out = buf.getvalue()
+        assert "vergil-lmf-cloud" in out
+        assert "gcp" in out
+        assert "unknown (no gcp creds)" in out
+
+    def test_cloud_status_reads_live_status(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_status
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"):
+            completed = MagicMock(stdout="RUNNING\n")
+            with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+                assert _cloud_status(state_dir, "key") == "RUNNING"
+
+    def test_cloud_status_gcloud_failure_is_empty(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_status
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"),
+            patch(
+                "vergil_tooling.bin.vrg_vm.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "gcloud"),
+            ),
+        ):
+            assert _cloud_status(state_dir, "key") == ""
+
+    def test_cloud_list_rows_empty_when_no_tofu_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
+        assert _cloud_list_rows() == []
+
+
+class TestCloudUnderProvision:
+    def _cloud_repo_instance(self, tmp_path: Path, instance: str, *, cpus: int) -> Path:
+        projects = tmp_path / "projects"
+        section = textwrap.dedent(f"""
+            [vm]
+            backend = "off-platform"
+            provider = "gcp"
+            region = "us-central1"
+            instance = "{instance}"
+            volume = "300GiB"
+
+            [vm.vergil-user]
+            cpus = {cpus}
+            memory = "256GiB"
+        """)
+        _make_repo(projects, "lmf", "cloud", section)
+        return _identities(tmp_path, projects)
+
+    def test_warns_for_undersized_known_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # n2-standard-8 is (8, 32); declared 16 cpus / 256GiB is bigger -> warn.
+        cfg = self._cloud_repo_instance(tmp_path, "n2-standard-8", cpus=16)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" in capsys.readouterr().err
+
+    def test_silent_for_unknown_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._cloud_repo_instance(tmp_path, "z9-mystery-99", cpus=16)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" not in capsys.readouterr().err
+
+    def test_silent_for_adequate_known_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # n2-standard-16 is (16, 64); declared 8 cpus / 64GiB fits -> no warning.
+        projects = tmp_path / "projects"
+        section = textwrap.dedent("""
+            [vm]
+            backend = "off-platform"
+            provider = "gcp"
+            region = "us-central1"
+            instance = "n2-standard-16"
+            volume = "300GiB"
+
+            [vm.vergil-user]
+            cpus = 8
+            memory = "64GiB"
+        """)
+        _make_repo(projects, "lmf", "cloud", section)
+        cfg = _identities(tmp_path, projects)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" not in capsys.readouterr().err
