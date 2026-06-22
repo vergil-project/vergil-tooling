@@ -10,6 +10,7 @@ and tooling logic does not.
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 from typing import NoReturn, Protocol, runtime_checkable
@@ -89,4 +90,65 @@ class LimaTransport:
             "-c",
             inner,
         ]
+        os.execvp(cmd[0], cmd)  # noqa: S606, S607
+
+
+class IapTransport:
+    """Transport over a GCP IAP SSH tunnel (no public IP, IAM-authed).
+
+    The vm module exposes the box by its *instance name* (``host``, no public IP)
+    and a separate ``ssh_user``, so the tunnel addresses it as
+    ``gcloud compute ssh <ssh_user>@<host> --tunnel-through-iap``. Same
+    run/pipe/exec_session surface as :class:`LimaTransport`.
+    """
+
+    def __init__(self, host: str, zone: str, project: str, ssh_user: str) -> None:
+        self.host = host
+        self.zone = zone
+        self.project = project
+        self.ssh_user = ssh_user
+
+    def _base(self) -> list[str]:
+        return [
+            "gcloud",
+            "compute",
+            "ssh",
+            f"{self.ssh_user}@{self.host}",
+            "--tunnel-through-iap",
+            f"--zone={self.zone}",
+            f"--project={self.project}",
+        ]
+
+    def run(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.CompletedProcess[str]:
+        remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
+        try:
+            return subprocess.run(  # noqa: S603
+                [*self._base(), f"--command={remote}"],  # noqa: S607
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stderr:
+                print(exc.stderr, end="", file=sys.stderr)
+            raise
+
+    def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
+        remote = f"cd {shlex.quote(workdir)} && {cmd}"
+        try:
+            subprocess.run(  # noqa: S603
+                [*self._base(), f"--command={remote}"],  # noqa: S607
+                check=True,
+                input=input_data,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stderr:
+                print(exc.stderr, end="", file=sys.stderr)
+            raise
+
+    def exec_session(self, workdir: str, inner: str) -> NoReturn:
+        remote = f"cd {workdir} && {inner}"
+        cmd = [*self._base(), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
