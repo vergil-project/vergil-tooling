@@ -134,9 +134,32 @@ def provision_params(
     return params
 
 
+# Every provision/*.sh sources provision.env under ``set -u`` and reads these keys
+# directly (no ``${VAR:-}`` default), so the body must DEFINE all of them even when the
+# spec leaves them unset — otherwise the script aborts on an unbound variable. The set and
+# its empty defaults mirror Lima's ``agent.yaml.skel`` ``param:`` block byte-for-byte (the
+# backend-neutral contract): Lima's template substitutes every ``.Param.*`` to empty, so
+# the cloud writer must do the same. ``provision_params`` omits unset keys (correct for
+# Lima's ``--set`` path), so we re-establish the full set here.
+_PROVISION_ENV_DEFAULTS = {
+    "EXTRA_PACKAGES": "",
+    "APT_REPOS": "",
+    "VAGRANT_PLUGINS": "",
+    "SPEC_FINGERPRINT": "",
+    "NESTED_VIRT": "",
+    "PORT_FORWARDS": "",
+}
+
+
 def render_provision_env(params: dict[str, str], *, vergil_user: str, home: str) -> str:
-    """Render the cloud ``provision.env`` body: the shared params plus VERGIL_USER/HOME."""
-    lines = [f"{key}={value}" for key, value in params.items()]
+    """Render the cloud ``provision.env`` body: the full canonical key set plus VERGIL_USER/HOME.
+
+    ``params`` (from ``provision_params``, which omits unset keys) overrides the empty
+    ``_PROVISION_ENV_DEFAULTS`` so every key the provision scripts source is always defined
+    — provisioning runs under ``set -u`` and aborts on any unbound variable.
+    """
+    merged = {**_PROVISION_ENV_DEFAULTS, **params}
+    lines = [f"{key}={value}" for key, value in merged.items()]
     lines.append(f"VERGIL_USER={vergil_user}")
     lines.append(f"HOME={home}")
     return "\n".join(lines)

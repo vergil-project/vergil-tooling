@@ -218,6 +218,18 @@ class TestProvisionParams:
 
 
 class TestProvisionEnv:
+    # The keys every provision/*.sh sources under `set -u` — must always be defined.
+    _CANONICAL_KEYS = frozenset(
+        {
+            "EXTRA_PACKAGES",
+            "APT_REPOS",
+            "VAGRANT_PLUGINS",
+            "SPEC_FINGERPRINT",
+            "NESTED_VIRT",
+            "PORT_FORWARDS",
+        }
+    )
+
     def test_renders_key_value_body(self) -> None:
         params = {"EXTRA_PACKAGES": "git vim", "NESTED_VIRT": "true", "SPEC_FINGERPRINT": "abc"}
         body = render_provision_env(params, vergil_user="vergil", home="/home/vergil")
@@ -227,6 +239,24 @@ class TestProvisionEnv:
         assert "SPEC_FINGERPRINT=abc" in lines
         assert "VERGIL_USER=vergil" in lines
         assert "HOME=/home/vergil" in lines
+
+    def test_minimal_params_still_define_every_canonical_key(self) -> None:
+        # Regression (#1768): a minimal spec must NOT leave keys undefined, or each
+        # provision script aborts on `unbound variable` under `set -u`.
+        body = render_provision_env({}, vergil_user="vergil", home="/home/vergil")
+        defined = {line.split("=", 1)[0] for line in body.splitlines()}
+        assert defined >= self._CANONICAL_KEYS
+        # unset keys default to empty, matching Lima's agent.yaml.skel param block
+        assert "NESTED_VIRT=" in body.splitlines()
+        assert "APT_REPOS=" in body.splitlines()
+
+    def test_params_override_empty_defaults(self) -> None:
+        body = render_provision_env(
+            {"NESTED_VIRT": "true"}, vergil_user="vergil", home="/home/vergil"
+        )
+        lines = body.splitlines()
+        assert "NESTED_VIRT=true" in lines
+        assert "NESTED_VIRT=" not in lines  # the default did not leak a duplicate
 
 
 class TestPreflight:
