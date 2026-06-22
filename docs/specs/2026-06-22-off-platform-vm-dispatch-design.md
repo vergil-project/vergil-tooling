@@ -112,8 +112,9 @@ cloud PR can consume them.
    `destroy-volume` verb and cannot be conditionalized; the two-state separation plus
    the confirmation-gated verb are the real guard (see "Verb mechanics").
 
-Items 2 and 3 are sizeable enough to warrant their own vergil-vm issues (filed as
-follow-ups).
+Tracked in vergil-vm: **#207** (item 2, IAP redesign) and **#208** (items 1 and 3,
+publish tarball + remove `prevent_destroy`). Both must land and cut a release before
+the cloud PR.
 
 ## Architecture
 
@@ -485,17 +486,17 @@ structural finding and seven issues, all folded into the body above:
 Minor items folded in: under-provisioning table (silent on unknown), `tofu` local
 state lock for concurrency, local state cleanup on `destroy-volume`.
 
-## Follow-ups (to be filed)
+## Follow-ups (filed)
 
-- **vergil-vm: IAP module redesign** — drop public IP, firewall → IAP range, retire
-  `ssh_public_key`/`ssh_source_ranges`, rework `ssh_user`/`host` output;
+- **vergil-vm #207: IAP module redesign** — drop public IP, firewall → IAP range,
+  retire `ssh_public_key`/`ssh_source_ranges`, rework `ssh_user`/`host` output;
   `interface.json` change. Prerequisite for the cloud PR.
-- **vergil-vm: remove `prevent_destroy`** from the volume disk. Prerequisite for
-  `destroy-volume`.
-- **vergil-vm + vergil-tooling: off-platform `stop`/`start`** via a `desired_status`
-  module variable (overnight pause).
-- **vergil-tooling: Azure Bastion transport** when the Azure module lands (symmetric
-  to IAP).
+- **vergil-vm #208: publish module tarball + remove `prevent_destroy`** from the volume
+  disk. Prerequisites for the cloud PR and `destroy-volume`.
+- **vergil-vm #209: off-platform `stop`/`start`** via a `desired_status` module
+  variable (overnight pause). Non-blocking.
+- **vergil-tooling #1734: Azure Bastion transport** when the Azure module lands
+  (symmetric to IAP). Non-blocking.
 
 ## Related
 
