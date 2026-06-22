@@ -10,9 +10,33 @@ from __future__ import annotations
 
 from typing import Any
 
+from vergil_tooling.lib.commit_message import find_autoclose
 from vergil_tooling.lib.pr_workflow import registry
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.state import CHECK_STATUSES, MODES, WorkflowState
+
+
+def _reject_autoclose(verb: str, **fields: str | None) -> None:
+    """Reject any PR-metadata field that carries a GitHub auto-close keyword.
+
+    On merge, GitHub auto-closes the linked issue when the PR body contains
+    ``Closes/Fixes/Resolves #N`` — violating the fleet policy that an issue
+    stays open until its post-merge workflows succeed. The structured
+    ``--issue`` already emits ``Ref #N``; the free-text fields must never carry
+    an issue-*closing* reference. Rejecting at entry (before state is written)
+    keeps the keyword from ever reaching ``.vergil/pr-workflow.json`` or the
+    rendered PR body; the submit-time check stays as defense-in-depth."""
+    for flag, value in fields.items():
+        if value is None:
+            continue
+        match = find_autoclose(value)
+        if match:
+            raise WorkflowError(
+                f'{verb}: --{flag} contains an auto-close keyword ("{match}"). '
+                "Issues must stay open until post-merge workflows succeed; the "
+                'structured --issue already emits "Ref #N". '
+                'Use "Ref #N" or drop the reference.'
+            )
 
 
 def init_state(
@@ -87,6 +111,7 @@ def apply_report_ready(
     """USER's initial done-signal. In paired mode it hands the turn to AUDIT; in
     solo mode there is no audit, so it goes straight to approved."""
     _require_owner(state, "user")
+    _reject_autoclose("report-ready", title=title, summary=summary, notes=notes)
     state.pr_metadata = {"title": title, "summary": summary, "notes": notes, "linkage": linkage}
     state.git["head_sha"] = head_sha
     if state.mode == "solo":
@@ -128,6 +153,7 @@ def apply_report_fixes(
     runaway-round cap, spec §9). ``max_rounds`` is supplied by the CLI from
     ``settings.max_rounds``; the default keeps the engine usable standalone."""
     _require_owner(state, "user")
+    _reject_autoclose("report-fixes", title=title, summary=summary, notes=notes)
     revisions = {
         key: value
         for key, value in (("title", title), ("summary", summary), ("notes", notes))

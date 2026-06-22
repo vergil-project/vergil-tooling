@@ -130,6 +130,50 @@ def test_report_ready_rejects_out_of_turn() -> None:
         _ready(state)
 
 
+@pytest.mark.parametrize("bad", ["Closes #1", "Fixes #2", "Resolves #3"])
+def test_report_ready_rejects_autoclose_in_notes(bad: str) -> None:
+    state = _paired_owned_by_user()
+    with pytest.raises(WorkflowError, match=r"--notes contains an auto-close keyword"):
+        engine.apply_report_ready(
+            state, title="t", summary="s", notes=bad, linkage="Ref", head_sha="h1", now=_NOW
+        )
+    # Rejected at entry: no state was written.
+    assert state.pr_metadata is None
+    assert state.owner == "user"
+
+
+@pytest.mark.parametrize("field", ["title", "summary", "notes"])
+def test_report_ready_rejects_autoclose_in_any_field(field: str) -> None:
+    state = _paired_owned_by_user()
+    kwargs = {"title": "t", "summary": "s", "notes": "n"}
+    kwargs[field] = "Closes #299"
+    with pytest.raises(WorkflowError, match=rf"--{field} contains an auto-close keyword"):
+        engine.apply_report_ready(state, linkage="Ref", head_sha="h1", now=_NOW, **kwargs)
+
+
+@pytest.mark.parametrize(
+    "ok",
+    ["Ref #1", "fix(rdqm): right-size matrices (#300)", "see #287", "the fix touches #287 files"],
+)
+def test_report_ready_accepts_safe_fields(ok: str) -> None:
+    state = _paired_owned_by_user()
+    engine.apply_report_ready(
+        state, title=ok, summary=ok, notes=ok, linkage="Ref", head_sha="h1", now=_NOW
+    )
+    assert state.pr_metadata == {"title": ok, "summary": ok, "notes": ok, "linkage": "Ref"}
+
+
+def test_report_fixes_rejects_autoclose_revision() -> None:
+    state = _paired_owned_by_user()
+    _ready(state)
+    _run_review(state, fail=check_ids()[0])  # owner user, last_reviewed h1
+    with pytest.raises(WorkflowError, match=r"report-fixes: --notes contains an auto-close"):
+        engine.apply_report_fixes(state, head_sha="h2", note=None, now=_NOW, notes="Fixes #2")
+    # Rejected at entry: the round was not bumped and the metadata is untouched.
+    assert state.round == 0
+    assert state.pr_metadata == {"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"}
+
+
 def test_review_all_pass_approves_and_hands_to_user() -> None:
     state = _paired_owned_by_user()
     _ready(state)
