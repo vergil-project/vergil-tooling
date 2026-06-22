@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_worktree_status import main
+from vergil_tooling.bin.vrg_worktree_status import _row, main
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
 if TYPE_CHECKING:
@@ -23,11 +23,82 @@ def _status(
     ahead: int = 0,
     dirty: bool = False,
     detail: str | None = None,
+    workflow_status: str | None = None,
+    workflow_error: str | None = None,
+    pr_prepared: bool = False,
 ) -> WorktreeStatus:
     wt = Worktree(path=Path(f"/repo/.worktrees/{branch.replace('/', '-')}"), branch=branch)
     return WorktreeStatus(
-        worktree=wt, state=state, pr_number=pr, ahead=ahead, dirty=dirty, detail=detail
+        worktree=wt,
+        state=state,
+        pr_number=pr,
+        ahead=ahead,
+        dirty=dirty,
+        detail=detail,
+        workflow_status=workflow_status,
+        workflow_error=workflow_error,
+        pr_prepared=pr_prepared,
     )
+
+
+# Column index of WORKFLOW in a rendered row (between STATE and AHEAD).
+_WORKFLOW_COL = 4
+
+
+def test_row_renders_loaded_workflow_status_verbatim() -> None:
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"))
+    assert row[_WORKFLOW_COL] == "approved"
+
+
+def test_row_renders_dash_when_no_workflow_file() -> None:
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1))
+    assert row[_WORKFLOW_COL] == "-"
+
+
+def test_row_renders_unknown_on_workflow_read_error() -> None:
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_error="bad json"))
+    assert row[_WORKFLOW_COL] == "unknown"
+
+
+def test_main_summary_reports_prepared_count(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [
+        _status(
+            "feature/1-a",
+            WorktreeState.NO_PR,
+            ahead=1,
+            workflow_status="approved",
+            pr_prepared=True,
+        ),
+        _status("feature/2-b", WorktreeState.NO_PR, ahead=1, workflow_status="implementing"),
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "WORKFLOW" in out
+    assert "1 PR prepared." in out
+
+
+def test_main_surfaces_workflow_read_error_note(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [
+        _status("feature/3-c", WorktreeState.NO_PR, ahead=1, workflow_error="not valid JSON"),
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "unknown" in out
+    assert "note: feature/3-c:" in out
+    assert "not valid JSON" in out
+    assert "0 PR prepared." in out
 
 
 def test_main_groups_cruft_last_and_summarizes(capsys: pytest.CaptureFixture[str]) -> None:

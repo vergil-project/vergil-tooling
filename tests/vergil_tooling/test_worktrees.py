@@ -8,10 +8,12 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.worktrees import (
     Worktree,
     WorktreeState,
     WorktreeStatus,
+    _probe_pr_workflow,
     classify_worktree,
     gather_worktree_status,
     list_worktrees,
@@ -348,6 +350,97 @@ def test_gather_pr_lookup_failure_is_unknown() -> None:
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.UNKNOWN
     assert "boom" in (status.detail or "")
+
+
+# -- _probe_pr_workflow (local .vergil/pr-workflow.json) ---------------------
+
+
+def _write_state(worktree_root: Path, **overrides: object) -> None:
+    """Write a valid pr-workflow.json under *worktree_root* with overrides."""
+    state = WorkflowState(
+        issue="42",
+        branch="feature/42-x",
+        base="origin/develop",
+        mode="solo",
+        owner="user",
+        status="implementing",
+        round=1,
+        created_at="2026-06-22T00:00:00Z",
+        updated_at="2026-06-22T00:00:00Z",
+        participants={},
+        git={},
+    )
+    for key, value in overrides.items():
+        setattr(state, key, value)
+    target = worktree_root / ".vergil"
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "pr-workflow.json").write_text(state.to_json())
+
+
+def test_probe_absent_file_is_not_prepared(tmp_path: Path) -> None:
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    assert _probe_pr_workflow(wt) == (None, None, False)
+
+
+def test_probe_loaded_with_metadata_is_prepared(tmp_path: Path) -> None:
+    _write_state(
+        tmp_path,
+        status="approved",
+        pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
+    )
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    assert _probe_pr_workflow(wt) == ("approved", None, True)
+
+
+def test_probe_already_submitted_is_not_prepared(tmp_path: Path) -> None:
+    _write_state(
+        tmp_path,
+        status="approved",
+        pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
+        submitted={"pr_url": "https://example/pull/9", "pr_number": 9},
+    )
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    status, error, prepared = _probe_pr_workflow(wt)
+    assert status == "approved"
+    assert error is None
+    assert prepared is False
+
+
+def test_probe_no_metadata_is_not_prepared(tmp_path: Path) -> None:
+    _write_state(tmp_path, status="implementing")
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    assert _probe_pr_workflow(wt) == ("implementing", None, False)
+
+
+def test_probe_malformed_file_reports_error(tmp_path: Path) -> None:
+    target = tmp_path / ".vergil"
+    target.mkdir(parents=True)
+    (target / "pr-workflow.json").write_text("{not valid json")
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    status, error, prepared = _probe_pr_workflow(wt)
+    assert status is None
+    assert error is not None
+    assert prepared is False
+
+
+def test_gather_attaches_pr_workflow_probe(tmp_path: Path) -> None:
+    _write_state(
+        tmp_path,
+        status="approved",
+        pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
+    )
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=3),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+    ):
+        status = gather_worktree_status(wt, target="develop")
+    assert status.state is WorktreeState.NO_PR
+    assert status.workflow_status == "approved"
+    assert status.workflow_error is None
+    assert status.pr_prepared is True
 
 
 def _wt(name: str, branch: str) -> Worktree:

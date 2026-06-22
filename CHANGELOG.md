@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.48] - 2026-06-22
+
+### Features
+
+- show pr-workflow prep state in a WORKFLOW column (#1730)
+
 ## [2.1.47] - 2026-06-21
 
 ### Bug fixes
