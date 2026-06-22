@@ -279,6 +279,36 @@ def _serial_dir(instance: str) -> Path:
     return Path.home() / ".lima" / instance
 
 
+_META_FILE = "vergil-meta.json"
+
+
+def write_instance_meta(instance: str, identity: str, org: str, repo: str) -> None:
+    """Record (identity, org, repo) beside the instance so a mangled name stays reversible.
+
+    Lives in the instance's own ``~/.lima/<instance>/`` dir, so it is removed when
+    ``limactl delete --force`` deletes that dir — no separate cleanup, no drift.
+    """
+    meta_dir = _serial_dir(instance)
+    meta_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"schema": 1, "identity": identity, "org": org, "repo": repo}
+    (meta_dir / _META_FILE).write_text(json.dumps(payload))
+
+
+def read_instance_meta(instance: str) -> dict[str, str] | None:
+    """Return the instance's recorded triple, or None if no sidecar exists.
+
+    Raises on a malformed sidecar rather than silently falling back — a corrupt
+    file is a real fault, not a missing one.
+    """
+    path = _serial_dir(instance) / _META_FILE
+    if not path.exists():
+        return None
+    data = json.loads(path.read_text())
+    # Touch the required keys so a truncated/garbled file fails loudly here.
+    _ = (data["identity"], data["org"], data["repo"])
+    return data
+
+
 def _drain_serial_logs(serial_dir: Path, offsets: dict[Path, int]) -> None:
     """Emit complete new lines appended to the instance's serial logs.
 
