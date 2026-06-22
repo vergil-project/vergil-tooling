@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.lima import (
-    VmUnreachableError,
     _limactl,
     _nested_virt_unsupported_reason,
     create_vm,
@@ -17,16 +16,12 @@ from vergil_tooling.lib.lima import (
     fetch_template,
     list_vms,
     nested_virt_unsupported_reason,
-    read_fingerprint,
     shell_pipe,
     shell_run,
     start_vm,
     stop_vm,
     update_plugins,
     vm_age_days,
-    vm_occupancy,
-    vm_probe,
-    vm_spec_status,
     vm_status,
 )
 
@@ -652,134 +647,6 @@ class TestCreateVmProfileParams:
         assert not any("param.VAGRANT_PLUGINS" in a for a in args)
         assert not any("param.PORT_FORWARDS" in a for a in args)
         assert not any("param.SPEC_FINGERPRINT" in a for a in args)
-
-
-class TestFingerprintHelpers:
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_read_fingerprint_returns_stamped_value(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="abc123\n", stderr="")
-        assert read_fingerprint("vergil-user.org.repo") == "abc123"
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_read_fingerprint_missing_marker_is_none(self, mock_shell: MagicMock) -> None:
-        # The in-guest read is masked (`cat ... 2>/dev/null || true`), so an absent
-        # marker is empty stdout from a zero exit — never a non-zero exit. That is
-        # what distinguishes "marker gone" (drift) from "VM unreachable" (transport).
-        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
-        assert read_fingerprint("vergil-user") is None
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_read_fingerprint_empty_marker_is_none(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="\n", stderr="")
-        assert read_fingerprint("vergil-user") is None
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_read_fingerprint_transport_failure_raises_unreachable(
-        self, mock_shell: MagicMock
-    ) -> None:
-        # The shell round-trip itself failing (SSH refused) is a transport failure,
-        # NOT an absent marker — it must surface as VmUnreachableError rather than
-        # collapse into None (which would be misread as drift).
-        mock_shell.side_effect = subprocess.CalledProcessError(255, "limactl")
-        with pytest.raises(VmUnreachableError):
-            read_fingerprint("vergil-user")
-
-    @patch("vergil_tooling.lib.lima.read_fingerprint")
-    def test_vm_spec_status_ok_on_match(self, mock_read: MagicMock) -> None:
-        mock_read.return_value = "abc123"
-        assert vm_spec_status("inst", "abc123") == "ok"
-
-    @patch("vergil_tooling.lib.lima.read_fingerprint")
-    def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
-        mock_read.return_value = "old"
-        assert vm_spec_status("inst", "new") == "needs-rebuild"
-
-    @patch("vergil_tooling.lib.lima.read_fingerprint")
-    def test_vm_spec_status_needs_rebuild_on_missing_marker(self, mock_read: MagicMock) -> None:
-        # A reachable VM whose marker is genuinely absent is still drift.
-        mock_read.return_value = None
-        assert vm_spec_status("inst", "abc123") == "needs-rebuild"
-
-    @patch("vergil_tooling.lib.lima.read_fingerprint")
-    def test_vm_spec_status_unreachable_on_transport_failure(self, mock_read: MagicMock) -> None:
-        # An unreachable VM is not a drifted VM: the third state keeps callers from
-        # telling the user to rebuild when the real problem is reachability.
-        mock_read.side_effect = VmUnreachableError("inst")
-        assert vm_spec_status("inst", "abc123") == "unreachable"
-
-
-class TestOccupancy:
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_parses_agents_and_humans(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=2 humans=1\n", stderr=""
-        )
-        assert vm_occupancy("inst") == (2, 1)
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_zero_when_idle(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=0 humans=0\n", stderr=""
-        )
-        assert vm_occupancy("inst") == (0, 0)
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_unparseable_output_is_zeros(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess([], 0, stdout="garbage\n", stderr="")
-        assert vm_occupancy("inst") == (0, 0)
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_exec_failure_is_zeros(self, mock_shell: MagicMock) -> None:
-        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
-        assert vm_occupancy("inst") == (0, 0)
-
-
-class TestVmProbe:
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_occupancy_only_skips_fingerprint(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=2 humans=1\n", stderr=""
-        )
-        assert vm_probe("inst") == (2, 1, None)
-        assert mock_shell.call_count == 1
-        script = mock_shell.call_args[0][3]
-        assert "vm-spec.fingerprint" not in script
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_fingerprint_combined_in_single_invocation(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=2 humans=1\nfingerprint=abc123\n", stderr=""
-        )
-        assert vm_probe("inst", fingerprint=True) == (2, 1, "abc123")
-        assert mock_shell.call_count == 1
-        script = mock_shell.call_args[0][3]
-        assert "vm-spec.fingerprint" in script
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_missing_fingerprint_is_none(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=0 humans=0\nfingerprint=\n", stderr=""
-        )
-        assert vm_probe("inst", fingerprint=True) == (0, 0, None)
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_absent_fingerprint_line_is_none(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="agents=1 humans=0\n", stderr=""
-        )
-        assert vm_probe("inst", fingerprint=True) == (1, 0, None)
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_unparseable_occupancy_is_zeros(self, mock_shell: MagicMock) -> None:
-        mock_shell.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="garbage\nfingerprint=abc123\n", stderr=""
-        )
-        assert vm_probe("inst", fingerprint=True) == (0, 0, "abc123")
-
-    @patch("vergil_tooling.lib.lima.shell_run")
-    def test_exec_failure_is_zeros_and_none(self, mock_shell: MagicMock) -> None:
-        mock_shell.side_effect = subprocess.CalledProcessError(1, "limactl")
-        assert vm_probe("inst", fingerprint=True) == (0, 0, None)
 
 
 class TestLimactlStream:

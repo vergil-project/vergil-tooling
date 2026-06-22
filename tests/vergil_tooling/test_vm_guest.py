@@ -7,10 +7,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.identity import Identity
-
-if TYPE_CHECKING:
-    from pathlib import Path
 from vergil_tooling.lib.vm_guest import (
+    VmUnreachableError,
     _inject_host_git_identity,
     _read_host_git_config,
     copy_claude_config,
@@ -18,9 +16,16 @@ from vergil_tooling.lib.vm_guest import (
     inject_credentials,
     install_tooling,
     link_claude_dirs,
+    read_fingerprint,
     try_update_tooling,
     update_tooling,
+    vm_occupancy,
+    vm_probe,
+    vm_spec_status,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _ok(stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -605,3 +610,104 @@ class TestToolingInstallSelfHeal:
         cmds = self._cmds(transport)
         assert any("uv cache clean" in c for c in cmds)
         assert sum("uv tool install" in c for c in cmds) == 2
+
+
+class TestFingerprintHelpers:
+    def test_read_fingerprint_returns_stamped_value(self) -> None:
+        transport = _transport("abc123\n")
+        assert read_fingerprint(transport) == "abc123"
+
+    def test_read_fingerprint_missing_marker_is_none(self) -> None:
+        # The in-guest read is masked (`cat ... 2>/dev/null || true`), so an absent
+        # marker is empty stdout from a zero exit — never a non-zero exit. That is
+        # what distinguishes "marker gone" (drift) from "VM unreachable" (transport).
+        transport = _transport("")
+        assert read_fingerprint(transport) is None
+
+    def test_read_fingerprint_empty_marker_is_none(self) -> None:
+        transport = _transport("\n")
+        assert read_fingerprint(transport) is None
+
+    def test_read_fingerprint_transport_failure_raises_unreachable(self) -> None:
+        # The shell round-trip itself failing (SSH refused) is a transport failure,
+        # NOT an absent marker — it must surface as VmUnreachableError rather than
+        # collapse into None (which would be misread as drift).
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(255, "limactl")
+        with pytest.raises(VmUnreachableError):
+            read_fingerprint(transport)
+
+    @patch("vergil_tooling.lib.vm_guest.read_fingerprint")
+    def test_vm_spec_status_ok_on_match(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "abc123"
+        assert vm_spec_status(_transport(), "abc123") == "ok"
+
+    @patch("vergil_tooling.lib.vm_guest.read_fingerprint")
+    def test_vm_spec_status_needs_rebuild_on_drift(self, mock_read: MagicMock) -> None:
+        mock_read.return_value = "old"
+        assert vm_spec_status(_transport(), "new") == "needs-rebuild"
+
+    @patch("vergil_tooling.lib.vm_guest.read_fingerprint")
+    def test_vm_spec_status_needs_rebuild_on_missing_marker(self, mock_read: MagicMock) -> None:
+        # A reachable VM whose marker is genuinely absent is still drift.
+        mock_read.return_value = None
+        assert vm_spec_status(_transport(), "abc123") == "needs-rebuild"
+
+    @patch("vergil_tooling.lib.vm_guest.read_fingerprint")
+    def test_vm_spec_status_unreachable_on_transport_failure(self, mock_read: MagicMock) -> None:
+        # An unreachable VM is not a drifted VM: the third state keeps callers from
+        # telling the user to rebuild when the real problem is reachability.
+        mock_read.side_effect = VmUnreachableError
+        assert vm_spec_status(_transport(), "abc123") == "unreachable"
+
+
+class TestOccupancy:
+    def test_parses_agents_and_humans(self) -> None:
+        transport = _transport("agents=2 humans=1\n")
+        assert vm_occupancy(transport) == (2, 1)
+
+    def test_zero_when_idle(self) -> None:
+        transport = _transport("agents=0 humans=0\n")
+        assert vm_occupancy(transport) == (0, 0)
+
+    def test_unparseable_output_is_zeros(self) -> None:
+        transport = _transport("garbage\n")
+        assert vm_occupancy(transport) == (0, 0)
+
+    def test_exec_failure_is_zeros(self) -> None:
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_occupancy(transport) == (0, 0)
+
+
+class TestVmProbe:
+    def test_occupancy_only_skips_fingerprint(self) -> None:
+        transport = _transport("agents=2 humans=1\n")
+        assert vm_probe(transport) == (2, 1, None)
+        assert transport.run.call_count == 1
+        script = transport.run.call_args[0][2]
+        assert "vm-spec.fingerprint" not in script
+
+    def test_fingerprint_combined_in_single_invocation(self) -> None:
+        transport = _transport("agents=2 humans=1\nfingerprint=abc123\n")
+        assert vm_probe(transport, fingerprint=True) == (2, 1, "abc123")
+        assert transport.run.call_count == 1
+        script = transport.run.call_args[0][2]
+        assert "vm-spec.fingerprint" in script
+
+    def test_missing_fingerprint_is_none(self) -> None:
+        transport = _transport("agents=0 humans=0\nfingerprint=\n")
+        assert vm_probe(transport, fingerprint=True) == (0, 0, None)
+
+    def test_absent_fingerprint_line_is_none(self) -> None:
+        transport = _transport("agents=1 humans=0\n")
+        assert vm_probe(transport, fingerprint=True) == (1, 0, None)
+
+    def test_unparseable_occupancy_is_zeros(self) -> None:
+        transport = _transport("garbage\nfingerprint=abc123\n")
+        assert vm_probe(transport, fingerprint=True) == (0, 0, "abc123")
+
+    def test_exec_failure_is_zeros_and_none(self) -> None:
+        transport = _transport()
+        transport.run.side_effect = subprocess.CalledProcessError(1, "limactl")
+        assert vm_probe(transport, fingerprint=True) == (0, 0, None)
