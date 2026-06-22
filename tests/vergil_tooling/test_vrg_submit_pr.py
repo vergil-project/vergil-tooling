@@ -1491,9 +1491,28 @@ def test_submit_one_bad_linkage_exits() -> None:
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
-        pytest.raises(SystemExit, match="linkage"),
+        pytest.raises(SystemExit, match="bare keyword"),
     ):
         _submit_one(Path("/r"), base_override=None, assume_yes=True)
+
+
+def test_submit_one_strips_issue_number_from_linkage_and_warns(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A linkage carrying the issue number is unambiguous: strip it, warn, proceed."""
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Ref #1761"}
+    with (
+        patch(_MOD + ".submission.read_pr_fields", return_value=fields),
+        patch(_MOD + ".resolve_issue_ref", return_value="#1"),
+        patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
+        patch(_MOD + ".build_pr_body", return_value="BODY") as build,
+        patch(_MOD + ".confirm", return_value=True),
+        patch(_MOD + "._push_create_record", return_value="https://example/pull/1"),
+    ):
+        url = _submit_one(Path("/r"), base_override=None, assume_yes=True)
+    assert url == "https://example/pull/1"
+    assert build.call_args.kwargs["linkage"] == "Ref"
+    assert "Ref #1761" in capsys.readouterr().err
 
 
 def test_submit_one_declined_exits() -> None:
