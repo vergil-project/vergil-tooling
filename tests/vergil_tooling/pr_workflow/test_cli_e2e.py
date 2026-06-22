@@ -120,6 +120,65 @@ def test_solo_happy_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
     assert state["history"][0]["action"] == "init"
 
 
+def test_report_ready_strips_issue_number_from_linkage_and_warns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    assert _run(monkeypatch, repo, "next", "--issue", "1534", "--no-audit") == 0
+    capsys.readouterr()
+
+    assert (
+        _run(
+            monkeypatch,
+            repo,
+            "report-ready",
+            "--title",
+            "feat: x",
+            "--summary",
+            "did x",
+            "--notes",
+            "n",
+            "--linkage",
+            "Ref #1761",
+        )
+        == 0
+    )
+    out = json.loads(capsys.readouterr().out)
+    assert out["status"] == "approved"
+    assert "Ref #1761" in out["warning"]
+
+    state = json.loads((repo / ".vergil" / "pr-workflow.json").read_text())
+    assert state["pr_metadata"]["linkage"] == "Ref"
+
+
+def test_report_ready_rejects_unrecognized_linkage_keyword(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    repo = _init_repo(tmp_path)
+    assert _run(monkeypatch, repo, "next", "--issue", "1534", "--no-audit") == 0
+    capsys.readouterr()
+
+    assert (
+        _run(
+            monkeypatch,
+            repo,
+            "report-ready",
+            "--title",
+            "feat: x",
+            "--summary",
+            "did x",
+            "--notes",
+            "n",
+            "--linkage",
+            "Refs #1761",
+        )
+        == 1
+    )
+    err = capsys.readouterr().err
+    assert "bare keyword" in err
+    assert "Refs #1761" in err
+
+
 def test_audit_on_solo_file_exits_clean(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
 ) -> None:

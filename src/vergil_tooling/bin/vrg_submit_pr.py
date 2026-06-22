@@ -45,7 +45,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import git, github, identity_mode, worktrees
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
-from vergil_tooling.lib.linkage import ALLOWED_LINKAGES
+from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import batch, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
@@ -478,13 +478,12 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
     issue_ref = resolve_issue_ref(fields["issue"])
     branch = git.current_branch()
     target = _target_branch(base_override, fields.get("base"))
-    linkage = fields.get("linkage", "Ref")
-    if linkage not in ALLOWED_LINKAGES:
-        msg = (
-            f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
-            f"allowed; use: {', '.join(ALLOWED_LINKAGES)}."
-        )
-        raise SystemExit(msg)
+    try:
+        linkage, linkage_warning = normalize_linkage(fields.get("linkage", "Ref"))
+    except ValueError as exc:
+        raise SystemExit(f"vrg-submit-pr: {exc}") from exc
+    if linkage_warning:
+        print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
     pr_body = build_pr_body(
         summary=fields["summary"],
         linkage=linkage,
@@ -554,19 +553,19 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     branch = git.current_branch()
     target = _target_branch(args.base, fields.get("base"))
     title = fields["title"]
-    linkage = fields.get("linkage", "Ref")
     notes = fields.get("notes", "")
 
-    # Belt-and-suspenders: the oracle validates linkage at report-ready, but
-    # guard the value used to build the PR body so a forbidden auto-close
-    # keyword can never reach the PR regardless of how the fields were obtained.
-    if linkage not in ALLOWED_LINKAGES:
-        print(
-            f"vrg-submit-pr: linkage '{linkage}' in the PR submission fields is not "
-            f"allowed; use: {', '.join(ALLOWED_LINKAGES)}.",
-            file=sys.stderr,
-        )
+    # Belt-and-suspenders: the oracle normalizes linkage at report-ready, but
+    # guard the value used to build the PR body so a forbidden keyword can never
+    # reach the PR regardless of how the fields were obtained. A keyword carrying
+    # a stray issue number is unambiguous, so strip it and warn rather than fail.
+    try:
+        linkage, linkage_warning = normalize_linkage(fields.get("linkage", "Ref"))
+    except ValueError as exc:
+        print(f"vrg-submit-pr: {exc}", file=sys.stderr)
         return 1
+    if linkage_warning:
+        print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
     pr_body = build_pr_body(
         summary=fields["summary"],
         linkage=linkage,
