@@ -3121,3 +3121,65 @@ class TestCloudSession:
         assert kwargs["workdir"] == "/vergil/projects/lmf/cloud"
         assert "vrg-vm-resolve-session" in kwargs["inner"]
 
+
+class TestCloudUpdate:
+    def test_cloud_update_delegates_to_rebuild(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                ["update", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        # update -> rebuild -> destroy_vm + re-apply
+        m["destroy_vm"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+
+
+class TestCloudStopStartUnsupported:
+    @pytest.mark.parametrize("verb", ["stop", "restart", "start"])
+    def test_ephemeral_message(
+        self,
+        verb: str,
+        _cloud_repo: Path,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        with _CloudPatches(tmp_path / "state"):
+            result = main([verb, "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 1
+        assert "ephemeral" in capsys.readouterr().err
+
+
+class TestDestroyVolume:
+    def test_requires_off_platform(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)  # Lima dedicated repo
+        cfg = _identities(tmp_path, projects)
+        result = main(["destroy-volume", "lmf/mq", "--config", str(cfg), "--yes"])
+        assert result == 1
+        assert "only for off-platform" in capsys.readouterr().err
+
+    def test_confirmation_mismatch_aborts(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m, patch("builtins.input", return_value="nope"):
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 1
+        assert "did not match" in capsys.readouterr().err
+        m["destroy_volume"].assert_not_called()
+
+    def test_confirmation_match_destroys(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch("builtins.input", return_value="lmf/cloud"),
+        ):
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 0
+        m["destroy_volume"].assert_called_once()
+
+    def test_yes_flag_skips_prompt(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo), "--yes"])
+        assert result == 0
+        m["destroy_volume"].assert_called_once()
