@@ -430,7 +430,7 @@ class TestStartStaleness:
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_start_rejects_stale_vm(
         self,
@@ -446,14 +446,14 @@ class TestStartStaleness:
         result = main(["start", "--config", str(config_file)])
         assert result == 1
         captured = capsys.readouterr()
-        assert "5 days old" in captured.err
+        assert "9 days old" in captured.err
         assert "--allow-stale-vm" in captured.err
 
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
     @patch("vergil_tooling.bin.vrg_vm.start_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
     def test_start_allows_stale_with_override(
         self,
@@ -1388,7 +1388,7 @@ class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_rejects_stale_vm(
         self,
         _age: MagicMock,
@@ -1408,7 +1408,7 @@ class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
     @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=5.0)
+    @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_allows_stale_with_override(
         self,
         _age: MagicMock,

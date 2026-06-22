@@ -91,7 +91,7 @@ class TestComposeVmSpec:
         assert spec.apt_repos == (_REPO,)  # all-identity [vm] tier
         assert spec.vagrant_plugins == ()  # role-only, did not apply to audit
         assert spec.port_forwards == ("3000|10.50.0.2:3000",)  # all-identity [vm] tier only
-        assert spec.stale_days == 3
+        assert spec.stale_days == 7
 
     def test_host_override_below_declared_flags_under(self) -> None:
         spec = compose_vm_spec(
