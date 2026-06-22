@@ -21,14 +21,28 @@ class TestLimaTransport:
         assert mock_run.call_args[1]["input"] == "payload"
         args = mock_run.call_args[0][0]
         assert args == [
-            "limactl", "shell", "--workdir", "/work", "vm-x", "--", "bash", "-c", "cat > f",
+            "limactl",
+            "shell",
+            "--workdir",
+            "/work",
+            "vm-x",
+            "--",
+            "bash",
+            "-c",
+            "cat > f",
         ]
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_run_default_workdir_is_tmp(self, mock_run: MagicMock) -> None:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         LimaTransport("vm-x").run("ls")
-        assert mock_run.call_args[0][0][:5] == ["limactl", "shell", "--workdir", "/tmp", "vm-x"]
+        assert mock_run.call_args[0][0][:5] == [
+            "limactl",
+            "shell",
+            "--workdir",
+            "/tmp",  # noqa: S108
+            "vm-x",
+        ]
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_run_prints_stderr_on_error(self, mock_run: MagicMock) -> None:
@@ -46,6 +60,30 @@ class TestLimaTransport:
     def test_pipe_prints_stderr_on_error(self, mock_run: MagicMock) -> None:
         err = subprocess.CalledProcessError(1, "limactl")
         err.stderr = "boom"
+        mock_run.side_effect = err
+        try:
+            LimaTransport("vm-x").pipe("cat > f", "data")
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_error_without_stderr_is_silent(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "limactl")
+        err.stderr = ""
+        mock_run.side_effect = err
+        try:
+            LimaTransport("vm-x").run("false")
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_error_without_stderr_is_silent(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "limactl")
+        err.stderr = ""
         mock_run.side_effect = err
         try:
             LimaTransport("vm-x").pipe("cat > f", "data")

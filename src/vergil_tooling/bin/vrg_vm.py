@@ -67,7 +67,6 @@ from vergil_tooling.lib.vm_guest import (
     vm_probe,
     vm_spec_status,
 )
-from vergil_tooling.lib.vm_transport import LimaTransport
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     SpecError,
@@ -76,6 +75,7 @@ from vergil_tooling.lib.vm_spec import (
     parse_instance_name,
     spec_fingerprint,
 )
+from vergil_tooling.lib.vm_transport import LimaTransport
 
 _default_config_path = default_config_path
 
@@ -220,9 +220,7 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
     if org is None or repo is None:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         backend = select_backend(spec)
-        return Target(
-            name, identity, config, None, None, spec, identity.vm_instance, "", backend
-        )
+        return Target(name, identity, config, None, None, spec, identity.vm_instance, "", backend)
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
@@ -239,9 +237,7 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
     backend = select_backend(spec)
 
     if not spec.dedicated:
-        return Target(
-            name, identity, config, org, repo, spec, identity.vm_instance, "", backend
-        )
+        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "", backend)
 
     inst = instance_name(name, eff_org, eff_repo)
     return Target(

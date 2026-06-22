@@ -24,11 +24,13 @@ class Transport(Protocol):
 
     def run(
         self, *args: str, workdir: str = _DEFAULT_WORKDIR
-    ) -> subprocess.CompletedProcess[str]: ...
+    ) -> subprocess.CompletedProcess[str]: ...  # pragma: no cover
 
-    def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None: ...
+    def pipe(
+        self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR
+    ) -> None: ...  # pragma: no cover
 
-    def exec_session(self, workdir: str, inner: str) -> NoReturn: ...
+    def exec_session(self, workdir: str, inner: str) -> NoReturn: ...  # pragma: no cover
 
 
 class LimaTransport:
@@ -37,9 +39,7 @@ class LimaTransport:
     def __init__(self, instance: str) -> None:
         self.instance = instance
 
-    def run(
-        self, *args: str, workdir: str = _DEFAULT_WORKDIR
-    ) -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(  # noqa: S603
                 ["limactl", "shell", "--workdir", workdir, self.instance, "--", *args],  # noqa: S607
@@ -56,8 +56,15 @@ class LimaTransport:
         try:
             subprocess.run(  # noqa: S603
                 [  # noqa: S607
-                    "limactl", "shell", "--workdir", workdir, self.instance,
-                    "--", "bash", "-c", cmd,
+                    "limactl",
+                    "shell",
+                    "--workdir",
+                    workdir,
+                    self.instance,
+                    "--",
+                    "bash",
+                    "-c",
+                    cmd,
                 ],
                 check=True,
                 input=input_data,

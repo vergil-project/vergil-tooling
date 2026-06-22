@@ -17,9 +17,9 @@ class Backend(Protocol):
 
     provider_label: str
 
-    def transport(self, instance: str) -> Transport: ...
+    def transport(self, instance: str) -> Transport: ...  # pragma: no cover
 
-    def status(self, instance: str) -> str: ...
+    def status(self, instance: str) -> str: ...  # pragma: no cover
 
 
 def select_backend(spec: ComposedSpec) -> Backend:

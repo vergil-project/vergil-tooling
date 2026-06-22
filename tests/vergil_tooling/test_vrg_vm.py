@@ -45,6 +45,7 @@ def _assert_transport(mock: MagicMock, instance: str) -> None:
     assert isinstance(transport, LimaTransport)
     assert transport.instance == instance
 
+
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from typing import Any
@@ -2663,9 +2664,7 @@ class TestProbeRunning:
             "vergil-user.lmf.mq": True,  # present dedicated: combined probe
             "vergil-user.o.gone": False,  # orphaned: no spec to compare
         }
-        assert all(
-            isinstance(c.args[0], LimaTransport) for c in mock_probe.call_args_list
-        )
+        assert all(isinstance(c.args[0], LimaTransport) for c in mock_probe.call_args_list)
 
     @patch("vergil_tooling.bin.vrg_vm.vm_probe")
     def test_nothing_running_probes_nothing(self, mock_probe: MagicMock, tmp_path: Path) -> None:

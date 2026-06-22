@@ -68,7 +68,7 @@ def inject_credentials(transport: Transport, identity: Identity) -> None:
 
     if not identity.mode:
         print(
-            f"ERROR: cannot derive identity mode for VM — rename the"
+            "ERROR: cannot derive identity mode for VM — rename the"
             " identity in identities.toml so the name contains 'user' or 'audit'",
             file=sys.stderr,
         )
@@ -246,9 +246,7 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
     """
     explicit = tag is not None
     if tag is None:
-        result = transport.run(
-            "bash", "-c", f"cat {_TOOLING_TAG_FILE} 2>/dev/null || true"
-        )
+        result = transport.run("bash", "-c", f"cat {_TOOLING_TAG_FILE} 2>/dev/null || true")
         tag = result.stdout.strip() or fallback_tag
     if not tag:
         print("ERROR: no tooling tag found — run 'vrg-vm create' first", file=sys.stderr)

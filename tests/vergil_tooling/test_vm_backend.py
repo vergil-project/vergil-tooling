@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from vergil_tooling.lib.vm_backend import LimaBackend, select_backend
@@ -6,22 +8,21 @@ from vergil_tooling.lib.vm_transport import LimaTransport
 
 
 def _spec(backend: str = "local", **kw: object) -> ComposedSpec:
-    base: dict[str, object] = {
-        "cpus": 4,
-        "memory": "4GiB",
-        "disk": "50GiB",
-        "stale_days": 3,
-        "packages": (),
-        "apt_repos": (),
-        "vagrant_plugins": (),
-        "port_forwards": (),
-        "dedicated": False,
-        "under": (),
-        "nested": False,
-        "backend": backend,
-    }
-    base.update(kw)
-    return ComposedSpec(**base)  # type: ignore[arg-type]
+    spec = ComposedSpec(
+        cpus=4,
+        memory="4GiB",
+        disk="50GiB",
+        stale_days=3,
+        packages=(),
+        apt_repos=(),
+        vagrant_plugins=(),
+        port_forwards=(),
+        dedicated=False,
+        under=(),
+        nested=False,
+        backend=backend,
+    )
+    return dataclasses.replace(spec, **kw)
 
 
 class TestSelectBackend:
