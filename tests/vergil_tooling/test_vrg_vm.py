@@ -15,6 +15,10 @@ from vergil_tooling.bin.vrg_vm import (
     BorrowError,
     DedicatedRow,
     Target,
+    _cloud_backend,
+    _CloudState,
+    _cs_credentials,
+    _cs_tofu_volume,
     _list_rows,
     _log_root,
     _preflight_target,
@@ -2943,3 +2947,177 @@ class TestPluginStage:
         assert "update-plugins" in names
         stage = next(s for s in _rebuild_stages() if s.name == "update-plugins")
         assert stage.mode == "warn"
+
+
+# --- Off-platform (cloud) lifecycle ------------------------------------------
+
+
+@pytest.fixture()
+def _cloud_repo(tmp_path: Path) -> Path:
+    """An identities.toml whose lmf/cloud repo declares an off-platform [vm]."""
+    projects = tmp_path / "projects"
+    _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+    return _identities(tmp_path, projects)
+
+
+class _CloudPatches:
+    """Bundle of patches that stub the entire cloud engine + backend surface.
+
+    Patches ``vm_cloud.*`` module functions (vrg_vm calls them via the module),
+    the credential/tooling helpers imported by name into vrg_vm, and the
+    OffPlatformBackend methods that talk to gcloud/tofu.
+    """
+
+    def __init__(self, state_dir: Path, *, status: str = "") -> None:
+        self.state_dir = state_dir
+        self.status = status
+
+    def __enter__(self) -> dict[str, MagicMock]:
+        self._ctx = []
+        mocks: dict[str, MagicMock] = {}
+
+        _unset = object()
+
+        def _patch(target: str, return_value: object = _unset) -> MagicMock:
+            if return_value is _unset:
+                p = patch(target)
+            else:
+                p = patch(target, return_value=return_value)
+            mock = p.start()
+            mocks[target.rsplit(".", 1)[-1]] = mock
+            self._ctx.append(p)
+            return mock
+
+        modules_root = self.state_dir / "modules"
+        modules_root.mkdir(parents=True, exist_ok=True)
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.fetch_modules", return_value=modules_root)
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            return_value=("vol-123", "us-central1-a"),
+        )
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_vm",
+            return_value={"host": "cloud-host"},
+        )
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.bootstrap_volume")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
+        _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_volume")
+        _patch("vergil_tooling.bin.vrg_vm.inject_credentials")
+        _patch("vergil_tooling.bin.vrg_vm.install_tooling")
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.state_dir",
+            return_value=self.state_dir,
+        )
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.status",
+            return_value=self.status,
+        )
+        _patch(
+            "vergil_tooling.lib.vm_cloud.OffPlatformBackend.transport",
+            return_value=MagicMock(),
+        )
+        return mocks
+
+    def __exit__(self, *exc: object) -> None:
+        for p in reversed(self._ctx):
+            p.stop()
+
+
+class TestCloudStageGuards:
+    def _state(self, tmp_path: Path) -> _CloudState:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/cloud"))
+        return _CloudState(
+            target=target,
+            backend=_cloud_backend(target),
+            state_dir=tmp_path / "state",
+        )
+
+    def test_require_modules_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="fetch-modules did not run"):
+            _cs_tofu_volume(self._state(tmp_path))
+
+    def test_require_transport_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="tofu-vm did not run"):
+            _cs_credentials(self._state(tmp_path))
+
+
+class TestCloudCreate:
+    def test_cloud_create_happy_path(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        m["preflight"].assert_called_once()
+        m["fetch_modules"].assert_called_once_with("v2.0")
+        m["apply_volume"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+        m["await_readiness"].assert_called_once()
+        m["inject_credentials"].assert_called_once()
+        m["install_tooling"].assert_called_once()
+        m["bootstrap_volume"].assert_called_once()
+        m["link_cloud_claude_dirs"].assert_called_once()
+        m["destroy_vm"].assert_not_called()
+
+    def test_cloud_create_cleans_up_modules(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        state = tmp_path / "state"
+        with _CloudPatches(state):
+            main(["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"])
+        # The fetched modules' parent temp dir is removed in the finally.
+        assert not (state / "modules").exists()
+
+    def test_cloud_create_concurrency_guard(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state", status="Running") as m:
+            result = main(
+                ["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 1
+        assert "already exists" in capsys.readouterr().err
+        m["apply_volume"].assert_not_called()
+
+
+class TestCloudDestroy:
+    def test_cloud_destroy_calls_destroy_vm(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(["destroy", "lmf/cloud", "--config", str(_cloud_repo)])
+        assert result == 0
+        m["destroy_vm"].assert_called_once()
+        m["destroy_volume"].assert_not_called()
+        assert "destroyed" in capsys.readouterr().out
+
+
+class TestCloudRebuild:
+    def test_cloud_rebuild_destroys_then_builds(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # Rebuild is allowed even when Running: it destroys the disposable VM first.
+        with _CloudPatches(tmp_path / "state", status="Running") as m:
+            result = main(
+                ["rebuild", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"]
+            )
+        assert result == 0
+        m["destroy_vm"].assert_called_once()
+        m["apply_volume"].assert_called_once()
+        m["apply_vm"].assert_called_once()
+
+
+class TestCloudSession:
+    def test_cloud_session_uses_iap_transport(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["preflight"].assert_called_once()
+        transport.exec_session.assert_called_once()
+        kwargs = transport.exec_session.call_args.kwargs
+        assert kwargs["workdir"] == "/vergil/projects/lmf/cloud"
+        assert "vrg-vm-resolve-session" in kwargs["inner"]
+
