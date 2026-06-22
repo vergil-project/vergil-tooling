@@ -16,6 +16,7 @@ import urllib.request
 from pathlib import Path
 
 from vergil_tooling.lib import progress
+from vergil_tooling.lib.vm_cloud import provision_params
 
 _TEMPLATE_URL = (
     "https://raw.githubusercontent.com/vergil-project/vergil-vm/{tag}/templates/agent.yaml"
@@ -233,29 +234,28 @@ def create_vm(
         args.append(f'--set=.memory = "{memory}"')
     if disk is not None:
         args.append(f'--set=.disk = "{disk}"')
-    if packages:
-        args.append(f'--set=.param.EXTRA_PACKAGES = "{" ".join(packages)}"')
-    if apt_repos:
-        # Each repo encoded "name|key_url|uri|suite|components"; repos joined by ";".
-        encoded = ";".join(
-            "|".join((r["name"], r["key_url"], r["uri"], r["suite"], r["components"]))
-            for r in apt_repos
-        )
-        args.append(f'--set=.param.APT_REPOS = "{encoded}"')
-    if vagrant_plugins:
-        args.append(f'--set=.param.VAGRANT_PLUGINS = "{" ".join(vagrant_plugins)}"')
-    if port_forwards:
-        # Each record "<port>|<host:port>"; records joined by ";" to match the
-        # template's IFS=';' / IFS='|' parser (vergil-vm #170).
-        args.append(f'--set=.param.PORT_FORWARDS = "{";".join(port_forwards)}"')
+    # The .param.* values are assembled by the shared provision_params() so the
+    # same profile yields a byte-identical box on the Lima and cloud backends
+    # (#1706); create_vm maps each entry to the Lima --set=.param.* form here.
+    params = provision_params(
+        packages=packages,
+        apt_repos=apt_repos,
+        vagrant_plugins=vagrant_plugins,
+        port_forwards=port_forwards,
+        nested=nested,
+        fingerprint=fingerprint,
+    )
+    for key in ("EXTRA_PACKAGES", "APT_REPOS", "VAGRANT_PLUGINS", "PORT_FORWARDS"):
+        if key in params:
+            args.append(f'--set=.param.{key} = "{params[key]}"')
     if fingerprint:
-        args.append(f'--set=.param.SPEC_FINGERPRINT = "{fingerprint}"')
+        args.append(f'--set=.param.SPEC_FINGERPRINT = "{params["SPEC_FINGERPRINT"]}"')
     if nested:
         # Both halves together (vergil-vm#131): the Lima config knob exposes
         # /dev/kvm, the template param turns on the in-guest verification that
         # fails the build loudly when it didn't appear.
         args.append("--set=.nestedVirtualization = true")
-        args.append('--set=.param.NESTED_VIRT = "true"')
+        args.append(f'--set=.param.NESTED_VIRT = "{params["NESTED_VIRT"]}"')
     args.append(str(template))
     _limactl(*args)
 

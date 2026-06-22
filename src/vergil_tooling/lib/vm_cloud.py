@@ -75,3 +75,48 @@ def fetch_modules(tag: str) -> Path:
         print(f"ERROR: module archive missing opentofu/modules ({url})", file=sys.stderr)
         raise SystemExit(1)
     return modules
+
+
+def provision_params(
+    *,
+    packages: list[str] | None = None,
+    apt_repos: list[dict[str, str]] | None = None,
+    vagrant_plugins: list[str] | None = None,
+    port_forwards: list[str] | None = None,
+    nested: bool = False,
+    fingerprint: str | None = None,
+) -> dict[str, str]:
+    """Assemble the provisioning ``param`` map shared by Lima and the cloud backend.
+
+    The encodings are byte-identical to the values ``lima.create_vm`` passes via
+    ``--set=.param.*`` so the same profile yields the same box on either backend:
+    packages and vagrant plugins are space-joined; each apt repo is encoded
+    ``name|key_url|uri|suite|components`` with repos joined by ``;``; port forwards
+    are ``;``-joined; ``NESTED_VIRT``/``SPEC_FINGERPRINT`` are passthrough strings.
+    Keys for unset pieces are omitted entirely (mirroring create_vm's ``if`` guards).
+    """
+    params: dict[str, str] = {}
+    if packages:
+        params["EXTRA_PACKAGES"] = " ".join(packages)
+    if apt_repos:
+        params["APT_REPOS"] = ";".join(
+            "|".join((r["name"], r["key_url"], r["uri"], r["suite"], r["components"]))
+            for r in apt_repos
+        )
+    if vagrant_plugins:
+        params["VAGRANT_PLUGINS"] = " ".join(vagrant_plugins)
+    if port_forwards:
+        params["PORT_FORWARDS"] = ";".join(port_forwards)
+    if nested:
+        params["NESTED_VIRT"] = "true"
+    if fingerprint:
+        params["SPEC_FINGERPRINT"] = fingerprint
+    return params
+
+
+def render_provision_env(params: dict[str, str], *, vergil_user: str, home: str) -> str:
+    """Render the cloud ``provision.env`` body: the shared params plus VERGIL_USER/HOME."""
+    lines = [f"{key}={value}" for key, value in params.items()]
+    lines.append(f"VERGIL_USER={vergil_user}")
+    lines.append(f"HOME={home}")
+    return "\n".join(lines)

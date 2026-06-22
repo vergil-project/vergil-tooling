@@ -6,7 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib.vm_cloud import cloud_labels, cloud_resource_name, fetch_modules
+from vergil_tooling.lib.vm_cloud import (
+    cloud_labels,
+    cloud_resource_name,
+    fetch_modules,
+    provision_params,
+    render_provision_env,
+)
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
@@ -129,3 +135,56 @@ class TestFetchModules:
         mock_taropen.return_value = _EmptyTar()
         with pytest.raises(SystemExit):
             fetch_modules("v2.1.50")
+
+
+class TestProvisionParams:
+    def test_assembles_all_encodings(self) -> None:
+        params = provision_params(
+            packages=["git", "vim"],
+            apt_repos=[
+                {
+                    "name": "n",
+                    "key_url": "k",
+                    "uri": "u",
+                    "suite": "s",
+                    "components": "c",
+                }
+            ],
+            vagrant_plugins=["p1", "p2"],
+            port_forwards=["8080|host:80", "9090|host:90"],
+            nested=True,
+            fingerprint="abc",
+        )
+        assert params == {
+            "EXTRA_PACKAGES": "git vim",
+            "APT_REPOS": "n|k|u|s|c",
+            "VAGRANT_PLUGINS": "p1 p2",
+            "PORT_FORWARDS": "8080|host:80;9090|host:90",
+            "NESTED_VIRT": "true",
+            "SPEC_FINGERPRINT": "abc",
+        }
+
+    def test_omits_unset_pieces(self) -> None:
+        params = provision_params()
+        assert params == {}
+
+    def test_multiple_apt_repos_joined_by_semicolon(self) -> None:
+        params = provision_params(
+            apt_repos=[
+                {"name": "a", "key_url": "k1", "uri": "u1", "suite": "s1", "components": "c1"},
+                {"name": "b", "key_url": "k2", "uri": "u2", "suite": "s2", "components": "c2"},
+            ]
+        )
+        assert params["APT_REPOS"] == "a|k1|u1|s1|c1;b|k2|u2|s2|c2"
+
+
+class TestProvisionEnv:
+    def test_renders_key_value_body(self) -> None:
+        params = {"EXTRA_PACKAGES": "git vim", "NESTED_VIRT": "true", "SPEC_FINGERPRINT": "abc"}
+        body = render_provision_env(params, vergil_user="vergil", home="/home/vergil")
+        lines = set(body.splitlines())
+        assert "EXTRA_PACKAGES=git vim" in lines
+        assert "NESTED_VIRT=true" in lines
+        assert "SPEC_FINGERPRINT=abc" in lines
+        assert "VERGIL_USER=vergil" in lines
+        assert "HOME=/home/vergil" in lines
