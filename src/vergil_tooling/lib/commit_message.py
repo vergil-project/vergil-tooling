@@ -33,9 +33,19 @@ AUTOCLOSE_RE = re.compile(
 )
 
 
+def find_autoclose(text: str) -> str | None:
+    """Return the first GitHub auto-close reference in *text*, or None.
+
+    The returned substring (e.g. ``"Closes #299"``) is suitable for naming the
+    offending text in an error message.
+    """
+    match = AUTOCLOSE_RE.search(text)
+    return match.group(0) if match else None
+
+
 def contains_autoclose(body: str) -> bool:
     """Return True if *body* contains a GitHub auto-close keyword."""
-    return bool(AUTOCLOSE_RE.search(body))
+    return find_autoclose(body) is not None
 
 
 def build_commit_message(
