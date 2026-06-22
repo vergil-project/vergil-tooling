@@ -224,9 +224,7 @@ def await_readiness(transport: Transport, fingerprint: str) -> None:
     try:
         transport.run("cloud-init", "status", "--wait")
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            "cloud-init did not complete on the cloud box — rebuild the VM"
-        ) from exc
+        raise RuntimeError("cloud-init did not complete on the cloud box — rebuild the VM") from exc
     try:
         result = transport.run("cat", _FINGERPRINT_PATH)
     except subprocess.CalledProcessError as exc:
@@ -236,3 +234,25 @@ def await_readiness(transport: Transport, fingerprint: str) -> None:
         ) from exc
     if result.stdout.strip() != fingerprint:
         raise RuntimeError("spec fingerprint mismatch on the cloud box — rebuild the VM")
+
+
+_CLOUD_CLAUDE_LINK_DIRS = ("projects", "todos")
+_CLOUD_CLAUDE_VOLUME = "/vergil/claude"
+
+
+def link_cloud_claude_dirs(transport: Transport) -> None:
+    """Link only the ~/.claude history subdirs onto the persistent volume.
+
+    ``projects`` and ``todos`` are symlinked onto ``/vergil/claude`` so session
+    history survives teardown, while injected credentials (``.credentials.json``,
+    ``.claude.json``) stay on the ephemeral boot disk and die with the VM
+    (acceptance: no injected credential on the detachable volume).
+    """
+    volume_dirs = " ".join(f"{_CLOUD_CLAUDE_VOLUME}/{sub}" for sub in _CLOUD_CLAUDE_LINK_DIRS)
+    transport.run("bash", "-c", f"mkdir -p ~/.claude {volume_dirs}")
+    for sub in _CLOUD_CLAUDE_LINK_DIRS:
+        transport.run(
+            "bash",
+            "-c",
+            f"ln -sfn {_CLOUD_CLAUDE_VOLUME}/{sub} ~/.claude/{sub}",
+        )

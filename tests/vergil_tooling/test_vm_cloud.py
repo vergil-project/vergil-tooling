@@ -13,6 +13,7 @@ from vergil_tooling.lib.vm_cloud import (
     cloud_labels,
     cloud_resource_name,
     fetch_modules,
+    link_cloud_claude_dirs,
     preflight,
     provision_params,
     render_provision_env,
@@ -356,3 +357,15 @@ class TestAwaitReadiness:
         ]
         with pytest.raises(RuntimeError):
             await_readiness(transport, "fp123")
+
+
+class TestCloudClaudeLayout:
+    def test_symlinks_history_subdirs_to_volume_only(self) -> None:
+        transport = MagicMock()
+        transport.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        link_cloud_claude_dirs(transport)
+        joined = " ".join(c for call in transport.run.call_args_list for c in call.args)
+        assert "/vergil/claude/projects" in joined
+        assert "/vergil/claude/todos" in joined
+        assert "/vergil/claude/.credentials.json" not in joined
+        assert ".credentials.json" not in joined
