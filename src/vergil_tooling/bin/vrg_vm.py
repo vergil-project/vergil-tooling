@@ -675,6 +675,7 @@ class _CloudState:
     state_dir: Path
     tag: str = ""
     vergil_version: str = ""
+    verbose: bool = False
     modules_root: Path | None = None
     zone: str = ""
     volume_id: str = ""
@@ -727,7 +728,11 @@ def _cs_tofu_vm(state: _CloudState) -> None:
 
 def _cs_await_readiness(state: _CloudState) -> None:
     print("Waiting for the cloud box to be ready...")
-    vm_cloud.await_readiness(_require_transport(state), spec_fingerprint(state.target.spec))
+    vm_cloud.await_readiness(
+        _require_transport(state),
+        spec_fingerprint(state.target.spec),
+        verbose=state.verbose,
+    )
 
 
 def _cs_credentials(state: _CloudState) -> None:
@@ -785,6 +790,16 @@ def _cloud_backend(target: Target) -> OffPlatformBackend:
     return cast("OffPlatformBackend", target.backend)
 
 
+_VERBOSE_ENV_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _resolve_vm_verbose(args: argparse.Namespace) -> bool:
+    """Opt into live provisioning output via ``--verbose`` or ``VERGIL_VM_VERBOSE``."""
+    if getattr(args, "verbose", False):
+        return True
+    return os.environ.get("VERGIL_VM_VERBOSE", "").strip().lower() in _VERBOSE_ENV_TRUTHY
+
+
 def _cloud_create(
     verb: str, target: Target, args: argparse.Namespace, *, destroy_first: bool
 ) -> int:
@@ -824,6 +839,7 @@ def _cloud_create(
         state_dir=backend.state_dir(),
         tag=tag,
         vergil_version=vergil_version,
+        verbose=_resolve_vm_verbose(args),
     )
     return _run_cloud_lifecycle(verb, state, _cloud_create_stages(), args)
 
@@ -1754,6 +1770,14 @@ def main(argv: list[str] | None = None) -> int:
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
+    p_create.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Stream live cloud-init provisioning output during await-readiness "
+            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+        ),
+    )
     progress.add_progress_args(p_create, ())
 
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
@@ -1795,6 +1819,14 @@ def main(argv: list[str] | None = None) -> int:
     )
     # Off-platform update delegates to rebuild, which drives the progress pipeline;
     # these flags must exist on the update parser so that delegation has them.
+    p_update.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Stream live cloud-init provisioning output during await-readiness "
+            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+        ),
+    )
     progress.add_progress_args(p_update, ())
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
@@ -1833,6 +1865,14 @@ def main(argv: list[str] | None = None) -> int:
         "--timeout",
         default="30m",
         help="How long to wait for VM to reach running status (default: 30m)",
+    )
+    p_rebuild.add_argument(
+        "--verbose",
+        action="store_true",
+        help=(
+            "Stream live cloud-init provisioning output during await-readiness "
+            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+        ),
     )
     progress.add_progress_args(p_rebuild, ())
 

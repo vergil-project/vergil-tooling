@@ -28,6 +28,7 @@ from vergil_tooling.bin.vrg_vm import (
     _read_repo_vm,
     _resolve,
     _resolve_target,
+    _resolve_vm_verbose,
     _target_ref,
     _warn_under,
     discover_dedicated,
@@ -3154,6 +3155,34 @@ class TestCloudCreate:
         m["bootstrap_volume"].assert_called_once()
         m["link_cloud_claude_dirs"].assert_called_once()
         m["destroy_vm"].assert_not_called()
+        # await-readiness defaults to non-verbose (heartbeat only).
+        assert m["await_readiness"].call_args.kwargs["verbose"] is False
+
+    def test_cloud_create_verbose_flag_streams_provisioning(
+        self, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        with _CloudPatches(tmp_path / "state") as m:
+            result = main(
+                [
+                    "create",
+                    "lmf/cloud",
+                    "--config",
+                    str(_cloud_repo),
+                    "--output-format",
+                    "plain",
+                    "--verbose",
+                ]
+            )
+        assert result == 0
+        assert m["await_readiness"].call_args.kwargs["verbose"] is True
+
+    def test_cloud_create_verbose_via_env(
+        self, _cloud_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("VERGIL_VM_VERBOSE", "1")
+        with _CloudPatches(tmp_path / "state") as m:
+            main(["create", "lmf/cloud", "--config", str(_cloud_repo), "--output-format", "plain"])
+        assert m["await_readiness"].call_args.kwargs["verbose"] is True
 
     def test_cloud_create_cleans_up_modules(self, _cloud_repo: Path, tmp_path: Path) -> None:
         state = tmp_path / "state"
@@ -3417,3 +3446,25 @@ class TestCloudUnderProvision:
             m["transport"].return_value = transport
             main(["session", "lmf/cloud", "--config", str(cfg)])
         assert "under-provisioned" not in capsys.readouterr().err
+
+
+class TestResolveVmVerbose:
+    def _ns(self, **kw: object) -> argparse.Namespace:
+        return argparse.Namespace(**kw)
+
+    def test_flag_wins(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VERGIL_VM_VERBOSE", raising=False)
+        assert _resolve_vm_verbose(self._ns(verbose=True)) is True
+
+    def test_env_truthy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VERGIL_VM_VERBOSE", "yes")
+        assert _resolve_vm_verbose(self._ns(verbose=False)) is True
+
+    def test_env_falsey(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VERGIL_VM_VERBOSE", "0")
+        assert _resolve_vm_verbose(self._ns(verbose=False)) is False
+
+    def test_absent_flag_and_env_is_false(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The flag is missing entirely on non-cloud-aware parsers (getattr default).
+        monkeypatch.delenv("VERGIL_VM_VERBOSE", raising=False)
+        assert _resolve_vm_verbose(self._ns()) is False
