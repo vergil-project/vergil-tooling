@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
-_MAX_NAME = 59  # GCP instance name <=63; the module appends "-ssh" to the firewall name.
+_MAX_NAME = 58  # GCP names <=63; the volume module appends "-data" (the longest suffix).
 _HASH_LEN = 6
 
 
@@ -290,12 +290,40 @@ def _plugin_cache_dir() -> Path:
     return path
 
 
+def _resolve_project() -> str:
+    """The GCP project for the off-platform backend: ``GOOGLE_CLOUD_PROJECT`` if set,
+    else ``gcloud config get-value project``. The google OpenTofu provider does NOT read
+    gcloud config, so we resolve it here and inject it into the tofu environment.
+    """
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if not project:
+        result = subprocess.run(  # noqa: S603
+            ["gcloud", "config", "get-value", "project"],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        project = result.stdout.strip()
+    if not project:
+        print(
+            "ERROR: no GCP project — set GOOGLE_CLOUD_PROJECT or run: "
+            "gcloud config set project <project>",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return project
+
+
 def _tofu_env() -> dict[str, str]:
-    """Environment for every tofu invocation: non-interactive + shared plugin cache."""
+    """Environment for every tofu invocation: non-interactive, shared plugin cache, and
+    the GCP project. The google provider reads ``GOOGLE_CLOUD_PROJECT`` (not gcloud
+    config), so without this every apply fails with ``project: required field is not set``.
+    """
     return {
         **os.environ,
         "TF_IN_AUTOMATION": "1",
         "TF_PLUGIN_CACHE_DIR": str(_plugin_cache_dir()),
+        "GOOGLE_CLOUD_PROJECT": _resolve_project(),
     }
 
 
@@ -458,23 +486,7 @@ class OffPlatformBackend:
         self.provider_label = spec.provider
 
     def _project(self) -> str:
-        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-        if not project:
-            result = subprocess.run(  # noqa: S603
-                ["gcloud", "config", "get-value", "project"],  # noqa: S607
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-            project = result.stdout.strip()
-        if not project:
-            print(
-                "ERROR: no GCP project — set GOOGLE_CLOUD_PROJECT or run: "
-                "gcloud config set project <project>",
-                file=sys.stderr,
-            )
-            raise SystemExit(1)
-        return project
+        return _resolve_project()
 
     def state_dir(self) -> Path:
         return tofu_state_dir(self.state_key, self.spec.provider)
