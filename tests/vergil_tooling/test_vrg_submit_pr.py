@@ -631,6 +631,32 @@ class TestTemplateMode:
         assert "linkage" in err.lower()
         assert "Ref" in err
 
+    def test_template_strips_issue_number_from_linkage_and_warns(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A linkage carrying the issue number is stripped to the bare keyword,
+        warned about, and the PR proceeds — no hard fail (issue #1765)."""
+        _write_workflow_state(tmp_path, title="fix", summary="Fix", linkage="Ref #1761")
+        with (
+            patch("vergil_tooling.bin.vrg_submit_pr.git.repo_root", return_value=tmp_path),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.git.current_branch",
+                return_value="feature/x",
+            ),
+            patch("vergil_tooling.bin.vrg_submit_pr.git.run"),
+            patch(
+                "vergil_tooling.bin.vrg_submit_pr.github.create_pr",
+                return_value="https://github.com/pr/8",
+            ),
+            patch("builtins.input", return_value="y"),
+        ):
+            result = main([])
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Ref #1761" in captured.err
+        # The rendered body carries the bare keyword with the auto-appended number.
+        assert "Ref #42" in captured.out
+
     def test_template_mode_reports_unready_workflow(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
