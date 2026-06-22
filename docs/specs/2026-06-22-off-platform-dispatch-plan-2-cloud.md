@@ -617,6 +617,122 @@ vrg-commit --type feat --scope off-platform --message "volume bootstrap: clone v
 
 ---
 
+## Task 8a: `await_readiness` hard-fail gate
+
+**Files:** Modify `src/vergil_tooling/lib/vm_cloud.py`; Test `tests/vergil_tooling/test_vm_cloud.py`.
+
+**Why:** the cloud backend has no native Lima-style readiness gate, so it must synthesize one — a non-zero `cloud-init` status or a missing fingerprint marker is a **hard `create` failure** (no half-ready box; no-silent-failures). This is spec-critical and gets its own task rather than living inside Task 9's pipeline prose.
+
+**Interfaces:** Produces `await_readiness(transport: Transport, fingerprint: str) -> None` — runs `cloud-init status --wait` over the transport, then confirms `/etc/vergil/vm-spec.fingerprint` exists and matches `fingerprint`; raises `RuntimeError` (caught by the create pipeline as a fail_fast stage) on either failure.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/vergil_tooling/test_vm_cloud.py (append)
+import subprocess
+
+import pytest
+
+from vergil_tooling.lib.vm_cloud import await_readiness
+
+
+class TestAwaitReadiness:
+    def test_passes_when_cloud_init_done_and_marker_matches(self) -> None:
+        transport = MagicMock()
+        # cloud-init status --wait -> ok; marker read -> matching fingerprint
+        transport.run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="fp123\n", stderr=""),
+        ]
+        await_readiness(transport, "fp123")  # no raise
+
+    def test_raises_when_cloud_init_fails(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(1, "cloud-init")
+        with pytest.raises(RuntimeError):
+            await_readiness(transport, "fp123")
+
+    def test_raises_when_marker_missing_or_mismatched(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="different\n", stderr=""),
+        ]
+        with pytest.raises(RuntimeError):
+            await_readiness(transport, "fp123")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run --project . pytest tests/vergil_tooling/test_vm_cloud.py::TestAwaitReadiness -v`
+Expected: FAIL (`await_readiness` undefined).
+
+- [ ] **Step 3: Implement.** `transport.run("cloud-init", "status", "--wait")` (a non-zero exit raises `CalledProcessError` → wrap in `RuntimeError`); then `transport.run("cat", "/etc/vergil/vm-spec.fingerprint")` and compare the stripped stdout to `fingerprint`; on mismatch or read failure raise `RuntimeError` with a message naming the box and the remediation (`rebuild`).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `uv run --project . pytest tests/vergil_tooling/test_vm_cloud.py::TestAwaitReadiness -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+vrg-git add src/vergil_tooling/lib/vm_cloud.py tests/vergil_tooling/test_vm_cloud.py
+vrg-commit --type feat --scope off-platform --message "synthesize a hard-fail readiness gate for cloud create (#1706)" --body "cloud-init status --wait + fingerprint-marker check; either failure fails create loudly (no half-ready box), mirroring Lima's readiness gate.\n\nRef #1706"
+```
+
+---
+
+## Task 8b: Cloud `.claude` layout (boot-disk credentials, volume-only history)
+
+**Files:** Modify `src/vergil_tooling/lib/vm_cloud.py`; Test `tests/vergil_tooling/test_vm_cloud.py`.
+
+**Why:** satisfies acceptance #4 — **no injected credential persists on the detachable volume.** The Claude OAuth token (`~/.claude/.credentials.json`) must stay on the ephemeral boot disk and die with the VM, while session history survives on the volume. Plan 1's `link_claude_dirs` is Lima-shaped (links to the Mac mount); the cloud box needs its own layout step.
+
+**Interfaces:** Produces `link_cloud_claude_dirs(transport: Transport) -> None` — ensures `~/.claude` is a real directory on the boot disk and symlinks only the history subdirs (`projects`, `todos`) onto `/vergil/claude/<subdir>`. Credentials/config files (`.credentials.json`, `.claude.json`) are never moved to the volume.
+
+- [ ] **Step 1: Write the failing test**
+
+```python
+# tests/vergil_tooling/test_vm_cloud.py (append)
+from vergil_tooling.lib.vm_cloud import link_cloud_claude_dirs
+
+
+class TestCloudClaudeLayout:
+    def test_symlinks_history_subdirs_to_volume_only(self) -> None:
+        transport = MagicMock()
+        transport.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        link_cloud_claude_dirs(transport)
+        joined = " ".join(c for call in transport.run.call_args_list for c in call.args)
+        # History subdirs are linked onto the volume...
+        assert "/vergil/claude/projects" in joined
+        assert "/vergil/claude/todos" in joined
+        # ...but credentials are NEVER pointed at the volume.
+        assert "/vergil/claude/.credentials.json" not in joined
+        assert ".credentials.json" not in joined
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `uv run --project . pytest tests/vergil_tooling/test_vm_cloud.py::TestCloudClaudeLayout -v`
+Expected: FAIL (`link_cloud_claude_dirs` undefined).
+
+- [ ] **Step 3: Implement.** Over the transport: `mkdir -p ~/.claude /vergil/claude/projects /vergil/claude/todos`; then for each of `projects`, `todos`, create the symlink `~/.claude/<sub> -> /vergil/claude/<sub>` (e.g. `ln -sfn /vergil/claude/projects ~/.claude/projects`). Do not touch `.credentials.json`/`.claude.json` — they are written to `~/.claude` (boot disk) by `inject_credentials` and stay there.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `uv run --project . pytest tests/vergil_tooling/test_vm_cloud.py::TestCloudClaudeLayout -v`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+vrg-git add src/vergil_tooling/lib/vm_cloud.py tests/vergil_tooling/test_vm_cloud.py
+vrg-commit --type feat --scope off-platform --message "cloud .claude layout: history on volume, creds on boot disk (#1706)" --body "Symlinks ~/.claude/projects and todos onto /vergil/claude so session history survives teardown, while .credentials.json stays on the ephemeral boot disk (acceptance: no injected credential on the volume).\n\nRef #1706"
+```
+
+---
+
 ## Task 9: Cloud lifecycle stages in `vrg_vm.py` (create/destroy/rebuild/session)
 
 **Files:** Modify `src/vergil_tooling/bin/vrg_vm.py`; Test `tests/vergil_tooling/test_vrg_vm.py`.
@@ -641,7 +757,7 @@ class TestCloudCreate:
 Run: `uv run --project . pytest tests/vergil_tooling/test_vrg_vm.py::TestCloudCreate -v`
 Expected: FAIL (cloud branch not wired).
 
-- [ ] **Step 3: Implement.** In `_cmd_create`/`_cmd_rebuild`/`_cmd_destroy`/`_cmd_session`, use `backend = select_backend(target.spec)`; when `target.spec.off_platform`: call `preflight()`, build the cloud stage list (each stage uses `backend`'s tofu helpers and an `IapTransport` from the vm outputs), and reuse the shared guest stages (`_st_credentials`, `_st_install_tooling`, `_st_copy_config`) which already take a transport (Plan 1). `_cmd_session` execs via `IapTransport(...).exec_session(workdir, inner)` where `workdir = /vergil/projects/<org>/<repo>` and `inner` is the unchanged resolver command. Keep the Lima branch exactly as Plan 1 left it.
+- [ ] **Step 3: Implement.** In `_cmd_create`/`_cmd_rebuild`/`_cmd_destroy`/`_cmd_session`, use `backend = select_backend(target.spec)`; when `target.spec.off_platform`: call `preflight()`, then build the cloud create stage list — `fetch-modules → tofu-volume → tofu-vm → await-readiness (Task 8a) → credentials → tooling → bootstrap-volume (Task 8) → link-cloud-claude-dirs (Task 8b)` — where each lifecycle stage uses `backend`'s tofu helpers and the shared guest stages (`_st_credentials`, `_st_install_tooling`) run over an `IapTransport` built from the vm outputs (Plan 1). `_cmd_session` execs via `IapTransport(...).exec_session(workdir, inner)` where `workdir = /vergil/projects/<org>/<repo>` and `inner` is the unchanged resolver command. **Concurrency guard:** before building the create pipeline, call `backend.status(...)` and, if it reports a running instance, refuse with the existing "already exists" error path (the cloud analog of the Lima `vm_status` guard) — never stand up a second instance for an `(identity, org/repo)`. Keep the Lima branch exactly as Plan 1 left it.
 
 - [ ] **Step 4: Run tests**
 
@@ -751,10 +867,10 @@ vrg-commit --type docs --scope off-platform --message "document off-platform ver
 
 ## Self-Review (completed during authoring)
 
-- **Spec coverage:** Tasks map to the spec sections — naming (T1), module fetch (T2), IAP transport (T3), tofu two-state (T4), shared provision.env (T5), backend selection (T6), preflight (T7), volume bootstrap incl. credential-less skip (T8), cloud lifecycle + session (T9), destroy-volume/update/stop-start (T10), list column + degradation + under-provisioning (T11), docs (T12). Credential placement (boot-disk-only) is inherited from Plan 1's `vm_guest` over `IapTransport` — verified by the existing `inject_credentials` behavior writing to `~/.config/vergil` / `~/.claude` (boot disk).
+- **Spec coverage:** Tasks map to the spec sections — naming (T1), module fetch (T2), IAP transport (T3), tofu two-state (T4), shared provision.env (T5), backend selection (T6), preflight (T7), volume bootstrap incl. credential-less skip (T8), readiness hard-fail gate (T8a), cloud `.claude` layout / no-cred-on-volume (T8b), cloud lifecycle + session + concurrency guard (T9), destroy-volume/update/stop-start (T10), list column + degradation + under-provisioning (T11), docs (T12). Acceptance #4 (no injected credential on the volume) is satisfied concretely by T8b (history-only symlinks; `.credentials.json` stays on the boot disk).
 - **Placeholders:** a few tasks (T9–T11 test bodies) reference "the existing test harness" because they depend on `test_vrg_vm.py`'s established fixtures; the implementer fills the fixture wiring, but every behavioral assertion and every implementation step is concrete. The `progress.run` `env=` note (T4) is flagged explicitly as a signature to confirm.
 - **Type consistency:** `cloud_resource_name`/`cloud_labels`/`fetch_modules`/`IapTransport`/`tofu_state_dir`/`_run_tofu`/`render_provision_env`/`OffPlatformBackend`/`bootstrap_volume`/`preflight` names are used identically across tasks and match `select_backend`'s wiring.
 
 ## Dependency reminder
 
-Do **not** start Tasks 4, 6, 9–11 against a real cloud until vergil-vm #207 + #208 are released. Re-read the released `opentofu/interface.json` and `variables.tf` first; the exact `-var` names and the `labels` encoding must match the released module.
+Do **not** run Tasks 4, 6, 8a, 8b, 9–11 against a real cloud until vergil-vm #207 + #208 are released (the unit tests, which mock `tofu`/`gcloud`, can be written anytime). Re-read the released `opentofu/interface.json` and `variables.tf` first; the exact `-var` names and the `labels` encoding must match the released module.
