@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.11/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.9/">
+        <link rel="next" href="../v2.1.51/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.10 - VERGIL Tooling</title>
+        <title>2.1.52 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1410-2026-05-01" class="md-skip">
+        <a href="#release-2152-2026-06-22" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.10
+              2.1.52
             
           </span>
         </div>
@@ -970,10 +970,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.52/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.52
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -989,6 +1016,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5226,37 +5284,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.10
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.10/" class="md-nav__link">
         
   
   
@@ -5272,37 +5303,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8825,11 +8825,11 @@
 
 
 
-<h1 id="release-1410-2026-05-01">Release 1.4.10 (2026-05-01)<a class="headerlink" href="#release-1410-2026-05-01" title="Permanent link">&para;</a></h1>
+<h1 id="release-2152-2026-06-22">Release 2.1.52 (2026-06-22)<a class="headerlink" href="#release-2152-2026-06-22" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Fix --pull=always breaking cached image lookup; route Python through cache</strong></li>
-<li><strong>Fix ruff format violations</strong></li>
+<li><strong>fetch opentofu modules from the v-tag git archive, not a release asset (#1755) (#1756)</strong>
+vrg-vm create off-platform 404d at fetch-modules: the URL embedded the version in both the release tag and the filename (from the v2.1 minor pin), but vergil-vm publishes per-patch release assets and v2.1 is only a git tag, not a release. Fetch GitHubs auto-generated source archive at the tag (archive/refs/tags/{tag}.tar.gz) instead — a single unauthenticated GET, no release asset to maintain; the moving v2.1 tag tracks the latest 2.1.x. The archive roots at vergil-vm-<ref>/, so locate modules via a */opentofu/modules glob. Companion: vergil-vm drops its now-unused publish-modules CD job.</li>
 </ul>
 
 
