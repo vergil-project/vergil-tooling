@@ -57,8 +57,9 @@ loader so its schema stays single-sourced.
   error" without a magic string):
   - **Absent** — no `.vergil/pr-workflow.json`. Renders `-`.
   - **Loaded** — carries `workflow_status: str` (the raw `status`) and
-    `pr_prepared: bool` (`pr_metadata` populated → the `vrg-submit-pr`
-    gate).
+    `pr_prepared: bool` (`pr_metadata` populated **and** not yet
+    `submitted` → exactly the `vrg-submit-pr` ready gate, which skips
+    already-submitted worktrees via `AlreadySubmittedError`).
   - **Error** — carries a `reason: str`. Renders `unknown` + a note.
   Concretely this can be a small tagged field (e.g. `workflow_status:
   str | None` for Absent/Loaded plus a `workflow_error: str | None`
@@ -87,12 +88,15 @@ loader so its schema stays single-sourced.
     already use for "nothing here".
   - **Error** → `unknown` (see Error handling below).
 - Summary line: append a neutral, trailing sentence
-  `N PR prepared.` where `N = count(status.pr_prepared)`. It keys off
-  `pr_prepared` (`pr_metadata` present), **not** the status string —
-  so a worktree in `reviewing`, `approved`, or `changes-requested`
-  with metadata already written all count. Existing
-  `active/stalled/cruft` counts and the "Run vrg-finalize-pr to clean
-  cruft." line are untouched.
+  `N PR prepared.` (always shown, including `0 PR prepared.`, so its
+  absence is never mistaken for the feature being missing) where
+  `N = count(status.pr_prepared)`. It keys off `pr_prepared`
+  (`pr_metadata` present and not yet submitted), **not** the status
+  string — so a worktree in `reviewing`, `approved`, or
+  `changes-requested` with metadata already written all count, while an
+  already-submitted one does not. Existing `active/stalled/cruft`
+  counts and the "Run vrg-finalize-pr to clean cruft." line are
+  untouched.
 
 ## Data flow
 
@@ -144,6 +148,38 @@ Extend `tests/vergil_tooling/test_vrg_worktree_status.py` (and
 Tests mock the pr-workflow loader / status gathering the same way the
 existing suite mocks `list_worktrees` and `gather_worktree_status`, so
 no real `git`/`gh`/filesystem pr-workflow files are required.
+
+## Implementation plan (TDD)
+
+Built test-first, red→green per step. Concrete touch points:
+
+1. **`lib/worktrees.py` — probe helper.** Add
+   `_probe_pr_workflow(worktree) -> tuple[str | None, str | None, bool]`
+   returning `(workflow_status, workflow_error, pr_prepared)`. Reads via
+   `LocalFileTransport(worktree.path).read()`. Absent file →
+   `(None, None, False)`. Loaded → `(state.status, None,
+   state.pr_metadata is not None and state.submitted is None)`. A
+   `WorkflowError`/`OSError` (malformed/unreadable) →
+   `(None, str(exc), False)` — caught explicitly, never swallowed.
+   *Tested directly with real files under `tmp_path` (no mocks).*
+2. **`lib/worktrees.py` — `WorktreeStatus` fields.** Add
+   `workflow_status: str | None = None`, `workflow_error: str | None =
+   None`, `pr_prepared: bool = False` (all defaulted, so existing
+   constructors and `classify_worktree` are untouched).
+3. **`lib/worktrees.py` — attach in `gather_worktree_status`.** Probe
+   once near the top; attach the three fields onto the classified
+   `WorktreeStatus` via `dataclasses.replace` at both return sites
+   (keeps `classify_worktree` focused on lifecycle only).
+4. **`bin/vrg_worktree_status.py` — render.** Add `WORKFLOW` to
+   `_COLUMNS` between `STATE` and `AHEAD`; in `_row` map the probe to a
+   cell (`workflow_error` → `unknown`; else `workflow_status` or `-`).
+   In `_summary` append `N PR prepared.`. In `main`'s note loop, emit a
+   `pr-workflow unreadable: <reason>` note when `workflow_error` is set.
+5. **Tests.** `test_worktrees.py` for `_probe_pr_workflow` (absent /
+   loaded-prepared / loaded-submitted / loaded-no-metadata / malformed)
+   and a `gather_*` test asserting the fields attach;
+   `test_vrg_worktree_status.py` for the column verbatim, `-` absent,
+   `unknown` + note on error, and the prepared count.
 
 ## Out of scope / future
 
