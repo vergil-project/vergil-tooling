@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.16/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.14/">
+        <link rel="next" href="../v2.1.50/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.15 - VERGIL Tooling</title>
+        <title>2.1.51 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2115-2026-06-07" class="md-skip">
+        <a href="#release-2151-2026-06-22" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.15
+              2.1.51
             
           </span>
         </div>
@@ -968,10 +968,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.51/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.51
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -987,6 +1014,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1920,37 +1978,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.15
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.15/" class="md-nav__link">
         
   
   
@@ -1966,37 +1997,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8795,18 +8795,37 @@
 
 
 
-<h1 id="release-2115-2026-06-07">Release 2.1.15 (2026-06-07)<a class="headerlink" href="#release-2115-2026-06-07" title="Permanent link">&para;</a></h1>
+<h1 id="release-2151-2026-06-22">Release 2.1.51 (2026-06-22)<a class="headerlink" href="#release-2151-2026-06-22" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>make wait_for_checks resilient to PR head movement</strong>
-wait_for_checks pinned the head SHA once and validated check registration for that single instant, then handed off to 'gh pr checks --watch', which re-resolves the PR head on every refresh and exits 1 with 'no checks reported' the moment it sees a head with zero registered checks. Any head movement after the guard passed — most commonly update-branch creating a merge commit whose CI run takes ~15s to register — killed the watch (issue 1490, observed on PR 1486).</li>
+<li><strong>bound Lima instance name under UNIX_PATH_MAX (#1751)</strong></li>
+<li>docs(vm): design bounded Lima instance name under UNIX_PATH_MAX</li>
 </ul>
-<p>Replace both duplicated wait loops (lib/github.py and lib/release/subprocess.py) with a shared engine that re-resolves the head SHA on every registration poll and treats a watch death by 'no checks reported' as transient — re-poll registration and restart the watch — bounded by the existing 180s deadline. All other watch failures propagate unchanged.</p>
+<p>Approved design for issue #1750: cap instance_name via a home-aware budget with cloud-style truncate+hash, and recover (identity, org, repo) from a per-instance sidecar. Ref #1750</p>
 <ul>
-<li><strong>read custom-title naming events and break slot collisions by recency</strong>
-Claude Code (~2.1.16x) renamed the transcript naming event from agent-name/agentName to custom-title/customTitle. The session resolver only parsed the old type, so modern sessions were invisible to transcript-based name resolution, archiving silently no-opped on modern transcripts, and stale pre-rename transcripts squatted on slot names forever — after a VM kill, reconnection resumed the stale session instead of the current one.</li>
+<li>docs(vm): add implementation plan for bounded Lima instance name</li>
 </ul>
-<p>Rename _last_agent_name to _last_session_name and parse both event types, last naming event in file order wins. Emit custom-title when archiving so Claude's own resume picker shows the archived label. Break slot-name collisions by liveness first, then last-active recency, so a /clear rotation (which leaves the abandoned session id still claiming the slot name) deterministically resolves to the current id. Ref #1493.</p>
+<p>TDD task breakdown for issue #1750: budget helper, bounded instance_name, sidecar read/write, recover_triple, create-time sidecar write, validation/handoff. Ref #1750</p>
+<ul>
+<li>fix(vm): bound Lima instance name under UNIX_PATH_MAX</li>
+</ul>
+<p>Add a home-aware lima_name_budget and apply it in instance_name: dedicated names within budget are unchanged; over-budget names are truncated and hashed like the cloud backend, satisfying Lima's name regex and keeping the worst-case ssh.sock path under the limit. A pathological-home guard raises SpecError rather than emitting an invalid name. Existing dedicated-name tests are pinned to an explicit home for determinism. Ref #1750</p>
+<ul>
+<li>feat(vm): add per-instance Lima metadata sidecar read/write</li>
+</ul>
+<p>Store (identity, org, repo) in ~/.lima/<instance>/vergil-meta.json so a truncated instance name stays reversible; the file is self-cleaning with the instance dir and a corrupt sidecar raises rather than silently falling back. Ref #1750</p>
+<ul>
+<li>fix(vm): recover VM triple via sidecar with parse fallback</li>
+</ul>
+<p>Add recover_triple and route discover_dedicated and _all_update_targets through it, so a truncated-name VM resolves via its sidecar instead of being silently skipped by parse_instance_name. Legacy short names and base boxes still resolve via the parse fallback. Ref #1750</p>
+<ul>
+<li>feat(vm): write VM metadata sidecar on dedicated create</li>
+</ul>
+<p>After a dedicated box is created, persist its (identity, org, repo) sidecar so a truncated instance name remains reversible by discovery and update --all. Base boxes write no sidecar. Ref #1750</p>
+<ul>
+<li>fix(vm): satisfy lint and typecheck for instance-name bounding</li>
+</ul>
+<p>Type read_instance_meta as dict[str, object] (the sidecar carries an int schema alongside string fields) and coerce in recover_triple; move the dedicated-invariant assert comment off the over-length line; use tmp_path and cast the SimpleNamespace target stub to Target in tests; apply ruff formatting. Ref #1750</p>
 
 
 
