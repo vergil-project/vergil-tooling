@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from vergil_tooling.lib.config import RoleOverlay, VmStanza
 
-_DEFAULT_STALE_DAYS = 3
+_DEFAULT_STALE_DAYS = 7
 
 # Backend dispatch values. "local" is the default Lima driver; "off-platform" is the
 # remote cloud (OpenTofu) driver (vergil-vm #199). The set is closed and tooling-owned
