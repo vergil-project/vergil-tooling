@@ -80,26 +80,20 @@ class TestFetchModules:
             fetch_modules("not-a-tag")
 
     @patch("vergil_tooling.lib.vm_cloud.urllib.request.urlopen")
-    def test_builds_release_asset_url(self, mock_urlopen: MagicMock) -> None:
+    def test_builds_archive_url(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value.__enter__.return_value.read.return_value = b"not-a-tarball"
         with pytest.raises(SystemExit):  # tar extraction of fake bytes fails loudly
             fetch_modules("v2.1.50")
         url = mock_urlopen.call_args[0][0]
-        assert url == (
-            "https://github.com/vergil-project/vergil-vm/releases/download/"
-            "v2.1.50/opentofu-modules-2.1.50.tar.gz"
-        )
+        assert url == "https://github.com/vergil-project/vergil-vm/archive/refs/tags/v2.1.50.tar.gz"
 
     @patch("vergil_tooling.lib.vm_cloud.urllib.request.urlopen")
-    def test_strips_leading_v_for_two_segment_tag(self, mock_urlopen: MagicMock) -> None:
+    def test_builds_archive_url_two_segment_tag(self, mock_urlopen: MagicMock) -> None:
         mock_urlopen.return_value.__enter__.return_value.read.return_value = b"not-a-tarball"
         with pytest.raises(SystemExit):
             fetch_modules("v2.2")
         url = mock_urlopen.call_args[0][0]
-        assert url == (
-            "https://github.com/vergil-project/vergil-vm/releases/download/"
-            "v2.2/opentofu-modules-2.2.tar.gz"
-        )
+        assert url == "https://github.com/vergil-project/vergil-vm/archive/refs/tags/v2.2.tar.gz"
 
     @patch("vergil_tooling.lib.vm_cloud.tarfile.open")
     @patch("vergil_tooling.lib.vm_cloud.urllib.request.urlopen")
@@ -120,7 +114,8 @@ class TestFetchModules:
                 return None
 
             def extractall(self, dest: str, filter: str) -> None:  # noqa: A002
-                modules = Path(dest) / "opentofu" / "modules"
+                # GitHub's source archive roots at vergil-vm-<ref>/, not opentofu/ at the top.
+                modules = Path(dest) / "vergil-vm-2.1.50" / "opentofu" / "modules"
                 modules.mkdir(parents=True)
                 created["modules"] = modules
 
