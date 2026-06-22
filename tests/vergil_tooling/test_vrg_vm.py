@@ -3183,3 +3183,147 @@ class TestDestroyVolume:
             result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo), "--yes"])
         assert result == 0
         m["destroy_volume"].assert_called_once()
+
+
+class TestCloudList:
+    def test_backend_column_present(self, config_file: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            patch("vergil_tooling.bin.vrg_vm._cloud_list_rows", return_value=[]),
+        ):
+            assert _cloud_list_rows is not None  # imported symbol exists
+            # exercise the printed header
+            import io
+            from contextlib import redirect_stdout
+
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        assert "BACKEND" in buf.getvalue()
+        assert "local" in buf.getvalue()
+
+    def test_cloud_rows_enumerated_with_degraded_status(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Build a fake tofu state tree: ~/.config/vergil/tofu/<key>/<provider>/volume.tfstate
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            # No persisted zone -> read_zone raises -> degraded placeholder.
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        out = buf.getvalue()
+        assert "vergil-lmf-cloud" in out
+        assert "gcp" in out
+        assert "unknown (no gcp creds)" in out
+
+    def test_cloud_status_reads_live_status(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_status
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"):
+            completed = MagicMock(stdout="RUNNING\n")
+            with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+                assert _cloud_status(state_dir, "key") == "RUNNING"
+
+    def test_cloud_status_gcloud_failure_is_empty(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_status
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"),
+            patch(
+                "vergil_tooling.bin.vrg_vm.subprocess.run",
+                side_effect=subprocess.CalledProcessError(1, "gcloud"),
+            ),
+        ):
+            assert _cloud_status(state_dir, "key") == ""
+
+    def test_cloud_list_rows_empty_when_no_tofu_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
+        assert _cloud_list_rows() == []
+
+
+class TestCloudUnderProvision:
+    def _cloud_repo_instance(self, tmp_path: Path, instance: str, *, cpus: int) -> Path:
+        projects = tmp_path / "projects"
+        section = textwrap.dedent(f"""
+            [vm]
+            backend = "off-platform"
+            provider = "gcp"
+            region = "us-central1"
+            instance = "{instance}"
+            volume = "300GiB"
+
+            [vm.vergil-user]
+            cpus = {cpus}
+            memory = "256GiB"
+        """)
+        _make_repo(projects, "lmf", "cloud", section)
+        return _identities(tmp_path, projects)
+
+    def test_warns_for_undersized_known_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # n2-standard-8 is (8, 32); declared 16 cpus / 256GiB is bigger -> warn.
+        cfg = self._cloud_repo_instance(tmp_path, "n2-standard-8", cpus=16)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" in capsys.readouterr().err
+
+    def test_silent_for_unknown_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cfg = self._cloud_repo_instance(tmp_path, "z9-mystery-99", cpus=16)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" not in capsys.readouterr().err
+
+    def test_silent_for_adequate_known_instance(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # n2-standard-16 is (16, 64); declared 8 cpus / 64GiB fits -> no warning.
+        projects = tmp_path / "projects"
+        section = textwrap.dedent("""
+            [vm]
+            backend = "off-platform"
+            provider = "gcp"
+            region = "us-central1"
+            instance = "n2-standard-16"
+            volume = "300GiB"
+
+            [vm.vergil-user]
+            cpus = 8
+            memory = "64GiB"
+        """)
+        _make_repo(projects, "lmf", "cloud", section)
+        cfg = _identities(tmp_path, projects)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(cfg)])
+        assert "under-provisioned" not in capsys.readouterr().err
