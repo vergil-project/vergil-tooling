@@ -49,12 +49,14 @@ from vergil_tooling.lib.lima import (
     fetch_template,
     list_vms,
     nested_virt_unsupported_reason,
+    read_instance_meta,
     shell_run,
     start_vm,
     stop_vm,
     update_plugins,
     vm_age_days,
     vm_status,
+    write_instance_meta,
 )
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
@@ -280,6 +282,21 @@ def _target_ref(target: Target) -> str:
     if target.org is not None:
         return f"{target.org}/{target.repo}"
     return f"--identity {target.identity_name}"
+
+
+def recover_triple(instance: str) -> tuple[str, str | None, str | None]:
+    """Reverse an instance name into (identity, org, repo).
+
+    Prefers the per-instance sidecar (the only reliable source once a long name
+    has been truncated+hashed); falls back to parsing the name for legacy short
+    names and base boxes that predate the sidecar.
+    """
+    meta = read_instance_meta(instance)
+    if meta is not None:
+        # Sidecar fields are always strings on disk; the mapping is typed
+        # ``dict[str, object]`` only because it also carries an int schema.
+        return str(meta["identity"]), str(meta["org"]), str(meta["repo"])
+    return parse_instance_name(instance)
 
 
 def _warn_under(target: Target) -> None:
@@ -587,6 +604,11 @@ def _create_from_target(target: Target, template: Path) -> None:
             fingerprint=target.fingerprint,
             nested=target.spec.nested,
         )
+        # Persist (identity, org, repo) so recover_triple can reverse the name
+        # even after it has been truncated+hashed to fit UNIX_PATH_MAX.
+        # org/repo are guaranteed non-None for dedicated targets.
+        assert target.org is not None and target.repo is not None  # noqa: S101
+        write_instance_meta(target.instance, target.identity_name, target.org, target.repo)
     else:
         create_vm(
             target.instance,
@@ -988,7 +1010,7 @@ def _all_update_targets(
             targets.append((id_name, identity, identity.vm_instance))
         for inst in sorted(status):
             try:
-                ident, org, repo = parse_instance_name(inst)
+                ident, org, repo = recover_triple(inst)
             except ValueError:
                 continue
             if ident == id_name and org is not None and repo is not None:
@@ -1219,7 +1241,7 @@ def discover_dedicated(
     rows: list[DedicatedRow] = []
     for name in instances:
         try:
-            ident, org, repo = parse_instance_name(name)
+            ident, org, repo = recover_triple(name)
         except ValueError:
             continue
         if ident != identity_name or org is None or repo is None:

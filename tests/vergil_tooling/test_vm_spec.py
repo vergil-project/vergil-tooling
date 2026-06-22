@@ -14,6 +14,7 @@ from vergil_tooling.lib.vm_spec import (
     SpecError,
     compose_vm_spec,
     instance_name,
+    lima_name_budget,
     parse_instance_name,
     spec_fingerprint,
 )
@@ -381,6 +382,13 @@ class TestOffPlatformCompose:
 _LIMA_IDENTIFIER = re.compile(r"^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$")
 
 
+def test_lima_name_budget_subtracts_home_and_socket_overhead() -> None:
+    # 104 - 1 - len(home) - (len("/.lima/")=7 + len("/ssh.sock.")=10 + 16) == 70 - len(home)
+    assert lima_name_budget("/Users/pmoore") == 57
+    assert lima_name_budget("/root") == 65
+    assert lima_name_budget("/home/runner") == 58
+
+
 class TestInstanceName:
     def test_base_is_bare_identity(self) -> None:
         assert instance_name("vergil-user", None, None) == "vergil-user"
@@ -389,13 +397,19 @@ class TestInstanceName:
         assert instance_name("vergil-user", "org", None) == "vergil-user"
 
     def test_dedicated_is_dot_joined(self) -> None:
+        # Pinned home keeps the within-budget format deterministic regardless of
+        # the test runner's home-directory length.
         assert (
-            instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
+            instance_name(
+                "vergil-user", "logical-minds-foundry", "mq-cluster-tooling", home="/root"
+            )
             == "vergil-user.logical-minds-foundry.mq-cluster-tooling"
         )
 
     def test_dedicated_name_is_valid_lima_identifier(self) -> None:
-        name = instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
+        name = instance_name(
+            "vergil-user", "logical-minds-foundry", "mq-cluster-tooling", home="/root"
+        )
         assert _LIMA_IDENTIFIER.fullmatch(name)
 
     def test_roundtrip_dedicated(self) -> None:
@@ -408,9 +422,39 @@ class TestInstanceName:
 
     def test_roundtrip_dedicated_repo_with_dots(self) -> None:
         # The repo is the final tier, so dots within it round-trip intact.
-        name = instance_name("vergil-user", "acme", "foo.github.io")
+        name = instance_name("vergil-user", "acme", "foo.github.io", home="/root")
         assert _LIMA_IDENTIFIER.fullmatch(name)
         assert parse_instance_name(name) == ("vergil-user", "acme", "foo.github.io")
+
+    def test_unchanged_when_within_budget(self) -> None:
+        # 52 chars, fits the 57 budget for /Users/pmoore -> returned verbatim.
+        name = instance_name(
+            "vergil-user", "logical-minds-foundry", "mq-cluster-tooling", home="/Users/pmoore"
+        )
+        assert name == "vergil-user.logical-minds-foundry.mq-cluster-tooling"
+
+    def test_truncates_and_hashes_when_over_budget(self) -> None:
+        # The reported failure: 61-char full name, 57 budget for /Users/pmoore.
+        name = instance_name(
+            "vergil-user",
+            "logical-minds-foundry",
+            "mq-resiliency-lab-for-linux",
+            home="/Users/pmoore",
+        )
+        assert len(name) <= lima_name_budget("/Users/pmoore")
+        assert _LIMA_IDENTIFIER.fullmatch(name)  # valid Lima instance name
+        assert name.startswith("vergil-user.logical")  # readable prefix retained
+        assert re.search(r"-[0-9a-f]{6}$", name)  # 6-char hash suffix
+
+    def test_truncation_is_deterministic(self) -> None:
+        args = ("vergil-user", "logical-minds-foundry", "mq-resiliency-lab-for-linux")
+        assert instance_name(*args, home="/Users/pmoore") == instance_name(
+            *args, home="/Users/pmoore"
+        )
+
+    def test_raises_when_budget_cannot_fit_identity(self) -> None:
+        with pytest.raises(SpecError):
+            instance_name("vergil-user", "o", "r", home="/" + "x" * 70)
 
     def test_roundtrip_base(self) -> None:
         assert parse_instance_name("vergil-user") == ("vergil-user", None, None)
