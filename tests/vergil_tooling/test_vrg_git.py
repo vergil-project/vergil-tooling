@@ -9,6 +9,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_git import (
+    _noninteractive_rebase_env,
     _parse_branch_target,
     _worktree_convention_active,
     main,
@@ -924,3 +925,42 @@ class TestWorktreeConvention:
             mock_run.return_value.returncode = 0
             rc = main(["switch", "feature/123-foo"])
         assert rc == 0
+
+
+# -- non-interactive rebase (#1742) -------------------------------------------
+
+
+def test_noninteractive_rebase_env_from_none_uses_os_environ() -> None:
+    with patch.dict("vergil_tooling.bin.vrg_git.os.environ", {"FOO": "bar"}, clear=True):
+        env = _noninteractive_rebase_env(None)
+    assert env["FOO"] == "bar"
+    assert env["GIT_SEQUENCE_EDITOR"] == "true"
+    assert env["GIT_EDITOR"] == "true"
+
+
+def test_noninteractive_rebase_env_preserves_base_env() -> None:
+    base = {"GIT_CONFIG_COUNT": "1", "FOO": "bar"}
+    env = _noninteractive_rebase_env(base)
+    assert env["GIT_CONFIG_COUNT"] == "1"
+    assert env["FOO"] == "bar"
+    assert env["GIT_SEQUENCE_EDITOR"] == "true"
+    assert env["GIT_EDITOR"] == "true"
+    # The caller's dict must not be mutated.
+    assert "GIT_SEQUENCE_EDITOR" not in base
+
+
+def test_rebase_forces_noninteractive_editors() -> None:
+    with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "rebase"], returncode=0, stdout="", stderr=""
+        )
+        rc = main(["rebase", "origin/develop"])
+    assert rc == 0
+    env = mock_run.call_args.kwargs["env"]
+    assert env["GIT_SEQUENCE_EDITOR"] == "true"
+    assert env["GIT_EDITOR"] == "true"
+
+
+def test_rebase_interactive_flag_still_denied(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["rebase", "-i", "origin/develop"]) != 0
+    assert "denied" in capsys.readouterr().err.lower()

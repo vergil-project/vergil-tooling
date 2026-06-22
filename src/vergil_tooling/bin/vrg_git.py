@@ -5,6 +5,7 @@ Enforces a subcommand allowlist and flag deny lists.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -155,6 +156,23 @@ def _upstream_is_integration_branch(branch_name: str) -> bool:
     # Strip the remote name (e.g. "origin/develop" -> "develop").
     _, _, upstream = result.stdout.strip().partition("/")
     return _is_protected_branch_name(upstream)
+
+
+def _noninteractive_rebase_env(base_env: dict[str, str] | None) -> dict[str, str]:
+    """Force no-op editors so a rebase never blocks on an editor.
+
+    vrg-git denies ``-i``/``--interactive``, so every rebase it runs is
+    non-interactive by policy. git can still try to launch a sequence or
+    commit editor for a plain ``rebase <upstream>`` (depending on git
+    version and config) — which hangs in a headless agent session and
+    leaves the worktree stranded mid-rebase with a stale ``index.lock``
+    (#1742). Pointing both editors at ``true`` makes any such launch a
+    clean no-op while leaving the rebase itself untouched.
+    """
+    env = dict(base_env) if base_env is not None else dict(os.environ)
+    env["GIT_SEQUENCE_EDITOR"] = "true"
+    env["GIT_EDITOR"] = "true"
+    return env
 
 
 def _check_denied_flags(subcmd: str, args: list[str]) -> str | None:
@@ -349,6 +367,9 @@ def main(argv: list[str] | None = None) -> int:
         token = github.get_installation_token()
         if token is not None:
             env = _git_auth_env(token)
+
+    if subcmd == "rebase":
+        env = _noninteractive_rebase_env(env)
 
     if subcmd == "push":
         push_result = subprocess.run(  # noqa: S603
