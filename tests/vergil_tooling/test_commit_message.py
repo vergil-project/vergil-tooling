@@ -8,6 +8,7 @@ from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
     contains_autoclose,
+    find_autoclose,
 )
 
 
@@ -77,3 +78,14 @@ def test_contains_autoclose_detects_keywords(body: str) -> None:
 )
 def test_contains_autoclose_allows_safe_bodies(body: str) -> None:
     assert contains_autoclose(body) is False
+
+
+def test_find_autoclose_returns_the_matched_reference() -> None:
+    assert find_autoclose("notes begin: Closes #299 and more") == "Closes #299"
+    assert find_autoclose("Resolved owner/repo#42") == "Resolved owner/repo#42"
+
+
+def test_find_autoclose_returns_none_for_safe_text() -> None:
+    assert find_autoclose("Ref #42") is None
+    assert find_autoclose("fix(rdqm): right-size matrices (#300)") is None
+    assert find_autoclose("the fix touches #287 files") is None
