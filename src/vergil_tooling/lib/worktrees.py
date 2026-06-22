@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
 from vergil_tooling.lib import git, github
+from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
 from vergil_tooling.lib.repo_init import prompt_choice, prompt_multi_choice
 
 
@@ -48,6 +50,12 @@ class WorktreeStatus:
     ahead: int
     dirty: bool
     detail: str | None = None
+    # Local pr-workflow handoff signals (.vergil/pr-workflow.json). Defaulted so
+    # classify_worktree and the finalize sweep, which do not gather them, are
+    # unaffected; gather_worktree_status attaches them. See _probe_pr_workflow.
+    workflow_status: str | None = None
+    workflow_error: str | None = None
+    pr_prepared: bool = False
 
     @property
     def removable(self) -> bool:
@@ -135,6 +143,31 @@ def _resolve_pr_state(branch: str) -> tuple[int | None, str | None, str | None]:
     return None, None, None
 
 
+def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool]:
+    """Read the worktree's local ``.vergil/pr-workflow.json`` prep signals.
+
+    Returns ``(workflow_status, workflow_error, pr_prepared)``:
+
+    - **Absent file** (the normal pre-report-ready case) →
+      ``(None, None, False)``.
+    - **Loaded** → ``(state.status, None, prepared)`` where ``prepared`` is
+      ``True`` only when PR metadata is present *and* the worktree is not yet
+      marked submitted — exactly the ``vrg-submit-pr`` ready gate (which skips
+      already-submitted worktrees).
+    - **Unreadable/malformed** → ``(None, <reason>, False)``. The error is
+      captured and surfaced by the caller, never swallowed; a real read error
+      is not collapsed into the "no file" case.
+    """
+    try:
+        state = LocalFileTransport(worktree.path).read()
+    except (WorkflowError, OSError) as exc:
+        return None, str(exc), False
+    if state is None:
+        return None, None, False
+    prepared = state.pr_metadata is not None and state.submitted is None
+    return state.status, None, prepared
+
+
 def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus:
     """Gather local + remote signals for *worktree* and classify it.
 
@@ -151,19 +184,31 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
     """
     ahead = git.commits_ahead(target, worktree.branch)
     dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
+    workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
+
+    def _with_workflow(status: WorktreeStatus) -> WorktreeStatus:
+        return replace(
+            status,
+            workflow_status=workflow_status,
+            workflow_error=workflow_error,
+            pr_prepared=pr_prepared,
+        )
+
     detail: str | None = None
     try:
         pr_number, pr_state, pr_head_sha = _resolve_pr_state(worktree.branch)
     except subprocess.CalledProcessError as exc:
         detail = (exc.stderr or str(exc)).strip()
-        return classify_worktree(
-            worktree,
-            pr_number=None,
-            pr_state=None,
-            pr_lookup_failed=True,
-            ahead=ahead,
-            dirty=dirty,
-            detail=detail,
+        return _with_workflow(
+            classify_worktree(
+                worktree,
+                pr_number=None,
+                pr_state=None,
+                pr_lookup_failed=True,
+                ahead=ahead,
+                dirty=dirty,
+                detail=detail,
+            )
         )
 
     merged_head_matches_tip = True
@@ -181,15 +226,17 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
                 f"(issue #1719); current commits are unmerged"
             )
 
-    return classify_worktree(
-        worktree,
-        pr_number=pr_number,
-        pr_state=pr_state,
-        pr_lookup_failed=False,
-        ahead=ahead,
-        dirty=dirty,
-        detail=detail,
-        merged_head_matches_tip=merged_head_matches_tip,
+    return _with_workflow(
+        classify_worktree(
+            worktree,
+            pr_number=pr_number,
+            pr_state=pr_state,
+            pr_lookup_failed=False,
+            ahead=ahead,
+            dirty=dirty,
+            detail=detail,
+            merged_head_matches_tip=merged_head_matches_tip,
+        )
     )
 
 
