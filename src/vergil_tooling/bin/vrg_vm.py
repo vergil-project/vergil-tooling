@@ -7,15 +7,20 @@ import datetime
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from vergil_tooling.lib.vm_backend import Backend
+    from vergil_tooling.lib.vm_cloud import OffPlatformBackend
+    from vergil_tooling.lib.vm_transport import Transport
 
 from vergil_tooling.bin.vrg_vm_resolve import (
     _archived_rows,
@@ -23,7 +28,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib import progress
+from vergil_tooling.lib import progress, vm_cloud
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -39,29 +44,32 @@ from vergil_tooling.lib.identity import (
     resolve_workspace,
 )
 from vergil_tooling.lib.lima import (
-    copy_claude_config,
     create_vm,
     delete_vm,
     fetch_template,
-    get_tooling_version,
-    inject_credentials,
-    install_tooling,
-    link_claude_dirs,
     list_vms,
     nested_virt_unsupported_reason,
     shell_run,
     start_vm,
     stop_vm,
-    try_update_tooling,
     update_plugins,
-    update_tooling,
     vm_age_days,
-    vm_probe,
-    vm_spec_status,
     vm_status,
 )
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.session import list_rows, make_name
+from vergil_tooling.lib.vm_backend import select_backend
+from vergil_tooling.lib.vm_guest import (
+    copy_claude_config,
+    get_tooling_version,
+    inject_credentials,
+    install_tooling,
+    link_claude_dirs,
+    try_update_tooling,
+    update_tooling,
+    vm_probe,
+    vm_spec_status,
+)
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     SpecError,
@@ -70,6 +78,7 @@ from vergil_tooling.lib.vm_spec import (
     parse_instance_name,
     spec_fingerprint,
 )
+from vergil_tooling.lib.vm_transport import LimaTransport
 
 _default_config_path = default_config_path
 
@@ -98,6 +107,7 @@ class Target:
     spec: ComposedSpec
     instance: str
     fingerprint: str
+    backend: Backend
 
 
 class BorrowError(Exception):
@@ -212,7 +222,8 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     if org is None or repo is None:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
-        return Target(name, identity, config, None, None, spec, identity.vm_instance, "")
+        backend = select_backend(spec, identity=name, org=None, repo=None)
+        return Target(name, identity, config, None, None, spec, identity.vm_instance, "", backend)
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
@@ -226,30 +237,38 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     override = identity.overrides.get((eff_org, eff_repo))
     spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
+    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo)
 
     if not spec.dedicated:
-        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "")
+        return Target(name, identity, config, org, repo, spec, identity.vm_instance, "", backend)
 
     inst = instance_name(name, eff_org, eff_repo)
-    return Target(name, identity, config, eff_org, eff_repo, spec, inst, spec_fingerprint(spec))
+    return Target(
+        name,
+        identity,
+        config,
+        eff_org,
+        eff_repo,
+        spec,
+        inst,
+        spec_fingerprint(spec),
+        backend,
+    )
 
 
 def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
     """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
 
-    These are all MANAGE commands: if the requested repo borrows a VM via
-    ``[vm] shared_from`` they are blocked with ``BorrowError`` pointing at the
-    lender. A repo with no readable ``vergil.toml`` (a true orphan) is unaffected
-    and resolves to its own instance name, so an orphaned dedicated VM (whose repo
-    dropped its `[vm]`) stays reachable; anything else is base.
+    These are all MANAGE commands. The borrow block (``[vm] shared_from``) and the
+    off-platform/Lima split are owned by the ``_resolve_target`` call each command
+    now runs first, so this helper only maps an ``org/repo`` (or its absence) to an
+    instance name. A repo with no readable ``vergil.toml`` (a true orphan) resolves
+    to its own instance name, so an orphaned dedicated VM (whose repo dropped its
+    `[vm]`) stays reachable; anything else is base.
     """
     name, identity, config = _resolve(args)
     org, repo = _workspace_org_repo(getattr(args, "workspace", None))
     if org is not None and repo is not None:
-        requested_vm = _read_repo_vm(identity, org, repo)
-        if requested_vm is not None and requested_vm.shared_from is not None:
-            lender_org, lender_repo = requested_vm.shared_from
-            raise BorrowError(_borrow_block_msg(args.command, org, repo, lender_org, lender_repo))
         instance = instance_name(name, org, repo)
     else:
         instance = identity.vm_instance
@@ -301,7 +320,8 @@ def _preflight_target(target: Target) -> int:
     # deferred to the post-start `spec-check` stage, once the guest is up. Mirrors list's
     # "drift only while running" contract.
     if status == "Running":
-        spec_status = vm_spec_status(target.instance, target.fingerprint)
+        transport = target.backend.transport(target.instance)
+        spec_status = vm_spec_status(transport, target.fingerprint)
         # 'unreachable' is not drift: Lima reports the box Running but the shell
         # transport (SSH) refused, so the spec was never read. Telling the user to
         # rebuild would be wrong — the VM may be mid-boot or wedged. Surface the
@@ -422,7 +442,8 @@ def _st_spec_check(state: _LifecycleState) -> None:
     target = state.target
     if not target.spec.dedicated:
         return
-    spec_status = vm_spec_status(target.instance, target.fingerprint)
+    transport = target.backend.transport(target.instance)
+    spec_status = vm_spec_status(transport, target.fingerprint)
     if spec_status == "ok":
         return
     workspace = f"{target.org}/{target.repo}"
@@ -442,21 +463,25 @@ def _st_spec_check(state: _LifecycleState) -> None:
 
 
 def _st_link_config(state: _LifecycleState) -> None:
-    link_claude_dirs(state.target.instance, Path.home() / ".claude")
+    transport = state.target.backend.transport(state.target.instance)
+    link_claude_dirs(transport, Path.home() / ".claude")
 
 
 def _st_credentials(state: _LifecycleState) -> None:
-    inject_credentials(state.target.instance, state.target.identity)
+    transport = state.target.backend.transport(state.target.instance)
+    inject_credentials(transport, state.target.identity)
 
 
 def _st_install_tooling(state: _LifecycleState) -> None:
-    install_tooling(state.target.instance, state.vergil_version)
+    transport = state.target.backend.transport(state.target.instance)
+    install_tooling(transport, state.vergil_version)
 
 
 def _st_copy_config(state: _LifecycleState) -> None:
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(state.target.instance, claude_dir)
-    link_claude_dirs(state.target.instance, claude_dir)
+    transport = state.target.backend.transport(state.target.instance)
+    copy_claude_config(transport, claude_dir)
+    link_claude_dirs(transport, claude_dir)
 
 
 def _st_update_tooling(state: _LifecycleState) -> None:
@@ -464,7 +489,8 @@ def _st_update_tooling(state: _LifecycleState) -> None:
     # and the start continues — the same warn-and-continue contract
     # try_update_tooling provided before the pipeline port.
     fallback = resolve_vergil_version(state.target.config, state.target.identity)
-    update_tooling(state.target.instance, fallback_tag=fallback)
+    transport = state.target.backend.transport(state.target.instance)
+    update_tooling(transport, fallback_tag=fallback)
 
 
 def _st_update_plugins(state: _LifecycleState) -> None:
@@ -572,9 +598,221 @@ def _create_from_target(target: Target, template: Path) -> None:
         )
 
 
+# --- Off-platform (cloud) lifecycle ------------------------------------------
+#
+# The cloud path mirrors the Lima Stage/run_pipeline framework with its own
+# small state object. Where the Lima lifecycle threads a fetched template, the
+# cloud lifecycle threads a fetched OpenTofu modules root (cleaned up in a
+# finally) plus the volume/VM coordinates that flow stage-to-stage: the resolved
+# zone and volume_id from the volume apply, the host from the VM apply, and the
+# IAP transport built once the box exists.
+
+# Known nested-virt instance types → (vcpus, mem_gib), for the under-provision
+# warning. Unknown types are silent (no false warning) — the table is a small,
+# best-effort allowlist, not an exhaustive provider catalogue.
+_CLOUD_INSTANCE_SIZES: dict[str, tuple[int, int]] = {
+    "n2-standard-16": (16, 64),
+    "n2-standard-8": (8, 32),
+    "c3-standard-22": (22, 88),
+}
+
+
+def _warn_cloud_under(target: Target) -> None:
+    """Loudly warn when a known cloud instance type is smaller than the declared spec.
+
+    Mirrors ``_warn_under``: the box will probably not satisfy the repo's footprint.
+    Unknown instance types are silent — we never guess a size we don't know.
+    """
+    size = _CLOUD_INSTANCE_SIZES.get(target.spec.instance)
+    if size is None:
+        return
+    vcpus, mem_gib = size
+    declared_mem = int(str(target.spec.memory).removesuffix("GiB"))
+    if vcpus >= target.spec.cpus and mem_gib >= declared_mem:
+        return
+    print(
+        f"WARNING: cloud instance type '{target.spec.instance}' "
+        f"({vcpus} vCPU, {mem_gib}GiB) is under-provisioned for "
+        f"{target.org}/{target.repo} (declared: {target.spec.cpus} CPU, "
+        f"{target.spec.memory}). This probably will not work — the repo asked "
+        f"for more than this instance type provides.",
+        file=sys.stderr,
+    )
+
+
+@dataclass
+class _CloudState:
+    """Pipeline context for the cloud (off-platform) lifecycle commands.
+
+    ``modules_root`` is populated by the fetch-modules stage and cleaned up by
+    ``_run_cloud_lifecycle`` after the pipeline finishes, success or failure.
+    """
+
+    target: Target
+    backend: OffPlatformBackend
+    state_dir: Path
+    tag: str = ""
+    vergil_version: str = ""
+    modules_root: Path | None = None
+    zone: str = ""
+    volume_id: str = ""
+    host: str = ""
+    transport: Transport | None = None
+
+
+def _require_modules(state: _CloudState) -> Path:
+    """Return the fetched modules root, failing loudly if fetch-modules never ran."""
+    if state.modules_root is None:
+        msg = "modules missing — fetch-modules did not run"
+        raise RuntimeError(msg)
+    return state.modules_root
+
+
+def _require_transport(state: _CloudState) -> Transport:
+    """Return the live transport, failing loudly if tofu-vm never built it."""
+    if state.transport is None:
+        msg = "transport missing — tofu-vm did not run"
+        raise RuntimeError(msg)
+    return state.transport
+
+
+def _cs_fetch_modules(state: _CloudState) -> None:
+    print(f"Fetching OpenTofu modules ({state.tag})...")
+    state.modules_root = vm_cloud.fetch_modules(state.tag)
+
+
+def _cs_tofu_volume(state: _CloudState) -> None:
+    modules_root = _require_modules(state)
+    print("Applying persistent volume...")
+    # The backend returns the var map as dict[str, object]; the engine's apply_*
+    # signatures are precisely typed. The dict is the backend's own contract, so the
+    # spread is the right call shape — cast to Any to bridge the object→typed kwargs gap.
+    volume_vars = cast("dict[str, Any]", state.backend.volume_vars())
+    volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
+    state.volume_id = volume_id
+    state.zone = zone
+
+
+def _cs_tofu_vm(state: _CloudState) -> None:
+    modules_root = _require_modules(state)
+    print("Applying VM...")
+    raw_vm_vars = state.backend.vm_vars(zone=state.zone, volume_id=state.volume_id)
+    vm_vars = cast("dict[str, Any]", raw_vm_vars)
+    out = vm_cloud.apply_vm(modules_root, state.state_dir, **vm_vars)
+    state.host = out["host"]
+    state.transport = state.backend.transport()
+
+
+def _cs_await_readiness(state: _CloudState) -> None:
+    print("Waiting for the cloud box to be ready...")
+    vm_cloud.await_readiness(_require_transport(state), spec_fingerprint(state.target.spec))
+
+
+def _cs_credentials(state: _CloudState) -> None:
+    inject_credentials(_require_transport(state), state.target.identity)
+
+
+def _cs_tooling(state: _CloudState) -> None:
+    install_tooling(_require_transport(state), state.vergil_version)
+
+
+def _cs_bootstrap_volume(state: _CloudState) -> None:
+    transport = _require_transport(state)
+    assert state.target.org is not None  # noqa: S101 — dedicated cloud target always carries org/repo
+    assert state.target.repo is not None  # noqa: S101
+    vm_cloud.bootstrap_volume(transport, state.target.identity, state.target.org, state.target.repo)
+
+
+def _cs_link_claude(state: _CloudState) -> None:
+    vm_cloud.link_cloud_claude_dirs(_require_transport(state))
+
+
+def _cloud_create_stages() -> list[Stage]:
+    return [
+        Stage("fetch-modules", _cs_fetch_modules, mode="fail_fast"),
+        Stage("tofu-volume", _cs_tofu_volume, mode="fail_fast"),
+        Stage("tofu-vm", _cs_tofu_vm, mode="fail_fast"),
+        Stage("await-readiness", _cs_await_readiness, mode="fail_fast"),
+        Stage("credentials", _cs_credentials, mode="fail_fast"),
+        Stage("tooling", _cs_tooling, mode="fail_fast"),
+        Stage("bootstrap-volume", _cs_bootstrap_volume, mode="fail_fast"),
+        Stage("link-claude", _cs_link_claude, mode="fail_fast"),
+    ]
+
+
+def _run_cloud_lifecycle(
+    verb: str, state: _CloudState, stages: list[Stage], args: argparse.Namespace
+) -> int:
+    """Run a cloud lifecycle pipeline, always cleaning up the fetched modules dir."""
+    try:
+        return progress.run_pipeline(
+            state,
+            stages,
+            command="vrg-vm",
+            label=f"vrg-vm {verb} '{state.backend.name}'",
+            args=args,
+            repo_root=_log_root(),
+        )
+    finally:
+        if state.modules_root is not None:
+            shutil.rmtree(state.modules_root.parent, ignore_errors=True)
+
+
+def _cloud_backend(target: Target) -> OffPlatformBackend:
+    """Narrow ``target.backend`` to the cloud backend for an off-platform target."""
+    return cast("OffPlatformBackend", target.backend)
+
+
+def _cloud_create(
+    verb: str, target: Target, args: argparse.Namespace, *, destroy_first: bool
+) -> int:
+    """Run the cloud build pipeline for create/rebuild.
+
+    With ``destroy_first`` the disposable VM is torn down before the (idempotent)
+    volume + VM apply rebuilds it; the persistent volume is reattached, not recreated.
+    """
+    name, identity, config = target.identity_name, target.identity, target.config
+    backend = _cloud_backend(target)
+    vm_cloud.preflight()
+
+    # Concurrency guard (create only): refuse to clobber a live box. Rebuild
+    # destroys the disposable VM first, so a Running box is expected there.
+    if not destroy_first and backend.status() == "Running":
+        print(
+            f"ERROR: VM '{backend.name}' already exists (status: Running)",
+            file=sys.stderr,
+        )
+        return 1
+
+    vergil_version = resolve_vergil_version(config, identity)
+    tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(config, identity)
+
+    if destroy_first:
+        modules_root = vm_cloud.fetch_modules(tag)
+        try:
+            print(f"Destroying disposable VM '{backend.name}' before rebuild...")
+            vm_cloud.destroy_vm(modules_root, backend.state_dir())
+        finally:
+            shutil.rmtree(modules_root.parent, ignore_errors=True)
+
+    print(f"Building cloud VM '{backend.name}' for identity '{name}'...")
+    state = _CloudState(
+        target=target,
+        backend=backend,
+        state_dir=backend.state_dir(),
+        tag=tag,
+        vergil_version=vergil_version,
+    )
+    return _run_cloud_lifecycle(verb, state, _cloud_create_stages(), args)
+
+
 def _cmd_create(args: argparse.Namespace) -> int:
     target = _resolve_target(args)
     name, identity, config = target.identity_name, target.identity, target.config
+
+    if target.spec.off_platform:
+        return _cloud_create("create", target, args, destroy_first=False)
+
     vergil_version = resolve_vergil_version(config, identity)
     tag = args.tag if args.tag else resolve_vm_tag(config, identity)
 
@@ -604,6 +842,10 @@ def _cmd_create(args: argparse.Namespace) -> int:
 def _cmd_start(args: argparse.Namespace) -> int:
     target = _resolve_target(args, borrow_allowed=True)
     name = target.identity_name
+
+    if target.spec.off_platform:
+        print(_EPHEMERAL_MSG, file=sys.stderr)
+        return 1
 
     if _preflight_target(target) != 0:
         return 1
@@ -635,7 +877,27 @@ def _cmd_start(args: argparse.Namespace) -> int:
     return _run_lifecycle("start", state, _start_stages(), args)
 
 
+_EPHEMERAL_MSG = (
+    "ERROR: off-platform VMs are ephemeral — use 'vrg-vm destroy'/'vrg-vm create' "
+    "(stop/start/restart not supported)"
+)
+
+
+def _reject_if_off_platform(args: argparse.Namespace) -> bool:
+    """Print the ephemeral-VM error and return True when the target is off-platform.
+
+    Resolves the full target (not just the instance name) so the spec's backend is
+    known — ``_resolve_instance`` alone cannot tell Lima from cloud.
+    """
+    if _resolve_target(args).spec.off_platform:
+        print(_EPHEMERAL_MSG, file=sys.stderr)
+        return True
+    return False
+
+
 def _cmd_stop(args: argparse.Namespace) -> int:
+    if _reject_if_off_platform(args):
+        return 1
     name, _identity, _config, instance = _resolve_instance(args)
 
     print(f"Stopping VM '{instance}' (identity: {name})...")
@@ -646,6 +908,8 @@ def _cmd_stop(args: argparse.Namespace) -> int:
 
 
 def _cmd_restart(args: argparse.Namespace) -> int:
+    if _reject_if_off_platform(args):
+        return 1
     name, identity, _config, instance = _resolve_instance(args)
 
     print(f"Restarting VM '{instance}' (identity: {name})...")
@@ -653,7 +917,7 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     start_vm(instance)
 
     print("Injecting credentials...")
-    inject_credentials(instance, identity)
+    inject_credentials(LimaTransport(instance), identity)
 
     print(f"VM '{instance}' is running.")
     return 0
@@ -663,9 +927,10 @@ def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -
     """Update tooling and plugins in one running VM, printing the version transition."""
     print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
 
-    before = get_tooling_version(instance)
-    update_tooling(instance, tag, fallback_tag=fallback)
-    after = get_tooling_version(instance)
+    transport = LimaTransport(instance)
+    before = get_tooling_version(transport)
+    update_tooling(transport, tag, fallback_tag=fallback)
+    after = get_tooling_version(transport)
 
     if before and after:
         if before == after:
@@ -681,6 +946,12 @@ def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -
 def _cmd_update(args: argparse.Namespace) -> int:
     if args.all:
         return _cmd_update_all(args)
+
+    # Off-platform boxes are stateless: there is no in-place tooling update —
+    # the disposable VM is rebuilt instead. (--all stays Lima-only and skips
+    # off-platform repos; it never resolves a cloud target.)
+    if _resolve_target(args).spec.off_platform:
+        return _cmd_rebuild(args)
 
     name, identity, config, instance = _resolve_instance(args)
 
@@ -785,7 +1056,25 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cloud_destroy(target: Target, args: argparse.Namespace) -> int:
+    """Destroy the disposable cloud VM, leaving the persistent volume intact."""
+    backend = _cloud_backend(target)
+    tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(target.config, target.identity)
+    modules_root = vm_cloud.fetch_modules(tag)
+    try:
+        print(f"Destroying cloud VM '{backend.name}' (volume preserved)...")
+        vm_cloud.destroy_vm(modules_root, backend.state_dir())
+    finally:
+        shutil.rmtree(modules_root.parent, ignore_errors=True)
+    print(f"Cloud VM '{backend.name}' destroyed (persistent volume preserved).")
+    return 0
+
+
 def _cmd_destroy(args: argparse.Namespace) -> int:
+    target = _resolve_target(args)
+    if target.spec.off_platform:
+        return _cloud_destroy(target, args)
+
     name, _identity, _config, instance = _resolve_instance(args)
 
     status = vm_status(instance)
@@ -803,9 +1092,47 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_destroy_volume(args: argparse.Namespace) -> int:
+    """Destroy an off-platform VM's PERSISTENT volume (irreversible).
+
+    Requires an off-platform target and an explicit confirmation: the user must
+    retype ``org/repo`` (or pass ``--yes``) before the volume — and its local tofu
+    state dir — are torn down.
+    """
+    target = _resolve_target(args)
+    if not target.spec.off_platform:
+        print("ERROR: destroy-volume is only for off-platform VMs", file=sys.stderr)
+        return 1
+
+    backend = _cloud_backend(target)
+    ref = f"{target.org}/{target.repo}"
+    if not args.yes:
+        answer = input(
+            f"Type the repo '{ref}' to confirm destroying the PERSISTENT volume: "
+        ).strip()
+        if answer != ref:
+            print("Aborted — confirmation did not match.", file=sys.stderr)
+            return 1
+
+    tag = args.tag if args.tag else resolve_vm_tag(target.config, target.identity)
+    modules_root = vm_cloud.fetch_modules(tag)
+    try:
+        print(f"Destroying the persistent volume for {ref} (state: {backend.state_dir()})...")
+        vm_cloud.destroy_volume(modules_root, backend.state_dir())
+    finally:
+        shutil.rmtree(modules_root.parent, ignore_errors=True)
+    print(f"Persistent volume for {ref} destroyed (local tofu state removed).")
+    return 0
+
+
 def _cmd_rebuild(args: argparse.Namespace) -> int:
     target = _resolve_target(args)
     name, identity, config = target.identity_name, target.identity, target.config
+
+    if target.spec.off_platform:
+        # The volume apply is idempotent, so the rebuild destroys only the
+        # disposable VM and re-applies; the persistent volume is reattached.
+        return _cloud_create("rebuild", target, args, destroy_first=True)
 
     status = vm_status(target.instance)
     if not status:
@@ -931,7 +1258,7 @@ def _probe_running(
         return {}
     with ThreadPoolExecutor(max_workers=len(wants)) as pool:
         futures = {
-            instance: pool.submit(vm_probe, instance, fingerprint=want_fp)
+            instance: pool.submit(vm_probe, LimaTransport(instance), fingerprint=want_fp)
             for instance, want_fp in wants.items()
         }
         return {instance: future.result() for instance, future in futures.items()}
@@ -972,6 +1299,7 @@ def _list_rows(
     rows.append(
         {
             "scope": "base",
+            "backend": "local",
             "status": status.get(identity.vm_instance, "Not Created"),
             "cpus": cast("int", base["cpus"]),
             "memory": str(base["memory"]),
@@ -990,6 +1318,7 @@ def _list_rows(
             rows.append(
                 {
                     "scope": scope,
+                    "backend": "local",
                     "status": st,
                     "cpus": "—",
                     "memory": "—",
@@ -1007,6 +1336,7 @@ def _list_rows(
         rows.append(
             {
                 "scope": scope,
+                "backend": "local",
                 "status": st,
                 "cpus": spec.cpus,
                 "memory": spec.memory,
@@ -1014,6 +1344,67 @@ def _list_rows(
                 "agents": agents,
                 "humans": humans,
                 "spec": _present_spec_state(d.instance, spec, probes),
+            }
+        )
+    return rows
+
+
+def _cloud_status(state_dir: Path, state_key: str) -> str:
+    """Best-effort cloud status for one tofu state dir, never raising.
+
+    The state_key (the state dir name) cannot be reversed to a spec, so this
+    queries gcloud directly with the persisted zone rather than going through
+    ``OffPlatformBackend.status``. Any failure — no zone, no creds, no instance —
+    yields the empty string so the caller can show a degraded placeholder; it
+    never errors the whole ``list``.
+    """
+    try:
+        zone = vm_cloud.read_zone(state_dir)
+    except RuntimeError:
+        return ""
+    try:
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "gcloud",
+                "compute",
+                "instances",
+                "describe",
+                state_key,
+                f"--zone={zone}",
+                "--format=value(status)",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return ""
+    return result.stdout.strip()
+
+
+def _cloud_list_rows() -> list[dict[str, object]]:
+    """Enumerate off-platform VMs from local tofu state under ~/.config/vergil/tofu.
+
+    Each ``<state_key>/<provider>/volume.tfstate`` is one off-platform VM. STATUS
+    comes from a best-effort cloud query; an unauthed/unreachable provider yields a
+    degraded ``unknown (no <provider> creds)`` placeholder rather than dropping the
+    row or erroring the list.
+    """
+    rows: list[dict[str, object]] = []
+    tofu_root = Path.home() / ".config" / "vergil" / "tofu"
+    if not tofu_root.is_dir():
+        return rows
+    for volume_state in sorted(tofu_root.glob("*/*/volume.tfstate")):
+        provider_dir = volume_state.parent
+        provider = provider_dir.name
+        state_key = provider_dir.parent.name
+        raw = _cloud_status(provider_dir, state_key)
+        status = raw or f"unknown (no {provider} creds)"
+        rows.append(
+            {
+                "scope": state_key,
+                "backend": provider,
+                "status": status,
             }
         )
     return rows
@@ -1036,8 +1427,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
     probes = _probe_running(config.identities, discovered, status)
 
     header = (
-        f"{'IDENTITY':<14} {'SCOPE':<40} {'STATUS':<11} {'CPUS':<5} {'MEM':<7} "
-        f"{'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'IDENTITY':<14} {'SCOPE':<40} {'BACKEND':<13} {'STATUS':<11} {'CPUS':<5} "
+        f"{'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -1045,10 +1436,16 @@ def _cmd_list(args: argparse.Namespace) -> int:
     for id_name, identity in config.identities.items():
         for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
-                f"{id_name:<14} {r['scope']!s:<40} {r['status']!s:<11} "
+                f"{id_name:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
                 f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
             )
+
+    for r in _cloud_list_rows():
+        print(
+            f"{'—':<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
+            f"{'—':<5} {'—':<7} {'—':<7} {'—':<7} {'—':<7} {'—':<22}"
+        )
 
     return 0
 
@@ -1191,9 +1588,40 @@ def _session_inner(
     return f"{source} exec {shlex.join(resolve_cmd)}"
 
 
+def _cloud_session(target: Target, args: argparse.Namespace) -> int:
+    """Launch a Claude session on the off-platform (cloud) box over the IAP transport.
+
+    Reuses the exact inner resolver/override command the Lima path builds; only the
+    transport differs. Cloud boxes are ephemeral, so the Lima preflight and the
+    staleness gate (both Lima-specific) do not apply here.
+    """
+    name, identity, config = target.identity_name, target.identity, target.config
+    backend = _cloud_backend(target)
+    vm_cloud.preflight()
+    _warn_cloud_under(target)
+
+    transport = backend.transport()
+    workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
+    rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
+    inner = _session_inner(
+        args,
+        name,
+        rel_path,
+        resolve_model(config, identity, args.model),
+        resolve_session_stale_days(config, identity),
+        resolve_session_archive_days(config, identity),
+    )
+    workdir = f"/vergil/projects/{target.org}/{target.repo}"
+    transport.exec_session(workdir=workdir, inner=inner)
+    return 0  # unreachable, keeps the type checker happy
+
+
 def _cmd_session(args: argparse.Namespace) -> int:
     target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
+
+    if target.spec.off_platform:
+        return _cloud_session(target, args)
 
     if _preflight_target(target) != 0:
         return 1
@@ -1212,11 +1640,12 @@ def _cmd_session(args: argparse.Namespace) -> int:
             return 1
 
     fallback = resolve_vergil_version(config, identity)
-    try_update_tooling(target.instance, fallback_tag=fallback)
+    transport = target.backend.transport(target.instance)
+    try_update_tooling(transport, fallback_tag=fallback)
 
     claude_dir = Path.home() / ".claude"
-    copy_claude_config(target.instance, claude_dir)
-    link_claude_dirs(target.instance, claude_dir)
+    copy_claude_config(transport, claude_dir)
+    link_claude_dirs(transport, claude_dir)
 
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -1342,10 +1771,35 @@ def main(argv: list[str] | None = None) -> int:
             "are attempted even if one fails; non-running VMs are skipped and reported)"
         ),
     )
+    # Off-platform update delegates to rebuild, which drives the progress pipeline;
+    # these flags must exist on the update parser so that delegation has them.
+    progress.add_progress_args(p_update, ())
 
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
     _add_workspace_arg(p_destroy)
+    p_destroy.add_argument(
+        "--tag",
+        default="",
+        help="OpenTofu module version tag for off-platform destroy (default: from config)",
+    )
+
+    p_destroy_volume = sub.add_parser(
+        "destroy-volume",
+        help="Destroy an off-platform VM's PERSISTENT volume (irreversible)",
+    )
+    _add_identity_args(p_destroy_volume)
+    _add_workspace_arg(p_destroy_volume)
+    p_destroy_volume.add_argument(
+        "--tag",
+        default="",
+        help="OpenTofu module version tag (default: from config)",
+    )
+    p_destroy_volume.add_argument(
+        "--yes",
+        action="store_true",
+        help="Skip the org/repo confirmation prompt",
+    )
 
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
@@ -1442,13 +1896,14 @@ def main(argv: list[str] | None = None) -> int:
         "restart": _cmd_restart,
         "update": _cmd_update,
         "destroy": _cmd_destroy,
+        "destroy-volume": _cmd_destroy_volume,
         "rebuild": _cmd_rebuild,
         "list": _cmd_list,
         "session": _cmd_session,
     }
     try:
         return dispatch[args.command](args)
-    except (BorrowError, SpecError) as exc:
+    except (BorrowError, SpecError, NotImplementedError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
