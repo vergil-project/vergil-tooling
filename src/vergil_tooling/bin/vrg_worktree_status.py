@@ -28,7 +28,7 @@ _SORT_RANK = {
     WorktreeState.CLOSED: 5,
 }
 
-_COLUMNS = ("WORKTREE", "BRANCH", "PR", "STATE", "AHEAD", "DIRTY")
+_COLUMNS = ("WORKTREE", "BRANCH", "PR", "STATE", "WORKFLOW", "AHEAD", "DIRTY")
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -43,6 +43,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _workflow_cell(status: WorktreeStatus) -> str:
+    """Render the pr-workflow prep signal: 'unknown' on a read error, the raw
+    status verbatim when the file loaded, '-' when there is no file yet."""
+    if status.workflow_error is not None:
+        return "unknown"
+    return status.workflow_status if status.workflow_status is not None else "-"
+
+
 def _row(status: WorktreeStatus) -> tuple[str, ...]:
     pr = f"#{status.pr_number}" if status.pr_number is not None else "-"
     return (
@@ -50,6 +58,7 @@ def _row(status: WorktreeStatus) -> tuple[str, ...]:
         status.worktree.branch,
         pr,
         status.state.value,
+        _workflow_cell(status),
         str(status.ahead),
         "yes" if status.dirty else "-",
     )
@@ -67,10 +76,12 @@ def _summary(statuses: list[WorktreeStatus]) -> str:
     total = len(statuses)
     cruft = sum(1 for s in statuses if s.removable)
     stalled = sum(1 for s in statuses if s.state is WorktreeState.NO_PR)
+    prepared = sum(1 for s in statuses if s.pr_prepared)
     active = total - cruft - stalled
     line = (
         f"{total} worktrees — {active} active, "
-        f"{stalled} stalled (no-pr), {cruft} cruft (removable)."
+        f"{stalled} stalled (no-pr), {cruft} cruft (removable). "
+        f"{prepared} PR prepared."
     )
     if cruft:
         line += " Run vrg-finalize-pr to clean cruft."
@@ -92,10 +103,16 @@ def main(argv: list[str] | None = None) -> int:
     print()
     print(_summary(statuses))
     # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a
-    # reused-branch-name mismatch (issue #1719) is silently hidden.
+    # reused-branch-name mismatch (issue #1719) is silently hidden. An
+    # unreadable pr-workflow file (the WORKFLOW 'unknown' cell) gets its reason
+    # surfaced too, never a silent failure.
     for status in statuses:
         if status.detail:
             print(f"  note: {status.worktree.branch}: {status.detail}")
+        if status.workflow_error:
+            print(
+                f"  note: {status.worktree.branch}: pr-workflow unreadable: {status.workflow_error}"
+            )
     return 0
 
 
