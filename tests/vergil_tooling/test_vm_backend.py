@@ -3,6 +3,7 @@ import dataclasses
 import pytest
 
 from vergil_tooling.lib.vm_backend import LimaBackend, select_backend
+from vergil_tooling.lib.vm_cloud import OffPlatformBackend
 from vergil_tooling.lib.vm_spec import ComposedSpec
 from vergil_tooling.lib.vm_transport import LimaTransport
 
@@ -32,17 +33,28 @@ class TestSelectBackend:
         assert backend.provider_label == "local"
         assert isinstance(backend.transport("vm-x"), LimaTransport)
 
-    def test_off_platform_not_yet_available(self) -> None:
-        with pytest.raises(NotImplementedError):
-            select_backend(
-                _spec(
-                    "off-platform",
-                    provider="gcp",
-                    region="us-central1",
-                    instance="n2-standard-16",
-                    volume="300GiB",
-                )
-            )
+    def test_off_platform_returns_off_platform_backend(self) -> None:
+        spec = _spec(
+            "off-platform",
+            provider="gcp",
+            region="us-central1",
+            instance="n2-standard-16",
+            volume="300GiB",
+        )
+        backend = select_backend(spec, identity="vergil-user", org="o", repo="r")
+        assert isinstance(backend, OffPlatformBackend)
+        assert backend.provider_label == "gcp"
+
+    def test_off_platform_requires_identity_org_repo(self) -> None:
+        spec = _spec(
+            "off-platform",
+            provider="gcp",
+            region="us-central1",
+            instance="n2-standard-16",
+            volume="300GiB",
+        )
+        with pytest.raises(ValueError, match="identity, org, and repo"):
+            select_backend(spec)
 
 
 class TestLimaBackendStatus:

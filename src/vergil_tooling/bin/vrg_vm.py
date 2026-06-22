@@ -219,7 +219,7 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     if org is None or repo is None:
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
-        backend = select_backend(spec)
+        backend = select_backend(spec, identity=name, org=None, repo=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "", backend)
 
     requested_vm = _read_repo_vm(identity, org, repo)
@@ -234,7 +234,7 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
 
     override = identity.overrides.get((eff_org, eff_repo))
     spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
-    backend = select_backend(spec)
+    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo)
 
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "", backend)

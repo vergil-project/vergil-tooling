@@ -17,9 +17,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import progress
+from vergil_tooling.lib.vm_spec import spec_fingerprint
+from vergil_tooling.lib.vm_transport import IapTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
+    from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
 _MAX_NAME = 59  # GCP instance name <=63; the module appends "-ssh" to the firewall name.
@@ -417,3 +420,124 @@ def read_zone(state_dir: Path) -> str:
         raise RuntimeError(msg)
     return zone_file.read_text(encoding="utf-8").strip()
 
+
+# --- Off-platform backend ----------------------------------------------------
+
+# ASSUMPTION pending real-cloud e2e (vergil-vm gated test): the GCE image's
+# default user that cloud-init's VERGIL_USER provisioning runs as. Overridable
+# via VRG_OFF_PLATFORM_SSH_USER.
+_DEFAULT_SSH_USER = "ubuntu"
+
+
+def _effective_ssh_user() -> str:
+    return os.environ.get("VRG_OFF_PLATFORM_SSH_USER", _DEFAULT_SSH_USER)
+
+
+class OffPlatformBackend:
+    """Cloud (OpenTofu + GCP) backend behind the ``Backend`` protocol.
+
+    The cloud host is always addressed by its deterministic resource name, so the
+    ``instance`` arg on ``transport``/``status`` exists only for protocol parity
+    with ``LimaBackend`` and is ignored.
+    """
+
+    def __init__(self, spec: ComposedSpec, identity: str, org: str, repo: str) -> None:
+        self.spec = spec
+        self.identity = identity
+        self.org = org
+        self.repo = repo
+        self.name = cloud_resource_name(identity, org, repo)
+        self.labels = cloud_labels(identity, org, repo)
+        self.state_key = self.name
+        self.ssh_user = _effective_ssh_user()
+        # Plain attribute (not a property): the Backend protocol declares
+        # provider_label as a settable variable, which a read-only property fails.
+        self.provider_label = spec.provider
+
+    def _project(self) -> str:
+        project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+        if not project:
+            result = subprocess.run(  # noqa: S603
+                ["gcloud", "config", "get-value", "project"],  # noqa: S607
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            project = result.stdout.strip()
+        if not project:
+            print(
+                "ERROR: no GCP project — set GOOGLE_CLOUD_PROJECT or run: "
+                "gcloud config set project <project>",
+                file=sys.stderr,
+            )
+            raise SystemExit(1)
+        return project
+
+    def state_dir(self) -> Path:
+        return tofu_state_dir(self.state_key, self.spec.provider)
+
+    def transport(self, instance: str | None = None) -> IapTransport:  # noqa: ARG002
+        zone = read_zone(self.state_dir())
+        return IapTransport(self.name, zone, self._project(), self.ssh_user)
+
+    def status(self, instance: str | None = None) -> str:  # noqa: ARG002
+        try:
+            zone = read_zone(self.state_dir())
+        except RuntimeError:
+            return ""
+        try:
+            result = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "gcloud",
+                    "compute",
+                    "instances",
+                    "describe",
+                    self.name,
+                    f"--zone={zone}",
+                    f"--project={self._project()}",
+                    "--format=value(status)",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError:
+            return ""
+        raw = result.stdout.strip()
+        if raw == "RUNNING":
+            return "Running"
+        if raw in {"TERMINATED", "STOPPED"}:
+            return "Stopped"
+        return ""
+
+    def volume_vars(self) -> dict[str, object]:
+        return {
+            "name": self.name,
+            "region": self.spec.region,
+            "size_gib": int(self.spec.volume.removesuffix("GiB")),
+            "labels": self.labels,
+        }
+
+    def vm_vars(self, *, zone: str, volume_id: str) -> dict[str, object]:
+        provision_env = render_provision_env(
+            provision_params(
+                packages=list(self.spec.packages),
+                apt_repos=list(self.spec.apt_repos),
+                vagrant_plugins=list(self.spec.vagrant_plugins),
+                port_forwards=list(self.spec.port_forwards),
+                nested=self.spec.nested,
+                fingerprint=spec_fingerprint(self.spec),
+            ),
+            vergil_user=self.ssh_user,
+            home=f"/home/{self.ssh_user}",
+        )
+        return {
+            "name": self.name,
+            "zone": zone,
+            "instance_type": self.spec.instance,
+            "nested": self.spec.nested,
+            "volume_id": volume_id,
+            "ssh_user": self.ssh_user,
+            "provision_env": provision_env,
+            "labels": self.labels,
+        }

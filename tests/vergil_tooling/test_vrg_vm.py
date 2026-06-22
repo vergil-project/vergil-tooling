@@ -2066,29 +2066,18 @@ volume = "300GiB"
 
 
 class TestOffPlatformDispatch:
-    @pytest.mark.parametrize("command", ["create", "session", "start", "rebuild"])
-    def test_off_platform_repo_errors_at_resolve(
-        self, command: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        # select_backend() raises NotImplementedError for an off-platform spec at
-        # resolve time; main() catches it, prints ERROR, and returns 1. No Lima
-        # command is ever attempted.
-        projects = tmp_path / "projects"
-        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
-        cfg = _identities(tmp_path, projects)
-        # --config precedes the workspace so session's REMAINDER `cmd` does not eat it.
-        result = main([command, "--config", str(cfg), "lmf/cloud"])
-        assert result == 1
-        err = capsys.readouterr().err
-        assert err.startswith("ERROR:")
-        assert "off-platform" in err
+    def test_resolve_target_selects_off_platform_backend(self, tmp_path: Path) -> None:
+        # An off-platform repo now resolves to a real OffPlatformBackend carrying the
+        # cloud spec; the cloud lifecycle stages themselves land in a later task.
+        from vergil_tooling.lib.vm_cloud import OffPlatformBackend
 
-    def test_resolve_target_raises_not_implemented(self, tmp_path: Path) -> None:
         projects = tmp_path / "projects"
         _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
         cfg = _identities(tmp_path, projects)
-        with pytest.raises(NotImplementedError, match="off-platform"):
-            _resolve_target(_args(cfg, "lmf/cloud"))
+        target = _resolve_target(_args(cfg, "lmf/cloud"))
+        assert isinstance(target.backend, OffPlatformBackend)
+        assert target.backend.provider_label == "gcp"
+        assert target.spec.off_platform
 
 
 class TestCreateDedicated:

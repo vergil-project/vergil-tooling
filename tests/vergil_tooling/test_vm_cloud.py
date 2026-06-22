@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import subprocess
@@ -9,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.vm_cloud import (
+    OffPlatformBackend,
     apply_vm,
     apply_volume,
     await_readiness,
@@ -25,6 +27,8 @@ from vergil_tooling.lib.vm_cloud import (
     render_provision_env,
     tofu_state_dir,
 )
+from vergil_tooling.lib.vm_spec import ComposedSpec
+from vergil_tooling.lib.vm_transport import IapTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
@@ -555,3 +559,166 @@ class TestReadZone:
         with pytest.raises(RuntimeError, match="no persisted zone"):
             read_zone(tmp_path)
 
+
+def _off_spec(**kw: object) -> ComposedSpec:
+    base = ComposedSpec(
+        cpus=16,
+        memory="64GiB",
+        disk="50GiB",
+        stale_days=3,
+        packages=(),
+        apt_repos=(),
+        vagrant_plugins=(),
+        port_forwards=(),
+        dedicated=True,
+        under=(),
+        nested=False,
+        backend="off-platform",
+        provider="gcp",
+        region="us-central1",
+        instance="n2-standard-16",
+        volume="300GiB",
+    )
+    return dataclasses.replace(base, **kw)
+
+
+class TestOffPlatformBackend:
+    def test_init_computes_name_labels_and_ssh_user(self) -> None:
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        assert b.provider_label == "gcp"
+        assert b.name == cloud_resource_name("vergil-user", "o", "r")
+        assert b.state_key == b.name
+        assert b.labels == cloud_labels("vergil-user", "o", "r")
+        assert b.ssh_user == "ubuntu"
+
+    def test_ssh_user_override_via_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_OFF_PLATFORM_SSH_USER", "deploy")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        assert b.ssh_user == "deploy"
+
+    def test_project_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        assert b._project() == "proj-env"
+
+    def test_project_from_gcloud(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="proj-cli\n", stderr="")
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        assert b._project() == "proj-cli"
+
+    def test_project_empty_aborts(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        sub = MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="\n", stderr=""))
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        with pytest.raises(SystemExit):
+            b._project()
+
+    def test_state_dir_uses_state_key_and_provider(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        assert b.state_dir() == tmp_path / ".config" / "vergil" / "tofu" / b.state_key / "gcp"
+
+    def test_transport_builds_iap_with_read_zone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        (b.state_dir() / "zone").write_text("us-central1-b")
+        transport = b.transport()
+        assert isinstance(transport, IapTransport)
+        assert transport.host == b.name
+        assert transport.zone == "us-central1-b"
+        assert transport.project == "proj-env"
+        assert transport.ssh_user == "ubuntu"
+
+    def test_status_running(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        (b.state_dir() / "zone").write_text("us-central1-b")
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="RUNNING\n", stderr="")
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert b.status() == "Running"
+
+    def test_status_terminated_is_stopped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        (b.state_dir() / "zone").write_text("us-central1-b")
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="TERMINATED\n", stderr="")
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert b.status() == "Stopped"
+
+    def test_status_unknown_state_is_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        (b.state_dir() / "zone").write_text("us-central1-b")
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="PROVISIONING\n", stderr="")
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert b.status() == ""
+
+    def test_status_no_creds_is_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        (b.state_dir() / "zone").write_text("us-central1-b")
+        sub = MagicMock(side_effect=subprocess.CalledProcessError(1, "gcloud"))
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert b.status() == ""
+
+    def test_status_no_state_is_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        # no zone file written -> read_zone raises -> ""
+        assert b.status() == ""
+
+    def test_volume_vars(self) -> None:
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        vars_ = b.volume_vars()
+        assert vars_ == {
+            "name": b.name,
+            "region": "us-central1",
+            "size_gib": 300,
+            "labels": b.labels,
+        }
+
+    def test_vm_vars_composition(self) -> None:
+        b = OffPlatformBackend(_off_spec(nested=True), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert vars_["name"] == b.name
+        assert vars_["zone"] == "us-central1-b"
+        assert vars_["instance_type"] == "n2-standard-16"
+        assert vars_["nested"] is True
+        assert vars_["volume_id"] == "vol-1"
+        assert vars_["ssh_user"] == "ubuntu"
+        assert vars_["labels"] == b.labels
+        env = vars_["provision_env"]
+        assert isinstance(env, str)
+        assert "VERGIL_USER=ubuntu" in env
+        assert "HOME=/home/ubuntu" in env
+        from vergil_tooling.lib.vm_spec import spec_fingerprint
+
+        assert f"SPEC_FINGERPRINT={spec_fingerprint(_off_spec(nested=True))}" in env
