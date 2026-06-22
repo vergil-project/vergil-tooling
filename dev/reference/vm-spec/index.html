@@ -6020,6 +6020,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lifecycle-and-access-off-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle and access (off-platform)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -8852,6 +8869,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#lifecycle-and-access-off-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Lifecycle and access (off-platform)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -9121,6 +9155,39 @@ design spec is
   <code>cpus</code>/<code>memory</code>) is part of the backend dispatcher, not this schema
   layer (it needs the provider's instance specs).</li>
 </ul>
+<h3 id="lifecycle-and-access-off-platform">Lifecycle and access (off-platform)<a class="headerlink" href="#lifecycle-and-access-off-platform" title="Permanent link">&para;</a></h3>
+<p>The same <code>vrg-vm</code> verbs work, dispatched on the resolved <code>backend</code>:</p>
+<ul>
+<li><code>create</code> — <code>tofu apply</code>s the persistent <code>volume</code> (idempotent — a
+  no-op if it already exists), then the ephemeral VM pinned to that
+  volume's zone, blocks until cloud-init provisioning is done, injects
+  GitHub App + Claude credentials over the tunnel, and clones the repo
+  onto the volume (first time) or fetches (reattach). Refuses to stand
+  up a second VM for a repo that already has one running.</li>
+<li><code>session</code> — opens the session over the tunnel into
+  <code>/vergil/projects/&lt;org&gt;/&lt;repo&gt;</code> on the volume.</li>
+<li><code>destroy</code> — tears down the <strong>ephemeral VM only</strong>. The persistent
+  volume (the repo checkout and <code>.claude</code> session history) survives.
+  This is the routine end-of-day teardown.</li>
+<li><code>rebuild</code> — <code>destroy</code> + recreate the VM against the <strong>existing</strong>
+  volume; the data reattaches intact.</li>
+<li><code>destroy-volume</code> — the <strong>only</strong> command that deletes the persistent
+  volume. Guarded: retype <code>org/repo</code> to confirm, or pass <code>--yes</code>.</li>
+<li><code>update</code> — maps to <code>rebuild</code> (off-platform is rebuild-not-update).</li>
+<li><code>stop</code> / <code>start</code> / <code>restart</code> — <strong>not supported</strong>. Off-platform VMs
+  are ephemeral; use <code>destroy</code> / <code>create</code>.</li>
+<li><code>list</code> — gains a <code>BACKEND</code> column (<code>local</code> for Lima rows, the
+  provider for cloud rows). Without cloud credentials a cloud row's
+  status degrades to <code>unknown (no &lt;provider&gt; creds)</code> rather than
+  erroring or hiding the row.</li>
+</ul>
+<p>Access is via the provider's identity-aware tunnel (GCP IAP) — there is
+<strong>no public IP</strong> and no operator-IP allow-list; authentication is the
+operator's existing cloud IAM/ADC. Host prerequisites are therefore
+OpenTofu (≥ 1.8.0) and the provider CLI (<code>gcloud</code>, with ADC); cloud
+verbs preflight both and fail with a clear remediation. The in-guest
+login user defaults to the cloud image's default user and can be
+overridden with <code>VRG_OFF_PLATFORM_SSH_USER</code>.</p>
 <h2 id="port-forwards-port_forwards">Port forwards (<code>port_forwards</code>)<a class="headerlink" href="#port-forwards-port_forwards" title="Permanent link">&para;</a></h2>
 <p>Each record is <code>"&lt;port&gt;|&lt;host:port&gt;"</code>. The vergil-vm template
 (vergil-project/vergil-vm#170) provisions a <code>systemd-socket-proxyd</code>
