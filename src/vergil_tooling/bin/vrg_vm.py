@@ -293,7 +293,9 @@ def recover_triple(instance: str) -> tuple[str, str | None, str | None]:
     """
     meta = read_instance_meta(instance)
     if meta is not None:
-        return meta["identity"], meta["org"], meta["repo"]
+        # Sidecar fields are always strings on disk; the mapping is typed
+        # ``dict[str, object]`` only because it also carries an int schema.
+        return str(meta["identity"]), str(meta["org"]), str(meta["repo"])
     return parse_instance_name(instance)
 
 
@@ -604,7 +606,8 @@ def _create_from_target(target: Target, template: Path) -> None:
         )
         # Persist (identity, org, repo) so recover_triple can reverse the name
         # even after it has been truncated+hashed to fit UNIX_PATH_MAX.
-        assert target.org is not None and target.repo is not None  # dedicated invariant  # noqa: S101
+        # org/repo are guaranteed non-None for dedicated targets.
+        assert target.org is not None and target.repo is not None  # noqa: S101
         write_instance_meta(target.instance, target.identity_name, target.org, target.repo)
     else:
         create_vm(

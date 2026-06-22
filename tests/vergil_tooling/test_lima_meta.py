@@ -29,9 +29,7 @@ def test_read_returns_none_when_absent(tmp_path: Path, monkeypatch: pytest.Monke
     assert lima.read_instance_meta("missing") is None
 
 
-def test_read_raises_on_corrupt_sidecar(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_read_raises_on_corrupt_sidecar(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lima.Path, "home", classmethod(lambda cls: tmp_path))
     meta_dir = tmp_path / ".lima" / "u.org.repo"
     meta_dir.mkdir(parents=True)

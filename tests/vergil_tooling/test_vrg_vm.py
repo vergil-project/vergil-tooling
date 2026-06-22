@@ -7,7 +7,7 @@ import subprocess
 import textwrap
 import types
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from unittest.mock import ANY, MagicMock, call, patch
 
 import pytest
@@ -167,7 +167,7 @@ def test_recover_triple_falls_back_to_parse_for_base_box(
 
 def _stub_target(
     *, dedicated: bool, identity_name: str, org: str | None, repo: str | None, instance: str
-) -> types.SimpleNamespace:
+) -> Target:
     spec = types.SimpleNamespace(
         dedicated=dedicated,
         cpus=4,
@@ -182,25 +182,26 @@ def _stub_target(
     identity = types.SimpleNamespace(
         projects_dir="/home/user/projects", cpus=4, memory="8GiB", disk="100GiB"
     )
-    return types.SimpleNamespace(
-        spec=spec,
-        identity=identity,
-        identity_name=identity_name,
-        org=org,
-        repo=repo,
-        instance=instance,
-        fingerprint="fp",
+    return cast(
+        "Target",
+        types.SimpleNamespace(
+            spec=spec,
+            identity=identity,
+            identity_name=identity_name,
+            org=org,
+            repo=repo,
+            instance=instance,
+            fingerprint="fp",
+        ),
     )
 
 
 def test_create_from_target_writes_sidecar_for_dedicated(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.create_vm", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a)
-    )
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a))
     target = _stub_target(
         dedicated=True,
         identity_name="vergil-user",
@@ -208,16 +209,16 @@ def test_create_from_target_writes_sidecar_for_dedicated(
         repo="widgets",
         instance="vergil-user.acme.widgets",
     )
-    _create_from_target(target, Path("/tmp/t.yaml"))
+    _create_from_target(target, tmp_path / "t.yaml")
     assert calls == [("vergil-user.acme.widgets", "vergil-user", "acme", "widgets")]
 
 
-def test_create_from_target_skips_sidecar_for_base(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_create_from_target_skips_sidecar_for_base(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     calls: list[tuple[str, ...]] = []
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.create_vm", lambda *a, **k: None)
-    monkeypatch.setattr(
-        "vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a)
-    )
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a))
     target = _stub_target(
         dedicated=False,
         identity_name="vergil-user",
@@ -225,7 +226,7 @@ def test_create_from_target_skips_sidecar_for_base(monkeypatch: pytest.MonkeyPat
         repo=None,
         instance="vergil-agent",
     )
-    _create_from_target(target, Path("/tmp/t.yaml"))
+    _create_from_target(target, tmp_path / "t.yaml")
     assert calls == []
 
 

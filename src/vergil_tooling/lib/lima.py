@@ -294,16 +294,17 @@ def write_instance_meta(instance: str, identity: str, org: str, repo: str) -> No
     (meta_dir / _META_FILE).write_text(json.dumps(payload))
 
 
-def read_instance_meta(instance: str) -> dict[str, str] | None:
-    """Return the instance's recorded triple, or None if no sidecar exists.
+def read_instance_meta(instance: str) -> dict[str, object] | None:
+    """Return the instance's recorded metadata, or None if no sidecar exists.
 
-    Raises on a malformed sidecar rather than silently falling back — a corrupt
-    file is a real fault, not a missing one.
+    The mapping carries an int ``schema`` plus string ``identity``/``org``/``repo``,
+    hence the ``object`` value type. Raises on a malformed sidecar rather than
+    silently falling back — a corrupt file is a real fault, not a missing one.
     """
     path = _serial_dir(instance) / _META_FILE
     if not path.exists():
         return None
-    data = json.loads(path.read_text())
+    data: dict[str, object] = json.loads(path.read_text())
     # Touch the required keys so a truncated/garbled file fails loudly here.
     _ = (data["identity"], data["org"], data["repo"])
     return data
