@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.54] - 2026-06-22
+
+### Bug fixes
+
+- clarify linkage error and strip stray issue numbers (#1769)
+- always define all provision.env keys so set -u scripts don't abort (#1771)
+
+### Features
+
+- surface cloud-init progress during await-readiness (#1770)
+
 ## [2.1.53] - 2026-06-22
 
 ### Bug fixes
