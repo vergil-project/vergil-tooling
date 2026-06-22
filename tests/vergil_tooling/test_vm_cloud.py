@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.vm_cloud import (
     OffPlatformBackend,
     apply_vm,
@@ -33,6 +34,32 @@ from vergil_tooling.lib.vm_transport import IapTransport
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
 
+@pytest.fixture(autouse=True)
+def _default_gcp_project(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The off-platform tofu env resolves the GCP project; default it so tests that
+    exercise tofu don't shell out to ``gcloud``. The _resolve_project tests clear it."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+
+
+class TestResolveProject:
+    def test_uses_env_when_set(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "from-env")
+        assert vm_cloud._resolve_project() == "from-env"
+
+    def test_falls_back_to_gcloud_config(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        sub = MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="from-gcloud\n"))
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert vm_cloud._resolve_project() == "from-gcloud"
+
+    def test_aborts_when_no_project(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+        sub = MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="\n"))
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        with pytest.raises(SystemExit):
+            vm_cloud._resolve_project()
+
+
 class TestCloudName:
     def test_lowercases_and_replaces_dots(self) -> None:
         name = cloud_resource_name("vergil-user", "Logical-Minds", "MQ.Cluster")
@@ -44,9 +71,10 @@ class TestCloudName:
         b = cloud_resource_name("vergil-user", "o", "r")
         assert a == b
 
-    def test_truncates_long_names_to_59_with_hash(self) -> None:
+    def test_truncates_long_names_to_58_with_hash(self) -> None:
         name = cloud_resource_name("vergil-user", "a" * 40, "b" * 40)
-        assert len(name) <= 59
+        # 58 leaves room for the volume module's "-data" suffix within GCP's 63-char cap.
+        assert len(name) <= 58
         assert _RFC1035.fullmatch(name)
 
     def test_distinct_inputs_distinct_names_even_when_truncated(self) -> None:
