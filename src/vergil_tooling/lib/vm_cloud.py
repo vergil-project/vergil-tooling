@@ -209,3 +209,30 @@ def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: s
     else:
         print(f"  Reattaching existing checkout for {org}/{repo}...")
         transport.run("git", "-C", path, "fetch", "--all")
+
+
+_FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
+
+
+def await_readiness(transport: Transport, fingerprint: str) -> None:
+    """Synthesize a hard-fail readiness gate for a cloud box.
+
+    Waits for cloud-init to finish, then confirms the stamped spec fingerprint
+    matches the freshly composed one. Either failure raises ``RuntimeError`` so
+    the create pipeline aborts loudly (no half-ready box).
+    """
+    try:
+        transport.run("cloud-init", "status", "--wait")
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "cloud-init did not complete on the cloud box — rebuild the VM"
+        ) from exc
+    try:
+        result = transport.run("cat", _FINGERPRINT_PATH)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"could not read the spec fingerprint marker ({_FINGERPRINT_PATH}) "
+            "on the cloud box — rebuild the VM"
+        ) from exc
+    if result.stdout.strip() != fingerprint:
+        raise RuntimeError("spec fingerprint mismatch on the cloud box — rebuild the VM")

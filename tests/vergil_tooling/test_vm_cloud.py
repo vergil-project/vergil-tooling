@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.vm_cloud import (
+    await_readiness,
     bootstrap_volume,
     cloud_labels,
     cloud_resource_name,
@@ -321,3 +322,37 @@ class TestBootstrap:
         bootstrap_volume(transport, identity, "org", "repo")
         cmds = [list(call.args) for call in transport.run.call_args_list]
         assert ["git", "-C", "/vergil/projects/org/repo", "fetch", "--all"] in cmds
+
+
+class TestAwaitReadiness:
+    def test_passes_when_cloud_init_done_and_marker_matches(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="fp123\n", stderr=""),
+        ]
+        await_readiness(transport, "fp123")  # no raise
+
+    def test_raises_when_cloud_init_fails(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(1, "cloud-init")
+        with pytest.raises(RuntimeError):
+            await_readiness(transport, "fp123")
+
+    def test_raises_when_marker_mismatched(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            subprocess.CompletedProcess([], 0, stdout="different\n", stderr=""),
+        ]
+        with pytest.raises(RuntimeError):
+            await_readiness(transport, "fp123")
+
+    def test_raises_when_marker_read_fails(self) -> None:
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CompletedProcess([], 0, stdout="status: done\n", stderr=""),
+            subprocess.CalledProcessError(1, "cat"),
+        ]
+        with pytest.raises(RuntimeError):
+            await_readiness(transport, "fp123")
