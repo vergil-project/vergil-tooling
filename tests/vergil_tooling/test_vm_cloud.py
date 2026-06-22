@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
@@ -8,15 +9,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.vm_cloud import (
+    apply_vm,
+    apply_volume,
     await_readiness,
     bootstrap_volume,
     cloud_labels,
     cloud_resource_name,
+    destroy_vm,
+    destroy_volume,
     fetch_modules,
     link_cloud_claude_dirs,
     preflight,
     provision_params,
+    read_zone,
     render_provision_env,
+    tofu_state_dir,
 )
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
@@ -369,3 +376,182 @@ class TestCloudClaudeLayout:
         assert "/vergil/claude/todos" in joined
         assert "/vergil/claude/.credentials.json" not in joined
         assert ".credentials.json" not in joined
+
+
+def _tofu_output_json(values: dict[str, str]) -> str:
+    return json.dumps({k: {"value": v} for k, v in values.items()})
+
+
+class TestTofuStateDirs:
+    def test_state_dir_under_config_home(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        path = tofu_state_dir("vergil-user-o-r", "gcp")
+        assert path == tmp_path / ".config" / "vergil" / "tofu" / "vergil-user-o-r" / "gcp"
+        assert path.is_dir()
+
+
+class TestRunTofu:
+    def _setup_volume(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[MagicMock, MagicMock, Path, Path]:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "vol-1", "zone": "us-central1-a"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        return run, sub, state_dir, modules
+
+    def test_apply_volume_flags_and_persists_zone(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run, sub, state_dir, modules = self._setup_volume(tmp_path, monkeypatch)
+        volume_id, zone = apply_volume(
+            modules,
+            state_dir,
+            name="vm-x",
+            region="us-central1",
+            size_gib=300,
+            labels={"vergil-org": "o"},
+        )
+        assert (volume_id, zone) == ("vol-1", "us-central1-a")
+        # zone persisted for the transport
+        assert (state_dir / "zone").read_text() == "us-central1-a"
+        # tfvars written next to state, with the map kept nested
+        var_file = state_dir / "volume.tfstate.tfvars.json"
+        data = json.loads(var_file.read_text())
+        assert data == {
+            "name": "vm-x",
+            "region": "us-central1",
+            "size_gib": 300,
+            "labels": {"vergil-org": "o"},
+        }
+        # init then apply, both non-interactive, apply auto-approved + state/var-file
+        init_args = run.call_args_list[0].args[0]
+        apply_args = run.call_args_list[1].args[0]
+        assert init_args == ["tofu", f"-chdir={modules / 'gcp' / 'volume'}", "init", "-input=false"]
+        assert "-input=false" in apply_args
+        assert "-auto-approve" in apply_args
+        assert f"-state={state_dir / 'volume.tfstate'}" in apply_args
+        assert f"-var-file={state_dir / 'volume.tfstate.tfvars.json'}" in apply_args
+        # env carries the automation + plugin-cache knobs
+        env = run.call_args_list[0].kwargs["env"]
+        assert env["TF_IN_AUTOMATION"] == "1"
+        assert "plugin-cache" in env["TF_PLUGIN_CACHE_DIR"]
+        # output captured via subprocess.run, not progress.run
+        out_args = sub.call_args.args[0]
+        assert out_args == [
+            "tofu",
+            f"-chdir={modules / 'gcp' / 'volume'}",
+            "output",
+            "-json",
+            f"-state={state_dir / 'volume.tfstate'}",
+        ]
+
+    def test_apply_vm_passes_all_vars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"host": "vm-x", "ssh_user": "ubuntu"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        out = apply_vm(
+            modules,
+            state_dir,
+            name="vm-x",
+            zone="us-central1-a",
+            instance_type="n2-standard-16",
+            nested=True,
+            volume_id="vol-1",
+            ssh_user="ubuntu",
+            provision_env="VERGIL_USER=ubuntu",
+            labels={"vergil-org": "o"},
+        )
+        assert out == {"host": "vm-x", "ssh_user": "ubuntu"}
+        data = json.loads((state_dir / "vm.tfstate.tfvars.json").read_text())
+        assert data["nested"] is True
+        assert data["volume_id"] == "vol-1"
+        assert data["provision_env"] == "VERGIL_USER=ubuntu"
+
+    def test_destroy_vm_reuses_stored_tfvars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        (state_dir / "vm.tfstate.tfvars.json").write_text('{"name": "vm-x"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_vm(modules, state_dir)
+        # tfvars untouched (reused, not rewritten)
+        assert (state_dir / "vm.tfstate.tfvars.json").read_text() == '{"name": "vm-x"}'
+        destroy_args = run.call_args_list[1].args[0]
+        assert "destroy" in destroy_args
+        assert "-auto-approve" in destroy_args
+        assert f"-var-file={state_dir / 'vm.tfstate.tfvars.json'}" in destroy_args
+
+    def test_non_mutating_action_omits_auto_approve(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A read-only action (e.g. "plan") must not carry -auto-approve.
+        from vergil_tooling.lib.vm_cloud import _run_tofu
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        state = state_dir / "vm.tfstate"
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        _run_tofu(modules / "gcp" / "vm", state, "plan", {"name": "vm-x"})
+        plan_args = run.call_args_list[1].args[0]
+        assert "plan" in plan_args
+        assert "-auto-approve" not in plan_args
+
+    def test_destroy_without_vars_or_file_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        with pytest.raises(RuntimeError, match="no tofu vars supplied"):
+            destroy_vm(modules, state_dir)
+
+    def test_destroy_volume_cleans_state_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "vm-x"}')
+        (state_dir / "zone").write_text("us-central1-a")
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_volume(modules, state_dir)
+        assert not state_dir.exists()
+
+
+class TestReadZone:
+    def test_reads_persisted_zone(self, tmp_path: Path) -> None:
+        (tmp_path / "zone").write_text("us-central1-a\n")
+        assert read_zone(tmp_path) == "us-central1-a"
+
+    def test_missing_zone_raises(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="no persisted zone"):
+            read_zone(tmp_path)
+

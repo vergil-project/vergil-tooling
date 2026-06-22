@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -14,6 +15,8 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from vergil_tooling.lib import progress
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -256,3 +259,161 @@ def link_cloud_claude_dirs(transport: Transport) -> None:
             "-c",
             f"ln -sfn {_CLOUD_CLAUDE_VOLUME}/{sub} ~/.claude/{sub}",
         )
+
+
+# --- OpenTofu two-state runner -----------------------------------------------
+#
+# The cloud backend keeps the volume and the VM in *separate* tofu states under
+# one per-identity state dir, so the disposable VM can be destroyed and rebuilt
+# without ever touching the persistent volume. State, plugin cache, and the
+# rendered tfvars all live under ~/.config/vergil/tofu so nothing is left in the
+# (read-only, fetched-and-discarded) module tree.
+
+
+def tofu_state_dir(state_key: str, provider: str) -> Path:
+    """Per-(identity, provider) tofu state directory, created on demand."""
+    path = Path.home() / ".config" / "vergil" / "tofu" / state_key / provider
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _plugin_cache_dir() -> Path:
+    """Shared OpenTofu provider plugin cache, created on demand."""
+    path = Path.home() / ".config" / "vergil" / "tofu" / "plugin-cache"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _tofu_env() -> dict[str, str]:
+    """Environment for every tofu invocation: non-interactive + shared plugin cache."""
+    return {
+        **os.environ,
+        "TF_IN_AUTOMATION": "1",
+        "TF_PLUGIN_CACHE_DIR": str(_plugin_cache_dir()),
+    }
+
+
+def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, object]) -> None:
+    """Run ``tofu init`` then ``tofu <action>`` against a single state file.
+
+    The var values are written next to the state as ``<state>.tfvars.json`` so a
+    later ``destroy`` can reuse them verbatim without re-deriving the inputs. When
+    ``tofu_vars`` is empty (the destroy case) the existing tfvars file is reused;
+    if neither vars nor a stored file exist we fail loudly rather than run an
+    under-specified destroy.
+    """
+    var_file = Path(f"{state}.tfvars.json")
+    if tofu_vars:
+        var_file.write_text(json.dumps(tofu_vars), encoding="utf-8")
+    elif not var_file.exists():
+        msg = f"no tofu vars supplied and no stored {var_file} to reuse"
+        raise RuntimeError(msg)
+
+    progress.run(["tofu", f"-chdir={module_dir}", "init", "-input=false"], env=_tofu_env())
+
+    args = [
+        "tofu",
+        f"-chdir={module_dir}",
+        action,
+        "-input=false",
+        f"-state={state}",
+        f"-var-file={var_file}",
+    ]
+    if action in {"apply", "destroy"}:
+        args.append("-auto-approve")
+    progress.run(args, env=_tofu_env())
+
+
+def _tofu_output(module_dir: Path, state: Path) -> dict[str, str]:
+    """Return ``tofu output -json`` for a state file flattened to ``{name: str(value)}``."""
+    result = subprocess.run(  # noqa: S603
+        ["tofu", f"-chdir={module_dir}", "output", "-json", f"-state={state}"],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+        env=_tofu_env(),
+    )
+    data = json.loads(result.stdout)
+    return {key: str(entry["value"]) for key, entry in data.items()}
+
+
+def apply_volume(
+    modules_root: Path,
+    state_dir: Path,
+    *,
+    name: str,
+    region: str,
+    size_gib: int,
+    labels: dict[str, str],
+) -> tuple[str, str]:
+    """Apply the persistent-volume module; return ``(volume_id, zone)``.
+
+    The resolved zone is persisted to ``<state_dir>/zone`` so the VM apply and the
+    IAP transport can address the disk's zone without re-querying tofu.
+    """
+    module_dir = modules_root / "gcp" / "volume"
+    state = state_dir / "volume.tfstate"
+    _run_tofu(
+        module_dir,
+        state,
+        "apply",
+        {"name": name, "region": region, "size_gib": size_gib, "labels": labels},
+    )
+    out = _tofu_output(module_dir, state)
+    (state_dir / "zone").write_text(out["zone"], encoding="utf-8")
+    return out["volume_id"], out["zone"]
+
+
+def apply_vm(
+    modules_root: Path,
+    state_dir: Path,
+    *,
+    name: str,
+    zone: str,
+    instance_type: str,
+    nested: bool,
+    volume_id: str,
+    ssh_user: str,
+    provision_env: str,
+    labels: dict[str, str],
+) -> dict[str, str]:
+    """Apply the VM module against the existing volume; return its outputs (host, ssh_user)."""
+    module_dir = modules_root / "gcp" / "vm"
+    state = state_dir / "vm.tfstate"
+    _run_tofu(
+        module_dir,
+        state,
+        "apply",
+        {
+            "name": name,
+            "zone": zone,
+            "instance_type": instance_type,
+            "nested": nested,
+            "volume_id": volume_id,
+            "ssh_user": ssh_user,
+            "provision_env": provision_env,
+            "labels": labels,
+        },
+    )
+    return _tofu_output(module_dir, state)
+
+
+def destroy_vm(modules_root: Path, state_dir: Path) -> None:
+    """Destroy the disposable VM, reusing the stored tfvars; the volume is untouched."""
+    _run_tofu(modules_root / "gcp" / "vm", state_dir / "vm.tfstate", "destroy", {})
+
+
+def destroy_volume(modules_root: Path, state_dir: Path) -> None:
+    """Destroy the persistent volume, then remove the whole state dir for a clean rebuild."""
+    _run_tofu(modules_root / "gcp" / "volume", state_dir / "volume.tfstate", "destroy", {})
+    shutil.rmtree(state_dir)
+
+
+def read_zone(state_dir: Path) -> str:
+    """Read the zone persisted by ``apply_volume``; raise if no volume has been applied."""
+    zone_file = state_dir / "zone"
+    if not zone_file.is_file():
+        msg = f"no persisted zone at {zone_file} — apply the volume first"
+        raise RuntimeError(msg)
+    return zone_file.read_text(encoding="utf-8").strip()
+
