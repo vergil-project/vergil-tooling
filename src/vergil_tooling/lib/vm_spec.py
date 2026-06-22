@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
@@ -278,16 +279,49 @@ def _validate_backend(identity: str, acc: _Acc) -> None:
 # enforces that loudly rather than silently producing a name that won't decode.
 _TIER_SEP = "."
 
+_UNIX_PATH_MAX = 104
+# Lima validates the longest socket path it might create:
+#   <home>/.lima/<instance>/ssh.sock.<16-char worst-case reservation>
+# The "/.lima/" and "/ssh.sock." segments and the 16-char reservation are fixed;
+# only the instance name is ours to bound. Strict-less-than, hence the -1.
+_SOCK_OVERHEAD = len("/.lima/") + len("/ssh.sock.") + 16  # 7 + 10 + 16 = 33
 
-def instance_name(identity: str, org: str | None, repo: str | None) -> str:
-    """Derive the Lima instance name. Bare identity = base box; ``.``-joined = dedicated."""
+
+def lima_name_budget(home: str | None = None) -> int:
+    """Max instance-name length that keeps Lima's socket path under UNIX_PATH_MAX."""
+    home = home if home is not None else str(Path.home())
+    return (_UNIX_PATH_MAX - 1) - len(home) - _SOCK_OVERHEAD
+
+
+def instance_name(
+    identity: str, org: str | None, repo: str | None, *, home: str | None = None
+) -> str:
+    """Derive the Lima instance name. Bare identity = base box; ``.``-joined = dedicated.
+
+    Dedicated names are returned verbatim when they fit ``lima_name_budget``; over
+    budget they are truncated and hashed (mirroring ``vm_cloud.cloud_resource_name``)
+    so Lima's worst-case socket path stays under UNIX_PATH_MAX. ``recover_triple``
+    (vrg_vm) reverses a mangled name via the per-instance sidecar.
+    """
     if org is None or repo is None:
         return identity
     for tier, value in (("identity", identity), ("org", org)):
         if _TIER_SEP in value:
             msg = f"{tier} name {value!r} must not contain '{_TIER_SEP}'"
             raise ValueError(msg)
-    return _TIER_SEP.join((identity, org, repo))
+    full = _TIER_SEP.join((identity, org, repo))
+    budget = lima_name_budget(home)
+    if len(full) <= budget:
+        return full
+    if budget < len(identity) + 7:  # 6 hash chars + 1 separator
+        msg = (
+            f"home directory too long to fit a bounded VM name for identity "
+            f"{identity!r}: budget {budget} < {len(identity) + 7}"
+        )
+        raise SpecError(msg)
+    digest = hashlib.sha256(f"{identity}/{org}/{repo}".encode()).hexdigest()[:6]
+    keep = budget - 7
+    return f"{full[:keep].rstrip('._-')}-{digest}"
 
 
 def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
