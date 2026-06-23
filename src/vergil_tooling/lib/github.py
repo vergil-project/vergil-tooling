@@ -1,8 +1,8 @@
 """GitHub CLI (``gh``) subprocess wrappers.
 
 All functions that use ``check=True`` retry transparently on transient
-GitHub API errors (HTTP 502, 503, 504, 429 and network-level timeouts)
-with exponential backoff.
+GitHub API errors (HTTP 401, 502, 503, 504, 429 and network-level
+timeouts) with exponential backoff.
 """
 
 from __future__ import annotations
@@ -459,7 +459,7 @@ def wait_for_checks(
     --watch`` which blocks until every check completes.  Resilient to
     the head moving mid-wait (see ``_poll_and_watch_checks``).
 
-    Transient GitHub API errors (502/503/504/429) are retried
+    Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
     """
     _poll_and_watch_checks(
