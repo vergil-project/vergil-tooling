@@ -8781,6 +8781,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Base Permission Mode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-not-acceptedits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why not acceptEdits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bypass-is-not-no-enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bypass is not "no enforcement"
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -8990,6 +9018,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-vm-sandbox-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The VM Sandbox Boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-actual-security-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9039,52 +9078,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#phasing" class="md-nav__link">
+  <a href="#history-the-acceptedits-direction-and-why-it-was-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phasing
+        History: the acceptEdits direction, and why it was dropped
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Phasing">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-current-target" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 1 (current target)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-future" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 2 (future)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-future" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 3 (future)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -9417,6 +9417,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Base Permission Mode">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#why-not-acceptedits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Why not acceptEdits
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#bypass-is-not-no-enforcement" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bypass is not "no enforcement"
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -9626,6 +9654,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#the-vm-sandbox-boundary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The VM Sandbox Boundary
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#the-actual-security-boundary" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9675,52 +9714,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#phasing" class="md-nav__link">
+  <a href="#history-the-acceptedits-direction-and-why-it-was-dropped" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phasing
+        History: the acceptEdits direction, and why it was dropped
       
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Phasing">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#phase-1-current-target" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 1 (current target)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-2-future" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 2 (future)
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#phase-3-future" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Phase 3 (future)
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -9764,18 +9764,32 @@ itself.</p>
 credentials are selected per-operation, see
 <a href="../credential-management/">Credential Management</a>.</p>
 <h2 id="base-permission-mode">Base Permission Mode<a class="headerlink" href="#base-permission-mode" title="Permanent link">&para;</a></h2>
-<p><strong><code>acceptEdits</code></strong> is the target mode. The agent freely reads and
-modifies code files — that is its primary job. The real risk
-surface is shell commands, not file edits.</p>
-<p><code>acceptEdits</code> auto-approves:</p>
-<ul>
-<li>File reads (Read tool)</li>
-<li>File edits (Edit tool)</li>
-<li>File writes (Write tool)</li>
-</ul>
-<p>Shell commands not in the allowlist prompt the human. This is the
-escalation mechanism: the agent encounters something it cannot do,
-explains the situation, and the human approves or denies.</p>
+<p><strong><code>bypassPermissions</code></strong> is the standard mode — but only because the
+agent runs inside a sandboxed, ephemeral VM (see
+<a href="#the-vm-sandbox-boundary">The VM Sandbox Boundary</a>). Inside that
+sandbox the agent reads, edits, and runs shell commands without
+per-action prompts, which is what makes it usable for real work.</p>
+<h3 id="why-not-acceptedits">Why not <code>acceptEdits</code><a class="headerlink" href="#why-not-acceptedits" title="Permanent link">&para;</a></h3>
+<p><code>acceptEdits</code> was the original target: auto-approve file edits, prompt
+on any shell command not in the allowlist. It proved impractical for
+the work VERGIL actually does. An agent doing infrastructure work runs
+a constant stream of shell commands — container builds, cloud CLIs,
+system inspection, ad-hoc scripts — and under <code>acceptEdits</code> every
+non-allowlisted one stops for human approval. The prompts never end,
+and autonomous work becomes impossible. Chasing an ever-growing bash
+allowlist was a losing race.</p>
+<p>So VERGIL moved the boundary outward instead of inward: rather than
+constrain <em>which commands</em> the agent may run, <strong>sandbox the whole agent
+in a disposable VM</strong> and let it run in <code>bypassPermissions</code> there. The
+blast radius is the VM, which is ephemeral and reproducible.</p>
+<h3 id="bypass-is-not-no-enforcement">Bypass is not "no enforcement"<a class="headerlink" href="#bypass-is-not-no-enforcement" title="Permanent link">&para;</a></h3>
+<p><code>bypassPermissions</code> removes the <em>prompts</em>, not the <em>guardrails</em>. The
+<code>vrg-*</code> wrappers, the deny rules, and the hook guard all still apply —
+a hook hard-block (exit code 2) overrides even bypass mode — and the
+server-side GitHub App permission shapes remain the ultimate boundary
+(see <a href="#the-actual-security-boundary">The Actual Security Boundary</a>).
+Bypass changes the agent's <em>experience inside the sandbox</em>; it does not
+widen what the agent can do to the outside world.</p>
 <h2 id="vrg-git-wrapper"><code>vrg-git</code> Wrapper<a class="headerlink" href="#vrg-git-wrapper" title="Permanent link">&para;</a></h2>
 <p>A Python CLI tool that validates subcommands and flags before
 executing <code>git</code>. Arguments arrive as a Python argv list — no
@@ -10209,13 +10223,15 @@ per-developer setup needed.</p>
 <h3 id="global-user-settings-claudesettingsjson">Global User Settings (<code>~/.claude/settings.json</code>)<a class="headerlink" href="#global-user-settings-claudesettingsjson" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">&quot;permissions&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">&quot;defaultMode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;acceptEdits&quot;</span>
+<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">    </span><span class="nt">&quot;defaultMode&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;bypassPermissions&quot;</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="p">}</span>
 </code></pre></div>
-<p>Switching <code>defaultMode</code> to <code>acceptEdits</code> makes unknown commands
-prompt the human instead of auto-approving. This is independent
-of the deny rules — raw <code>git</code>/<code>gh</code> are blocked regardless of mode.</p>
+<p>This is the operator's per-host setting. <code>vrg-vm</code> copies it into every
+identity VM — Lima and off-platform alike — via <code>copy_claude_config</code>,
+so the agent boots straight into bypass inside the sandbox. The mode is
+independent of the deny rules: raw <code>git</code>/<code>gh</code> are blocked regardless,
+because the hook guard hard-blocks them even under bypass.</p>
 <h3 id="local-settings-claudesettingslocaljson">Local Settings (<code>.claude/settings.local.json</code>)<a class="headerlink" href="#local-settings-claudesettingslocaljson" title="Permanent link">&para;</a></h3>
 <p>Gitignored, per-developer. Houses temporary read-only bash
 exceptions:</p>
@@ -10270,11 +10286,11 @@ are found (Explore subagent, native Read tool, future
 </tr>
 <tr>
 <td><code>curl https://...</code></td>
-<td>Prompts the human</td>
+<td>Runs (bypass; contained to the sandbox VM)</td>
 </tr>
 <tr>
 <td><code>rm -rf .</code></td>
-<td>Prompts the human</td>
+<td>Runs (bypass; the disposable VM is the containment)</td>
 </tr>
 <tr>
 <td><code>vrg-gh pr merge</code></td>
@@ -10286,7 +10302,7 @@ are found (Explore subagent, native Read tool, future
 <h3 id="the-vergil-assumption">The Vergil Assumption<a class="headerlink" href="#the-vergil-assumption" title="Permanent link">&para;</a></h3>
 <p>Every client-side enforcement layer in this model assumes the agent
 is cooperative — that it is operating as Vergil, not Mimir. An
-agent with file write access (which <code>acceptEdits</code> grants) can
+agent with file write access (which <code>bypassPermissions</code> grants) can
 dismantle the entire client-side stack:</p>
 <ol>
 <li>Delete or edit <code>.claude/settings.json</code> — Layer 1 gone</li>
@@ -10303,10 +10319,36 @@ that decides to do it.</p>
 boundaries.</strong> They keep a well-intentioned agent on the rails.
 They prevent mistakes, enforce consistency, and provide an audit
 trail. They do not stop an adversary.</p>
+<p>The two boundaries an agent <strong>cannot</strong> edit its way out of are not
+client-side: the <strong>VM sandbox</strong> that contains it locally, and the
+<strong>server-side</strong> GitHub App permission shape that bounds what reaches
+GitHub.</p>
+<h3 id="the-vm-sandbox-boundary">The VM Sandbox Boundary<a class="headerlink" href="#the-vm-sandbox-boundary" title="Permanent link">&para;</a></h3>
+<p>Agents run inside a per-identity Vergil VM — never on the host. This is
+what makes <code>bypassPermissions</code> acceptable: the agent has full rein
+<em>inside</em> the VM, but the VM is the wall.</p>
+<ul>
+<li><strong>Containment.</strong> The agent reaches only what the VM can reach. The
+  host filesystem, other identities' VMs, and the operator's wider
+  environment are outside the sandbox.</li>
+<li><strong>Disposability.</strong> The VM is ephemeral and reproducible from its
+  declared profile, so a bad outcome inside it (an <code>rm -rf</code>, a wedged
+  toolchain) is recovered by a rebuild, not a forensic cleanup. On the
+  off-platform backend, irreplaceable state lives on a separate
+  persistent volume; injected credentials stay on the ephemeral boot
+  disk and die with the VM.</li>
+<li><strong>Credential bounding.</strong> Even with full local control, the agent can
+  only reach GitHub through its injected App token — which the
+  server-side boundary below constrains regardless of what happens in
+  the sandbox.</li>
+</ul>
+<p>The sandbox is why VERGIL runs <code>bypassPermissions</code> rather than chasing
+a per-command allowlist: move the boundary to the edge of a disposable
+VM, and the prompts inside it stop being the thing that protects you.</p>
 <h3 id="the-actual-security-boundary">The Actual Security Boundary<a class="headerlink" href="#the-actual-security-boundary" title="Permanent link">&para;</a></h3>
-<p>The only enforcement an agent cannot edit its way out of is
-<strong>server-side</strong>: the GitHub App's installation permission shape and
-branch protection rulesets.</p>
+<p>At the GitHub layer, the enforcement an agent cannot edit its way out
+of is <strong>server-side</strong>: the GitHub App's installation permission shape
+and branch protection rulesets.</p>
 <ul>
 <li>Each agent is a GitHub App whose installation token is bounded by
   its declared permission shape. The user App holds
@@ -10322,7 +10364,8 @@ branch protection rulesets.</p>
 <li>An App can only act on accounts it is installed on and repos that
   installation covers.</li>
 </ul>
-<p>This is the real security model. Everything else is convenience.</p>
+<p>This and the VM sandbox are the real security model. Everything else
+is convenience.</p>
 <h3 id="why-client-side-layers-still-matter">Why Client-Side Layers Still Matter<a class="headerlink" href="#why-client-side-layers-still-matter" title="Permanent link">&para;</a></h3>
 <p>If server-side enforcement is the only real boundary, why bother
 with four client-side layers?</p>
@@ -10447,29 +10490,30 @@ through normal operation.</p>
 </tbody>
 </table>
 <p>The rightmost column is the only one that holds against Mimir.</p>
-<h2 id="phasing">Phasing<a class="headerlink" href="#phasing" title="Permanent link">&para;</a></h2>
-<h3 id="phase-1-current-target">Phase 1 (current target)<a class="headerlink" href="#phase-1-current-target" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>acceptEdits</code> as default mode</li>
-<li><code>vrg-git</code> and <code>vrg-gh</code> wrappers with subcommand validation</li>
-<li>Project-level deny rules for raw <code>git</code> and <code>gh</code></li>
-<li>Temporary read-only bash exceptions in local settings</li>
-<li>Hooks retained as backstop</li>
-</ul>
-<h3 id="phase-2-future">Phase 2 (future)<a class="headerlink" href="#phase-2-future" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Evaluate replacing read-only bash exceptions with dedicated
-  tools or subagent patterns</li>
-<li>Tighten the allowlist as more operations are mechanized</li>
-<li>Each frequent prompt is a signal to build a new VRG tool</li>
-</ul>
-<h3 id="phase-3-future">Phase 3 (future)<a class="headerlink" href="#phase-3-future" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Ideal end state: <code>Bash(vrg *)</code> is the only allowlisted pattern</li>
-<li>All operations flow through one command with validated
-  subcommands</li>
-<li>No raw shell access without human approval</li>
-</ul>
+<h2 id="history-the-acceptedits-direction-and-why-it-was-dropped">History: the <code>acceptEdits</code> direction, and why it was dropped<a class="headerlink" href="#history-the-acceptedits-direction-and-why-it-was-dropped" title="Permanent link">&para;</a></h2>
+<p>The original plan phased <em>toward</em> a tight <code>acceptEdits</code> + allowlist
+model — <code>acceptEdits</code> as the default mode, then progressively shrinking
+the bash allowlist until <code>Bash(vrg *)</code> was the only allowed pattern and
+everything else required human approval.</p>
+<p><strong>That direction was not adopted.</strong> In practice, prompting on every
+non-allowlisted shell command made the agent unusable for the
+infrastructure work VERGIL actually does, where running many varied
+commands <em>is</em> the job. The allowlist could never keep up, and the
+operator spent sessions approving commands instead of getting work
+done.</p>
+<p>VERGIL resolved this by changing <em>where</em> the boundary sits rather than
+<em>how tight</em> the allowlist is: the agent runs in <code>bypassPermissions</code>
+inside a disposable, sandboxed VM (see
+<a href="#base-permission-mode">Base Permission Mode</a> and
+<a href="#the-vm-sandbox-boundary">The VM Sandbox Boundary</a>). The <code>vrg-*</code>
+wrappers, deny rules, and hooks remain — as consistency and
+mistake-prevention guardrails, and as hard blocks on raw <code>git</code>/<code>gh</code>
+that hold even under bypass — but they are no longer what makes
+autonomy <em>safe</em>. The VM sandbox and the server-side App permissions
+are.</p>
+<p>The earlier <code>acceptEdits</code> design spec
+(<code>docs/specs/2026-05-14-permission-model-design.md</code>) is retained as
+historical context; it does not describe the model in use.</p>
 <h2 id="related">Related<a class="headerlink" href="#related" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../identity-architecture/">Identity Architecture</a> — the
