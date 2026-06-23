@@ -82,6 +82,7 @@ from vergil_tooling.lib.vm_spec import (
     spec_fingerprint,
     split_state_slug,
     state_slug,
+    validate_instance_name,
     validate_repo_segment,
 )
 from vergil_tooling.lib.vm_transport import LimaTransport
@@ -1295,6 +1296,12 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
         )
     else:
         validate_repo_segment(repo)
+        if inst_name is not None:
+            try:
+                validate_instance_name(inst_name)
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
         requested_vm = _read_repo_vm(identity, org, repo)
         borrow = resolve_borrow(identity, org, repo, requested_vm)
         if borrow is not None:
@@ -1306,7 +1313,9 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
         return 1
 
     # Confirmation contract.
-    print("Will destroy the following recorded boxes:")
+    box_count = (1 if rs.lima_instance else 0) + len(rs.tofu_dirs)
+    box_word = "box" if box_count == 1 else "boxes"
+    print(f"Will destroy the following recorded {box_word}:")
     if rs.lima_instance:
         print(f"  - Lima: {rs.lima_instance}")
     for provider, state_dir in rs.tofu_dirs:
@@ -1314,7 +1323,7 @@ def _cmd_destroy(args: argparse.Namespace) -> int:
     if not getattr(args, "yes", False):
         if not sys.stdin.isatty():
             print(
-                "Refusing to destroy multiple recorded boxes non-interactively"
+                f"Refusing to destroy {box_count} recorded {box_word} non-interactively"
                 " — re-run with --yes to confirm.",
                 file=sys.stderr,
             )

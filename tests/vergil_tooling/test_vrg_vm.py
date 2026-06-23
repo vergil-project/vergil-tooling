@@ -4996,6 +4996,61 @@ def test_destroy_interactive_n_aborts(
     assert "aborted" in capsys.readouterr().err.lower()
 
 
+def test_destroy_rejects_malformed_instance_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """destroy --name with a grammar-violating name (e.g. 'Bad_Name') must reject loudly
+    before touching recorded state — not silently fall through to 'no recorded state'."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    # _recorded_state_for_handle must NOT be called — validation fires before it.
+    called: list[object] = []
+
+    def _fake_recorded_state(*a: object) -> vrg_vm.RecordedState:
+        called.append(a)
+        return vrg_vm.RecordedState(lima_instance=None, tofu_dirs=[])
+
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", _fake_recorded_state)
+    args = _destroy_args(workspace="lmf/mq", name="Bad_Name", yes=True)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Bad_Name" in err
+    assert called == [], "recorded-state lookup must not run after a malformed name"
+
+
+def test_destroy_single_box_uses_singular_wording(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When exactly one box will be destroyed the listing header says 'box', not 'boxes',
+    and the non-interactive refusal says '1 recorded box'."""
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    out = capsys.readouterr()
+    assert "the following recorded box:" in out.out
+    assert "1 recorded box" in out.err
+    assert "boxes" not in out.out
+    assert "boxes" not in out.err
+
+
 # ---------------------------------------------------------------------------
 # Task 9 — stop/start/restart resolve by handle, Lima-only
 # ---------------------------------------------------------------------------
