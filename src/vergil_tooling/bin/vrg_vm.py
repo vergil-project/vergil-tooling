@@ -285,19 +285,19 @@ def _target_ref(target: Target) -> str:
     return f"--identity {target.identity_name}"
 
 
-def recover_triple(instance: str) -> tuple[str, str | None, str | None]:
-    """Reverse an instance name into (identity, org, repo).
+def recover_handle(instance: str) -> tuple[str, str | None, str | None, str | None]:
+    """Reverse an instance name into the four-part handle (identity, org, repo, name).
 
-    Prefers the per-instance sidecar (the only reliable source once a long name
-    has been truncated+hashed); falls back to parsing the name for legacy short
-    names and base boxes that predate the sidecar.
+    Prefers the per-instance sidecar (reliable once a long name is truncated+hashed);
+    falls back to parsing for legacy short names and base boxes that predate the
+    sidecar, where ``name`` is None.
     """
     meta = read_instance_meta(instance)
     if meta is not None:
-        # Sidecar fields are always strings on disk; the mapping is typed
-        # ``dict[str, object]`` only because it also carries an int schema.
-        return str(meta["identity"]), str(meta["org"]), str(meta["repo"])
-    return parse_instance_name(instance)
+        name = str(meta.get("name") or "") or None
+        return str(meta["identity"]), str(meta["org"]), str(meta["repo"]), name
+    ident, org, repo = parse_instance_name(instance)
+    return ident, org, repo, None
 
 
 def _warn_under(target: Target) -> None:
@@ -607,11 +607,13 @@ def _create_from_target(target: Target, template: Path) -> None:
             fingerprint=target.fingerprint,
             nested=target.spec.nested,
         )
-        # Persist (identity, org, repo) so recover_triple can reverse the name
+        # Persist (identity, org, repo) so recover_handle can reverse the name
         # even after it has been truncated+hashed to fit UNIX_PATH_MAX.
         # org/repo are guaranteed non-None for dedicated targets.
         assert target.org is not None and target.repo is not None  # noqa: S101
-        write_instance_meta(target.instance, target.identity_name, target.org, target.repo)
+        write_instance_meta(
+            target.instance, target.identity_name, target.org, target.repo, None
+        )  # Task 6 wires the instance name here
     else:
         create_vm(
             target.instance,
@@ -1113,7 +1115,7 @@ def _all_update_targets(
             targets.append((id_name, identity, identity.vm_instance))
         for inst in sorted(status):
             try:
-                ident, org, repo = recover_triple(inst)
+                ident, org, repo, _inst_name = recover_handle(inst)
             except ValueError:
                 continue
             if ident == id_name and org is not None and repo is not None:
@@ -1347,6 +1349,7 @@ class DedicatedRow:
     instance: str
     state: str  # "present" | "orphaned"
     stanza: VmStanza | None = None
+    instance_name: str | None = None
 
 
 def _classify_instance(
@@ -1395,13 +1398,13 @@ def discover_dedicated(
     rows: list[DedicatedRow] = []
     for name in instances:
         try:
-            ident, org, repo = recover_triple(name)
+            ident, org, repo, inst_name = recover_handle(name)
         except ValueError:
             continue
         if ident != identity_name or org is None or repo is None:
             continue
         state, stanza = _classify_instance(projects_dir, org, repo, name)
-        rows.append(DedicatedRow(org, repo, name, state, stanza))
+        rows.append(DedicatedRow(org, repo, name, state, stanza, inst_name))
     return rows
 
 

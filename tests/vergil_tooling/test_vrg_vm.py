@@ -36,7 +36,7 @@ from vergil_tooling.bin.vrg_vm import (
     _warn_under,
     discover_dedicated,
     main,
-    recover_triple,
+    recover_handle,
     resolve_borrow,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
@@ -147,26 +147,61 @@ def config_file_top_model(tmp_path: Path) -> Path:
     return p
 
 
-def test_recover_triple_prefers_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recover_handle_prefers_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_vm.read_instance_meta",
-        lambda inst: {"schema": 1, "identity": "vergil-user", "org": "o", "repo": "r"},
+        lambda inst: {
+            "schema": 1, "identity": "vergil-user", "org": "o", "repo": "r", "name": ""
+        },
     )
-    assert recover_triple("mangled-abc123") == ("vergil-user", "o", "r")
+    assert recover_handle("mangled-abc123") == ("vergil-user", "o", "r", None)
 
 
-def test_recover_triple_falls_back_to_parse_for_legacy_name(
+def test_recover_handle_falls_back_to_parse_for_legacy_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.read_instance_meta", lambda inst: None)
-    assert recover_triple("vergil-user.acme.widgets") == ("vergil-user", "acme", "widgets")
+    assert recover_handle("vergil-user.acme.widgets") == ("vergil-user", "acme", "widgets", None)
 
 
-def test_recover_triple_falls_back_to_parse_for_base_box(
+def test_recover_handle_falls_back_to_parse_for_base_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.read_instance_meta", lambda inst: None)
-    assert recover_triple("vergil-user") == ("vergil-user", None, None)
+    assert recover_handle("vergil-user") == ("vergil-user", None, None, None)
+
+
+def test_recover_handle_roundtrips_named_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+    from vergil_tooling.lib.lima import write_instance_meta
+
+    inst = "vergil-user.lmf.mq.cloud-x86"
+    write_instance_meta(inst, "vergil-user", "lmf", "mq", "cloud-x86")
+    assert recover_handle(inst) == ("vergil-user", "lmf", "mq", "cloud-x86")
+
+
+def test_recover_handle_default_instance_name_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+    from vergil_tooling.lib.lima import write_instance_meta
+
+    inst = "vergil-user.lmf.mq"
+    write_instance_meta(inst, "vergil-user", "lmf", "mq")
+    assert recover_handle(inst) == ("vergil-user", "lmf", "mq", None)
+
+
+def test_recover_handle_parse_fallback_no_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+
+    assert recover_handle("vergil-user.lmf.mq") == ("vergil-user", "lmf", "mq", None)
 
 
 def _stub_target(
@@ -214,7 +249,7 @@ def test_create_from_target_writes_sidecar_for_dedicated(
         instance="vergil-user.acme.widgets",
     )
     _create_from_target(target, tmp_path / "t.yaml")
-    assert calls == [("vergil-user.acme.widgets", "vergil-user", "acme", "widgets")]
+    assert calls == [("vergil-user.acme.widgets", "vergil-user", "acme", "widgets", None)]
 
 
 def test_create_from_target_skips_sidecar_for_base(
