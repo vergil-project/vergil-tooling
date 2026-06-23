@@ -126,6 +126,7 @@ class RoleOverlay:
     region: str | None = None
     instance: str | None = None
     volume: str | None = None
+    zone: str | None = None
 
 
 @dataclass
@@ -147,6 +148,7 @@ class VmStanza:
     region: str | None = None
     instance: str | None = None
     volume: str | None = None
+    zone: str | None = None
 
 
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
@@ -172,6 +174,7 @@ _VM_KEYS = frozenset(
         "region",
         "instance",
         "volume",
+        "zone",
     }
 )
 
@@ -179,7 +182,7 @@ _VM_KEYS = frozenset(
 # string when present); the *required-when-off-platform* contract and the value
 # enums/formats are enforced at composition (compose_vm_spec), where the cascade
 # is resolved to one effective value per key.
-_VM_STR_SCALARS = ("backend", "provider", "region", "instance", "volume")
+_VM_STR_SCALARS = ("backend", "provider", "region", "instance", "volume", "zone")
 
 
 def _vm_str_scalar(raw: dict[str, Any], key: str, ctx: str, source: str) -> str | None:

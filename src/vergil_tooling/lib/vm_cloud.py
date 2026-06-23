@@ -605,11 +605,14 @@ def apply_volume(
     region: str,
     size_gib: int,
     labels: dict[str, str],
+    zone: str = "",
 ) -> tuple[str, str]:
     """Apply the persistent-volume module; return ``(volume_id, zone)``.
 
     The resolved zone is persisted to ``<state_dir>/zone`` so the VM apply and the
-    IAP transport can address the disk's zone without re-querying tofu.
+    IAP transport can address the disk's zone without re-querying tofu. ``zone`` is an
+    optional explicit GCP zone; empty falls back to the module's ``${region}-b`` default
+    (the module coalesces it away), so existing region-b volumes are unaffected (#1797).
     """
     module_dir = modules_root / "gcp" / "volume"
     state = state_dir / "volume.tfstate"
@@ -617,7 +620,13 @@ def apply_volume(
         module_dir,
         state,
         "apply",
-        {"name": name, "region": region, "size_gib": size_gib, "labels": labels},
+        {
+            "name": name,
+            "region": region,
+            "size_gib": size_gib,
+            "labels": labels,
+            "zone": zone,
+        },
     )
     out = _tofu_output(module_dir, state)
     (state_dir / "zone").write_text(out["zone"], encoding="utf-8")
@@ -843,6 +852,7 @@ class OffPlatformBackend:
             "region": self.spec.region,
             "size_gib": int(self.spec.volume.removesuffix("GiB")),
             "labels": self.labels,
+            "zone": self.spec.zone,
         }
 
     def vm_vars(self, *, zone: str, volume_id: str) -> dict[str, object]:
