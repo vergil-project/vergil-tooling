@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import textwrap
@@ -4327,22 +4328,20 @@ class TestVolumesCommand:
 # budget of ≥57 chars — enough for the full unmangled instance name.
 
 
-def _make_short_home(monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Create a short temp directory suitable as a Lima-budget home.
-
-    Uses tempfile.mkdtemp() so the path is unique (~13 chars) — short enough
-    for Lima's socket-path budget, unlike pytest's tmp_path which is ≥50 chars.
-    Cleanup is left to the OS; the directory lives in the system temp area.
-    """
+@pytest.fixture
+def short_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Home dir short enough to fit a Lima socket-path budget; auto-removed after the test."""
     short = Path(tempfile.mkdtemp())
     monkeypatch.setattr("pathlib.Path.home", lambda: short)
-    return short
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
 
 
 def test_recorded_state_enumerates_lima_and_tofu(
     monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
 ) -> None:
-    home = _make_short_home(monkeypatch)
+    home = short_home
     from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
     from vergil_tooling.lib.vm_spec import state_slug
 
@@ -4364,8 +4363,8 @@ def test_recorded_state_enumerates_lima_and_tofu(
 
 def test_recorded_state_no_lima_when_absent(
     monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
 ) -> None:
-    _make_short_home(monkeypatch)
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
     from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
 
@@ -4376,9 +4375,10 @@ def test_recorded_state_no_lima_when_absent(
 
 def test_recorded_state_volume_tfstate_included(
     monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
 ) -> None:
     """volume.tfstate alone (no vm.tfstate) is still detected as recorded state."""
-    home = _make_short_home(monkeypatch)
+    home = short_home
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
     from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
     from vergil_tooling.lib.vm_spec import state_slug
@@ -4395,9 +4395,10 @@ def test_recorded_state_volume_tfstate_included(
 
 def test_recorded_state_both_tfstate_files_included(
     monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
 ) -> None:
     """A dir with both volume.tfstate and vm.tfstate appears exactly once."""
-    home = _make_short_home(monkeypatch)
+    home = short_home
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
     from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
     from vergil_tooling.lib.vm_spec import state_slug
@@ -4415,9 +4416,10 @@ def test_recorded_state_both_tfstate_files_included(
 
 def test_recorded_state_dir_without_tfstate_excluded(
     monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
 ) -> None:
     """A provider dir with no .tfstate files is not included in tofu_dirs."""
-    home = _make_short_home(monkeypatch)
+    home = short_home
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
     from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
     from vergil_tooling.lib.vm_spec import state_slug
