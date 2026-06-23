@@ -18,7 +18,12 @@ def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedPro
 def test_run_delegates_to_progress_run() -> None:
     with patch("vergil_tooling.lib.git.progress") as m_progress:
         git.run("status")
-    m_progress.run.assert_called_once_with(("git", "status"), env=None)
+    _args, kwargs = m_progress.run.call_args
+    assert _args[0] == ("git", "status")
+    # Local commands carry no auth header but still disable the prompt (#1830).
+    env = kwargs["env"]
+    assert "GIT_CONFIG_KEY_0" not in env
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_run_commit_no_env_var_gate() -> None:
@@ -28,7 +33,7 @@ def test_run_commit_no_env_var_gate() -> None:
     with patch("vergil_tooling.lib.git.progress") as m_progress:
         git.run("commit", "-m", "msg")
     _args, kwargs = m_progress.run.call_args
-    assert kwargs.get("env") is None
+    assert "GIT_CONFIG_KEY_0" not in kwargs["env"]
 
 
 def test_run_raises_on_failure() -> None:
@@ -72,9 +77,13 @@ def test_read_output_returns_stripped_stdout() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(stdout="  hello world  \n")
         assert git.read_output("log") == "hello world"
-    mock_run.assert_called_once_with(
-        ("git", "log"), check=True, text=True, capture_output=True, env=None
-    )
+    _args, kwargs = mock_run.call_args
+    assert _args[0] == ("git", "log")
+    assert kwargs["check"] is True
+    assert kwargs["text"] is True
+    assert kwargs["capture_output"] is True
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    assert "GIT_CONFIG_KEY_0" not in kwargs["env"]
 
 
 def test_repo_root_returns_path() -> None:
@@ -181,7 +190,9 @@ def test_working_tree_status_returns_empty_when_clean() -> None:
 class TestRunRemoteCredentialInjection:
     """git.run() injects credentials for remote-capable subcommands."""
 
-    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote"])
+    # "remote" is included (#1830): `git remote prune` ls-remotes the origin,
+    # so it must be token-injected just like fetch/pull.
+    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote", "remote"])
     def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
         with (
             patch(
@@ -197,6 +208,7 @@ class TestRunRemoteCredentialInjection:
         assert env["GIT_CONFIG_COUNT"] == "1"
         assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
         assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
 
     @pytest.mark.parametrize("subcmd", ["status", "log", "diff", "add", "branch", "commit"])
     def test_no_injection_for_local_commands(self, subcmd: str) -> None:
@@ -209,7 +221,10 @@ class TestRunRemoteCredentialInjection:
         ):
             git.run(subcmd)
         _, kwargs = mock_progress.run.call_args
-        assert "env" not in kwargs or kwargs.get("env") is None
+        env = kwargs["env"]
+        # No auth header for local commands, but the prompt is still disabled.
+        assert "GIT_CONFIG_KEY_0" not in env
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
 
     def test_no_injection_when_no_token(self) -> None:
         with (
@@ -221,7 +236,11 @@ class TestRunRemoteCredentialInjection:
         ):
             git.run("push", "origin", "main")
         _, kwargs = mock_progress.run.call_args
-        assert "env" not in kwargs or kwargs.get("env") is None
+        env = kwargs["env"]
+        # Without a token the remote op carries no auth header — but the prompt
+        # stays disabled so it fails fast instead of hanging (#1830).
+        assert "GIT_CONFIG_KEY_0" not in env
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
 
     def test_token_encodes_as_basic_auth(self) -> None:
         import base64
@@ -271,7 +290,9 @@ class TestReadOutputRemoteCredentialInjection:
             mock_run.return_value = _completed(stdout="output\n")
             git.read_output(subcmd)
         _, kwargs = mock_run.call_args
-        assert "env" not in kwargs or kwargs.get("env") is None
+        env = kwargs["env"]
+        assert "GIT_CONFIG_KEY_0" not in env
+        assert env["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_commits_ahead_parses_rev_list_count() -> None:

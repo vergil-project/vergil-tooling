@@ -10,7 +10,11 @@ from pathlib import Path
 
 from vergil_tooling.lib import github, progress
 
-_REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote"}
+# Subcommands that may contact the remote and therefore need the installation
+# token. "remote" is included because `git remote prune`/`update` ls-remote the
+# origin to compute stale refs — a network op — even though most `git remote`
+# subcommands are local (#1830).
+_REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "remote"}
 
 
 def _git_auth_env(token: str) -> dict[str, str]:
@@ -18,30 +22,40 @@ def _git_auth_env(token: str) -> dict[str, str]:
     credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return {
         **os.environ,
+        # Fail fast on a credential miss instead of blocking on an interactive
+        # prompt no automated caller can answer (#1830).
+        "GIT_TERMINAL_PROMPT": "0",
         "GIT_CONFIG_COUNT": "1",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraHeader",
         "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
     }
 
 
-def _remote_env(args: tuple[str, ...]) -> dict[str, str] | None:
-    """Return auth env if *args* begins with a remote-capable subcommand."""
+def _git_env(args: tuple[str, ...]) -> dict[str, str]:
+    """Build the env for a git invocation.
+
+    GIT_TERMINAL_PROMPT=0 is set unconditionally (#1830): a network op missing
+    credentials we did not supply must fail fast, never hang forever on an
+    unanswerable interactive prompt (the bug that wedged `git remote prune` in
+    vrg-finalize-pr). For remote-capable subcommands the GitHub installation
+    token is layered on when available.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     if args and args[0] in _REMOTE_SUBCOMMANDS:
         token = github.get_installation_token()
         if token is not None:
-            return _git_auth_env(token)
-    return None
+            env = _git_auth_env(token)
+    return env
 
 
 def run(*args: str) -> None:
     """Run a git command, streaming output, and raise on failure."""
-    env = _remote_env(args)
-    progress.run(("git", *args), env=env)
+    progress.run(("git", *args), env=_git_env(args))
 
 
 def read_output(*args: str) -> str:
     """Run a git command and return stripped stdout."""
-    env = _remote_env(args)
+    env = _git_env(args)
     try:
         result = subprocess.run(  # noqa: S603
             ("git", *args),  # noqa: S607
