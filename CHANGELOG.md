@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.58] - 2026-06-23
+
+### Bug fixes
+
+- reattach via vrg-git fetch (token-injected) instead of raw git (#1791)
+
 ## [2.1.57] - 2026-06-23
 
 ### Bug fixes
