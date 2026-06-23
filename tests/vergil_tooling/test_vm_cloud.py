@@ -385,8 +385,11 @@ class TestBootstrap:
         identity = MagicMock()
         identity.auth_type = "app"
         bootstrap_volume(transport, identity, "org", "repo")
-        cmds = [list(call.args) for call in transport.run.call_args_list]
-        assert ["git", "-C", "/vergil/projects/org/repo", "fetch", "--all"] in cmds
+        # reattach fetches via vrg-git (token injection), run inside the repo so the
+        # org resolves from its own remote.
+        fetch_call = transport.run.call_args_list[-1]
+        assert list(fetch_call.args) == ["vrg-git", "fetch", "--all"]
+        assert fetch_call.kwargs["workdir"] == "/vergil/projects/org/repo"
 
 
 def _done(stdout: str = "status: done\n") -> subprocess.CompletedProcess[str]:
