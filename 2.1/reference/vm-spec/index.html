@@ -918,6 +918,8 @@
       
         
       
+        
+      
     
     
     
@@ -970,6 +972,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.61/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.61
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9503,13 +9533,20 @@ design spec is
   volume; the data reattaches intact.</li>
 <li><code>destroy-volume</code> — the <strong>only</strong> command that deletes the persistent
   volume. Guarded: retype <code>org/repo</code> to confirm, or pass <code>--yes</code>.</li>
-<li><code>update</code> — maps to <code>rebuild</code> (off-platform is rebuild-not-update).</li>
+<li><code>update</code> — refreshes vergil-tooling and Claude plugins <strong>in place</strong>
+  over the IAP tunnel on a running box (seconds, non-disruptive), exactly
+  like a Lima box. <code>rebuild</code> is reserved for what genuinely needs a fresh
+  image (a new base image or changed provision scripts), not a tooling
+  bump. <code>update --all</code> includes off-platform boxes and updates each running
+  one in place; a non-running box is skipped and reported. Two boxes that
+  share an <code>org/repo</code> (one per identity) stay distinct by their identity.</li>
 <li><code>stop</code> / <code>start</code> / <code>restart</code> — <strong>not supported</strong>. Off-platform VMs
   are ephemeral; use <code>destroy</code> / <code>create</code>.</li>
 <li><code>list</code> — gains a <code>BACKEND</code> column (<code>local</code> for Lima rows, the
-  provider for cloud rows). Without cloud credentials a cloud row's
-  status degrades to <code>unknown (no &lt;provider&gt; creds)</code> rather than
-  erroring or hiding the row.</li>
+  provider for cloud rows). Cloud rows carry their box's <code>IDENTITY</code> so
+  two boxes sharing an <code>org/repo</code> (one per identity) stay distinct.
+  Without cloud credentials a cloud row's status degrades to
+  <code>unknown (no &lt;provider&gt; creds)</code> rather than erroring or hiding the row.</li>
 <li><code>volumes</code> — enumerates the persistent volumes (the long-lived,
   billable, quota-consuming disks that outlive each ephemeral VM) from
   local tofu state: <code>IDENTITY</code>, <code>ORG/REPO</code>, <code>DISK NAME</code>, <code>SIZE</code>, <code>ZONE</code>,
