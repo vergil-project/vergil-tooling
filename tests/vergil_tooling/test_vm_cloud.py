@@ -406,6 +406,58 @@ class TestParseCloudInitStatus:
         assert vm_cloud._parse_cloud_init_status("ssh: connect: connection refused\n") == ("", "")
 
 
+class TestIsConnectionFailure:
+    def test_ssh_exit_255_is_a_connection_failure(self) -> None:
+        exc = subprocess.CalledProcessError(255, "ssh")
+        assert vm_cloud._is_connection_failure(exc) is True
+
+    def test_cloud_init_error_exit_is_not_a_connection_failure(self) -> None:
+        # cloud-init's own error(1)/degraded(2) exits are terminal faults, not
+        # transport-connect failures.
+        assert vm_cloud._is_connection_failure(subprocess.CalledProcessError(1, "x")) is False
+        assert vm_cloud._is_connection_failure(subprocess.CalledProcessError(2, "x")) is False
+
+
+class TestWaitForSsh:
+    def test_returns_once_a_trivial_command_succeeds(self) -> None:
+        transport = MagicMock()
+        transport.run.return_value = _done("")
+        vm_cloud._wait_for_ssh(transport)  # no raise
+        # The probe is a quiet trivial command, so a connect-race error is not
+        # echoed as misleading noise.
+        assert transport.run.call_args.kwargs.get("quiet") is True
+
+    def test_retries_through_connect_failures_then_succeeds(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The box's sshd is not up at the first probe (IAP 4003 / ssh 255); the
+        # wait must retry rather than fail, then return once it answers.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        emitted: list[str] = []
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", emitted.append)
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CalledProcessError(255, "ssh"),
+            subprocess.CalledProcessError(255, "ssh"),
+            _done(""),
+        ]
+        vm_cloud._wait_for_ssh(transport)  # no raise
+        assert transport.run.call_count == 3
+        assert any("waiting for SSH" in line for line in emitted)
+
+    def test_raises_after_bounded_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # sshd never comes up: bounded by the timeout, the wait raises a message
+        # distinct from a cloud-init fault ("never became reachable").
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", lambda _line: None)
+        clock = iter([0.0, 100.0, 250.0])
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.monotonic", lambda: next(clock))
+        transport = MagicMock()
+        transport.run.side_effect = subprocess.CalledProcessError(255, "ssh")
+        with pytest.raises(RuntimeError, match="never became reachable"):
+            vm_cloud._wait_for_ssh(transport, timeout_secs=200.0)
+
+
 class TestPollCloudInitStatus:
     def test_parses_successful_call(self) -> None:
         transport = MagicMock()
@@ -421,12 +473,50 @@ class TestPollCloudInitStatus:
         assert vm_cloud._poll_cloud_init_status(transport) == ("error", "boom")
 
     def test_connection_failure_yields_empty_status(self) -> None:
+        # ssh exit 255 (IAP connect failure) is distinguished from a cloud-init
+        # fault by its return code, not by parsing stdout: it yields no status so
+        # the poll loop keeps waiting.
         transport = MagicMock()
         transport.run.side_effect = subprocess.CalledProcessError(255, "ssh")
         assert vm_cloud._poll_cloud_init_status(transport) == ("", "")
 
+    def test_polls_quietly(self) -> None:
+        # The poll runs quietly so a transient connect drop mid-provision does
+        # not spam the operator with a raw IAP error.
+        transport = MagicMock()
+        transport.run.return_value = _done("status: done\n")
+        vm_cloud._poll_cloud_init_status(transport)
+        assert transport.run.call_args.kwargs.get("quiet") is True
+
 
 class TestAwaitReadiness:
+    @pytest.fixture(autouse=True)
+    def _skip_ssh_wait(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # _wait_for_ssh is exercised directly in TestWaitForSsh; stub it here so
+        # these cloud-init/marker tests need not thread an SSH probe through the
+        # transport.run side-effect lists.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud._wait_for_ssh", lambda *a, **k: None)
+
+    def test_waits_for_ssh_before_polling_cloud_init(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # The readiness gate must confirm SSH reachability before it probes
+        # cloud-init, so it never conflates a boot race with a provisioning fault.
+        calls: list[str] = []
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud._wait_for_ssh",
+            lambda *a, **k: calls.append("ssh"),
+        )
+        transport = MagicMock()
+
+        def _record_run(*args: str, **_kwargs: object) -> subprocess.CompletedProcess[str]:
+            calls.append(f"run:{args[0]}")
+            return _done("status: done\n") if args[0] == "cloud-init" else _done("fp123\n")
+
+        transport.run.side_effect = _record_run
+        await_readiness(transport, "fp123")
+        assert calls[0] == "ssh"
+        assert "run:cloud-init" in calls
+        assert calls.index("ssh") < calls.index("run:cloud-init")
+
     def test_passes_when_cloud_init_done_and_marker_matches(self) -> None:
         transport = MagicMock()
         transport.run.side_effect = [
