@@ -1256,40 +1256,74 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cloud_destroy(target: Target, args: argparse.Namespace) -> int:
-    """Destroy the disposable cloud VM, leaving the persistent volume intact."""
-    backend = _cloud_backend(target)
-    tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(target.config, target.identity)
-    modules_root = vm_cloud.fetch_modules(tag)
-    try:
-        print(f"Destroying cloud VM '{backend.name}' (volume preserved)...")
-        vm_cloud.destroy_vm(modules_root, backend.state_dir())
-    finally:
-        shutil.rmtree(modules_root.parent, ignore_errors=True)
-    print(f"Cloud VM '{backend.name}' destroyed (persistent volume preserved).")
+def _destroy_recorded(
+    rs: RecordedState,
+    args: argparse.Namespace,
+    config: IdentityConfig,
+    identity: Identity,
+) -> int:
+    """Tear down the Lima box and every recorded provider state for a handle."""
+    if rs.lima_instance is not None:
+        print(f"Destroying Lima VM '{rs.lima_instance}'...")
+        delete_vm(rs.lima_instance)
+    if rs.tofu_dirs:
+        tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(config, identity)
+        modules_root = vm_cloud.fetch_modules(tag)
+        try:
+            for provider, state_dir in rs.tofu_dirs:
+                print(f"Destroying cloud VM under {provider} (volume preserved): {state_dir}")
+                vm_cloud.destroy_vm(modules_root, state_dir)
+        finally:
+            shutil.rmtree(modules_root.parent, ignore_errors=True)
+    print("Destroyed (persistent volumes preserved — use destroy-volume to remove them).")
     return 0
 
 
 def _cmd_destroy(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
-    if target.spec.off_platform:
-        return _cloud_destroy(target, args)
-
-    name, _identity, _config, instance = _resolve_instance(args)
-
-    status = vm_status(instance)
-    if not status:
-        print(
-            f"VM '{instance}' does not exist.",
-            file=sys.stderr,
+    name, identity, config = _resolve(args)
+    org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    inst_name = getattr(args, "name", None)
+    if org is None or repo is None:
+        rs = RecordedState(
+            lima_instance=(
+                identity.vm_instance
+                if identity.vm_instance in {vm["name"] for vm in list_vms()}
+                else None
+            ),
+            tofu_dirs=[],
         )
+    else:
+        validate_repo_segment(repo)
+        requested_vm = _read_repo_vm(identity, org, repo)
+        borrow = resolve_borrow(identity, org, repo, requested_vm)
+        if borrow is not None:
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, borrow.org, borrow.repo))
+        rs = _recorded_state_for_handle(name, org, repo, inst_name)
+
+    if rs.lima_instance is None and not rs.tofu_dirs:
+        print("No recorded state to destroy for this handle.", file=sys.stderr)
         return 1
 
-    print(f"Destroying VM '{instance}' (identity: {name})...")
-    delete_vm(instance)
+    # Confirmation contract.
+    print("Will destroy the following recorded boxes:")
+    if rs.lima_instance:
+        print(f"  - Lima: {rs.lima_instance}")
+    for provider, state_dir in rs.tofu_dirs:
+        print(f"  - {provider}: {state_dir}")
+    if not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            print(
+                "Refusing to destroy multiple recorded boxes non-interactively"
+                " — re-run with --yes to confirm.",
+                file=sys.stderr,
+            )
+            return 1
+        answer = input("Proceed? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("Aborted.", file=sys.stderr)
+            return 1
 
-    print(f"VM '{instance}' destroyed.")
-    return 0
+    return _destroy_recorded(rs, args, config, identity)
 
 
 def _cmd_destroy_volume(args: argparse.Namespace) -> int:
@@ -2291,6 +2325,12 @@ def main(argv: list[str] | None = None) -> int:
         "--tag",
         default="",
         help="OpenTofu module version tag for off-platform destroy (default: from config)",
+    )
+    p_destroy.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the confirmation prompt (required for non-interactive destroy)",
     )
 
     p_destroy_volume = sub.add_parser(

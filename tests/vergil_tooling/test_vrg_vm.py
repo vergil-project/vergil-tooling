@@ -697,15 +697,18 @@ class TestRestart:
 
 class TestDestroy:
     @patch("vergil_tooling.bin.vrg_vm.delete_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
-    def test_destroy(self, _status: MagicMock, mock_delete: MagicMock, config_file: Path) -> None:
-        result = main(["destroy", "--config", str(config_file)])
+    @patch(
+        "vergil_tooling.bin.vrg_vm.list_vms",
+        return_value=[{"name": "vergil-agent", "status": "Running"}],
+    )
+    def test_destroy(self, _list: MagicMock, mock_delete: MagicMock, config_file: Path) -> None:
+        result = main(["destroy", "--yes", "--config", str(config_file)])
         assert result == 0
         mock_delete.assert_called_once_with("vergil-agent")
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
-    def test_destroy_nonexistent(self, _status: MagicMock, config_file: Path) -> None:
-        result = main(["destroy", "--config", str(config_file)])
+    @patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[])
+    def test_destroy_nonexistent(self, _list: MagicMock, config_file: Path) -> None:
+        result = main(["destroy", "--yes", "--config", str(config_file)])
         assert result == 1
 
 
@@ -2941,13 +2944,19 @@ class TestDedicatedGateThroughCommands:
 
 class TestLifecyclePositional:
     @patch("vergil_tooling.bin.vrg_vm.delete_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    @patch(
+        "vergil_tooling.bin.vrg_vm._recorded_state_for_handle",
+        return_value=None,  # will be set in test
+    )
     def test_destroy_targets_dedicated_instance(
-        self, _status: MagicMock, mock_delete: MagicMock, tmp_path: Path
+        self, mock_rs: MagicMock, mock_delete: MagicMock, tmp_path: Path
     ) -> None:
+        from vergil_tooling.bin.vrg_vm import RecordedState
+
         # No repo/spec needed: an orphan (repo dropped [vm]) is still reachable by name.
+        mock_rs.return_value = RecordedState(lima_instance="vergil-user.lmf.mq", tofu_dirs=[])
         cfg = _identities(tmp_path, tmp_path / "projects")
-        assert main(["destroy", "lmf/mq", "--config", str(cfg)]) == 0
+        assert main(["destroy", "--yes", "lmf/mq", "--config", str(cfg)]) == 0
         mock_delete.assert_called_once_with("vergil-user.lmf.mq")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
@@ -3715,12 +3724,22 @@ class TestCloudDestroy:
     def test_cloud_destroy_calls_destroy_vm(
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        with _CloudPatches(tmp_path / "state") as m:
-            result = main(["destroy", "lmf/cloud", "--config", str(_cloud_repo)])
+        from vergil_tooling.bin.vrg_vm import RecordedState
+
+        state_dir = tmp_path / "state" / "gcp"
+        rs = RecordedState(lima_instance=None, tofu_dirs=[("gcp", state_dir)])
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch(
+                "vergil_tooling.bin.vrg_vm._recorded_state_for_handle",
+                return_value=rs,
+            ),
+        ):
+            result = main(["destroy", "--yes", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 0
-        m["destroy_vm"].assert_called_once()
+        m["destroy_vm"].assert_called_once_with(ANY, state_dir)
         m["destroy_volume"].assert_not_called()
-        assert "destroyed" in capsys.readouterr().out
+        assert "Destroyed" in capsys.readouterr().out
 
 
 class TestCloudRebuild:
@@ -4431,3 +4450,146 @@ def test_recorded_state_dir_without_tfstate_excluded(
 
     rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
     assert rs.tofu_dirs == []
+
+
+# ---------------------------------------------------------------------------
+# Task 8 --- _cmd_destroy / confirmation contract
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdentity:
+    vm_instance = "vergil-user"
+
+
+class _FakeConfig:
+    pass
+
+
+def _destroy_args(
+    workspace: str | None = None,
+    name: str | None = None,
+    yes: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="destroy",
+        workspace=workspace,
+        name=name,
+        yes=yes,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def test_destroy_refuses_non_interactive_without_yes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    assert "--yes" in capsys.readouterr().err
+
+
+def test_destroy_yes_tears_down_lima_and_all_providers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(
+        lima_instance="vergil-user.lmf.mq.cloud-x86",
+        tofu_dirs=[("gcp", Path("/x/gcp")), ("azure", Path("/x/azure"))],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    deleted: list[str] = []
+    destroyed: list[Path] = []
+    monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d: destroyed.append(d))
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
+    assert destroyed == [Path("/x/gcp"), Path("/x/azure")]
+
+
+def test_destroy_nothing_recorded_returns_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_recorded_state_for_handle",
+        lambda *a: vrg_vm.RecordedState(lima_instance=None, tofu_dirs=[]),
+    )
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    assert vrg_vm._cmd_destroy(args) == 1
+    assert "no recorded" in capsys.readouterr().err.lower()
+
+
+def test_destroy_interactive_y_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    deleted: list[str] = []
+    monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_destroy_interactive_n_aborts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err.lower()
