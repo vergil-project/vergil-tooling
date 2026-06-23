@@ -958,7 +958,7 @@ def test_project_ghas_is_recognized_key(tmp_path: Path, capsys: pytest.CaptureFi
 # -- named instances (vergil-tooling #1831) ------------------------------------
 
 
-def test_parse_vm_stanza_named_instances():
+def test_parse_vm_stanza_named_instances() -> None:
     raw = {
         "vm": {
             "vergil-user": {
@@ -985,13 +985,25 @@ def test_parse_vm_stanza_named_instances():
     assert inst.instances == {}  # no nested instances
 
 
-def test_parse_vm_stanza_rejects_all_identity_instances_tier():
+def test_parse_vm_stanza_rejects_all_identity_instances_tier() -> None:
     raw = {"vm": {"instances": {"cloud-x86": {"cpus": 4}}}}
     with pytest.raises(ConfigError, match="no all-identity .*instances"):
         parse_vm_stanza(raw)
 
 
-def test_parse_vm_stanza_rejects_invalid_instance_name():
+def test_parse_vm_stanza_rejects_invalid_instance_name() -> None:
     raw = {"vm": {"vergil-user": {"instances": {"bad--name": {"cpus": 4}}}}}
     with pytest.raises(ConfigError, match="instance name"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_nested_instances_in_overlay() -> None:
+    raw = {
+        "vm": {
+            "vergil-user": {
+                "instances": {"cloud-x86": {"instances": {"nope": {}}}}
+            }
+        }
+    }
+    with pytest.raises(ConfigError, match="nested instances"):
         parse_vm_stanza(raw)

@@ -230,6 +230,9 @@ def _parse_role_overlay(
     for key in raw:
         if key == "instances" and allow_instances:
             continue
+        if key == "instances" and not allow_instances:
+            msg = f"{source}: [vm.{name}.instances.{name}] must not contain nested instances"
+            raise ConfigError(msg)
         if key not in _VM_KEYS:
             print(f"{source}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
     scalars = {k: _vm_str_scalar(raw, k, f"[vm.{name}]", source) for k in _VM_STR_SCALARS}
