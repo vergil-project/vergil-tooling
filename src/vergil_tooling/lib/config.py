@@ -132,7 +132,7 @@ class RoleOverlay:
     # Named-instance overlays (vergil-tooling #1831). Each value is itself a
     # RoleOverlay parsed from [vm.<identity>.instances.<name>]; an instance overlay
     # never carries its own nested instances. Empty for the common (unnamed) case.
-    instances: dict[str, "RoleOverlay"] = field(default_factory=dict)
+    instances: dict[str, RoleOverlay] = field(default_factory=dict)
 
 
 @dataclass
@@ -345,16 +345,16 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     _warn_unrecognized_keys(raw, source)
     project_raw = raw.get("project", {})
 
-    for field in _REQUIRED_PROJECT_FIELDS:
-        if field not in project_raw or not project_raw[field]:
-            msg = f"{source}: missing or empty required field '{field}'"
+    for required_field in _REQUIRED_PROJECT_FIELDS:
+        if required_field not in project_raw or not project_raw[required_field]:
+            msg = f"{source}: missing or empty required field '{required_field}'"
             raise ConfigError(msg)
 
-    for field in _REQUIRED_PROJECT_FIELDS:
-        value = project_raw[field]
-        if value not in _ENUMS[field]:
-            allowed = ", ".join(sorted(_ENUMS[field]))
-            msg = f"{source}: invalid {field} '{value}' (allowed: {allowed})"
+    for required_field in _REQUIRED_PROJECT_FIELDS:
+        value = project_raw[required_field]
+        if value not in _ENUMS[required_field]:
+            allowed = ", ".join(sorted(_ENUMS[required_field]))
+            msg = f"{source}: invalid {required_field} '{value}' (allowed: {allowed})"
             raise ConfigError(msg)
 
     raw_lang = project_raw.get("primary-language", "")
