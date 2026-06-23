@@ -1028,7 +1028,9 @@ class OffPlatformBackend:
             "zone": self.spec.zone,
         }
 
-    def vm_vars(self, *, zone: str, volume_id: str) -> dict[str, object]:
+    def vm_vars(
+        self, *, zone: str, volume_id: str, instance_override: str | None = None
+    ) -> dict[str, object]:
         provision_env = render_provision_env(
             provision_params(
                 packages=list(self.spec.packages),
@@ -1044,7 +1046,10 @@ class OffPlatformBackend:
         return {
             "name": self.name,
             "zone": zone,
-            "instance_type": self.spec.instance,
+            # A family fallback swaps the machine type here ONLY; self.spec is never
+            # mutated, so fingerprint=spec_fingerprint(self.spec) above stays the
+            # declared hash and the drift check never reads a fallback as drift. (#1836)
+            "instance_type": instance_override or self.spec.instance,
             "nested": self.spec.nested,
             "volume_id": volume_id,
             "ssh_user": self.ssh_user,

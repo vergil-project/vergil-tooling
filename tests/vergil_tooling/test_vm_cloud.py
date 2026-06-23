@@ -37,7 +37,7 @@ from vergil_tooling.lib.vm_cloud import (
     tofu_state_dir,
     zone_to_region,
 )
-from vergil_tooling.lib.vm_spec import ComposedSpec, state_slug
+from vergil_tooling.lib.vm_spec import ComposedSpec, spec_fingerprint, state_slug
 from vergil_tooling.lib.vm_transport import IapTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
@@ -1527,3 +1527,28 @@ class TestInstanceFallbackLadder:
         # Real nested-virt validity is verified by hand against GCP docs (#1836).
         assert NESTED_VIRT_FAMILIES == ("n2", "n2d", "c2", "c2d")
         assert FALLBACK_SHAPES == frozenset({"standard-8", "standard-16"})  # noqa: SIM300
+
+
+class TestVmVarsInstanceOverride:
+    def test_override_swaps_machine_type_but_keeps_declared_fingerprint(self) -> None:
+        spec = _off_spec(instance="n2-standard-8")
+        b = OffPlatformBackend(spec, "vergil-user", "o", "r")
+        declared_fp = spec_fingerprint(spec)
+        would_be_landed_fp = spec_fingerprint(
+            dataclasses.replace(spec, instance="n2d-standard-8")
+        )
+
+        v = b.vm_vars(zone="us-central1-f", volume_id="v1", instance_override="n2d-standard-8")
+
+        # The tofu machine type is the fallback family...
+        assert v["instance_type"] == "n2d-standard-8"
+        # ...but the stamped fingerprint is the DECLARED one, never the landed family's.
+        assert declared_fp in str(v["provision_env"])
+        assert would_be_landed_fp not in str(v["provision_env"])
+        # ...and the spec object is never mutated.
+        assert b.spec.instance == "n2-standard-8"
+
+    def test_default_uses_declared_instance(self) -> None:
+        b = OffPlatformBackend(_off_spec(instance="n2-standard-16"), "vergil-user", "o", "r")
+        v = b.vm_vars(zone="us-central1-b", volume_id="v1")
+        assert v["instance_type"] == "n2-standard-16"
