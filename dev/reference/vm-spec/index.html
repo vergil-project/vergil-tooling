@@ -9450,6 +9450,14 @@ design spec is
   provider for cloud rows). Without cloud credentials a cloud row's
   status degrades to <code>unknown (no &lt;provider&gt; creds)</code> rather than
   erroring or hiding the row.</li>
+<li><code>volumes</code> — enumerates the persistent volumes (the long-lived,
+  billable, quota-consuming disks that outlive each ephemeral VM) from
+  local tofu state: <code>IDENTITY</code>, <code>ORG/REPO</code>, <code>DISK NAME</code>, <code>SIZE</code>, <code>ZONE</code>,
+  <code>REGION</code>, all read from each disk's stamped labels/attributes with no
+  network call. <code>--live</code> adds a <code>LIVE</code> column that cross-checks each disk
+  against the provider — a disk deleted out of band shows <code>MISSING</code>; an
+  unauthed/unreachable provider degrades to <code>unknown</code>. This is how you
+  identify which volume to <code>destroy-volume</code> and track SSD quota usage.</li>
 </ul>
 <p>Access is via the provider's identity-aware tunnel (GCP IAP) — there is
 <strong>no public IP</strong> and no operator-IP allow-list; authentication is the
