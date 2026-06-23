@@ -86,9 +86,17 @@ names are derived, each with its own delimiter:
 
 | Derived name | Form | Used for | Reversal |
 |---|---|---|---|
-| **Lima instance name** | `identity.org.repo.name` (dots; bare `identity` for base, three-segment for default dedicated) | the `limactl` instance | sidecar metadata (`write_instance_meta` / `recover_triple`), extended to carry `name` |
+| **Lima instance name** | `identity.org.repo.name` (dots; bare `identity` for base, three-segment for default dedicated) | the `limactl` instance | sidecar metadata (`write_instance_meta` / `recover_handle`), extended to carry `name` |
 | **State slug** (readable) | `identity--org--repo--name` (`--`-joined; three-segment for default dedicated, bare `identity` for base) | tofu state dir `~/.config/vergil/tofu/<slug>/<provider>/`; the SHA-256 input for the cloud name | resource labels (and human-readable in the path) |
 | **Cloud resource name** | `vrg-<first 12 hex of sha256(state-slug)>` (≤ 16 chars, RFC1035: leading letter, lowercase alnum + hyphen) | GCP instance/disk/firewall name | never reversed from the name — `list` and `tofu import` read the labels |
+
+**The Lima name follows the existing budget rule.** The dotted
+`identity.org.repo.name` form is what you get when it fits within
+`lima_name_budget(home)`; when it overflows (more common now that a fourth segment
+is appended), `instance_name()` produces a deterministic truncated+hashed
+`…-<hash>` form, exactly as today. Either way the **sidecar is the reversal
+source** — the dotted-name parse is only a legacy fallback for pre-sidecar short
+names and must not be relied on for named instances.
 
 ### Why the cloud name is hashed
 
@@ -106,6 +114,24 @@ four-segment), not only when the slug would overflow. This is deterministic and
 uniform, and greenfield makes it free. (The prior behavior — derive a readable
 dashed name and hash only on overflow — is dropped; nothing deployed depends on
 it.)
+
+### Reversal is handle-aware end-to-end
+
+The fourth segment ripples through the whole reversal path, not just the sidecar
+write:
+
+- `write_instance_meta` gains a `name` parameter and records it in the sidecar.
+- `recover_triple` becomes `recover_handle`, returning
+  `(identity, org, repo, name | None)` (a four-part handle; `name` is `None` for
+  base and default-dedicated boxes).
+- Its consumers thread the name as part of the match/identity key:
+  `discover_dedicated` (the `list` builder) and `update --all` (which enumerates
+  every Lima + off-platform box and matches each to a configured identity). Without
+  this, `update --all` would be blind to four-segment named instances — silently
+  dropping the name or skipping the box.
+
+Cloud reversal (labels) and Lima reversal (sidecar) stay symmetric: both carry the
+full handle.
 
 ### Identity lives in labels
 
@@ -200,25 +226,50 @@ four-part handle.
 
 ## Recorded-state lifecycle dispatch (the Problem-1 fix)
 
-Resolution is split by verb intent:
+Resolution is split by verb intent. Note that `stop`/`start`/`restart` operate on
+**Lima boxes only** — they reject off-platform today (`_reject_if_off_platform`),
+and cloud VMs have no stop/start lifecycle through `vrg-vm` (they are create/destroy
+only, per #199). That rejection is preserved; only `destroy` spans backends.
 
 - **`create` / `rebuild` / `session`-preflight** resolve from the **composed
   profile + fingerprint** — you are asserting intent. Unchanged shape.
-- **`destroy` / `stop` / `start`** resolve from **recorded state for the handle**,
-  not the live profile. A new enumerator takes `(identity, org, repo, name)` and
-  finds every recorded box under the handle:
+- **`destroy`** resolves from **all recorded state for the handle**, not the live
+  profile. A new enumerator takes `(identity, org, repo, name)` and finds every
+  recorded box under the handle:
   - the Lima instance `identity.org.repo.name`, if it exists; and
   - every `~/.config/vergil/tofu/<state-slug>/<provider>/` directory carrying
     recorded state.
 
   Because the state slug is now readable and deterministic, this is a direct glob
-  of the handle's own subtree — no scan of unrelated handles.
+  of the handle's own subtree — no scan of unrelated handles. A bare
+  `destroy --name X` tears down **every** recorded backend/provider under the handle
+  (a Lima box *and* a `gcp` box, or `gcp` *and* `azure` state side by side, left by
+  an in-place `backend`/`provider` edit) — after printing a confirmation listing of
+  exactly what it will remove.
 
-A bare `destroy --name X` tears down **every** recorded backend/provider under the
-handle (a Lima box *and* a `gcp` box, or `gcp` *and* `azure` state side by side,
-left by an in-place `backend`/`provider` edit) — after printing a confirmation
-listing of exactly what it will remove. `stop`/`start` act on each recorded running
-box. This replaces `_resolve_instance`'s spec-derivation for these three verbs.
+  **Confirmation contract (interactive and agent paths).** `destroy` always prints
+  the listing of boxes it will remove first. It then:
+  - **Interactive (stdin is a TTY):** prompts for confirmation before proceeding.
+  - **`--yes`/`-y` given:** proceeds without prompting (after printing the listing).
+  - **No TTY and no `--yes`:** **refuses** with a clear message instructing the
+    caller to re-run with `--yes`. This is the safe default for a verb that now
+    tears down *multiple* boxes at once, and is the path agent sessions take
+    deliberately (no silent multi-box teardown). The `--yes` flag is added to
+    `destroy` (and mirrors the existing `destroy-volume` confirmation).
+- **`stop` / `start` / `restart`** resolve from **Lima recorded state only** for
+  the handle (the derived Lima instance name), continuing to reject off-platform.
+  They act on the handle's Lima box; there is no cloud stop/start.
+
+This replaces `_resolve_instance`'s spec-derivation for these verbs.
+
+**Implementation sequencing.** This recorded-state dispatch is the highest-risk
+unit of the whole change — it is the Problem-1 fix, it rewrites target resolution
+for the destructive verbs, and it carries the bulk of the lifecycle test surface
+(the multi-provider teardown and orphan-reconciliation cases). The rest of the work
+(namespace parsing, composition, the `--name` flag, the `list`/`volumes` columns) is
+largely additive. The implementation plan should land the parsing/composition/naming
+groundwork first, then treat this dispatch as its own phase with disproportionate
+test coverage — not as one task among equals.
 
 **How this dissolves Problem 1.** A profile edit can no longer aim `destroy` at a
 box that was never built, nor leave a sibling-backend box behind: nothing built
@@ -246,6 +297,16 @@ as `orphaned` in `list` and is removable by `destroy --name X`.
   (`ok` / `NEEDS-REBUILD` / `orphaned` / `under`) semantics are unchanged, reported
   per instance. Enumeration stays **O(instances)**. `list` degrades visibly without
   cloud creds (`unknown (no <provider> creds)`), per instance.
+
+**Relationship to `vrg-vm volumes`.** The existing `volumes` command (#1798) stays
+as the focused, billing-oriented view of off-platform persistent volumes (DISK
+NAME / SIZE / ZONE / REGION, with `--live`), while `list`'s `no-vm` row is the
+unified per-handle lifecycle view. They serve different audiences and both remain.
+Under named instances, `volumes` gains an **INSTANCE column** (read from the
+`vergil-instance` label) so two volumes for one repo (e.g. `cloud-x86` and
+`rdqm-rhel`) are distinguishable; without it, sibling instances' volumes would be
+indistinguishable in its SCOPE-only output. `volumes` is a global enumerator (no
+`--name`), like `list`.
 
 ## State paths, labels, and volumes
 
@@ -366,11 +427,13 @@ and auditable:
   derive the three names from the handle; reserve the tier-6 per-name slot.
 - `lib/vm_cloud.py` — `cloud_resource_name` → `vrg-<hash>`; decouple `state_key`
   (readable slug) from the cloud name; add `vergil-instance` to `cloud_labels`.
-- `lib/lima.py` — extend the sidecar (`write_instance_meta`/`recover_triple`) to
-  carry `name`.
-- `bin/vrg_vm.py` — `--name` across the verbs; the recorded-state enumerator for
-  `destroy`/`stop`/`start`; `list` INSTANCE column + `no-vm` rows + per-`(slug,
-  provider)` rows.
+- `lib/lima.py` — extend the sidecar: `write_instance_meta` gains a `name`
+  parameter and records it.
+- `bin/vrg_vm.py` — `recover_triple` → `recover_handle` (returns the four-part
+  handle), threaded through `discover_dedicated` and `update --all`; `--name` across
+  the verbs; the recorded-state enumerator for `destroy` (all backends) and
+  `stop`/`start`/`restart` (Lima only); `list` INSTANCE column + `no-vm` rows +
+  per-`(slug, provider)` rows; `volumes` INSTANCE column.
 
 ## Related
 
