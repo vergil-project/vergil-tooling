@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.60] - 2026-06-23
+
+### Bug fixes
+
+- enumerate off-platform VMs in update --all and session listing (#1806)
+- roll back a failed VM apply so an orphan firewall doesn't 409 every retry (#1807)
+- shell-quote provision.env values so multi-token lists source cleanly (#1808)
+
 ## [2.1.59] - 2026-06-23
 
 ### Features
