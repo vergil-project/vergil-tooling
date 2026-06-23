@@ -784,7 +784,16 @@ def _cs_bootstrap_volume(state: _CloudState) -> None:
 
 
 def _cs_link_claude(state: _CloudState) -> None:
-    vm_cloud.link_cloud_claude_dirs(_require_transport(state))
+    # Parity with the Lima path's _st_copy_config (#1825): seed the host's
+    # ~/.claude config (CLAUDE.md + settings.json) onto the cloud VM, THEN link
+    # the durable history subdirs onto the persistent volume. settings.json
+    # carries the operator's permissions.defaultMode; without this copy an
+    # off-platform VM never receives it, so bypassPermissions is unreachable
+    # (it is a launch-time/default mode, not a Shift+Tab cycle). The VM sandbox
+    # is the security boundary that makes bypass-in-guest the standard.
+    transport = _require_transport(state)
+    copy_claude_config(transport, Path.home() / ".claude")
+    vm_cloud.link_cloud_claude_dirs(transport)
 
 
 def _cloud_create_stages() -> list[Stage]:

@@ -2,7 +2,20 @@
 
 **Issue:** #754
 **Date:** 2026-05-14
-**Status:** Draft
+**Status:** Superseded (historical)
+
+> **Superseded (#1825).** This spec's direction — migrate from
+> `bypassPermissions` to `acceptEdits` plus a shrinking command
+> allowlist — was **not adopted**. In practice the per-command
+> prompting made the agent unusable for infrastructure work. VERGIL
+> instead made `bypassPermissions` the standard mode *inside a
+> disposable, sandboxed VM*, moving the security boundary to the edge
+> of the VM (and the server-side GitHub App permissions) rather than to
+> a client-side allowlist. The `vrg-*` wrappers, deny rules, and hooks
+> described below survive as guardrails, not as the safety mechanism.
+> The current model is documented in
+> [`docs/site/docs/guides/permission-model.md`](../site/docs/guides/permission-model.md).
+> This document is kept for historical context only.
 
 ## Problem
 

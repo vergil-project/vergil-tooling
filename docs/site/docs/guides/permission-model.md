@@ -14,19 +14,37 @@ credentials are selected per-operation, see
 
 ## Base Permission Mode
 
-**`acceptEdits`** is the target mode. The agent freely reads and
-modifies code files — that is its primary job. The real risk
-surface is shell commands, not file edits.
+**`bypassPermissions`** is the standard mode — but only because the
+agent runs inside a sandboxed, ephemeral VM (see
+[The VM Sandbox Boundary](#the-vm-sandbox-boundary)). Inside that
+sandbox the agent reads, edits, and runs shell commands without
+per-action prompts, which is what makes it usable for real work.
 
-`acceptEdits` auto-approves:
+### Why not `acceptEdits`
 
-- File reads (Read tool)
-- File edits (Edit tool)
-- File writes (Write tool)
+`acceptEdits` was the original target: auto-approve file edits, prompt
+on any shell command not in the allowlist. It proved impractical for
+the work VERGIL actually does. An agent doing infrastructure work runs
+a constant stream of shell commands — container builds, cloud CLIs,
+system inspection, ad-hoc scripts — and under `acceptEdits` every
+non-allowlisted one stops for human approval. The prompts never end,
+and autonomous work becomes impossible. Chasing an ever-growing bash
+allowlist was a losing race.
 
-Shell commands not in the allowlist prompt the human. This is the
-escalation mechanism: the agent encounters something it cannot do,
-explains the situation, and the human approves or denies.
+So VERGIL moved the boundary outward instead of inward: rather than
+constrain *which commands* the agent may run, **sandbox the whole agent
+in a disposable VM** and let it run in `bypassPermissions` there. The
+blast radius is the VM, which is ephemeral and reproducible.
+
+### Bypass is not "no enforcement"
+
+`bypassPermissions` removes the *prompts*, not the *guardrails*. The
+`vrg-*` wrappers, the deny rules, and the hook guard all still apply —
+a hook hard-block (exit code 2) overrides even bypass mode — and the
+server-side GitHub App permission shapes remain the ultimate boundary
+(see [The Actual Security Boundary](#the-actual-security-boundary)).
+Bypass changes the agent's *experience inside the sandbox*; it does not
+widen what the agent can do to the outside world.
 
 ## `vrg-git` Wrapper
 
@@ -206,14 +224,16 @@ per-developer setup needed.
 ```json
 {
   "permissions": {
-    "defaultMode": "acceptEdits"
+    "defaultMode": "bypassPermissions"
   }
 }
 ```
 
-Switching `defaultMode` to `acceptEdits` makes unknown commands
-prompt the human instead of auto-approving. This is independent
-of the deny rules — raw `git`/`gh` are blocked regardless of mode.
+This is the operator's per-host setting. `vrg-vm` copies it into every
+identity VM — Lima and off-platform alike — via `copy_claude_config`,
+so the agent boots straight into bypass inside the sandbox. The mode is
+independent of the deny rules: raw `git`/`gh` are blocked regardless,
+because the hook guard hard-blocks them even under bypass.
 
 ### Local Settings (`.claude/settings.local.json`)
 
@@ -255,8 +275,8 @@ are found (Explore subagent, native Read tool, future
 | `vrg-git status` | No prompt (project allow) |
 | `grep -r "foo" src/` | No prompt (local allow) |
 | `git push` | Blocked (hook guard) |
-| `curl https://...` | Prompts the human |
-| `rm -rf .` | Prompts the human |
+| `curl https://...` | Runs (bypass; contained to the sandbox VM) |
+| `rm -rf .` | Runs (bypass; the disposable VM is the containment) |
 | `vrg-gh pr merge` | No Claude Code prompt, but wrapper rejects it |
 
 ## Defense-in-Depth
@@ -265,7 +285,7 @@ are found (Explore subagent, native Read tool, future
 
 Every client-side enforcement layer in this model assumes the agent
 is cooperative — that it is operating as Vergil, not Mimir. An
-agent with file write access (which `acceptEdits` grants) can
+agent with file write access (which `bypassPermissions` grants) can
 dismantle the entire client-side stack:
 
 1. Delete or edit `.claude/settings.json` — Layer 1 gone
@@ -284,11 +304,40 @@ boundaries.** They keep a well-intentioned agent on the rails.
 They prevent mistakes, enforce consistency, and provide an audit
 trail. They do not stop an adversary.
 
+The two boundaries an agent **cannot** edit its way out of are not
+client-side: the **VM sandbox** that contains it locally, and the
+**server-side** GitHub App permission shape that bounds what reaches
+GitHub.
+
+### The VM Sandbox Boundary
+
+Agents run inside a per-identity Vergil VM — never on the host. This is
+what makes `bypassPermissions` acceptable: the agent has full rein
+*inside* the VM, but the VM is the wall.
+
+- **Containment.** The agent reaches only what the VM can reach. The
+  host filesystem, other identities' VMs, and the operator's wider
+  environment are outside the sandbox.
+- **Disposability.** The VM is ephemeral and reproducible from its
+  declared profile, so a bad outcome inside it (an `rm -rf`, a wedged
+  toolchain) is recovered by a rebuild, not a forensic cleanup. On the
+  off-platform backend, irreplaceable state lives on a separate
+  persistent volume; injected credentials stay on the ephemeral boot
+  disk and die with the VM.
+- **Credential bounding.** Even with full local control, the agent can
+  only reach GitHub through its injected App token — which the
+  server-side boundary below constrains regardless of what happens in
+  the sandbox.
+
+The sandbox is why VERGIL runs `bypassPermissions` rather than chasing
+a per-command allowlist: move the boundary to the edge of a disposable
+VM, and the prompts inside it stop being the thing that protects you.
+
 ### The Actual Security Boundary
 
-The only enforcement an agent cannot edit its way out of is
-**server-side**: the GitHub App's installation permission shape and
-branch protection rulesets.
+At the GitHub layer, the enforcement an agent cannot edit its way out
+of is **server-side**: the GitHub App's installation permission shape
+and branch protection rulesets.
 
 - Each agent is a GitHub App whose installation token is bounded by
   its declared permission shape. The user App holds
@@ -304,7 +353,8 @@ branch protection rulesets.
 - An App can only act on accounts it is installed on and repos that
   installation covers.
 
-This is the real security model. Everything else is convenience.
+This and the VM sandbox are the real security model. Everything else
+is convenience.
 
 ### Why Client-Side Layers Still Matter
 
@@ -373,29 +423,34 @@ through normal operation.
 
 The rightmost column is the only one that holds against Mimir.
 
-## Phasing
+## History: the `acceptEdits` direction, and why it was dropped
 
-### Phase 1 (current target)
+The original plan phased *toward* a tight `acceptEdits` + allowlist
+model — `acceptEdits` as the default mode, then progressively shrinking
+the bash allowlist until `Bash(vrg *)` was the only allowed pattern and
+everything else required human approval.
 
-- `acceptEdits` as default mode
-- `vrg-git` and `vrg-gh` wrappers with subcommand validation
-- Project-level deny rules for raw `git` and `gh`
-- Temporary read-only bash exceptions in local settings
-- Hooks retained as backstop
+**That direction was not adopted.** In practice, prompting on every
+non-allowlisted shell command made the agent unusable for the
+infrastructure work VERGIL actually does, where running many varied
+commands *is* the job. The allowlist could never keep up, and the
+operator spent sessions approving commands instead of getting work
+done.
 
-### Phase 2 (future)
+VERGIL resolved this by changing *where* the boundary sits rather than
+*how tight* the allowlist is: the agent runs in `bypassPermissions`
+inside a disposable, sandboxed VM (see
+[Base Permission Mode](#base-permission-mode) and
+[The VM Sandbox Boundary](#the-vm-sandbox-boundary)). The `vrg-*`
+wrappers, deny rules, and hooks remain — as consistency and
+mistake-prevention guardrails, and as hard blocks on raw `git`/`gh`
+that hold even under bypass — but they are no longer what makes
+autonomy *safe*. The VM sandbox and the server-side App permissions
+are.
 
-- Evaluate replacing read-only bash exceptions with dedicated
-  tools or subagent patterns
-- Tighten the allowlist as more operations are mechanized
-- Each frequent prompt is a signal to build a new VRG tool
-
-### Phase 3 (future)
-
-- Ideal end state: `Bash(vrg *)` is the only allowlisted pattern
-- All operations flow through one command with validated
-  subcommands
-- No raw shell access without human approval
+The earlier `acceptEdits` design spec
+(`docs/specs/2026-05-14-permission-model-design.md`) is retained as
+historical context; it does not describe the model in use.
 
 ## Related
 
