@@ -850,6 +850,14 @@ class TestRebuild:
 
 
 class TestList:
+    # Default: no off-platform boxes, so Lima-focused list/session tests stay
+    # hermetic regardless of the host's real ~/.config/vergil/tofu (and never try
+    # to SSH a real box). Off-platform tests override this with their own patch.
+    @pytest.fixture(autouse=True)
+    def _no_off_platform(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm._off_platform_vms", return_value=[]) as m:
+            yield m
+
     @patch("vergil_tooling.bin.vrg_vm.vm_probe", return_value=(0, 0, None))
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
     def test_list_shows_identities(
@@ -1136,6 +1144,119 @@ class TestList:
         assert "alpha/repo" in data[1] and "02" in data[1]
         assert "beta/repo" in data[2]
 
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm._off_platform_active_sessions")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[])
+    def test_list_sessions_includes_off_platform_roster(
+        self,
+        _list: MagicMock,
+        _shell: MagicMock,
+        mock_cloud_sessions: MagicMock,
+        _names: MagicMock,
+        _age: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A running off-platform box's live sessions were invisible (list_vms()
+        # never sees the box). Now they are queried over IAP and merged in.
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-lmf-cloud",
+                provider="gcp",
+                state_dir=Path("/x/gcp"),
+                identity="vergil",
+                org="lmf",
+                repo="cloud",
+                status="RUNNING",
+            )
+        ]
+        mock_cloud_sessions.return_value = {
+            "c1": {
+                "identity": "vergil",
+                "slot": 1,
+                "path": "lmf/cloud",
+                "sessionId": "c1",
+                "state": "active",
+                "lastActive": 1748000000.0,
+            }
+        }
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        mock_cloud_sessions.assert_called_once()
+        out = capsys.readouterr().out
+        assert "lmf/cloud" in out
+        assert "active" in out
+
+    @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm._off_platform_active_sessions")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[])
+    def test_list_sessions_off_platform_query_failure_warns(
+        self,
+        _list: MagicMock,
+        _shell: MagicMock,
+        mock_cloud_sessions: MagicMock,
+        _names: MagicMock,
+        _age: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A failed roster query (no creds, unreachable, malformed) must degrade to
+        # a warning, never erroring the whole listing.
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-lmf-cloud",
+                provider="gcp",
+                state_dir=Path("/x/gcp"),
+                identity="vergil",
+                org="lmf",
+                repo="cloud",
+                status="RUNNING",
+            )
+        ]
+        mock_cloud_sessions.side_effect = subprocess.CalledProcessError(255, "gcloud ssh")
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        err = capsys.readouterr().err
+        assert "could not query sessions on off-platform box 'lmf/cloud'" in err
+
+    @patch("vergil_tooling.bin.vrg_vm._off_platform_active_sessions")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[])
+    def test_list_sessions_skips_non_running_off_platform(
+        self,
+        _list: MagicMock,
+        _names: MagicMock,
+        _shell: MagicMock,
+        mock_cloud_sessions: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # A non-running off-platform box is never queried (no live roster to read).
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-lmf-cloud",
+                provider="gcp",
+                state_dir=Path("/x/gcp"),
+                identity="vergil",
+                org="lmf",
+                repo="cloud",
+                status="TERMINATED",
+            )
+        ]
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        mock_cloud_sessions.assert_not_called()
+
 
 class TestUpdate:
     # vrg-vm update refreshes plugins too (via _update_instance); mock it so the
@@ -1265,6 +1386,14 @@ class TestUpdateAll:
     @pytest.fixture(autouse=True)
     def _mock_update_plugins(self) -> Iterator[MagicMock]:
         with patch("vergil_tooling.bin.vrg_vm.update_plugins") as m:
+            yield m
+
+    # Default: no off-platform boxes, so the Lima-focused tests stay hermetic
+    # regardless of the host's real ~/.config/vergil/tofu. Tests that exercise the
+    # off-platform report override this with their own patch.
+    @pytest.fixture(autouse=True)
+    def _no_off_platform(self) -> Iterator[MagicMock]:
+        with patch("vergil_tooling.bin.vrg_vm._off_platform_vms", return_value=[]) as m:
             yield m
 
     @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
@@ -1472,6 +1601,80 @@ class TestUpdateAll:
         assert result == 0
         mock_update.assert_not_called()
         assert "No VMs found" in capsys.readouterr().out
+
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_reports_off_platform_boxes_instead_of_silently_skipping(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # The bug: off-platform boxes are invisible to list_vms(), so --all never
+        # touched them and said nothing. Now they are enumerated across backends
+        # and reported with the per-box rebuild command — never bulk-rebuilt, never
+        # silent — and reporting them is not a failure.
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-lmf-cloud",
+                provider="gcp",
+                state_dir=Path("/x/gcp"),
+                identity="lmf",
+                org="lmf",
+                repo="cloud",
+                status="RUNNING",
+            )
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        # The Lima box was still updated normally.
+        mock_update.assert_called_once_with(ANY, None, fallback_tag="v2.0")
+        out = capsys.readouterr().out
+        assert "1 off-platform box NOT updated" in out
+        assert "lmf/cloud" in out
+        assert "vrg-vm update lmf/cloud" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_reports_off_platform_when_no_lima_vms(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Off-platform boxes must surface even when there are no Lima VMs at all —
+        # the old "No VMs found." early return hid them in that case.
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        mock_list.return_value = []
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-lmf-cloud",
+                provider="gcp",
+                state_dir=Path("/x/gcp"),
+                identity="lmf",
+                org=None,
+                repo=None,
+                status="",
+            )
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        mock_update.assert_not_called()
+        out = capsys.readouterr().out
+        assert "No VMs found" not in out
+        assert "1 off-platform box NOT updated" in out
+        # Unlabeled state -> addressed by identity rather than org/repo.
+        assert "vrg-vm update --identity lmf" in out
 
 
 class TestSessionStaleness:
@@ -3381,6 +3584,97 @@ class TestCloudList:
 
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
         assert _cloud_list_rows() == []
+
+    def test_off_platform_vms_recovers_identity_from_labels(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _off_platform_vms
+
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        # A real applied volume state carries the persistent disk with vergil-* labels.
+        state = {
+            "resources": [
+                {
+                    "type": "google_compute_disk",
+                    "instances": [
+                        {
+                            "attributes": {
+                                "name": "vergil-lmf-cloud-data",
+                                "size": 100,
+                                "zone": "us-central1-a",
+                                "labels": {
+                                    "vergil-identity": "lmf",
+                                    "vergil-org": "lmf",
+                                    "vergil-repo": "cloud",
+                                },
+                            }
+                        }
+                    ],
+                }
+            ]
+        }
+        (tofu / "volume.tfstate").write_text(json.dumps(state))
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+        # No persisted zone file -> _cloud_status degrades to "" without raising.
+        vms = _off_platform_vms()
+        assert len(vms) == 1
+        vm = vms[0]
+        assert vm.name == "vergil-lmf-cloud"
+        assert vm.provider == "gcp"
+        assert (vm.identity, vm.org, vm.repo) == ("lmf", "lmf", "cloud")
+        assert vm.scope == "lmf/cloud"
+        assert vm.update_ref == "lmf/cloud"
+        assert vm.status == ""
+        assert vm.is_running is False
+
+    def test_off_platform_vm_unlabeled_falls_back_to_resource_name(self) -> None:
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        # A never-applied / unlabeled state has no identity or org/repo, so both the
+        # display scope and the targeted ref fall back to the resource name.
+        vm = OffPlatformVm(
+            name="vergil-orphan",
+            provider="gcp",
+            state_dir=Path("/x/gcp"),
+            identity=None,
+            org=None,
+            repo=None,
+            status="",
+        )
+        assert vm.scope == "vergil-orphan"
+        assert vm.update_ref == "vergil-orphan"
+
+    def test_off_platform_active_sessions_queries_over_transport(self) -> None:
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm, _off_platform_active_sessions
+
+        vm = OffPlatformVm(
+            name="vergil-lmf-cloud",
+            provider="gcp",
+            state_dir=Path("/x/gcp"),
+            identity="vergil",
+            org="lmf",
+            repo="cloud",
+            status="RUNNING",
+        )
+        transport = MagicMock()
+        transport.run.return_value = MagicMock(
+            stdout=json.dumps(
+                [
+                    {"sessionId": "c1", "state": "active", "path": "lmf/cloud"},
+                    {"sessionId": "c2", "state": "idle", "path": "lmf/cloud"},
+                ]
+            )
+        )
+        with patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport", return_value=transport
+        ) as mk:
+            rows = _off_platform_active_sessions(vm)
+        mk.assert_called_once_with("vergil-lmf-cloud", Path("/x/gcp"))
+        transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
+        # Only the active row is retained, keyed by session id.
+        assert set(rows) == {"c1"}
 
 
 class TestCloudUnderProvision:

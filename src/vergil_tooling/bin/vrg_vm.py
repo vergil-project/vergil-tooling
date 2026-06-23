@@ -986,8 +986,9 @@ def _cmd_update(args: argparse.Namespace) -> int:
         return _cmd_update_all(args)
 
     # Off-platform boxes are stateless: there is no in-place tooling update —
-    # the disposable VM is rebuilt instead. (--all stays Lima-only and skips
-    # off-platform repos; it never resolves a cloud target.)
+    # the disposable VM is rebuilt instead. A targeted `update <off-platform>` does
+    # that rebuild here; bulk `--all` never rebuilds them silently — it enumerates
+    # and reports them (see _cmd_update_all / _report_off_platform_not_updated).
     if _resolve_target(args).spec.off_platform:
         return _cmd_rebuild(args)
 
@@ -1034,12 +1035,35 @@ def _all_update_targets(
     return targets
 
 
+def _report_off_platform_not_updated(vms: list[OffPlatformVm]) -> None:
+    """Name every off-platform box that ``update --all`` does not touch (issue #1803).
+
+    Off-platform 'update' is a full rebuild of a stateless box (destructive, slow,
+    quota-bound), so bulk ``--all`` deliberately never rebuilds them — but it must
+    not *silently* skip them either (the original bug: a running off-platform box
+    got no tooling update and no warning). Each box is reported with the targeted
+    command that would rebuild it.
+    """
+    if not vms:
+        return
+    count = len(vms)
+    noun = "box" if count == 1 else "boxes"
+    print(
+        f"\n{count} off-platform {noun} NOT updated by --all "
+        f"(off-platform 'update' is a full rebuild — run it per box):"
+    )
+    for vm in vms:
+        print(f"  - {vm.scope} [{vm.provider}]: vrg-vm update {vm.update_ref}")
+
+
 def _cmd_update_all(args: argparse.Namespace) -> int:
     """Update vergil-tooling in every existing VM owned by a configured identity.
 
     Fail-deferred by design: every VM in the list is attempted even after one
     fails; non-running VMs are skipped and reported; any failure makes the
-    final exit code non-zero — only after all attempts have completed.
+    final exit code non-zero — only after all attempts have completed. Off-platform
+    boxes are enumerated across backends and reported (never silently skipped, never
+    bulk-rebuilt); reporting them is not a failure, so it never affects the exit code.
     """
     if args.workspace or args.identity:
         print(
@@ -1053,7 +1077,8 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
     status = {vm["name"]: vm["status"] for vm in list_vms()}
 
     targets = _all_update_targets(config, status)
-    if not targets:
+    off_platform = _off_platform_vms()
+    if not targets and not off_platform:
         print("No VMs found.")
         return 0
 
@@ -1083,10 +1108,14 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             failed.append((instance, reason))
 
     total = len(targets)
-    print(
-        f"Update complete: {len(updated)} updated, {len(skipped)} skipped, "
-        f"{len(failed)} failed (of {total} VMs)."
-    )
+    if total:
+        print(
+            f"Update complete: {len(updated)} updated, {len(skipped)} skipped, "
+            f"{len(failed)} failed (of {total} VMs)."
+        )
+
+    _report_off_platform_not_updated(off_platform)
+
     if failed:
         names = ", ".join(f"'{inst}' ({reason})" for inst, reason in failed)
         print(f"failed to update {len(failed)} of {total}: {names}", file=sys.stderr)
@@ -1420,31 +1449,92 @@ def _cloud_status(state_dir: Path, state_key: str) -> str:
     return result.stdout.strip()
 
 
-def _cloud_list_rows() -> list[dict[str, object]]:
+@dataclass(frozen=True)
+class OffPlatformVm:
+    """One off-platform VM reconstructed from local tofu state — no network.
+
+    ``identity`` / ``org`` / ``repo`` come from the persistent disk's ``vergil-*``
+    labels (``None`` for a never-applied or unlabeled state). ``status`` is the raw
+    best-effort cloud status (``"RUNNING"`` for a live box; ``""`` when the provider
+    cannot be reached). ``state_dir`` is the ``<state_key>/<provider>`` tofu
+    directory; ``name`` is both the state key and the deterministic cloud resource
+    name (the gcloud instance name).
+    """
+
+    name: str
+    provider: str
+    state_dir: Path
+    identity: str | None
+    org: str | None
+    repo: str | None
+    status: str
+
+    @property
+    def is_running(self) -> bool:
+        return self.status == "RUNNING"
+
+    @property
+    def scope(self) -> str:
+        """Human label for the box: ``org/repo`` when labeled, else the resource name."""
+        if self.org and self.repo:
+            return f"{self.org}/{self.repo}"
+        return self.name
+
+    @property
+    def update_ref(self) -> str:
+        """How an operator re-addresses this box for a targeted ``vrg-vm update``."""
+        if self.org and self.repo:
+            return f"{self.org}/{self.repo}"
+        if self.identity:
+            return f"--identity {self.identity}"
+        return self.name
+
+
+def _off_platform_vms() -> list[OffPlatformVm]:
     """Enumerate off-platform VMs from local tofu state under ~/.config/vergil/tofu.
 
-    Each ``<state_key>/<provider>/volume.tfstate`` is one off-platform VM. STATUS
-    comes from a best-effort cloud query; an unauthed/unreachable provider yields a
-    degraded ``unknown (no <provider> creds)`` placeholder rather than dropping the
-    row or erroring the list.
+    The cross-backend companion to ``list_vms()`` (which sees only Lima): every
+    ``<state_key>/<provider>/volume.tfstate`` is one off-platform box. Identity /
+    org / repo are recovered from the disk's ``vergil-*`` labels; STATUS is a
+    best-effort cloud query that degrades to ``""`` rather than raising. Shared by
+    every fan-out-over-all-VMs caller (``list``, ``update --all``, session listing)
+    so none of them silently sees only Lima boxes (issue #1803).
     """
-    rows: list[dict[str, object]] = []
+    vms: list[OffPlatformVm] = []
     tofu_root = Path.home() / ".config" / "vergil" / "tofu"
     if not tofu_root.is_dir():
-        return rows
+        return vms
     for volume_state in sorted(tofu_root.glob("*/*/volume.tfstate")):
         provider_dir = volume_state.parent
         provider = provider_dir.name
         state_key = provider_dir.parent.name
-        raw = _cloud_status(provider_dir, state_key)
-        status = raw or f"unknown (no {provider} creds)"
-        rows.append(
-            {
-                "scope": state_key,
-                "backend": provider,
-                "status": status,
-            }
+        parsed = vm_cloud.parse_volume_state(volume_state)
+        labels = parsed.labels if parsed else {}
+        vms.append(
+            OffPlatformVm(
+                name=state_key,
+                provider=provider,
+                state_dir=provider_dir,
+                identity=labels.get("vergil-identity"),
+                org=labels.get("vergil-org"),
+                repo=labels.get("vergil-repo"),
+                status=_cloud_status(provider_dir, state_key),
+            )
         )
+    return vms
+
+
+def _cloud_list_rows() -> list[dict[str, object]]:
+    """Display rows for off-platform VMs (the cloud half of ``vrg-vm list``).
+
+    Reuses the shared ``_off_platform_vms()`` enumeration; an unauthed/unreachable
+    provider yields a degraded ``unknown (no <provider> creds)`` placeholder rather
+    than dropping the row or erroring the list.
+    """
+    rows: list[dict[str, object]] = []
+    for vm in _off_platform_vms():
+        status = vm.status or f"unknown (no {vm.provider} creds)"
+        rows.append({"scope": vm.name, "backend": vm.provider, "status": status})
     return rows
 
 
@@ -1627,6 +1717,20 @@ def _vm_active_sessions(instance: str) -> dict[str, dict[str, object]]:
     return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
 
 
+def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, object]]:
+    """Map active session id -> row from a running off-platform box over IAP.
+
+    The cloud analog of ``_vm_active_sessions``: the same
+    ``vrg-vm-resolve-session --list-json`` query, but carried over the IAP SSH
+    transport instead of limactl. The box owns its own roster, so it is the only
+    source for a live session's name — exactly as for a Lima box.
+    """
+    transport = vm_cloud.off_platform_transport(vm.name, vm.state_dir)
+    result = transport.run("vrg-vm-resolve-session", "--list-json")
+    rows = json.loads(result.stdout)
+    return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
+
+
 def _format_age(last_active: float | None, now: float) -> str:
     if last_active is None:
         return "unknown"
@@ -1656,6 +1760,21 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
     for identity in config.identities.values():
         if vm_map.get(identity.vm_instance) == "Running":
             active_rows.update(_vm_active_sessions(identity.vm_instance))
+
+    # Off-platform boxes live in tofu state, not Lima, so list_vms() never sees
+    # them; query each running one's roster over IAP the same way (issue #1803). A
+    # query failure (no creds, unreachable, malformed) degrades to a warning rather
+    # than erroring the whole listing.
+    for vm in _off_platform_vms():
+        if not vm.is_running:
+            continue
+        try:
+            active_rows.update(_off_platform_active_sessions(vm))
+        except (subprocess.CalledProcessError, OSError, json.JSONDecodeError, RuntimeError) as exc:
+            print(
+                f"WARNING: could not query sessions on off-platform box '{vm.scope}': {exc}",
+                file=sys.stderr,
+            )
 
     projects = Path.home() / ".claude" / "projects"
     names = name_by_session(projects)
@@ -1940,7 +2059,9 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help=(
             "Update every VM owned by a configured identity (fail-deferred: all VMs "
-            "are attempted even if one fails; non-running VMs are skipped and reported)"
+            "are attempted even if one fails; non-running VMs are skipped and reported). "
+            "Off-platform boxes are reported but not rebuilt — run 'vrg-vm update <box>' "
+            "per box to rebuild one."
         ),
     )
     # Off-platform update delegates to rebuild, which drives the progress pipeline;

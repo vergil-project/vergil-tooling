@@ -22,6 +22,7 @@ from vergil_tooling.lib.vm_cloud import (
     destroy_volume,
     fetch_modules,
     link_cloud_claude_dirs,
+    off_platform_transport,
     parse_volume_state,
     preflight,
     provision_params,
@@ -236,7 +237,8 @@ class TestProvisionEnv:
         params = {"EXTRA_PACKAGES": "git vim", "NESTED_VIRT": "true", "SPEC_FINGERPRINT": "abc"}
         body = render_provision_env(params, vergil_user="vergil", home="/home/vergil")
         lines = set(body.splitlines())
-        assert "EXTRA_PACKAGES=git vim" in lines
+        # values are shell-quoted; a multi-token value gets single-quoted (#1805)
+        assert "EXTRA_PACKAGES='git vim'" in lines
         assert "NESTED_VIRT=true" in lines
         assert "SPEC_FINGERPRINT=abc" in lines
         assert "VERGIL_USER=vergil" in lines
@@ -248,9 +250,9 @@ class TestProvisionEnv:
         body = render_provision_env({}, vergil_user="vergil", home="/home/vergil")
         defined = {line.split("=", 1)[0] for line in body.splitlines()}
         assert defined >= self._CANONICAL_KEYS
-        # unset keys default to empty, matching Lima's agent.yaml.skel param block
-        assert "NESTED_VIRT=" in body.splitlines()
-        assert "APT_REPOS=" in body.splitlines()
+        # unset keys default to a shell-quoted empty string
+        assert "NESTED_VIRT=''" in body.splitlines()
+        assert "APT_REPOS=''" in body.splitlines()
 
     def test_params_override_empty_defaults(self) -> None:
         body = render_provision_env(
@@ -258,7 +260,38 @@ class TestProvisionEnv:
         )
         lines = body.splitlines()
         assert "NESTED_VIRT=true" in lines
-        assert "NESTED_VIRT=" not in lines  # the default did not leak a duplicate
+        assert "NESTED_VIRT=''" not in lines  # the default did not leak a duplicate
+
+    def test_sources_cleanly_with_multi_token_values(self) -> None:
+        # Regression (#1805): provision scripts do `. provision.env`, so values with
+        # spaces / | / ; / : must round-trip as plain assignments, not `VAR=x cmd` lines.
+        params = {
+            "EXTRA_PACKAGES": "bridge-utils qemu-system-x86 libvirt-clients",
+            "APT_REPOS": "hashicorp|https://k.example/k.gpg|https://apt.example|noble|main",
+            "PORT_FORWARDS": "3000|10.50.0.2:3000;8080|10.50.0.2:8080",
+            "VAGRANT_PLUGINS": "vagrant-libvirt",
+        }
+        body = render_provision_env(params, vergil_user="ubuntu", home="/home/ubuntu")
+        # Source the rendered body under `set -eu` and echo each var back: with the old
+        # unquoted output this aborts (`command not found`); quoted, it round-trips exactly.
+        script = (
+            f"set -eu\n{body}\n"
+            'printf "%s\\n" "$EXTRA_PACKAGES" "$APT_REPOS" "$PORT_FORWARDS"'
+            ' "$VAGRANT_PLUGINS" "$NESTED_VIRT"'
+        )
+        out = subprocess.run(  # noqa: S603
+            ["bash", "-c", script],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert out == [
+            "bridge-utils qemu-system-x86 libvirt-clients",
+            "hashicorp|https://k.example/k.gpg|https://apt.example|noble|main",
+            "3000|10.50.0.2:3000;8080|10.50.0.2:8080",
+            "vagrant-libvirt",
+            "",  # NESTED_VIRT default — empty
+        ]
 
 
 class TestPreflight:
@@ -759,6 +792,87 @@ class TestRunTofu:
         assert data["volume_id"] == "vol-1"
         assert data["provision_env"] == "VERGIL_USER=ubuntu"
 
+    def test_apply_vm_rolls_back_on_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A failed VM apply (e.g. capacity stockout on the instance) leaves the
+        # global firewall behind in vm.tfstate; without a rollback the next create
+        # 409s on the orphan firewall (#1804). apply_vm must tear the partial state
+        # down with a `tofu destroy` before re-raising, so the create is retryable.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        apply_err = subprocess.CalledProcessError(
+            1, ("tofu", "apply"), stderr="Error: capacity stockout (n2-standard-16)"
+        )
+
+        def _run(cmd: list[str], **_kwargs: object) -> int:
+            if "apply" in cmd:
+                raise apply_err
+            return 0
+
+        run = MagicMock(side_effect=_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            apply_vm(
+                modules,
+                state_dir,
+                name="vm-x",
+                zone="us-central1-a",
+                instance_type="n2-standard-16",
+                nested=True,
+                volume_id="vol-1",
+                ssh_user="ubuntu",
+                provision_env="VERGIL_USER=ubuntu",
+                labels={"vergil-org": "o"},
+            )
+        # the ORIGINAL apply error surfaces — the rollback doesn't mask the real cause
+        assert excinfo.value is apply_err
+        # a rollback destroy ran against the VM state, reusing the just-written tfvars
+        destroy_calls = [c for c in run.call_args_list if "destroy" in c.args[0]]
+        assert len(destroy_calls) == 1
+        destroy_args = destroy_calls[0].args[0]
+        assert f"-state={state_dir / 'vm.tfstate'}" in destroy_args
+        assert f"-var-file={state_dir / 'vm.tfstate.tfvars.json'}" in destroy_args
+
+    def test_apply_vm_rollback_failure_does_not_mask_original_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # If the best-effort rollback itself fails, the original apply error must
+        # still be the one that surfaces — never the secondary cleanup failure.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        apply_err = subprocess.CalledProcessError(
+            1, ("tofu", "apply"), stderr="Error: capacity stockout"
+        )
+
+        def _run(cmd: list[str], **_kwargs: object) -> int:
+            if "apply" in cmd:
+                raise apply_err
+            if "destroy" in cmd:
+                raise subprocess.CalledProcessError(1, cmd, stderr="rollback boom")
+            return 0
+
+        run = MagicMock(side_effect=_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            apply_vm(
+                modules,
+                state_dir,
+                name="vm-x",
+                zone="us-central1-a",
+                instance_type="n2-standard-16",
+                nested=True,
+                volume_id="vol-1",
+                ssh_user="ubuntu",
+                provision_env="VERGIL_USER=ubuntu",
+                labels={"vergil-org": "o"},
+            )
+        assert excinfo.value is apply_err
+
     def test_destroy_vm_reuses_stored_tfvars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -826,6 +940,28 @@ class TestReadZone:
     def test_missing_zone_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="no persisted zone"):
             read_zone(tmp_path)
+
+
+class TestOffPlatformTransport:
+    def test_builds_iap_from_local_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A fan-out enumerator reaches a running box from purely local state:
+        # resource name + the persisted zone file, no spec composition.
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "zone").write_text("us-central1-b")
+        transport = off_platform_transport("vergil-lmf-cloud", state_dir)
+        assert isinstance(transport, IapTransport)
+        assert transport.host == "vergil-lmf-cloud"
+        assert transport.zone == "us-central1-b"
+        assert transport.project == "proj-env"
+        assert transport.ssh_user == "ubuntu"
+
+    def test_raises_when_zone_not_persisted(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="no persisted zone"):
+            off_platform_transport("vergil-lmf-cloud", tmp_path / "absent")
 
 
 def _off_spec(**kw: object) -> ComposedSpec:
