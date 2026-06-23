@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -158,11 +159,16 @@ def render_provision_env(params: dict[str, str], *, vergil_user: str, home: str)
     ``params`` (from ``provision_params``, which omits unset keys) overrides the empty
     ``_PROVISION_ENV_DEFAULTS`` so every key the provision scripts source is always defined
     — provisioning runs under ``set -u`` and aborts on any unbound variable.
+
+    Every value is ``shlex.quote``-escaped: the scripts source this file (``. provision.env``),
+    so a multi-token value (EXTRA_PACKAGES' space-joined list, PORT_FORWARDS' ``|``/``;``
+    records, APT_REPOS) written raw would be parsed as a ``VAR=x cmd args`` line instead of a
+    plain assignment. (#1805)
     """
     merged = {**_PROVISION_ENV_DEFAULTS, **params}
-    lines = [f"{key}={value}" for key, value in merged.items()]
-    lines.append(f"VERGIL_USER={vergil_user}")
-    lines.append(f"HOME={home}")
+    lines = [f"{key}={shlex.quote(value)}" for key, value in merged.items()]
+    lines.append(f"VERGIL_USER={shlex.quote(vergil_user)}")
+    lines.append(f"HOME={shlex.quote(home)}")
     return "\n".join(lines)
 
 

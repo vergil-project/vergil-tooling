@@ -237,7 +237,8 @@ class TestProvisionEnv:
         params = {"EXTRA_PACKAGES": "git vim", "NESTED_VIRT": "true", "SPEC_FINGERPRINT": "abc"}
         body = render_provision_env(params, vergil_user="vergil", home="/home/vergil")
         lines = set(body.splitlines())
-        assert "EXTRA_PACKAGES=git vim" in lines
+        # values are shell-quoted; a multi-token value gets single-quoted (#1805)
+        assert "EXTRA_PACKAGES='git vim'" in lines
         assert "NESTED_VIRT=true" in lines
         assert "SPEC_FINGERPRINT=abc" in lines
         assert "VERGIL_USER=vergil" in lines
@@ -249,9 +250,9 @@ class TestProvisionEnv:
         body = render_provision_env({}, vergil_user="vergil", home="/home/vergil")
         defined = {line.split("=", 1)[0] for line in body.splitlines()}
         assert defined >= self._CANONICAL_KEYS
-        # unset keys default to empty, matching Lima's agent.yaml.skel param block
-        assert "NESTED_VIRT=" in body.splitlines()
-        assert "APT_REPOS=" in body.splitlines()
+        # unset keys default to a shell-quoted empty string
+        assert "NESTED_VIRT=''" in body.splitlines()
+        assert "APT_REPOS=''" in body.splitlines()
 
     def test_params_override_empty_defaults(self) -> None:
         body = render_provision_env(
@@ -259,7 +260,38 @@ class TestProvisionEnv:
         )
         lines = body.splitlines()
         assert "NESTED_VIRT=true" in lines
-        assert "NESTED_VIRT=" not in lines  # the default did not leak a duplicate
+        assert "NESTED_VIRT=''" not in lines  # the default did not leak a duplicate
+
+    def test_sources_cleanly_with_multi_token_values(self) -> None:
+        # Regression (#1805): provision scripts do `. provision.env`, so values with
+        # spaces / | / ; / : must round-trip as plain assignments, not `VAR=x cmd` lines.
+        params = {
+            "EXTRA_PACKAGES": "bridge-utils qemu-system-x86 libvirt-clients",
+            "APT_REPOS": "hashicorp|https://k.example/k.gpg|https://apt.example|noble|main",
+            "PORT_FORWARDS": "3000|10.50.0.2:3000;8080|10.50.0.2:8080",
+            "VAGRANT_PLUGINS": "vagrant-libvirt",
+        }
+        body = render_provision_env(params, vergil_user="ubuntu", home="/home/ubuntu")
+        # Source the rendered body under `set -eu` and echo each var back: with the old
+        # unquoted output this aborts (`command not found`); quoted, it round-trips exactly.
+        script = (
+            f"set -eu\n{body}\n"
+            'printf "%s\\n" "$EXTRA_PACKAGES" "$APT_REPOS" "$PORT_FORWARDS"'
+            ' "$VAGRANT_PLUGINS" "$NESTED_VIRT"'
+        )
+        out = subprocess.run(  # noqa: S603
+            ["bash", "-c", script],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.splitlines()
+        assert out == [
+            "bridge-utils qemu-system-x86 libvirt-clients",
+            "hashicorp|https://k.example/k.gpg|https://apt.example|noble|main",
+            "3000|10.50.0.2:3000;8080|10.50.0.2:8080",
+            "vagrant-libvirt",
+            "",  # NESTED_VIRT default — empty
+        ]
 
 
 class TestPreflight:
