@@ -255,6 +255,21 @@ _CLOUD_INIT_LOG = "/var/log/cloud-init-output.log"
 # hammering the IAP tunnel.
 _READINESS_POLL_SECS = 20.0
 
+# `ssh` (and `gcloud compute ssh`'s tunnel) exits 255 when the transport itself
+# fails to connect — on a fresh box that is the IAP "4003: failed to connect to
+# port 22" boot race, where the instance is RUNNING but sshd is not accepting
+# yet. Keying off this code tells a transient connect failure (retry) apart from
+# cloud-init's own error(1)/degraded(2) exits (terminal).
+_CONNECT_FAILURE_RETURNCODE = 255
+
+# The SSH-readiness wait probes a trivial command on this cadence, bounded by an
+# overall timeout. The cadence is brisk because the boot race usually clears in
+# seconds; the timeout is generous because a box not answering SSH after several
+# minutes has genuinely failed to boot — distinct from cloud-init merely taking
+# a long time, which the (unbounded) cloud-init poll handles separately.
+_SSH_PROBE_INTERVAL_SECS = 5.0
+_SSH_READY_TIMEOUT_SECS = 300.0
+
 # cloud-init's terminal states (``cloud-init status`` output). "done" is the
 # only clean success; "error" and "degraded done" mean provisioning finished
 # with faults — both of which the old blocking ``status --wait`` surfaced as a
@@ -281,19 +296,68 @@ def _parse_cloud_init_status(stdout: str) -> tuple[str, str]:
     return status, detail
 
 
+def _is_connection_failure(exc: subprocess.CalledProcessError) -> bool:
+    """True when *exc* is the transport failing to connect (ssh/IAP exit 255).
+
+    Distinguishes "cannot reach the box yet" (transient — retry) from a command
+    that ran and exited nonzero (e.g. cloud-init's error/degraded states), so the
+    readiness gate never mistakes a boot race for a provisioning fault.
+    """
+    return exc.returncode == _CONNECT_FAILURE_RETURNCODE
+
+
+def _wait_for_ssh(
+    transport: Transport,
+    *,
+    timeout_secs: float = _SSH_READY_TIMEOUT_SECS,
+    poll_secs: float = _SSH_PROBE_INTERVAL_SECS,
+) -> None:
+    """Block until the guest accepts a trivial SSH command, or raise on timeout.
+
+    A fresh box's sshd is not listening the instant the instance reports
+    RUNNING, so the first probes race guest boot and the IAP tunnel fails to
+    connect (ssh exit 255 / IAP 4003). Those are "not ready yet", not failures:
+    we retry on a bounded cadence — emitting a heartbeat so the wait is visible —
+    until a trivial command succeeds. The probe runs ``quiet`` so the expected
+    connect errors do not spam the operator with misleading 4003 noise. Only an
+    exhausted timeout is terminal, and its message says the box "never became
+    reachable" (distinct from a cloud-init fault).
+    """
+    started = time.monotonic()
+    deadline = started + timeout_secs
+    while True:
+        try:
+            transport.run("true", quiet=True)
+            return
+        except subprocess.CalledProcessError as exc:
+            now = time.monotonic()
+            if now >= deadline:
+                raise RuntimeError(
+                    f"SSH never became reachable on the cloud box within "
+                    f"{int(timeout_secs)}s (last exit {exc.returncode}) — "
+                    "the box may have failed to boot"
+                ) from exc
+            beat = _readiness_heartbeat(now - started, "", "waiting for SSH (still booting)")
+            progress.emit(beat)
+            time.sleep(poll_secs)
+
+
 def _poll_cloud_init_status(transport: Transport) -> tuple[str, str]:
     """Query cloud-init once and return its ``(status, detail)``.
 
     ``cloud-init status`` exits nonzero for the error(1)/degraded(2) states, but
     the status line still rides on stdout — so we parse the captured output of a
-    failed call too. A genuine connectivity failure (SSH not up yet) produces no
-    status line, which parses to an empty status the poll loop treats as
-    non-terminal. The transport already echoes the child's stderr, so a real
-    failure is never silent.
+    failed call too. A transport-connect failure (ssh exit 255: SSH dropped /
+    not up yet) is told apart from those by its return code and yields an empty
+    status the poll loop treats as non-terminal. The probe runs ``quiet`` so a
+    transient connect drop mid-provision does not spam a raw IAP error; a real
+    cloud-init fault still surfaces via the parsed status the loop raises on.
     """
     try:
-        result = transport.run("cloud-init", "status", "--long")
+        result = transport.run("cloud-init", "status", "--long", quiet=True)
     except subprocess.CalledProcessError as exc:
+        if _is_connection_failure(exc):
+            return "", ""
         return _parse_cloud_init_status(exc.stdout or "")
     return _parse_cloud_init_status(result.stdout)
 
@@ -358,7 +422,12 @@ def _wait_for_cloud_init(
     wait-forever semantics — because the heartbeat itself is the signal the
     operator uses to decide a box is wedged and abort by hand. Raises
     ``RuntimeError`` on any cloud-init failure state so the gate still hard-fails.
+
+    First waits for SSH reachability, so the cloud-init probe (and the verbose
+    log tail, which also tunnels in) never races sshd startup and mistakes the
+    boot-time IAP 4003 connect error for a provisioning failure.
     """
+    _wait_for_ssh(transport)
     tail = _CloudInitTail(transport) if verbose else None
     if tail is not None:
         tail.start()

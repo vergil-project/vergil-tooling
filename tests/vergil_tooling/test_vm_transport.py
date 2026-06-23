@@ -1,6 +1,8 @@
 import subprocess
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from vergil_tooling.lib.vm_transport import IapTransport, LimaTransport
 
 
@@ -192,6 +194,23 @@ class TestIapTransport:
             pass
         else:  # pragma: no cover
             raise AssertionError("expected CalledProcessError")
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_quiet_suppresses_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # quiet=True is for probe callers where a connect failure is expected
+        # and the raw error (e.g. IAP 4003) would be misleading noise.
+        err = subprocess.CalledProcessError(255, "gcloud")
+        err.stderr = "ERROR: 4003: failed to connect to port 22"
+        mock_run.side_effect = err
+        try:
+            IapTransport("inst", "z", "p", "vergil").run("true", quiet=True)
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+        assert capsys.readouterr().err == ""
 
     @patch("vergil_tooling.lib.vm_transport.os.execvp")
     def test_exec_session_tunnels_interactively(self, mock_execvp: MagicMock) -> None:
