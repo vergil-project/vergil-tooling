@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.63] - 2026-06-23
+
+### Bug fixes
+
+- copy host Claude config onto cloud VMs so bypass is reachable (#1826)
+
 ## [2.1.62] - 2026-06-23
 
 ### Bug fixes
