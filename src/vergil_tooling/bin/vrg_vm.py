@@ -1905,6 +1905,7 @@ def _volume_rows() -> list[dict[str, object]]:
                 {
                     "identity": "—",
                     "scope": state_key,
+                    "instance": "—",
                     "name": "—",
                     "size": "—",
                     "zone": "—",
@@ -1921,6 +1922,7 @@ def _volume_rows() -> list[dict[str, object]]:
             {
                 "identity": parsed.labels.get("vergil-identity") or "—",
                 "scope": scope,
+                "instance": parsed.labels.get("vergil-instance") or "—",
                 "name": parsed.name or "—",
                 "size": f"{parsed.size_gib}GiB" if parsed.size_gib is not None else "—",
                 "zone": parsed.zone or "—",
@@ -1985,9 +1987,10 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
 
     scope_w = max([24, *(len(str(r["scope"])) for r in rows)])
     name_w = max([20, *(len(str(r["name"])) for r in rows)])
+    inst_w = max([10, *(len(str(r.get("instance", "—"))) for r in rows)])
     header = (
-        f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'DISK NAME':<{name_w}} "
-        f"{'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
+        f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'INSTANCE':<{inst_w}} "
+        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
     )
     if live:
         header += f" {'LIVE':<22}"
@@ -1995,7 +1998,8 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
     print("─" * len(header))
     for r in rows:
         line = (
-            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['name']!s:<{name_w}} "
+            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} "
+            f"{r.get('instance', '—')!s:<{inst_w}} {r['name']!s:<{name_w}} "
             f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14}"
         )
         if live:

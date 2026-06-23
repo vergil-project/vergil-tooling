@@ -4686,6 +4686,34 @@ class TestVolumesCommand:
         assert "READY" in out
         live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")
 
+    def test_volumes_shows_instance_column(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from vergil_tooling.bin import vrg_vm
+
+        monkeypatch.setattr(
+            vrg_vm,
+            "_volume_rows",
+            lambda: [
+                {
+                    "identity": "vergil-user",
+                    "scope": "lmf/mq",
+                    "instance": "cloud-x86",
+                    "name": "vrg-abc123",
+                    "size": "300GiB",
+                    "zone": "us-central1-b",
+                    "region": "us-central1",
+                    "provider": "gcp",
+                }
+            ],
+        )
+        args = vrg_vm.argparse.Namespace(live=False)
+        assert vrg_vm._cmd_volumes(args) == 0
+        out = capsys.readouterr().out
+        assert "INSTANCE" in out
+        assert "cloud-x86" in out
+
 
 # ---------------------------------------------------------------------------
 # Task 7 — _recorded_state_for_handle / RecordedState
