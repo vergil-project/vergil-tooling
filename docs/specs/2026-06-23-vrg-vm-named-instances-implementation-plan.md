@@ -21,6 +21,7 @@
 - **No silent failures:** invalid instance names, repo names containing `--`, and `--name X` against a missing instance must raise loudly. Never default or fall back silently.
 - **Instance name grammar:** `[a-z0-9]+(?:-[a-z0-9]+)*` (lowercase alnum, single internal hyphens, no `--`, no leading/trailing hyphen).
 - **Cloud name budget:** the hashed `vrg-<12 hex>` is 16 chars; the GCP `var.name` ≤ 58 guard lives in vergil-vm and is out of scope here.
+- **Reserved, not built:** the per-name tier-6 host-override slot `[<identity>.<org>.<repo>.<name>]` is intentionally NOT parsed or consumed. Tier-6 stays keyed on `(org, repo)` exactly as today; a name-level override table is left unread (non-breaking to add later, per the spec). Do not implement it.
 
 ---
 
@@ -176,7 +177,13 @@ In `parse_vm_stanza`, reject the all-identity tier. Replace the `elif isinstance
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_config.py -k "instances" -v`
 Expected: PASS (all three new tests).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Refactor**
+
+Look for:
+- Duplicated RoleOverlay construction between the top-level role parse and the instance-overlay parse — both build a `RoleOverlay` from the same scalar/list set. Confirm the recursive `_parse_role_overlay(..., allow_instances=False)` reuse is the only construction path (don't fork a second builder).
+- Naming: the `instances={}` default on `RoleOverlay` must not break existing positional constructions in tests — grep `RoleOverlay(` in tests and confirm.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -277,11 +284,33 @@ def test_compose_missing_named_instance_errors_with_available():
         compose_vm_spec(
             identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="nope"
         )
+
+
+def test_fingerprint_excludes_instance_name():
+    # The name is the handle, not fingerprint content: a named instance and the
+    # default that resolve to the SAME effective footprint share a fingerprint, so
+    # adding/renaming an instance never trips drift on the others.
+    role = RoleOverlay(
+        packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        instances={"rdqm-rhel": RoleOverlay(
+            packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
+            apt_repos=[], vagrant_plugins=[], port_forwards=[])},
+    )
+    stanza = VmStanza(
+        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={"vergil-user": role},
+    )
+    default = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+    named = compose_vm_spec(
+        identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="rdqm-rhel"
+    )
+    assert spec_fingerprint(default) == spec_fingerprint(named)
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k "validate_instance or validate_repo or named_instance or default_instance" -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k "validate_instance or validate_repo or named_instance or default_instance or fingerprint_excludes" -v`
 Expected: FAIL — `ImportError` for `validate_instance_name` / `compose_vm_spec` got unexpected keyword `instance`.
 
 - [ ] **Step 3: Add the validators**
@@ -359,10 +388,16 @@ Replace the tier-3/4 block (lines 200-205) with tier-3/4/5:
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k "validate_instance or validate_repo or named_instance or default_instance or missing_named" -v`
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k "validate_instance or validate_repo or named_instance or default_instance or missing_named or fingerprint_excludes" -v`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Refactor**
+
+Look for:
+- The tier-5 block accesses `role.instances` twice (available list + overlay lookup); bind it once to a local.
+- `validate_instance_name`/`validate_repo_segment` error messages should match the existing `SpecError` message style in this module (identity-prefixed where relevant).
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -371,7 +406,7 @@ vrg-commit --type feat --scope vm --message "compose tier-5 named-instance overl
   --body "Add validate_instance_name / validate_repo_segment and an 'instance' parameter to compose_vm_spec that applies the [vm.<identity>.instances.<name>] overlay, erroring with available names when the instance is missing. Ref #1831"
 ```
 
-- [ ] **Step 7: Phase 1 full validation**
+- [ ] **Step 8: Phase 1 full validation**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS (whole suite green; default path unchanged).
@@ -470,7 +505,13 @@ def instance_name(
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k "instance_name" -v`
 Expected: PASS (new tests plus existing `instance_name` tests).
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Refactor**
+
+Look for:
+- `segments` is built once and reused for both `full` (the readable join) and `digest_src` (the hash input) — confirm there's no second place that re-joins identity/org/repo/name.
+- Naming: the new `name` parameter should not shadow the module-level `name` usages; confirm the function body reads clearly.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -661,7 +702,14 @@ def select_backend(
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_cloud.py tests/vergil_tooling/test_vm_spec.py::test_state_slug_forms -v`
 Expected: PASS. If existing `test_vm_cloud.py` tests call `cloud_resource_name(identity, org, repo)` or `cloud_labels(identity, org, repo)` positionally, update those call sites to the new signatures (the cloud name is now a hash of the slug; assertions on the old dashed name must change to `state_slug(...)` for the state key and `cloud_resource_name(state_slug(...))` for the resource name).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Refactor**
+
+Look for:
+- Remove the now-unused `_MAX_NAME`/`_HASH_LEN` constants (grep first to confirm no other reference).
+- `OffPlatformBackend` should obtain its slug via `state_slug(...)` (done) rather than re-joining segments — confirm no duplicate slug-building remains in `vm_cloud.py`.
+- Update every `cloud_resource_name(...)`/`cloud_labels(...)` caller to the new signatures (grep both names across `src/` and `tests/`).
+
+- [ ] **Step 9: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -834,7 +882,14 @@ class DedicatedRow:
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "recover_handle" -v`
 Expected: PASS. Then run the full `test_vrg_vm.py` to catch any remaining `recover_triple` references: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -q` and fix any `recover_triple` import in the tests by renaming to `recover_handle` (adjusting expected tuples to four elements).
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Refactor**
+
+Look for:
+- Extract the name-normalization (`str(meta.get("name") or "") or None`) if it reads awkwardly inline.
+- Grep `recover_triple` across `src/` and `tests/` to confirm zero remaining references after the rename to `recover_handle`.
+- Confirm `read_instance_meta`'s schema-1 back-compat (`setdefault("name", "")`) is exercised by a test or note it.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -843,7 +898,7 @@ vrg-commit --type feat --scope vm --message "make handle reversal name-aware (re
   --body "Sidecar payload bumps to schema 2 with a name field; recover_triple becomes recover_handle returning the four-part handle, threaded through discover_dedicated and update --all. Ref #1831"
 ```
 
-- [ ] **Step 8: Phase 2 full validation**
+- [ ] **Step 9: Phase 2 full validation**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS.
@@ -878,9 +933,28 @@ def test_resolve_target_named_instance(monkeypatch, named_instance_config):
     assert target.instance == "vergil-user.lmf.mq.cloud-x86"
     assert target.spec.off_platform
     assert target.backend.slug == "vergil-user--lmf--mq--cloud-x86"
+
+
+def test_destroy_volume_named_targets_instance_volume(named_instance_config):
+    # destroy-volume --name must resolve the NAMED instance's volume state, not the
+    # default's — it is irreversible and billable.
+    args = _make_args(
+        command="destroy-volume", workspace="lmf/mq", name="cloud-x86", identity="vergil-user"
+    )
+    target = _resolve_target(args)
+    assert target.backend.state_key == "vergil-user--lmf--mq--cloud-x86"
+
+
+def test_update_named_resolves_instance_lima_name(named_instance_local_config):
+    # update (single) routes through _resolve_instance, which must honor --name.
+    args = _make_args(
+        command="update", workspace="lmf/mq", name="rdqm-rhel", identity="vergil-user"
+    )
+    _name, _identity, _config, instance = _resolve_instance(args)
+    assert instance == "vergil-user.lmf.mq.rdqm-rhel"
 ```
 
-If `test_vrg_vm_resolve.py` has no reusable fixture/`_make_args`, add a minimal `argparse.Namespace`-based helper and a config fixture following the patterns already in that file (read the file's existing resolve tests first and match them). The behavioral assertions above are the contract.
+If `test_vrg_vm_resolve.py` has no reusable fixture/`_make_args`, add a minimal `argparse.Namespace`-based helper and config fixtures following the patterns already in that file (read the file's existing resolve tests first and match them). `_make_args` must accept a `command` kwarg. The behavioral assertions above are the contract.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1016,10 +1090,17 @@ Confirm the create-time write (Task 5 Step 5a) passes `target.instance_name_arg`
 
 - [ ] **Step 7: Run the tests to verify they pass**
 
-Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm_resolve.py -k "named_instance" -v`
-Expected: PASS.
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm_resolve.py -k "named" -v`
+Expected: PASS (resolve + destroy-volume + update named tests).
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 8: Refactor**
+
+Look for:
+- The repeated `getattr(args, "name", None)` across `_resolve_target`/`_resolve_instance` — consider a tiny `_requested_name(args)` accessor.
+- `validate_repo_segment` is now called in two resolvers; ensure consistent placement (right after `org`/`repo` are known).
+- `_add_name_arg` is attached to many parsers — confirm one helper, not copy-pasted `add_argument` calls (session is the one intentional exception).
+
+- [ ] **Step 9: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1028,7 +1109,7 @@ vrg-commit --type feat --scope vm --message "add --name flag across lifecycle ve
   --body "Target carries instance_name_arg; --name is wired into create/session/rebuild/destroy/stop/start/restart/update/destroy-volume and threaded through _resolve_target/_resolve_instance into composition, the Lima name, and the backend. Ref #1831"
 ```
 
-- [ ] **Step 9: Phase 3 full validation**
+- [ ] **Step 10: Phase 3 full validation**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS. Confirm a bare verb (no `--name`) still resolves the default instance unchanged.
@@ -1135,7 +1216,13 @@ def _recorded_state_for_handle(
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "recorded_state" -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Refactor**
+
+Look for:
+- The `volume.tfstate`/`vm.tfstate` existence check now appears here and in `_off_platform_vms`; if it becomes a third site in Task 8/10, extract a small `_has_tofu_state(provider_dir)` helper.
+- Naming: confirm `RecordedState` fields (`lima_instance`, `tofu_dirs`) read clearly at the call sites in Tasks 8/9.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1306,7 +1393,14 @@ In `main()`, after the `p_destroy` `--tag` argument (2213-2217), add:
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "destroy_refuses or destroy_yes or destroy_nothing" -v`
 Expected: PASS. Then run the existing destroy tests: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k destroy -v` and reconcile any that assumed the old single-target behavior (they should now expect the recorded-state path; update them to the new contract — this is the intended behavior change).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Refactor**
+
+Look for:
+- `_destroy_recorded`'s fetch-modules / `shutil.rmtree(modules_root.parent)` pattern now mirrors `_cmd_destroy_volume` (and the deleted `_cloud_destroy`); if it is repeated, extract a `_with_fetched_modules(tag)` context manager.
+- Confirm the dead `_cloud_destroy` is removed (grep to verify no remaining caller).
+- The confirmation listing + prompt could be a single `_confirm_destroy(rs, args)` helper if it clutters `_cmd_destroy`.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1374,7 +1468,13 @@ Expected: the stop test may already PASS (Task 6 made `_resolve_instance` name-a
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "stop or start or restart" -v`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 5: Refactor**
+
+Look for:
+- This is a test-only task — no production refactor expected. Reuse the existing `_FakeTarget`/`_FakeIdentity` fixtures rather than re-declaring them; grep the test module first.
+- If a production change was needed (a verb dropping `--name`), recheck it routes through the shared resolvers rather than re-deriving the instance.
+
+- [ ] **Step 6: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1383,7 +1483,7 @@ vrg-commit --type test --scope vm --message "lock stop/start/restart to the hand
   --body "Regression tests proving stop/start/restart address the handle's Lima instance via --name and continue to reject off-platform (no cloud stop/start). Ref #1831"
 ```
 
-- [ ] **Step 6: Phase 4 full validation**
+- [ ] **Step 7: Phase 4 full validation**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS.
@@ -1535,7 +1635,13 @@ In `_list_rows` (the local-row builder — find it with `grep -n "def _list_rows
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "instance_column or list" -v`
 Expected: PASS. Reconcile any existing `list` tests that assert the old header/column count — update them to include INSTANCE (intended change).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Refactor**
+
+Look for:
+- The per-row format string with the INSTANCE column is now duplicated between the local-row and cloud-row loops in `_cmd_list` (and again in `volumes`, Task 12). Extract a single row-formatting helper / shared width constants.
+- `OffPlatformVm`'s new fields (`instance`, `volume_size`, `vm_present`) need defaults so existing constructions stay valid — grep `OffPlatformVm(` and confirm.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1546,7 +1652,206 @@ vrg-commit --type feat --scope vm --message "add INSTANCE column and no-vm volum
 
 ---
 
-### Task 11: `volumes` INSTANCE column
+### Task 11: `list` off-platform orphan classification (SPEC column for cloud rows)
+
+**Files:**
+- Modify: `src/vergil_tooling/lib/vm_spec.py` (add `split_state_slug` near `state_slug`)
+- Modify: `src/vergil_tooling/bin/vrg_vm.py` (add `_classify_off_platform`; thread it into `_cloud_list_rows` 1657-1677 and `_cmd_list` 1711-1715)
+- Test: `tests/vergil_tooling/test_vm_spec.py`, `tests/vergil_tooling/test_vrg_vm.py`
+
+**Interfaces:**
+- Consumes: `_off_platform_vms` (now carrying `instance`/`vm_present` from Task 10), `read_config`, `compose_vm_spec`, `_base_footprint`, `config.identities`.
+- Produces:
+  - `vm_spec.split_state_slug(slug) -> tuple[str, str|None, str|None, str|None]` — exact reverse of `state_slug` via `split('--')` (1 segment = base, 3 = default dedicated, 4 = named); unambiguous because identity/org/repo contain no `--`.
+  - `vrg_vm._classify_off_platform(vm, config) -> str` — `"ok"` / `"orphaned"`: recovers the exact handle from `vm.name` (the readable slug), composes the repo's current profile for that handle, and returns `"orphaned"` when the repo dropped the stanza, no longer declares the instance, or no longer composes that `(off-platform, provider)`.
+  - `_cloud_list_rows(config)` now emits a real `spec` field; `_cmd_list` prints it for cloud rows instead of `—`.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add to `tests/vergil_tooling/test_vm_spec.py`:
+
+```python
+from vergil_tooling.lib.vm_spec import split_state_slug
+
+
+def test_split_state_slug_roundtrips():
+    assert split_state_slug("vergil-user") == ("vergil-user", None, None, None)
+    assert split_state_slug("vergil-user--lmf--mq") == ("vergil-user", "lmf", "mq", None)
+    assert split_state_slug("vergil-user--lmf--mq--cloud-x86") == (
+        "vergil-user", "lmf", "mq", "cloud-x86",
+    )
+```
+
+Add to `tests/vergil_tooling/test_vrg_vm.py`:
+
+```python
+def test_classify_off_platform_orphaned_when_provider_switched(monkeypatch, tmp_path):
+    from vergil_tooling.bin import vrg_vm
+
+    # The repo's current profile composes off-platform/azure, but the recorded box is gcp.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86", provider="gcp", state_dir=tmp_path,
+        identity="vergil-user", org="lmf", repo="mq", instance="cloud-x86",
+        status="Running", volume_size=None, vm_present=True,
+    )
+    config = _config_with_azure_instance("vergil-user", "lmf", "mq", "cloud-x86")
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_orphaned_when_stanza_dropped(monkeypatch, tmp_path):
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86", provider="gcp", state_dir=tmp_path,
+        identity="vergil-user", org="lmf", repo="mq", instance="cloud-x86",
+        status="Running", volume_size=None, vm_present=True,
+    )
+    config = _config_no_repo_vm("vergil-user", "lmf", "mq")  # vergil.toml gone / no [vm]
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_ok_when_matches(monkeypatch, tmp_path):
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86", provider="gcp", state_dir=tmp_path,
+        identity="vergil-user", org="lmf", repo="mq", instance="cloud-x86",
+        status="Running", volume_size=None, vm_present=True,
+    )
+    config = _config_with_gcp_instance("vergil-user", "lmf", "mq", "cloud-x86")
+    assert vrg_vm._classify_off_platform(vm, config) == "ok"
+```
+
+Add the `_config_with_azure_instance` / `_config_with_gcp_instance` / `_config_no_repo_vm` helpers following the config fixtures already in `test_vrg_vm.py` (they build an `IdentityConfig` whose identity has a `projects_dir` containing a `vergil.toml` with the named instance overlay; read the existing config fixtures first and match them).
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k split_state_slug tests/vergil_tooling/test_vrg_vm.py -k classify_off_platform -v`
+Expected: FAIL — `split_state_slug` import error; `_classify_off_platform` undefined.
+
+- [ ] **Step 3: Add `split_state_slug`**
+
+In `src/vergil_tooling/lib/vm_spec.py`, after `state_slug`, add:
+
+```python
+def split_state_slug(slug: str) -> tuple[str, str | None, str | None, str | None]:
+    """Reverse state_slug. 1 segment = base; 3 = default dedicated; 4 = named instance.
+
+    Unambiguous because identity/org/repo never contain '--' (repo names with '--'
+    are rejected at parse time), so this is the exact inverse — no labels needed.
+    """
+    parts = slug.split(_SLUG_SEP)
+    if len(parts) == 1:
+        return parts[0], None, None, None
+    if len(parts) == 3:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], None
+    if len(parts) == 4:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], parts[3]
+    msg = f"unparseable state slug: {slug!r}"
+    raise ValueError(msg)
+```
+
+- [ ] **Step 4: Implement `_classify_off_platform`**
+
+In `src/vergil_tooling/bin/vrg_vm.py`, near `_cloud_list_rows`, add (ensure `split_state_slug`, `compose_vm_spec`, `read_config`, `ConfigError`, `SpecError`, `_base_footprint` are imported/in scope):
+
+```python
+def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
+    """Classify a recorded off-platform box against the repo's current profile.
+
+    'orphaned' when the repo dropped its [vm], no longer declares this instance, or
+    no longer composes this (off-platform, provider); 'ok' when it still matches.
+    The handle is recovered exactly from the readable slug — no lossy label round-trip.
+    """
+    identity_name, org, repo, inst_name = split_state_slug(vm.name)
+    if org is None or repo is None:
+        return "ok"  # a base box carries no per-repo spec
+    identity = config.identities.get(identity_name)
+    if identity is None:
+        return "orphaned"
+    repo_dir = Path(identity.projects_dir) / org / repo
+    if not (repo_dir / "vergil.toml").exists():
+        return "orphaned"
+    try:
+        stanza = read_config(repo_dir).vm
+        spec = compose_vm_spec(
+            identity=identity_name,
+            base=_base_footprint(identity),
+            stanza=stanza,
+            override=identity.overrides.get((org, repo)),
+            instance=inst_name,
+        )
+    except (ConfigError, SpecError):
+        return "orphaned"
+    if not spec.off_platform or spec.provider != vm.provider:
+        return "orphaned"
+    return "ok"
+```
+
+- [ ] **Step 5: Thread the SPEC into the cloud list rows**
+
+Change `_cloud_list_rows` to accept `config` and emit `spec`. Update its signature and the row dict (building on Task 10's version):
+
+```python
+def _cloud_list_rows(config: IdentityConfig) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for vm in _off_platform_vms():
+        if not vm.vm_present:
+            status = "no-vm"
+            disk = vm.volume_size or "—"
+            spec = _classify_off_platform(vm, config)
+        else:
+            status = vm.status or f"unknown (no {vm.provider} creds)"
+            disk = "—"
+            spec = _classify_off_platform(vm, config)
+        rows.append(
+            {
+                "identity": vm.identity or "—",
+                "scope": vm.scope,
+                "instance": vm.instance or "—",
+                "backend": vm.provider,
+                "status": status,
+                "disk": disk,
+                "spec": spec,
+            }
+        )
+    return rows
+```
+
+In `_cmd_list`, pass `config` and print `spec` for cloud rows. Replace the cloud-row loop:
+
+```python
+    for r in _cloud_list_rows(config):
+        print(
+            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<11} "
+            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
+        )
+```
+
+- [ ] **Step 6: Run the tests to verify they pass**
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vm_spec.py -k split_state_slug tests/vergil_tooling/test_vrg_vm.py -k "classify_off_platform or instance_column" -v`
+Expected: PASS.
+
+- [ ] **Step 7: Refactor**
+
+Look for:
+- `_classify_off_platform` and the local `_classify_instance` both answer "does the repo still compose this handle?"; if the compose+compare logic overlaps cleanly, extract a shared helper (but keep the off-platform provider comparison distinct).
+- Note the deliberate symmetry between `split_state_slug` (`--`) and `parse_instance_name` (`.`) — document it, but do NOT merge them; the delimiters and segment rules differ.
+
+- [ ] **Step 8: Commit**
+
+```bash
+cd .worktrees/issue-1831-named-instances
+vrg-git add src/vergil_tooling/lib/vm_spec.py src/vergil_tooling/bin/vrg_vm.py tests/vergil_tooling/test_vm_spec.py tests/vergil_tooling/test_vrg_vm.py
+vrg-commit --type feat --scope vm --message "classify off-platform orphans in list SPEC column" \
+  --body "Add split_state_slug (exact handle reversal from the readable slug) and _classify_off_platform: a recorded cloud box whose repo dropped the stanza or switched (backend, provider) now reads 'orphaned' in list, removable via destroy --name X. Closes acceptance #4/#6 for the cloud path. Ref #1831"
+```
+
+---
+
+### Task 12: `volumes` INSTANCE column
 
 **Files:**
 - Modify: `src/vergil_tooling/bin/vrg_vm.py` (`_volume_rows`; `_cmd_volumes` 1807-1843)
@@ -1622,7 +1927,13 @@ In `_cmd_volumes` (1807-1843), add the column to the header and rows. Replace th
 Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/test_vrg_vm.py -k "volumes" -v`
 Expected: PASS. Reconcile existing `volumes` tests that assert the old header (intended change).
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 6: Refactor**
+
+Look for:
+- The INSTANCE column width/format here duplicates Task 10's `list` rendering; consolidate into the shared column helper introduced in Task 10 (or introduce it now and back-apply).
+- `_volume_rows`' `instance` field should source the `vergil-instance` label the same way `_off_platform_vms` does — avoid a second, divergent label lookup.
+
+- [ ] **Step 7: Commit**
 
 ```bash
 cd .worktrees/issue-1831-named-instances
@@ -1631,7 +1942,7 @@ vrg-commit --type feat --scope vm --message "add INSTANCE column to volumes" \
   --body "vrg-vm volumes shows an INSTANCE column (from the vergil-instance label) so two volumes for one repo are distinguishable. Ref #1831"
 ```
 
-- [ ] **Step 7: Phase 5 full validation + final sweep**
+- [ ] **Step 8: Phase 5 full validation + final sweep**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS (whole suite green).
@@ -1643,14 +1954,14 @@ Run: `vrg-container-run -- uv run vrg-vm list` and `... vrg-vm volumes` to confi
 
 ## Final acceptance check (map to the spec's acceptance criteria)
 
-After Task 11, confirm each spec acceptance criterion has coverage:
+After Task 12, confirm each spec acceptance criterion has coverage:
 
 1. `--name X` lifecycle independence → Tasks 6, 8, 9.
 2. Two instances co-exist → Tasks 3, 4 (distinct Lima names, slugs, hashed cloud names, volumes).
 3. Bare verb = default unchanged → Tasks 2, 6 (default composition + no-`--name` path); regression suite.
-4. In-place backend/provider edit + `destroy --name X` tears down all recorded state; dropped stanza → `orphaned` → Tasks 7, 8, 10.
+4. In-place backend/provider edit + `destroy --name X` tears down all recorded state; dropped stanza → `orphaned` → Tasks 7, 8, 10, 11.
 5. Invalid instance name / repo `--` rejected at parse time → Tasks 1, 2, 6.
-6. `list` INSTANCE + `no-vm` rows, O(instances) → Task 10.
+6. `list` INSTANCE + `no-vm` rows + per-instance orphan classification, O(instances) → Tasks 10, 11.
 7. `--name X` against a missing instance errors with available names → Task 2.
 8. Deterministic `vrg-<hash>` cloud name + identity labels → Task 4.
 9. Full existing suite green → every phase's `vrg-validate`.
