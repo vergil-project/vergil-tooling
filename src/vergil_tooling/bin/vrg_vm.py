@@ -80,6 +80,7 @@ from vergil_tooling.lib.vm_spec import (
     instance_name,
     parse_instance_name,
     spec_fingerprint,
+    state_slug,
     validate_repo_segment,
 )
 from vergil_tooling.lib.vm_transport import LimaTransport
@@ -1642,6 +1643,41 @@ class OffPlatformVm:
         if self.identity:
             return f"--identity {self.identity}"
         return self.name
+
+
+@dataclass
+class RecordedState:
+    """Everything actually built under one handle, discovered from disk + Lima."""
+
+    lima_instance: str | None
+    tofu_dirs: list[tuple[str, Path]]  # (provider, provider_state_dir)
+
+
+def _recorded_state_for_handle(
+    identity: str, org: str, repo: str, name: str | None
+) -> RecordedState:
+    """Enumerate the Lima box and every tofu provider state recorded for a handle.
+
+    Acts on reality, not the live profile: the Lima instance named for the handle
+    (if it exists) plus every ``~/.config/vergil/tofu/<slug>/<provider>/`` directory
+    carrying recorded state. The slug is deterministic, so this is a direct glob of
+    the handle's own subtree.
+    """
+    lima = instance_name(identity, org, repo, name)
+    existing = {vm["name"] for vm in list_vms()}
+    lima_instance = lima if lima in existing else None
+
+    slug = state_slug(identity, org, repo, name)
+    handle_root = Path.home() / ".config" / "vergil" / "tofu" / slug
+    tofu_dirs: list[tuple[str, Path]] = []
+    if handle_root.is_dir():
+        for provider_dir in sorted(p for p in handle_root.iterdir() if p.is_dir()):
+            has_state = (provider_dir / "volume.tfstate").exists() or (
+                provider_dir / "vm.tfstate"
+            ).exists()
+            if has_state:
+                tofu_dirs.append((provider_dir.name, provider_dir))
+    return RecordedState(lima_instance, tofu_dirs)
 
 
 def _off_platform_vms() -> list[OffPlatformVm]:

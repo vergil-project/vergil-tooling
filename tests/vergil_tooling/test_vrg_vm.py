@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import subprocess
+import tempfile
 import textwrap
 import types
 from pathlib import Path
@@ -4313,3 +4314,118 @@ class TestVolumesCommand:
         assert "LIVE" in out
         assert "READY" in out
         live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — _recorded_state_for_handle / RecordedState
+# ---------------------------------------------------------------------------
+#
+# instance_name() computes a Lima socket-path budget from the home directory.
+# pytest's tmp_path is typically ≥50 chars, leaving <14 chars of budget — not
+# enough for "vergil-user.lmf.mq.cloud-x86" (30 chars).  We therefore use a
+# short home path created via tempfile.mkdtemp() (~13 chars), which leaves a
+# budget of ≥57 chars — enough for the full unmangled instance name.
+
+
+def _make_short_home(monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Create a short temp directory suitable as a Lima-budget home.
+
+    Uses tempfile.mkdtemp() so the path is unique (~13 chars) — short enough
+    for Lima's socket-path budget, unlike pytest's tmp_path which is ≥50 chars.
+    Cleanup is left to the OS; the directory lives in the system temp area.
+    """
+    short = Path(tempfile.mkdtemp())
+    monkeypatch.setattr("pathlib.Path.home", lambda: short)
+    return short
+
+
+def test_recorded_state_enumerates_lima_and_tofu(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = _make_short_home(monkeypatch)
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    for provider in ("gcp", "azure"):
+        d = home / ".config" / "vergil" / "tofu" / slug / provider
+        d.mkdir(parents=True)
+        (d / "vm.tfstate").write_text("{}")
+    # Lima instance presence is mocked via list_vms
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_vm.list_vms",
+        lambda: [{"name": "vergil-user.lmf.mq.cloud-x86", "status": "Running"}],
+    )
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance == "vergil-user.lmf.mq.cloud-x86"
+    assert {p for p, _ in rs.tofu_dirs} == {"gcp", "azure"}
+
+
+def test_recorded_state_no_lima_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _make_short_home(monkeypatch)
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance is None
+    assert rs.tofu_dirs == []
+
+
+def test_recorded_state_volume_tfstate_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """volume.tfstate alone (no vm.tfstate) is still detected as recorded state."""
+    home = _make_short_home(monkeypatch)
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "volume.tfstate").write_text("{}")
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance is None
+    assert {p for p, _ in rs.tofu_dirs} == {"gcp"}
+
+
+def test_recorded_state_both_tfstate_files_included(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dir with both volume.tfstate and vm.tfstate appears exactly once."""
+    home = _make_short_home(monkeypatch)
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "volume.tfstate").write_text("{}")
+    (d / "vm.tfstate").write_text("{}")
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert len(rs.tofu_dirs) == 1
+    assert rs.tofu_dirs[0][0] == "gcp"
+
+
+def test_recorded_state_dir_without_tfstate_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider dir with no .tfstate files is not included in tofu_dirs."""
+    home = _make_short_home(monkeypatch)
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "other.json").write_text("{}")  # no tfstate file
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.tofu_dirs == []
