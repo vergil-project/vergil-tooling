@@ -41,6 +41,7 @@ from vergil_tooling.bin.vrg_vm import (
     recover_handle,
     resolve_borrow,
 )
+from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec
@@ -3614,6 +3615,40 @@ class TestCloudStageGuards:
         )
         _cs_tofu_volume(state)
         assert state.fallback_zones == []
+
+    def test_tofu_volume_reattach_populates_family_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reattach: zone is pinned, so the recovery is a machine-family sweep (#1836).
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        state.state_dir.mkdir(parents=True, exist_ok=True)
+        (state.state_dir / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        _cs_tofu_volume(state)
+        expected = vm_cloud.instance_fallback_candidates(state.backend.spec.instance)[1:]
+        assert state.fallback_instances == expected
+        assert state.fallback_zones == []
+
+    def test_tofu_volume_fresh_create_leaves_family_fallback_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Fresh create keeps the zone sweep and never engages family fallback.
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            MagicMock(return_value=["us-central1-a", "us-central1-b"]),
+        )
+        _cs_tofu_volume(state)
+        assert state.fallback_instances == []
 
     def test_require_modules_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="fetch-modules did not run"):
