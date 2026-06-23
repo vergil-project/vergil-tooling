@@ -1534,9 +1534,7 @@ class TestVmVarsInstanceOverride:
         spec = _off_spec(instance="n2-standard-8")
         b = OffPlatformBackend(spec, "vergil-user", "o", "r")
         declared_fp = spec_fingerprint(spec)
-        would_be_landed_fp = spec_fingerprint(
-            dataclasses.replace(spec, instance="n2d-standard-8")
-        )
+        would_be_landed_fp = spec_fingerprint(dataclasses.replace(spec, instance="n2d-standard-8"))
 
         v = b.vm_vars(zone="us-central1-f", volume_id="v1", instance_override="n2d-standard-8")
 
