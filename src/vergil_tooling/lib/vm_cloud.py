@@ -785,6 +785,19 @@ def _effective_ssh_user() -> str:
     return os.environ.get("VRG_OFF_PLATFORM_SSH_USER", _DEFAULT_SSH_USER)
 
 
+def off_platform_transport(name: str, state_dir: Path) -> IapTransport:
+    """Build an IAP transport for an already-applied off-platform box from local state.
+
+    Mirrors :meth:`OffPlatformBackend.transport` but sourced purely from the
+    persisted tofu state (the resource ``name`` plus the apply ``zone`` file), so a
+    fan-out enumerator can reach a running box without composing its full spec.
+    Raises ``RuntimeError`` (via :func:`read_zone`) when no zone has been persisted
+    — i.e. the volume was never applied and there is nothing to reach.
+    """
+    zone = read_zone(state_dir)
+    return IapTransport(name, zone, _resolve_project(), _effective_ssh_user())
+
+
 class OffPlatformBackend:
     """Cloud (OpenTofu + GCP) backend behind the ``Backend`` protocol.
 

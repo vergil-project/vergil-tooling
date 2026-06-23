@@ -22,6 +22,7 @@ from vergil_tooling.lib.vm_cloud import (
     destroy_volume,
     fetch_modules,
     link_cloud_claude_dirs,
+    off_platform_transport,
     parse_volume_state,
     preflight,
     provision_params,
@@ -826,6 +827,28 @@ class TestReadZone:
     def test_missing_zone_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="no persisted zone"):
             read_zone(tmp_path)
+
+
+class TestOffPlatformTransport:
+    def test_builds_iap_from_local_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A fan-out enumerator reaches a running box from purely local state:
+        # resource name + the persisted zone file, no spec composition.
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "zone").write_text("us-central1-b")
+        transport = off_platform_transport("vergil-lmf-cloud", state_dir)
+        assert isinstance(transport, IapTransport)
+        assert transport.host == "vergil-lmf-cloud"
+        assert transport.zone == "us-central1-b"
+        assert transport.project == "proj-env"
+        assert transport.ssh_user == "ubuntu"
+
+    def test_raises_when_zone_not_persisted(self, tmp_path: Path) -> None:
+        with pytest.raises(RuntimeError, match="no persisted zone"):
+            off_platform_transport("vergil-lmf-cloud", tmp_path / "absent")
 
 
 def _off_spec(**kw: object) -> ComposedSpec:
