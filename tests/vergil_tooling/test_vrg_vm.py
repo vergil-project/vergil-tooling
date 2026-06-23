@@ -22,6 +22,7 @@ from vergil_tooling.bin.vrg_vm import (
     _CloudState,
     _create_from_target,
     _cs_credentials,
+    _cs_link_claude,
     _cs_tofu_volume,
     _list_rows,
     _log_root,
@@ -3471,6 +3472,7 @@ class _CloudPatches:
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.bootstrap_volume")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
+        _patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_volume")
@@ -3575,6 +3577,37 @@ class TestCloudStageGuards:
     def test_require_transport_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="tofu-vm did not run"):
             _cs_credentials(self._state(tmp_path))
+
+
+class TestCloudLinkClaudeCopiesConfig:
+    """The cloud link-claude stage must copy host ~/.claude config (parity with
+    the Lima path's _st_copy_config) so the operator's permissions.defaultMode
+    reaches the off-platform VM and bypassPermissions is reachable (#1825)."""
+
+    def _state(self, tmp_path: Path) -> _CloudState:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "cloud", _OFF_PLATFORM_VM)
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_args(cfg, "lmf/cloud"))
+        state = _CloudState(
+            target=target,
+            backend=_cloud_backend(target),
+            state_dir=tmp_path / "state",
+        )
+        state.transport = MagicMock()
+        return state
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
+    @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
+    def test_link_stage_copies_host_config_then_links(
+        self, mock_copy: MagicMock, mock_link: MagicMock, tmp_path: Path
+    ) -> None:
+        state = self._state(tmp_path)
+        _cs_link_claude(state)
+        # copies host ~/.claude (settings.json carries permissions.defaultMode)...
+        mock_copy.assert_called_once_with(state.transport, Path.home() / ".claude")
+        # ...and still links the durable history subdirs onto the volume
+        mock_link.assert_called_once_with(state.transport)
 
 
 class TestCloudCreate:
