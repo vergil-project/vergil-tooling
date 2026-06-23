@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.55] - 2026-06-23
+
+### Bug fixes
+
+- wait for SSH readiness before the cloud-init probe so a boot race is not a hard fail (#1776)
+
 ## [2.1.54] - 2026-06-22
 
 ### Bug fixes
