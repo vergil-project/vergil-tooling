@@ -1919,6 +1919,7 @@ def _volume_rows() -> list[dict[str, object]]:
         provider_dir = volume_state.parent
         provider = provider_dir.name
         state_key = provider_dir.parent.name
+        vm_type = vm_cloud.parse_vm_machine_type(provider_dir / "vm.tfstate") or "—"
         parsed = vm_cloud.parse_volume_state(volume_state)
         if parsed is None:
             rows.append(
@@ -1931,6 +1932,7 @@ def _volume_rows() -> list[dict[str, object]]:
                     "zone": "—",
                     "region": "—",
                     "provider": provider,
+                    "vm_type": vm_type,
                 }
             )
             continue
@@ -1948,6 +1950,7 @@ def _volume_rows() -> list[dict[str, object]]:
                 "zone": parsed.zone or "—",
                 "region": region or "—",
                 "provider": provider,
+                "vm_type": vm_type,
             }
         )
     return rows
@@ -2010,7 +2013,7 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
     inst_w = max([10, *(len(str(r.get("instance", "—"))) for r in rows)])
     header = (
         f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'INSTANCE':<{inst_w}} "
-        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
+        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14} {'VM TYPE':<16}"
     )
     if live:
         header += f" {'LIVE':<22}"
@@ -2020,7 +2023,7 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
         line = (
             f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} "
             f"{r.get('instance', '—')!s:<{inst_w}} {r['name']!s:<{name_w}} "
-            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14}"
+            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14} {r['vm_type']!s:<16}"
         )
         if live:
             line += f" {r['live']!s:<22}"

@@ -955,6 +955,36 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
     return None
 
 
+def parse_vm_machine_type(state_file: Path) -> str | None:
+    """Return the bare machine type from a ``vm.tfstate``'s instance, or ``None``.
+
+    Mirrors ``parse_volume_state``: ``None`` when the file is absent, unreadable,
+    malformed, or carries no applied ``google_compute_instance``. ``machine_type`` may
+    be a bare type or a full selfLink — normalize to the bare name. This is the single
+    source of truth for the family a reattach fallback actually landed on. (#1836)
+    """
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for resource in data.get("resources", []):
+        if not isinstance(resource, dict) or resource.get("type") != "google_compute_instance":
+            continue
+        instances = resource.get("instances") or []
+        if not instances or not isinstance(instances[0], dict):
+            continue
+        attrs = instances[0].get("attributes")
+        if not isinstance(attrs, dict):
+            continue
+        machine_type = attrs.get("machine_type")
+        if not machine_type:
+            return None
+        return str(machine_type).rsplit("/", 1)[-1]
+    return None
+
+
 # --- Off-platform backend ----------------------------------------------------
 
 # ASSUMPTION pending real-cloud e2e (vergil-vm gated test): the GCE image's

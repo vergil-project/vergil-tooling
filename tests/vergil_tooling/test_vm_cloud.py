@@ -28,6 +28,7 @@ from vergil_tooling.lib.vm_cloud import (
     is_zone_capacity_error,
     link_cloud_claude_dirs,
     off_platform_transport,
+    parse_vm_machine_type,
     parse_volume_state,
     preflight,
     provision_params,
@@ -1641,3 +1642,33 @@ class TestFamilyFallback:
                 fallback_zones=[],
                 fallback_instances=[],
             )
+
+
+class TestParseVmMachineType:
+    def _state(self, machine_type: str) -> str:
+        return json.dumps(
+            {
+                "resources": [
+                    {
+                        "type": "google_compute_instance",
+                        "instances": [{"attributes": {"machine_type": machine_type}}],
+                    }
+                ]
+            }
+        )
+
+    def test_returns_bare_type_from_selflink(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state("projects/p/zones/us-central1-f/machineTypes/n2d-standard-8"))
+        assert parse_vm_machine_type(f) == "n2d-standard-8"
+
+    def test_returns_bare_type_when_already_bare(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state("n2-standard-8"))
+        assert parse_vm_machine_type(f) == "n2-standard-8"
+
+    def test_none_when_absent_or_empty(self, tmp_path: Path) -> None:
+        assert parse_vm_machine_type(tmp_path / "missing.tfstate") is None
+        empty = tmp_path / "vm.tfstate"
+        empty.write_text("{}")
+        assert parse_vm_machine_type(empty) is None

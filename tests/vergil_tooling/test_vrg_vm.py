@@ -35,6 +35,7 @@ from vergil_tooling.bin.vrg_vm import (
     _resolve_target,
     _resolve_vm_verbose,
     _target_ref,
+    _volume_rows,
     _warn_under,
     discover_dedicated,
     main,
@@ -3130,6 +3131,49 @@ class TestListRows:
         _make_repo(projects, "lmf", "mq", _MQ_VM_SECTION)
         cfg = _identities(tmp_path, projects)
         assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1
+
+    def test_volume_rows_include_landed_machine_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        provider = tmp_path / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        provider.mkdir(parents=True)
+        (provider / "volume.tfstate").write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {
+                            "type": "google_compute_disk",
+                            "instances": [
+                                {
+                                    "attributes": {
+                                        "name": "vergil-lmf-cloud-data",
+                                        "size": 300,
+                                        "zone": "us-central1-f",
+                                        "labels": {},
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+        (provider / "vm.tfstate").write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {
+                            "type": "google_compute_instance",
+                            "instances": [{"attributes": {"machine_type": "n2d-standard-8"}}],
+                        }
+                    ]
+                }
+            )
+        )
+        rows = _volume_rows()
+        assert rows
+        assert rows[0]["vm_type"] == "n2d-standard-8"
 
 
 class TestProbeRunning:
