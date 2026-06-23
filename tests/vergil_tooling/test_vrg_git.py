@@ -10,6 +10,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_git import (
     _noninteractive_rebase_env,
+    _org_from_clone_url,
     _parse_branch_target,
     _worktree_convention_active,
     main,
@@ -605,6 +606,21 @@ def test_returns_subprocess_exit_code() -> None:
 # -- remote token injection ---------------------------------------------------
 
 
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["https://github.com/myorg/myrepo.git", "/dest"], "myorg"),
+        (["https://github.com/myorg/myrepo"], "myorg"),
+        (["git@github.com:myorg/myrepo.git"], "myorg"),
+        (["--depth", "1", "https://github.com/myorg/myrepo.git"], "myorg"),
+        (["/local/path", "/dest"], None),
+        (["https://gitlab.com/myorg/myrepo.git"], None),
+    ],
+)
+def test_org_from_clone_url(args: list[str], expected: str | None) -> None:
+    assert _org_from_clone_url(args) == expected
+
+
 class TestRemoteTokenInjection:
     @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote", "clone"])
     def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
@@ -625,6 +641,21 @@ class TestRemoteTokenInjection:
         assert env["GIT_CONFIG_COUNT"] == "1"
         assert env["GIT_CONFIG_KEY_0"] == "http.https://github.com/.extraHeader"
         assert "Authorization: Basic" in env["GIT_CONFIG_VALUE_0"]
+
+    def test_clone_derives_org_from_url_for_token(self) -> None:
+        # clone runs outside any repo, so the org must come from the URL, not a remote.
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.github.get_installation_token",
+                return_value="ghs_token_123",
+            ) as mock_token,
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = subprocess.CompletedProcess(
+                args=["git", "clone"], returncode=0, stdout="", stderr=""
+            )
+            main(["clone", "https://github.com/myorg/myrepo.git", "/dest"])
+        mock_token.assert_called_once_with("myorg")
 
     @pytest.mark.parametrize("subcmd", ["status", "log", "diff", "add", "branch"])
     def test_no_injection_for_local_commands(self, subcmd: str) -> None:
