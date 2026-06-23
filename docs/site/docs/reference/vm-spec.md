@@ -186,6 +186,14 @@ The same `vrg-vm` verbs work, dispatched on the resolved `backend`:
   provider for cloud rows). Without cloud credentials a cloud row's
   status degrades to `unknown (no <provider> creds)` rather than
   erroring or hiding the row.
+- `volumes` — enumerates the persistent volumes (the long-lived,
+  billable, quota-consuming disks that outlive each ephemeral VM) from
+  local tofu state: `IDENTITY`, `ORG/REPO`, `DISK NAME`, `SIZE`, `ZONE`,
+  `REGION`, all read from each disk's stamped labels/attributes with no
+  network call. `--live` adds a `LIVE` column that cross-checks each disk
+  against the provider — a disk deleted out of band shows `MISSING`; an
+  unauthed/unreachable provider degrades to `unknown`. This is how you
+  identify which volume to `destroy-volume` and track SSD quota usage.
 
 Access is via the provider's identity-aware tunnel (GCP IAP) — there is
 **no public IP** and no operator-IP allow-list; authentication is the

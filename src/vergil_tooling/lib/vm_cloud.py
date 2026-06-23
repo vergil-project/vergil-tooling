@@ -16,6 +16,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -675,6 +676,92 @@ def read_zone(state_dir: Path) -> str:
         msg = f"no persisted zone at {zone_file} — apply the volume first"
         raise RuntimeError(msg)
     return zone_file.read_text(encoding="utf-8").strip()
+
+
+# --- Volume state parsing ----------------------------------------------------
+#
+# Each off-platform volume's tofu state carries the one resource that matters
+# for an inventory: ``google_compute_disk.data``, stamped at apply time with the
+# disk's name, size, zone, and the vergil-{identity,org,repo} labels. Parsing it
+# lets ``vrg-vm volumes`` build a full listing from purely local state — no
+# gcloud, no network — reflecting exactly what vrg-vm manages.
+
+
+@dataclass(frozen=True)
+class VolumeState:
+    """The ``google_compute_disk.data`` attributes parsed from a volume.tfstate."""
+
+    name: str
+    size_gib: int | None
+    zone: str
+    labels: dict[str, str]
+
+
+def _coerce_int(value: object) -> int | None:
+    """Best-effort int from a tofu attribute, ``None`` when it is absent/non-numeric."""
+    if isinstance(value, bool):  # bool is an int subclass; a label-like bool is not a size
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None
+
+
+def _zone_name(zone: str) -> str:
+    """Normalize a zone that may be a full selfLink URL down to its bare name."""
+    return zone.rsplit("/", 1)[-1] if zone else ""
+
+
+def zone_to_region(zone: str) -> str:
+    """Derive a GCP region from a zone name (``us-central1-a`` -> ``us-central1``).
+
+    Returns the empty string for a zone with no trailing ``-<suffix>`` (or none at
+    all), so the caller can show a placeholder rather than a malformed region.
+    """
+    if not zone or "-" not in zone:
+        return ""
+    return zone.rsplit("-", 1)[0]
+
+
+def parse_volume_state(state_file: Path) -> VolumeState | None:
+    """Parse a ``volume.tfstate``, returning the persistent disk's attributes.
+
+    Returns ``None`` when the file is absent, unreadable, malformed, or carries
+    no applied ``google_compute_disk`` resource (e.g. the ``{}`` placeholder of a
+    never-applied state). A bad state degrades to a placeholder volume row in the
+    caller rather than erroring the whole listing — there is no network call and
+    no gcloud here, only the local state file.
+    """
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for resource in data.get("resources", []):
+        if not isinstance(resource, dict) or resource.get("type") != "google_compute_disk":
+            continue
+        instances = resource.get("instances") or []
+        if not instances or not isinstance(instances[0], dict):
+            continue
+        attrs = instances[0].get("attributes")
+        if not isinstance(attrs, dict):
+            continue
+        raw_labels = attrs.get("labels") or {}
+        labels = (
+            {str(k): str(v) for k, v in raw_labels.items()} if isinstance(raw_labels, dict) else {}
+        )
+        return VolumeState(
+            name=str(attrs.get("name", "")),
+            size_gib=_coerce_int(attrs.get("size")),
+            zone=_zone_name(str(attrs.get("zone", ""))),
+            labels=labels,
+        )
+    return None
 
 
 # --- Off-platform backend ----------------------------------------------------
