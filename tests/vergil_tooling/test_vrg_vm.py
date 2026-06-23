@@ -4593,3 +4593,169 @@ def test_destroy_interactive_n_aborts(
     rc = vrg_vm._cmd_destroy(args)
     assert rc == 1
     assert "aborted" in capsys.readouterr().err.lower()
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — stop/start/restart resolve by handle, Lima-only
+# ---------------------------------------------------------------------------
+
+
+def _stop_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="stop",
+        workspace=workspace,
+        name=name,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def _start_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="start",
+        workspace=workspace,
+        name=name,
+        tag="",
+        timeout="30m",
+        allow_stale_vm=False,
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def _restart_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="restart",
+        workspace=workspace,
+        name=name,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+class _FakeTarget:
+    """Minimal stand-in for Target with a configurable off_platform flag."""
+
+    def __init__(self, *, off_platform: bool = False) -> None:
+        self.spec = types.SimpleNamespace(off_platform=off_platform)
+        self.identity_name = "vergil-user"
+
+
+def test_stop_named_instance_targets_handle_lima(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stop --name routes stop_vm to the 4-segment Lima instance name."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(vrg_vm, "_reject_if_off_platform", lambda args: False)
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_instance",
+        lambda args: (
+            "vergil-user",
+            _FakeIdentity(),
+            _FakeConfig(),
+            "vergil-user.lmf.mq.cloud-x86",
+        ),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _stop_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_stop(args) == 0
+    assert stopped == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_stop_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """stop --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _stop_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_stop(args) == 1
+    assert stopped == []
+    assert "ephemeral" in capsys.readouterr().err.lower()
+
+
+def test_start_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """start --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    args = _start_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_start(args) == 1
+    assert "ephemeral" in capsys.readouterr().err.lower()
+
+
+def test_restart_named_instance_targets_handle_lima(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """restart --name routes stop_vm/start_vm to the 4-segment Lima instance name."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(vrg_vm, "_reject_if_off_platform", lambda args: False)
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_instance",
+        lambda args: (
+            "vergil-user",
+            _FakeIdentity(),
+            _FakeConfig(),
+            "vergil-user.lmf.mq.cloud-x86",
+        ),
+    )
+    stopped: list[str] = []
+    started: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    monkeypatch.setattr(vrg_vm, "start_vm", lambda i: started.append(i))
+    monkeypatch.setattr(vrg_vm, "inject_credentials", lambda transport, identity: None)
+    args = _restart_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_restart(args) == 0
+    assert stopped == ["vergil-user.lmf.mq.cloud-x86"]
+    assert started == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_restart_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """restart --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _restart_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_restart(args) == 1
+    assert stopped == []
+    assert "ephemeral" in capsys.readouterr().err.lower()
