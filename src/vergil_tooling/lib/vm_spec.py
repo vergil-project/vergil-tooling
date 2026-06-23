@@ -172,8 +172,9 @@ def compose_vm_spec(
     base: Mapping[str, object],
     stanza: VmStanza | None,
     override: Mapping[str, object] | None,
+    instance: str | None = None,
 ) -> ComposedSpec:
-    """Overlay the five precedence tiers into the effective spec for one (identity, repo)."""
+    """Overlay the precedence tiers into the effective spec for one (identity, repo[, name])."""
     # Tier 1+2: built-in/base footprint from the identity.
     acc = _Acc(
         cpus=cast("int", base["cpus"]),
@@ -198,13 +199,27 @@ def compose_vm_spec(
     )
 
     # Tiers 3 + 4: repo [vm] (all-identity), then [vm.<identity>] role overlay.
+    role = None
     if stanza is not None:
         _apply_overlay(acc, stanza)
         role = stanza.roles.get(identity)
         if role is not None:
             _apply_overlay(acc, role)
 
-    # Tier 5: host override (wins). Flag any scalar pushed below the repo-declared floor.
+    # Tier 5: the named-instance overlay, if a name was requested.
+    if instance is not None:
+        instances = role.instances if role is not None else {}
+        overlay = instances.get(instance)
+        if overlay is None:
+            avail = ", ".join(sorted(instances)) if instances else "(none)"
+            msg = (
+                f"identity {identity!r}: no instance {instance!r} for this repo; "
+                f"available: {avail}"
+            )
+            raise SpecError(msg)
+        _apply_overlay(acc, overlay)
+
+    # Host override (wins). Flag any scalar pushed below the repo-declared floor.
     under: list[str] = []
     if override:
         acc.customized = True
@@ -301,6 +316,16 @@ def validate_instance_name(name: str) -> None:
         msg = (
             f"instance name {name!r} must be lowercase [a-z0-9-] with single internal "
             f"hyphens (no '--', no leading/trailing hyphen)"
+        )
+        raise ValueError(msg)
+
+
+def validate_repo_segment(repo: str) -> None:
+    """Reject a repo name containing '--', which would make the state slug ambiguous."""
+    if "--" in repo:
+        msg = (
+            f"repo name {repo!r} must not contain '--' (it would make the "
+            f"'--'-joined instance handle ambiguous)"
         )
         raise ValueError(msg)
 

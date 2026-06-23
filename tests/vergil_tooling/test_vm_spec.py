@@ -17,6 +17,8 @@ from vergil_tooling.lib.vm_spec import (
     lima_name_budget,
     parse_instance_name,
     spec_fingerprint,
+    validate_instance_name,
+    validate_repo_segment,
 )
 
 BASE = {"cpus": 4, "memory": "4GiB", "disk": "50GiB"}
@@ -678,3 +680,101 @@ class TestFingerprint:
         )
         expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         assert spec_fingerprint(self._op_spec()) == expected
+
+
+# ---------------------------------------------------------------------------
+# Task 2: Naming validators + tier-5 composition
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ["cloud-x86", "rdqm-rhel", "a", "x1"])
+def test_validate_instance_name_accepts(name: str) -> None:
+    validate_instance_name(name)  # no raise
+
+
+@pytest.mark.parametrize("name", ["bad--name", "-lead", "trail-", "Up", "a_b", ""])
+def test_validate_instance_name_rejects(name: str) -> None:
+    with pytest.raises(ValueError, match="instance name"):
+        validate_instance_name(name)
+
+
+def test_validate_repo_segment_rejects_double_dash() -> None:
+    with pytest.raises(ValueError, match="--"):
+        validate_repo_segment("my--repo")
+    validate_repo_segment("my-repo")  # single dash ok
+
+
+def test_compose_named_instance_overlays_tier5() -> None:
+    role = RoleOverlay(
+        packages=[], cpus=12, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        instances={
+            "rdqm-rhel": RoleOverlay(
+                packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
+                apt_repos=[], vagrant_plugins=[], port_forwards=[],
+                backend="off-platform", provider="gcp", region="us-central1",
+                instance="n2-standard-8", volume="200GiB",
+            )
+        },
+    )
+    stanza = VmStanza(
+        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        roles={"vergil-user": role},
+    )
+    spec = compose_vm_spec(
+        identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="rdqm-rhel"
+    )
+    assert spec.cpus == 8  # tier-5 overrides tier-4's 12
+    assert spec.memory == "32GiB"
+    assert spec.off_platform
+    assert spec.instance == "n2-standard-8"
+
+
+def test_compose_default_instance_unchanged_when_none() -> None:
+    stanza = VmStanza(
+        packages=[], cpus=12, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={},
+    )
+    spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+    assert spec.cpus == 12  # tiers 1-4 only, today's behavior
+
+
+def test_compose_missing_named_instance_errors_with_available() -> None:
+    role = RoleOverlay(
+        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        instances={"cloud-x86": RoleOverlay(
+            packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+            apt_repos=[], vagrant_plugins=[], port_forwards=[])},
+    )
+    stanza = VmStanza(
+        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={"vergil-user": role},
+    )
+    with pytest.raises(SpecError, match="cloud-x86"):
+        compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="nope"
+        )
+
+
+def test_fingerprint_excludes_instance_name() -> None:
+    # The name is the handle, not fingerprint content: a named instance and the
+    # default that resolve to the SAME effective footprint share a fingerprint, so
+    # adding/renaming an instance never trips drift on the others.
+    role = RoleOverlay(
+        packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        instances={"rdqm-rhel": RoleOverlay(
+            packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
+            apt_repos=[], vagrant_plugins=[], port_forwards=[])},
+    )
+    stanza = VmStanza(
+        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
+        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={"vergil-user": role},
+    )
+    default = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
+    named = compose_vm_spec(
+        identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="rdqm-rhel"
+    )
+    assert spec_fingerprint(default) == spec_fingerprint(named)
