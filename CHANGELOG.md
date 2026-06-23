@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.61] - 2026-06-23
+
+### Bug fixes
+
+- update a running box in place over IAP instead of rebuilding (#1815)
+
+### Documentation
+
+- park shared-workspace NFS design (#1796) (#1814)
+
+### Features
+
+- auto-fall back across a region's zones on a capacity stockout (#1816)
+
 ## [2.1.60] - 2026-06-23
 
 ### Bug fixes
