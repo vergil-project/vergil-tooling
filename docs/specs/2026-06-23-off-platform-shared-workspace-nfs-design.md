@@ -7,7 +7,11 @@
 
 **Date:** 2026-06-23
 
-**Status:** Design (from brainstorming, 2026-06-23).
+**Status:** **Parked** (2026-06-23). Design captured from brainstorming and a
+paad:pushback review; **not scheduled for implementation**. Parked pending (a)
+reconsideration of the network-filesystem dependency (see "Architectural
+reservation") and (b) resolution of the in-flight conflicts (see "Conflicts with
+in-flight work").
 
 **Spans two repositories.** Like the parent
 [off-platform VM dispatch design](2026-06-22-off-platform-vm-dispatch-design.md),
@@ -15,6 +19,39 @@ this is the `vergil-tooling` companion to a vergil-vm module change. This spec
 specifies the `vrg-vm` dispatcher mechanism, the new fleet-scoped lifecycle, and
 the per-VM provisioning changes; the `gcp/shared-fs` OpenTofu module that stands up
 the NFS server is a **vergil-vm prerequisite** (see "Cross-repo prerequisites").
+
+## Architectural reservation (why this is parked)
+
+The hesitation that parks this design is **architectural, not cost** (the cost
+analysis below lands at an acceptable ~$115–125/month). The concern is that a shared
+**network filesystem** — NFS/NAS — is a heavyweight, dated dependency to graft onto an
+otherwise cloud-native, ephemeral-VM architecture. It works in this context, but
+standing up a *permanent, always-on, single-point* NFS server as fleet substrate cuts
+against the grain of the rest of the off-platform design (ephemeral boot disks,
+declarative tofu lifecycle, no always-on infrastructure). Introducing a stateful NAS
+tier is the kind of dependency worth resisting until we're sure there's no
+cloud-native alternative.
+
+Before committing to this design, reconsider whether the `vergil-user` ↔
+`vergil-audit` shared-tree requirement can be met **without** a persistent shared
+POSIX filesystem. Directions to explore first:
+
+- **Audit reviews a copy, not the live tree.** Audit pulls a read-only
+  snapshot/clone (or `git fetch` of the user's branch) rather than mounting the same
+  working tree. Trades live-sharing for a pull step, but removes the shared-FS
+  dependency entirely.
+- **Move the dual-agent coordination off the filesystem.** The
+  `.vergil/pr-workflow.json` IPC channel is the hard constraint that forces a shared
+  *writable* tree (see "Trust boundary"). If coordination moved to a non-filesystem
+  channel (object store, a small API, GitHub itself), the shared-tree requirement
+  relaxes.
+- **Single VM, Unix-user credential separation.** Both agents on one VM sharing local
+  disk, with credentials separated by OS user instead of by VM. Weaker isolation
+  boundary, but no shared-FS cost or NAS tier. (Considered and set aside during
+  brainstorming for the weaker boundary; recorded here as a live alternative.)
+
+If none of these pans out and a shared POSIX FS is genuinely required, this design is
+the cost-validated way to do it.
 
 ## Problem
 
@@ -331,6 +368,41 @@ recovers the memory slice) lives in vergil-vm.
 2. **`vm` module change** — accept `nfs_endpoint`, mount it at `/vergil` in cloud-init,
    drop the per-identity data-disk attach.
 3. **Publish in the module tarball** at the resolved tag (existing `fetch_modules` path).
+
+## Conflicts with in-flight work (reconcile before implementation)
+
+A paad:pushback source-control review (2026-06-23) found three conflicts with
+off-platform code that landed in the days just before this design. They are recorded
+here rather than resolved, because the design is parked.
+
+1. **Explicit-zone profile field vs. "zone = NFS server's zone" (serious).** #1799
+   (`vm_spec.py:78-80`) added an optional explicit `zone` to the off-platform profile
+   ("set it to dodge a per-zone capacity stockout"). This design derives the client-VM
+   zone from the NFS server's zone instead. They collide: a profile `zone` that differs
+   from the NFS server's zone forces cross-zone NFS egress or breaks co-location.
+   **Reconciliation:** make the fleet NFS zone authoritative and require the profile
+   `zone` to match it — or invert it so the profile `zone` is what *sets* the fleet
+   zone at `shared-fs create`. Must be decided before implementation.
+
+2. **Per-identity volume machinery is actively being extended (serious).** This design
+   removes per-identity volumes, but that machinery is being iterated *this week*:
+   #1798 added the `vrg-vm volumes` verb (`vrg_vm.py:1668`) to surface persistent
+   volumes; #1806/#1807 fixed VM-apply rollback and off-platform listing. Removing
+   `vrg-vm volumes`, `destroy-volume`, `_cs_tofu_volume`, and `bootstrap_volume` days
+   after they shipped is real churn on fresh, still-moving code. **Reconciliation:**
+   this is a sequencing decision — either let the per-identity-volume path stabilize
+   and prove out first, or treat this design as its planned replacement and stop
+   extending the volume path. Not a code-delete to do casually mid-iteration.
+
+3. **NFS networking model is unstated; cloud code manages "no network" (moderate).**
+   `vm_cloud.py:716` is explicit — "gcloud, no network — reflecting exactly what
+   vrg-vm manages." The off-platform VMs ride the project's default VPC; there is no
+   custom-network management. NFS requires client and server on a shared, routable L3
+   network plus a 2049 firewall rule. It likely works on a single project's default
+   VPC, but this design asserts "firewalled to the VPC" without establishing that the
+   VMs and the NFS server share a routable VPC. **Reconciliation:** make the shared-VPC
+   reachability an explicit prerequisite (and own the 2049 firewall rule in the
+   `gcp/shared-fs` module), or the mount is a latent "cannot reach the server" failure.
 
 ## Related
 
