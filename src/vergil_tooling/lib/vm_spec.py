@@ -345,14 +345,18 @@ def lima_name_budget(home: str | None = None) -> int:
 
 
 def instance_name(
-    identity: str, org: str | None, repo: str | None, *, home: str | None = None
+    identity: str,
+    org: str | None,
+    repo: str | None,
+    name: str | None = None,
+    *,
+    home: str | None = None,
 ) -> str:
-    """Derive the Lima instance name. Bare identity = base box; ``.``-joined = dedicated.
+    """Derive the Lima instance name. Bare identity = base; ``.``-joined = dedicated.
 
-    Dedicated names are returned verbatim when they fit ``lima_name_budget``; over
-    budget they are truncated and hashed (mirroring ``vm_cloud.cloud_resource_name``)
-    so Lima's worst-case socket path stays under UNIX_PATH_MAX. ``recover_triple``
-    (vrg_vm) reverses a mangled name via the per-instance sidecar.
+    A named instance appends ``.<name>`` as a fourth segment. Over budget, the name
+    is truncated and hashed (the digest input includes ``name`` so distinct instances
+    differ); ``recover_handle`` (vrg_vm) reverses a mangled name via the sidecar.
     """
     if org is None or repo is None:
         return identity
@@ -360,7 +364,10 @@ def instance_name(
         if _TIER_SEP in value:
             msg = f"{tier} name {value!r} must not contain '{_TIER_SEP}'"
             raise ValueError(msg)
-    full = _TIER_SEP.join((identity, org, repo))
+    segments = [identity, org, repo]
+    if name:
+        segments.append(name)
+    full = _TIER_SEP.join(segments)
     budget = lima_name_budget(home)
     if len(full) <= budget:
         return full
@@ -370,7 +377,8 @@ def instance_name(
             f"{identity!r}: budget {budget} < {len(identity) + 7}"
         )
         raise SpecError(msg)
-    digest = hashlib.sha256(f"{identity}/{org}/{repo}".encode()).hexdigest()[:6]
+    digest_src = "/".join(segments)
+    digest = hashlib.sha256(digest_src.encode()).hexdigest()[:6]
     keep = budget - 7
     return f"{full[:keep].rstrip('._-')}-{digest}"
 
