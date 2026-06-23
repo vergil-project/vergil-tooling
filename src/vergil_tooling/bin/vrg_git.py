@@ -55,6 +55,10 @@ _ALLOWED_SIMPLE: set[str] = {
     "push",
     "fetch",
     "pull",
+    # A network "create": the off-platform volume bootstrap runs `vrg-git clone
+    # <url> <dest>` on the cloud box (vm_cloud.bootstrap_volume). Gated like the other
+    # remote ops — identity-token injection via _REMOTE_SUBCOMMANDS. (#1780)
+    "clone",
     "checkout",
     "switch",
     "stash",
@@ -98,7 +102,7 @@ _FLAG_DENY: dict[str, set[str]] = {
 }
 
 
-_REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote"}
+_REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
 
 _PROTECTED_BRANCHES: set[str] = {"develop", "main"}
 _PROTECTED_PREFIXES: tuple[str, ...] = ("release/",)
