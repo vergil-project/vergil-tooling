@@ -749,6 +749,46 @@ def region_zones(region: str) -> list[str]:
     return sorted(result.stdout.split())
 
 
+# --- Instance-family fallback ladder (#1836) ---------------------------------
+#
+# A capacity stockout is specific to a (zone, machine-family) pair: a different
+# family in the same zone often has capacity when the requested one does not. On a
+# reattach the zonal data disk pins the zone, so swapping the family is the only
+# recovery (see apply_vm_with_zone_fallback). The ladder may contain ONLY families
+# that support GCP nested virtualization — nested KVM is the point of these VMs, and
+# a family without it (e2, Tau) would boot a box with no /dev/kvm and fail the
+# provision. Membership/order is verified BY HAND against GCP's nested-virt
+# supported-machine-types doc before merge; the unit test is only a change-detector.
+NESTED_VIRT_FAMILIES = ("n2", "n2d", "c2", "c2d")
+
+# Shapes verified to exist for EVERY family in the ladder and actually run
+# off-platform. Family-fallback engages only for these, so we never synthesize an
+# invalid machine type. Adding a size is one line here.
+FALLBACK_SHAPES = frozenset({"standard-8", "standard-16"})
+
+
+def instance_fallback_candidates(requested: str) -> list[str]:
+    """Ordered machine types to try for ``requested``, the requested type first.
+
+    Splits ``requested`` into ``(family, shape)`` (``n2-standard-8`` ->
+    ``("n2", "standard-8")``). When the shape is in ``FALLBACK_SHAPES`` the result is
+    the requested type, then every other ``NESTED_VIRT_FAMILIES`` member at the same
+    shape, deduped. When the shape is unsupported the result is just ``[requested]``
+    (no fallback). If the requested family is not in the ladder (e.g. a misconfigured
+    ``e2`` declared with nested virt) the requested type still leads and the full
+    ladder follows, so fallback still reaches the nested-virt-safe families.
+    """
+    _family, _, shape = requested.partition("-")
+    if not shape or shape not in FALLBACK_SHAPES:
+        return [requested]
+    candidates = [requested]
+    for family in NESTED_VIRT_FAMILIES:
+        candidate = f"{family}-{shape}"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def apply_vm_with_zone_fallback(
     modules_root: Path,
     state_dir: Path,
