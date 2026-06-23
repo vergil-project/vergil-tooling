@@ -24,8 +24,16 @@ class Transport(Protocol):
     """Execute commands inside a guest, regardless of how we reach it."""
 
     def run(
-        self, *args: str, workdir: str = _DEFAULT_WORKDIR
-    ) -> subprocess.CompletedProcess[str]: ...  # pragma: no cover
+        self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        """Run a command in the guest, raising on a nonzero exit.
+
+        ``quiet`` suppresses echoing the child's stderr on failure — for probe
+        callers (readiness polling) where a connect failure is expected and the
+        raw transport error would be misleading noise. The exception still
+        carries ``returncode``/``stderr`` for the caller to inspect.
+        """
+        ...  # pragma: no cover
 
     def pipe(
         self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR
@@ -44,7 +52,9 @@ class LimaTransport:
     def __init__(self, instance: str) -> None:
         self.instance = instance
 
-    def run(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         try:
             return subprocess.run(  # noqa: S603
                 ["limactl", "shell", "--workdir", workdir, self.instance, "--", *args],  # noqa: S607
@@ -53,7 +63,7 @@ class LimaTransport:
                 text=True,
             )
         except subprocess.CalledProcessError as exc:
-            if exc.stderr:
+            if exc.stderr and not quiet:
                 print(exc.stderr, end="", file=sys.stderr)
             raise
 
@@ -131,7 +141,9 @@ class IapTransport:
             f"--project={self.project}",
         ]
 
-    def run(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
+    ) -> subprocess.CompletedProcess[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
         try:
             return subprocess.run(  # noqa: S603
@@ -141,7 +153,7 @@ class IapTransport:
                 text=True,
             )
         except subprocess.CalledProcessError as exc:
-            if exc.stderr:
+            if exc.stderr and not quiet:
                 print(exc.stderr, end="", file=sys.stderr)
             raise
 
