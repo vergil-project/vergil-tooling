@@ -75,6 +75,9 @@ class ComposedSpec:
     region: str = ""
     instance: str = ""
     volume: str = ""
+    # Optional explicit zone (vergil-tooling #1797). Empty -> the volume module's
+    # ${region}-b default; set it to dodge a per-zone capacity stockout in the region.
+    zone: str = ""
 
     @property
     def off_platform(self) -> bool:
@@ -103,6 +106,7 @@ class _Acc:
     region: str
     instance: str
     volume: str
+    zone: str
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
     declared_cpus: int | None
@@ -157,6 +161,9 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     if overlay.volume is not None:
         acc.volume = overlay.volume
         acc.customized = True
+    if overlay.zone is not None:
+        acc.zone = overlay.zone
+        acc.customized = True
 
 
 def compose_vm_spec(
@@ -184,6 +191,7 @@ def compose_vm_spec(
         region="",
         instance="",
         volume="",
+        zone="",
         declared_cpus=None,
         declared_mem=None,
         declared_disk=None,
@@ -216,7 +224,7 @@ def compose_vm_spec(
             acc.stale_days = cast("int", override["stale_days"])
         # The off-platform scalars also cascade through the host-override tier
         # (built-in → identity → [vm] → [vm.<identity>] → identities.toml override).
-        for key in ("backend", "provider", "region", "instance", "volume"):
+        for key in ("backend", "provider", "region", "instance", "volume", "zone"):
             if key in override:
                 setattr(acc, key, str(override[key]))
 
@@ -239,6 +247,7 @@ def compose_vm_spec(
         region=acc.region,
         instance=acc.instance,
         volume=acc.volume,
+        zone=acc.zone,
     )
 
 

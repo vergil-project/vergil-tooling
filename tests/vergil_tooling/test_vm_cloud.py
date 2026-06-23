@@ -703,6 +703,7 @@ class TestRunTofu:
             "region": "us-central1",
             "size_gib": 300,
             "labels": {"vergil-org": "o"},
+            "zone": "",
         }
         # init then apply, both non-interactive, apply auto-approved + state/var-file
         init_args = run.call_args_list[0].args[0]
@@ -970,7 +971,12 @@ class TestOffPlatformBackend:
             "region": "us-central1",
             "size_gib": 300,
             "labels": b.labels,
+            "zone": "",
         }
+
+    def test_volume_vars_carries_explicit_zone(self) -> None:
+        b = OffPlatformBackend(_off_spec(zone="us-central1-a"), "vergil-user", "o", "r")
+        assert b.volume_vars()["zone"] == "us-central1-a"
 
     def test_vm_vars_composition(self) -> None:
         b = OffPlatformBackend(_off_spec(nested=True), "vergil-user", "o", "r")
