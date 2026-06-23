@@ -498,7 +498,9 @@ class TestInstanceName:
         assert instance_name("vergil-user", "lmf", "mq") == "vergil-user.lmf.mq"
         assert instance_name("vergil-user", None, None) == "vergil-user"
 
-    def test_instance_name_named_hash_differs_from_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_instance_name_named_hash_differs_from_default(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Force the over-budget path with a tiny budget so both names are hashed.
         monkeypatch.setattr("vergil_tooling.lib.vm_spec.lima_name_budget", lambda home=None: 20)
         default = instance_name("vergil-user", "logical-minds-foundry", "mq-cluster-tooling")
