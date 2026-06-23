@@ -134,6 +134,9 @@ def test_has_staged_changes_true() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(returncode=1)
         assert git.has_staged_changes() is True
+    # Even this local op disables the prompt so it can never hang (#1830).
+    _, kwargs = mock_run.call_args
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_has_staged_changes_false() -> None:
@@ -146,6 +149,9 @@ def test_ref_exists_true() -> None:
     with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
         mock_run.return_value = _completed(returncode=0)
         assert git.ref_exists("main") is True
+    # Even this local op disables the prompt so it can never hang (#1830).
+    _, kwargs = mock_run.call_args
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
 
 
 def test_ref_exists_false() -> None:

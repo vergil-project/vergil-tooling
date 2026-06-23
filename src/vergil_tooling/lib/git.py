@@ -102,18 +102,22 @@ def current_branch() -> str:
 
 def has_staged_changes() -> bool:
     """Return True if there are staged changes."""
+    args = ("diff", "--cached", "--quiet")
     result = subprocess.run(  # noqa: S603
-        ("git", "diff", "--cached", "--quiet"),  # noqa: S607
+        ("git", *args),  # noqa: S607
         check=False,
+        env=_git_env(args),
     )
     return result.returncode != 0
 
 
 def ref_exists(ref: str) -> bool:
     """Return True if a git ref exists."""
+    args = ("rev-parse", "--verify", "--quiet", ref)
     result = subprocess.run(  # noqa: S603
-        ("git", "rev-parse", "--verify", "--quiet", ref),  # noqa: S607
+        ("git", *args),  # noqa: S607
         check=False,
+        env=_git_env(args),
     )
     return result.returncode == 0
 
