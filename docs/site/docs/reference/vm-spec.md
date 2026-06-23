@@ -179,13 +179,20 @@ The same `vrg-vm` verbs work, dispatched on the resolved `backend`:
   volume; the data reattaches intact.
 - `destroy-volume` — the **only** command that deletes the persistent
   volume. Guarded: retype `org/repo` to confirm, or pass `--yes`.
-- `update` — maps to `rebuild` (off-platform is rebuild-not-update).
+- `update` — refreshes vergil-tooling and Claude plugins **in place**
+  over the IAP tunnel on a running box (seconds, non-disruptive), exactly
+  like a Lima box. `rebuild` is reserved for what genuinely needs a fresh
+  image (a new base image or changed provision scripts), not a tooling
+  bump. `update --all` includes off-platform boxes and updates each running
+  one in place; a non-running box is skipped and reported. Two boxes that
+  share an `org/repo` (one per identity) stay distinct by their identity.
 - `stop` / `start` / `restart` — **not supported**. Off-platform VMs
   are ephemeral; use `destroy` / `create`.
 - `list` — gains a `BACKEND` column (`local` for Lima rows, the
-  provider for cloud rows). Without cloud credentials a cloud row's
-  status degrades to `unknown (no <provider> creds)` rather than
-  erroring or hiding the row.
+  provider for cloud rows). Cloud rows carry their box's `IDENTITY` so
+  two boxes sharing an `org/repo` (one per identity) stay distinct.
+  Without cloud credentials a cloud row's status degrades to
+  `unknown (no <provider> creds)` rather than erroring or hiding the row.
 - `volumes` — enumerates the persistent volumes (the long-lived,
   billable, quota-consuming disks that outlive each ephemeral VM) from
   local tofu state: `IDENTITY`, `ORG/REPO`, `DISK NAME`, `SIZE`, `ZONE`,

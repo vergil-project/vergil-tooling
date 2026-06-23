@@ -6,12 +6,13 @@ import argparse
 import datetime
 import json
 import os
+import random
 import shlex
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -53,7 +54,6 @@ from vergil_tooling.lib.lima import (
     shell_run,
     start_vm,
     stop_vm,
-    update_plugins,
     vm_age_days,
     vm_status,
     write_instance_meta,
@@ -68,6 +68,7 @@ from vergil_tooling.lib.vm_guest import (
     install_tooling,
     link_claude_dirs,
     try_update_tooling,
+    update_plugins,
     update_tooling,
     vm_probe,
     vm_spec_status,
@@ -513,8 +514,10 @@ def _st_update_tooling(state: _LifecycleState) -> None:
 def _st_update_plugins(state: _LifecycleState) -> None:
     # Warn-mode stage: a failed plugin refresh surfaces as ⚠ and the lifecycle
     # continues, the same warn-and-continue contract as update-tooling. Plugins
-    # are VM-local; this advances them to the latest published versions.
-    update_plugins(state.target.instance)
+    # are guest-local; this advances them to the latest published versions over
+    # whichever transport the backend provides (Lima or off-platform IAP).
+    transport = state.target.backend.transport(state.target.instance)
+    update_plugins(transport)
 
 
 def _st_cycle_ssh(state: _LifecycleState) -> None:
@@ -681,6 +684,9 @@ class _CloudState:
     volume_id: str = ""
     host: str = ""
     transport: Transport | None = None
+    # Remaining zones to try if the VM apply hits a capacity stockout (#1813). Populated
+    # by tofu-volume on a fresh create; empty on a reattach (a zonal disk cannot move).
+    fallback_zones: list[str] = field(default_factory=list)
 
 
 def _require_modules(state: _CloudState) -> Path:
@@ -704,6 +710,19 @@ def _cs_fetch_modules(state: _CloudState) -> None:
     state.modules_root = vm_cloud.fetch_modules(state.tag)
 
 
+def _candidate_zones(backend: OffPlatformBackend) -> list[str]:
+    """Zone order to try for a fresh create: an explicit ``zone`` first (operator
+    preference), otherwise the region's zones shuffled to spread load. (#1813)
+    """
+    zones = vm_cloud.region_zones(backend.spec.region)
+    configured = backend.spec.zone
+    if configured:
+        return [configured, *(z for z in zones if z != configured)]
+    shuffled = list(zones)
+    random.shuffle(shuffled)
+    return shuffled
+
+
 def _cs_tofu_volume(state: _CloudState) -> None:
     modules_root = _require_modules(state)
     print("Applying persistent volume...")
@@ -711,6 +730,13 @@ def _cs_tofu_volume(state: _CloudState) -> None:
     # signatures are precisely typed. The dict is the backend's own contract, so the
     # spread is the right call shape — cast to Any to bridge the object→typed kwargs gap.
     volume_vars = cast("dict[str, Any]", state.backend.volume_vars())
+    # Fresh create -> sweep zones on a capacity stockout. A reattach (existing volume
+    # state) is pinned to its zone — a zonal disk holds data and cannot move (#1813).
+    if not (state.state_dir / "volume.tfstate").exists():
+        candidates = _candidate_zones(state.backend)
+        if candidates:
+            volume_vars["zone"] = candidates[0]
+            state.fallback_zones = candidates[1:]
     volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
     state.volume_id = volume_id
     state.zone = zone
@@ -719,9 +745,16 @@ def _cs_tofu_volume(state: _CloudState) -> None:
 def _cs_tofu_vm(state: _CloudState) -> None:
     modules_root = _require_modules(state)
     print("Applying VM...")
-    raw_vm_vars = state.backend.vm_vars(zone=state.zone, volume_id=state.volume_id)
-    vm_vars = cast("dict[str, Any]", raw_vm_vars)
-    out = vm_cloud.apply_vm(modules_root, state.state_dir, **vm_vars)
+    volume_id, zone, out = vm_cloud.apply_vm_with_zone_fallback(
+        modules_root,
+        state.state_dir,
+        state.backend,
+        zone=state.zone,
+        volume_id=state.volume_id,
+        fallback_zones=state.fallback_zones,
+    )
+    state.volume_id = volume_id
+    state.zone = zone
     state.host = out["host"]
     state.transport = state.backend.transport()
 
@@ -961,11 +994,17 @@ def _cmd_restart(args: argparse.Namespace) -> int:
     return 0
 
 
-def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
-    """Update tooling and plugins in one running VM, printing the version transition."""
-    print(f"Updating vergil-tooling in VM '{instance}' (identity: {name})...")
+def _update_over_transport(
+    transport: Transport, label: str, tag: str | None, fallback: str
+) -> None:
+    """Update tooling and plugins in one running box, printing the version transition.
 
-    transport = LimaTransport(instance)
+    Transport-generic core shared by the Lima and off-platform update paths
+    (#1812): an off-platform box updates in place over its IAP transport exactly
+    as a Lima box does over limactl — no rebuild.
+    """
+    print(f"Updating vergil-tooling in {label}...")
+
     before = get_tooling_version(transport)
     update_tooling(transport, tag, fallback_tag=fallback)
     after = get_tooling_version(transport)
@@ -978,19 +1017,57 @@ def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -
     elif after:
         print(f"  vergil-tooling: {after}")
 
-    update_plugins(instance)
+    update_plugins(transport)
+
+
+def _update_instance(instance: str, name: str, tag: str | None, fallback: str) -> None:
+    """Update tooling and plugins in one running Lima VM over its limactl transport."""
+    _update_over_transport(
+        LimaTransport(instance), f"VM '{instance}' (identity: {name})", tag, fallback
+    )
+
+
+def _cmd_update_off_platform(target: Target, args: argparse.Namespace) -> int:
+    """Update tooling and plugins in a running off-platform box in place over IAP.
+
+    In-place is correct for a *running* off-platform box (#1812): the tooling
+    update is transport-generic, so it runs over the box's IAP transport exactly
+    as Lima runs over limactl — seconds, non-disruptive, no capacity/quota risk.
+    Rebuild (``vrg-vm rebuild``) stays reserved for what genuinely needs a fresh
+    image (a new base image or changed provision scripts), not a tooling bump.
+    """
+    backend = _cloud_backend(target)
+    status = backend.status()
+    if status != "Running":
+        effective = status or "Not Created"
+        # Identity-qualified hint: two off-platform boxes can share an org/repo
+        # (one per identity), so the start command must carry --identity (#1812).
+        start_ref = f"{target.org}/{target.repo} --identity {target.identity_name}"
+        print(
+            f"ERROR: off-platform VM '{backend.name}' is not running (status: {effective}).\n"
+            f"Start it first: vrg-vm start {start_ref}",
+            file=sys.stderr,
+        )
+        return 1
+
+    tag = args.tag if args.tag else None
+    fallback = resolve_vergil_version(target.config, target.identity)
+    label = f"off-platform box '{backend.name}' (identity: {target.identity_name})"
+    _update_over_transport(backend.transport(), label, tag, fallback)
+
+    print("Update complete.")
+    return 0
 
 
 def _cmd_update(args: argparse.Namespace) -> int:
     if args.all:
         return _cmd_update_all(args)
 
-    # Off-platform boxes are stateless: there is no in-place tooling update —
-    # the disposable VM is rebuilt instead. A targeted `update <off-platform>` does
-    # that rebuild here; bulk `--all` never rebuilds them silently — it enumerates
-    # and reports them (see _cmd_update_all / _report_off_platform_not_updated).
-    if _resolve_target(args).spec.off_platform:
-        return _cmd_rebuild(args)
+    # Off-platform boxes update IN PLACE over IAP — same transport-generic tooling
+    # update as Lima, no rebuild (#1812, correcting #1803's stateless premise).
+    target = _resolve_target(args)
+    if target.spec.off_platform:
+        return _cmd_update_off_platform(target, args)
 
     name, identity, config, instance = _resolve_instance(args)
 
@@ -1035,35 +1112,33 @@ def _all_update_targets(
     return targets
 
 
-def _report_off_platform_not_updated(vms: list[OffPlatformVm]) -> None:
-    """Name every off-platform box that ``update --all`` does not touch (issue #1803).
+def _off_platform_fallback(config: IdentityConfig, vm: OffPlatformVm) -> str:
+    """Resolve the fallback vergil tag for an off-platform box from its labeled identity.
 
-    Off-platform 'update' is a full rebuild of a stateless box (destructive, slow,
-    quota-bound), so bulk ``--all`` deliberately never rebuilds them — but it must
-    not *silently* skip them either (the original bug: a running off-platform box
-    got no tooling update and no warning). Each box is reported with the targeted
-    command that would rebuild it.
+    The box's own tooling-tag marker is authoritative — ``update_tooling`` reads it
+    and this fallback applies only to a box with no marker. Resolve it from the
+    box's labeled identity when that identity is still configured, otherwise the
+    config-level default; raise (deferred by the caller) when neither is set.
     """
-    if not vms:
-        return
-    count = len(vms)
-    noun = "box" if count == 1 else "boxes"
-    print(
-        f"\n{count} off-platform {noun} NOT updated by --all "
-        f"(off-platform 'update' is a full rebuild — run it per box):"
-    )
-    for vm in vms:
-        print(f"  - {vm.scope} [{vm.provider}]: vrg-vm update {vm.update_ref}")
+    identity = config.identities.get(vm.identity) if vm.identity else None
+    if identity is not None:
+        return resolve_vergil_version(config, identity)
+    if config.vergil:
+        return config.vergil
+    print("ERROR: no 'vergil' version configured in identities.toml", file=sys.stderr)
+    raise SystemExit(1)
 
 
 def _cmd_update_all(args: argparse.Namespace) -> int:
     """Update vergil-tooling in every existing VM owned by a configured identity.
 
-    Fail-deferred by design: every VM in the list is attempted even after one
-    fails; non-running VMs are skipped and reported; any failure makes the
+    Fail-deferred by design: every box in the list is attempted even after one
+    fails; non-running boxes are skipped and reported; any failure makes the
     final exit code non-zero — only after all attempts have completed. Off-platform
-    boxes are enumerated across backends and reported (never silently skipped, never
-    bulk-rebuilt); reporting them is not a failure, so it never affects the exit code.
+    boxes are enumerated across backends and updated IN PLACE over IAP, exactly
+    like Lima boxes (#1812, correcting #1803 which skipped-and-reported them on the
+    false premise that off-platform update means a rebuild). Two off-platform boxes
+    that share an org/repo (one per identity) stay distinct via their identity label.
     """
     if args.workspace or args.identity:
         print(
@@ -1107,14 +1182,39 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             print(f"ERROR: failed to update VM '{instance}': {reason}", file=sys.stderr)
             failed.append((instance, reason))
 
-    total = len(targets)
-    if total:
-        print(
-            f"Update complete: {len(updated)} updated, {len(skipped)} skipped, "
-            f"{len(failed)} failed (of {total} VMs)."
-        )
+    for vm in off_platform:
+        box = f"off-platform box '{vm.label}'"
+        if not vm.is_running:
+            print(f"Skipping {box} (status: {vm.status or 'Not Created'})")
+            skipped.append(vm.label)
+            continue
+        try:
+            fallback = _off_platform_fallback(config, vm)
+            transport = vm_cloud.off_platform_transport(vm.name, vm.state_dir)
+            _update_over_transport(transport, box, tag, fallback)
+            updated.append(vm.label)
+        except subprocess.CalledProcessError as exc:
+            reason = f"exit status {exc.returncode}"
+            print(f"ERROR: failed to update {box}: {reason}", file=sys.stderr)
+            failed.append((vm.label, reason))
+        except SystemExit as exc:
+            reason = f"aborted (exit {exc.code})"
+            print(f"ERROR: failed to update {box}: {reason}", file=sys.stderr)
+            failed.append((vm.label, reason))
+        except RuntimeError as exc:
+            # off_platform_transport raises RuntimeError when no zone is persisted
+            # (volume never applied), and update_plugins raises it on a plugin
+            # failure. Both are deferred like any other box failure.
+            reason = str(exc)
+            print(f"ERROR: failed to update {box}: {reason}", file=sys.stderr)
+            failed.append((vm.label, reason))
 
-    _report_off_platform_not_updated(off_platform)
+    # total is always > 0 here: the empty case returned "No VMs found." above.
+    total = len(targets) + len(off_platform)
+    print(
+        f"Update complete: {len(updated)} updated, {len(skipped)} skipped, "
+        f"{len(failed)} failed (of {total} VMs)."
+    )
 
     if failed:
         names = ", ".join(f"'{inst}' ({reason})" for inst, reason in failed)
@@ -1481,10 +1581,31 @@ class OffPlatformVm:
         return self.name
 
     @property
+    def label(self) -> str:
+        """Identity-qualified human label, so two boxes for the same org/repo stay distinct.
+
+        A repo with both a ``vergil-user`` and ``vergil-audit`` off-platform box has
+        two state dirs sharing one org/repo; ``scope`` alone collapses them into
+        identical lines (#1812). Carrying the identity keeps every box addressable.
+        """
+        if self.identity:
+            return f"{self.scope} [{self.identity}]"
+        return self.scope
+
+    @property
     def update_ref(self) -> str:
-        """How an operator re-addresses this box for a targeted ``vrg-vm update``."""
+        """How an operator re-addresses this box for a targeted ``vrg-vm update``.
+
+        Identity-qualified: a labeled box is reached by ``<org>/<repo> --identity
+        <identity>`` (two identities can share one org/repo), an unlabeled one by
+        ``--identity <identity>`` alone, falling back to the resource name only
+        when even the identity is unknown (#1812).
+        """
         if self.org and self.repo:
-            return f"{self.org}/{self.repo}"
+            base = f"{self.org}/{self.repo}"
+            if self.identity:
+                return f"{base} --identity {self.identity}"
+            return base
         if self.identity:
             return f"--identity {self.identity}"
         return self.name
@@ -1529,12 +1650,21 @@ def _cloud_list_rows() -> list[dict[str, object]]:
 
     Reuses the shared ``_off_platform_vms()`` enumeration; an unauthed/unreachable
     provider yields a degraded ``unknown (no <provider> creds)`` placeholder rather
-    than dropping the row or erroring the list.
+    than dropping the row or erroring the list. Each row carries the box's identity
+    so two boxes sharing an org/repo (one per identity) stay distinct in the listing
+    rather than collapsing into identical lines (#1812).
     """
     rows: list[dict[str, object]] = []
     for vm in _off_platform_vms():
         status = vm.status or f"unknown (no {vm.provider} creds)"
-        rows.append({"scope": vm.name, "backend": vm.provider, "status": status})
+        rows.append(
+            {
+                "identity": vm.identity or "—",
+                "scope": vm.scope,
+                "backend": vm.provider,
+                "status": status,
+            }
+        )
     return rows
 
 
@@ -1571,7 +1701,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
     for r in _cloud_list_rows():
         print(
-            f"{'—':<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
+            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
             f"{'—':<5} {'—':<7} {'—':<7} {'—':<7} {'—':<7} {'—':<22}"
         )
 
@@ -2048,7 +2178,9 @@ def main(argv: list[str] | None = None) -> int:
     _add_identity_args(p_restart)
     _add_workspace_arg(p_restart)
 
-    p_update = sub.add_parser("update", help="Reinstall vergil-tooling inside a running VM")
+    p_update = sub.add_parser(
+        "update", help="Reinstall vergil-tooling and refresh plugins in a running box (in place)"
+    )
     _add_identity_args(p_update)
     _add_workspace_arg(p_update)
     p_update.add_argument(
@@ -2058,20 +2190,10 @@ def main(argv: list[str] | None = None) -> int:
         "--all",
         action="store_true",
         help=(
-            "Update every VM owned by a configured identity (fail-deferred: all VMs "
-            "are attempted even if one fails; non-running VMs are skipped and reported). "
-            "Off-platform boxes are reported but not rebuilt — run 'vrg-vm update <box>' "
-            "per box to rebuild one."
-        ),
-    )
-    # Off-platform update delegates to rebuild, which drives the progress pipeline;
-    # these flags must exist on the update parser so that delegation has them.
-    p_update.add_argument(
-        "--verbose",
-        action="store_true",
-        help=(
-            "Stream live cloud-init provisioning output during await-readiness "
-            "(off-platform only; also enabled by VERGIL_VM_VERBOSE)"
+            "Update every box owned by a configured identity (fail-deferred: all "
+            "boxes are attempted even if one fails; non-running boxes are skipped and "
+            "reported). Off-platform boxes are updated in place over IAP, exactly "
+            "like Lima boxes — no rebuild."
         ),
     )
     progress.add_progress_args(p_update, ())

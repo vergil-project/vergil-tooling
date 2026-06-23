@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import platform
 import re
-import shlex
 import subprocess
 import sys
 import tempfile
@@ -406,72 +405,6 @@ def stop_vm(instance: str) -> None:
 
 def delete_vm(instance: str) -> None:
     _limactl("delete", "--force", instance)
-
-
-# Prepended to every in-VM `claude` invocation. claude itself is on the base
-# PATH (/usr/bin/claude, from apt node + `npm install -g`), but exporting PATH
-# explicitly — exactly as update_tooling does — keeps resolution independent of
-# the interactive environment. The VM's login shell is zsh (vergil-vm `chsh -s
-# /bin/zsh`), configured via ~/.zshenv / /etc/environment, so a bash login shell
-# would source none of its config; a non-login `bash -c` with an explicit PATH
-# avoids depending on any of that.
-_PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
-
-
-def update_plugins(instance: str) -> None:
-    """Refresh enabled Claude Code plugins inside the VM.
-
-    Plugins are installed VM-locally from their GitHub marketplaces (declared
-    in the copied settings.json); they are deliberately not shared from the
-    host (see docs/site/docs/guides/agent-vm-claude-share-set.md). This
-    refreshes marketplace metadata and then advances each enabled plugin to its
-    latest version, mirroring how update_tooling advances vergil-tooling.
-
-    `claude plugin update` has no bulk form: it requires a specific plugin id
-    and honours the plugin's scope (user vs project), which differ across the
-    set. So enumerate the installed plugins with `claude plugin list --json`
-    and update each enabled one with its own scope. Updates apply on the next
-    Claude restart, which every new session triggers.
-
-    Best-effort across the set: one plugin failing does not block the others;
-    failures are collected and surfaced by raising afterwards (never swallowed).
-    """
-    print("  Refreshing Claude plugins...")
-    shell_run(
-        instance,
-        "bash",
-        "-c",
-        f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace update",
-    )
-    listing = shell_run(
-        instance,
-        "bash",
-        "-c",
-        f"{_PLUGIN_PATH_EXPORT} && claude plugin list --json",
-    )
-    plugins = json.loads(listing.stdout)
-
-    failures: list[str] = []
-    for plugin in plugins:
-        if not plugin.get("enabled"):
-            continue
-        pid = plugin["id"]
-        scope = plugin.get("scope", "user")
-        print(f"    updating {pid} ({scope})...")
-        cmd = (
-            f"{_PLUGIN_PATH_EXPORT} && claude plugin update "
-            f"{shlex.quote(pid)} --scope {shlex.quote(scope)}"
-        )
-        try:
-            shell_run(instance, "bash", "-c", cmd)
-        except subprocess.CalledProcessError:
-            failures.append(pid)
-
-    if failures:
-        joined = ", ".join(failures)
-        msg = f"failed to update plugin(s): {joined}"
-        print(f"ERROR: {msg}", file=sys.stderr)
-        raise RuntimeError(msg)
 
 
 def vm_age_days(instance: str) -> float | None:
