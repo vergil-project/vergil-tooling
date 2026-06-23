@@ -80,6 +80,7 @@ from vergil_tooling.lib.vm_spec import (
     instance_name,
     parse_instance_name,
     spec_fingerprint,
+    validate_repo_segment,
 )
 from vergil_tooling.lib.vm_transport import LimaTransport
 
@@ -111,6 +112,7 @@ class Target:
     instance: str
     fingerprint: str
     backend: Backend
+    instance_name_arg: str | None = None
 
 
 class BorrowError(Exception):
@@ -192,6 +194,11 @@ def _base_footprint(identity: Identity) -> dict[str, object]:
     }
 
 
+def _requested_name(args: argparse.Namespace) -> str | None:
+    """Return the --name value from args, or None if the flag is absent."""
+    return getattr(args, "name", None)
+
+
 def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     """Derive (org, repo) for VM selection.
 
@@ -220,13 +227,19 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
     """
     name, identity, config = _resolve(args)
     workspace = getattr(args, "workspace", None)
+    inst_name = _requested_name(args)
     base = _base_footprint(identity)
     org, repo = _workspace_org_repo(workspace)
 
     if org is None or repo is None:
+        if inst_name is not None:
+            msg = "--name requires an <org>/<repo> workspace (named instances are per-repo)"
+            raise SpecError(msg)
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         backend = select_backend(spec, identity=name, org=None, repo=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "", backend)
+
+    validate_repo_segment(repo)
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
@@ -239,13 +252,15 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
         eff_org, eff_repo, eff_vm = org, repo, requested_vm
 
     override = identity.overrides.get((eff_org, eff_repo))
-    spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
-    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo)
+    spec = compose_vm_spec(
+        identity=name, base=base, stanza=eff_vm, override=override, instance=inst_name
+    )
+    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo, name=inst_name)
 
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "", backend)
 
-    inst = instance_name(name, eff_org, eff_repo)
+    inst = instance_name(name, eff_org, eff_repo, inst_name)
     return Target(
         name,
         identity,
@@ -256,23 +271,25 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
         inst,
         spec_fingerprint(spec),
         backend,
+        inst_name,
     )
 
 
-def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
-    """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
+def _resolve_instance(
+    args: argparse.Namespace,
+) -> tuple[str, Identity, IdentityConfig, str]:
+    """Resolve the Lima instance NAME for lifecycle commands (stop/restart).
 
-    These are all MANAGE commands. The borrow block (``[vm] shared_from``) and the
-    off-platform/Lima split are owned by the ``_resolve_target`` call each command
-    now runs first, so this helper only maps an ``org/repo`` (or its absence) to an
-    instance name. A repo with no readable ``vergil.toml`` (a true orphan) resolves
-    to its own instance name, so an orphaned dedicated VM (whose repo dropped its
-    `[vm]`) stays reachable; anything else is base.
+    Maps an ``org/repo`` (or its absence) plus an optional ``--name`` to a Lima
+    instance name. A repo with no readable ``vergil.toml`` still resolves to its own
+    instance name so an orphaned dedicated VM stays reachable.
     """
     name, identity, config = _resolve(args)
     org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    inst_name = _requested_name(args)
     if org is not None and repo is not None:
-        instance = instance_name(name, org, repo)
+        validate_repo_segment(repo)
+        instance = instance_name(name, org, repo, inst_name)
     else:
         instance = identity.vm_instance
     return name, identity, config, instance
@@ -612,8 +629,12 @@ def _create_from_target(target: Target, template: Path) -> None:
         # org/repo are guaranteed non-None for dedicated targets.
         assert target.org is not None and target.repo is not None  # noqa: S101
         write_instance_meta(
-            target.instance, target.identity_name, target.org, target.repo, None
-        )  # Task 6 wires the instance name here
+            target.instance,
+            target.identity_name,
+            target.org,
+            target.repo,
+            target.instance_name_arg,
+        )
     else:
         create_vm(
             target.instance,
@@ -2143,6 +2164,17 @@ def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_name_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Named VM instance for this repo (default: the unnamed default instance). "
+            "Must be declared under [vm.<identity>.instances.<name>]."
+        ),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",
@@ -2154,6 +2186,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create = sub.add_parser("create", help="Create and provision a new VM")
     _add_identity_args(p_create)
     _add_workspace_arg(p_create)
+    _add_name_arg(p_create)
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -2170,6 +2203,7 @@ def main(argv: list[str] | None = None) -> int:
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
     _add_workspace_arg(p_start)
+    _add_name_arg(p_start)
     p_start.add_argument(
         "--allow-stale-vm",
         action="store_true",
@@ -2185,16 +2219,19 @@ def main(argv: list[str] | None = None) -> int:
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
     _add_workspace_arg(p_stop)
+    _add_name_arg(p_stop)
 
     p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
     _add_identity_args(p_restart)
     _add_workspace_arg(p_restart)
+    _add_name_arg(p_restart)
 
     p_update = sub.add_parser(
         "update", help="Reinstall vergil-tooling and refresh plugins in a running box (in place)"
     )
     _add_identity_args(p_update)
     _add_workspace_arg(p_update)
+    _add_name_arg(p_update)
     p_update.add_argument(
         "--tag", default="", help="Override version tag (default: tag from initial install)"
     )
@@ -2213,6 +2250,7 @@ def main(argv: list[str] | None = None) -> int:
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
     _add_workspace_arg(p_destroy)
+    _add_name_arg(p_destroy)
     p_destroy.add_argument(
         "--tag",
         default="",
@@ -2225,6 +2263,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_identity_args(p_destroy_volume)
     _add_workspace_arg(p_destroy_volume)
+    _add_name_arg(p_destroy_volume)
     p_destroy_volume.add_argument(
         "--tag",
         default="",
@@ -2239,6 +2278,7 @@ def main(argv: list[str] | None = None) -> int:
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
     _add_workspace_arg(p_rebuild)
+    _add_name_arg(p_rebuild)
     p_rebuild.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -2308,6 +2348,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
     _add_identity_args(p_session)
+    p_session.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Named VM instance for this repo (default: the unnamed default instance). "
+            "Must be declared under [vm.<identity>.instances.<name>]."
+        ),
+    )
     p_session.add_argument(
         "--allow-stale-vm",
         action="store_true",

@@ -229,6 +229,7 @@ def _stub_target(
             repo=repo,
             instance=instance,
             fingerprint="fp",
+            instance_name_arg=None,
         ),
     )
 
@@ -236,7 +237,7 @@ def _stub_target(
 def test_create_from_target_writes_sidecar_for_dedicated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[object, ...]] = []
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.create_vm", lambda *a, **k: None)
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a))
     target = _stub_target(
