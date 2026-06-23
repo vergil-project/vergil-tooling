@@ -4375,6 +4375,46 @@ def test_classify_off_platform_no_vergil_toml_orphaned(tmp_path: Path) -> None:
     assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
 
 
+def test_classify_off_platform_config_error_returns_ok_with_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed vergil.toml triggers a stderr WARNING and conservatively returns 'ok'.
+
+    Mirrors _classify_instance: a broken config must not be treated as orphaned
+    (which could mislead an operator into destroying a live cloud box). The box is
+    listed as 'ok' (unverified) until the config is fixed.
+    """
+    from vergil_tooling.bin import vrg_vm
+
+    projects = tmp_path / "projects"
+    repo_dir = projects / "lmf" / "mq"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "vergil.toml").write_text("[invalid toml")  # malformed -> ConfigError on read
+
+    ident = Identity(vm_instance="vergil-user", projects_dir=str(projects))
+    config = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+
+    result = vrg_vm._classify_off_platform(vm, config)
+    assert result == "ok"
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "vergil-user--lmf--mq--cloud-x86" in captured.err
+    assert "unverified" in captured.err
+
+
 class TestCloudUnderProvision:
     def _cloud_repo_instance(self, tmp_path: Path, instance: str, *, cpus: int) -> Path:
         projects = tmp_path / "projects"

@@ -1767,6 +1767,11 @@ def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
     'orphaned' when the repo dropped its [vm], no longer declares this instance, or
     no longer composes this (off-platform, provider); 'ok' when it still matches.
     The handle is recovered exactly from the readable slug — no lossy label round-trip.
+
+    A repo whose vergil.toml fails to parse is classified 'ok' conservatively —
+    flagging it orphaned would invite destroying a VM whose spec may still be
+    declared — and the failure is warned loudly with the config path (mirrors the
+    Lima-path ``_classify_instance`` treatment of ConfigError).
     """
     identity_name, org, repo, inst_name = split_state_slug(vm.name)
     if org is None or repo is None:
@@ -1775,7 +1780,8 @@ def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
     if identity is None:
         return "orphaned"
     repo_dir = Path(identity.projects_dir) / org / repo
-    if not (repo_dir / "vergil.toml").exists():
+    config_path = repo_dir / "vergil.toml"
+    if not config_path.exists():
         return "orphaned"
     try:
         stanza = read_config(repo_dir).vm
@@ -1786,7 +1792,14 @@ def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
             override=identity.overrides.get((org, repo)),
             instance=inst_name,
         )
-    except (ConfigError, SpecError):
+    except ConfigError as exc:
+        print(
+            f"WARNING: cannot parse {config_path}: {exc} — "
+            f"listing '{vm.name}' as present (unverified)",
+            file=sys.stderr,
+        )
+        return "ok"
+    except SpecError:
         return "orphaned"
     if not spec.off_platform or spec.provider != vm.provider:
         return "orphaned"
@@ -1804,14 +1817,13 @@ def _cloud_list_rows(config: IdentityConfig) -> list[dict[str, object]]:
     """
     rows: list[dict[str, object]] = []
     for vm in _off_platform_vms():
+        spec = _classify_off_platform(vm, config)
         if not vm.vm_present:
             status = "no-vm"
             disk = vm.volume_size or "—"
-            spec = _classify_off_platform(vm, config)
         else:
             status = vm.status or f"unknown (no {vm.provider} creds)"
             disk = "—"
-            spec = _classify_off_platform(vm, config)
         rows.append(
             {
                 "identity": vm.identity or "—",

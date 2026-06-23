@@ -895,3 +895,7 @@ def test_split_state_slug_roundtrips() -> None:
 def test_split_state_slug_invalid_raises() -> None:
     with pytest.raises(ValueError, match="unparseable"):
         split_state_slug("a--b")  # 2 segments — not a valid form
+    # 5-segment slugs are also invalid. This can only arise from filesystem corruption
+    # because validate_repo_segment prevents '--' in repo names at parse time.
+    with pytest.raises(ValueError, match="unparseable"):
+        split_state_slug("a--b--c--d--e")  # 5 segments — not a valid form
