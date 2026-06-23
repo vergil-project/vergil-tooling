@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.26/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.24/">
+        <link rel="next" href="../v2.1.54/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.25 - VERGIL Tooling</title>
+        <title>2.1.55 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2125-2026-06-10" class="md-skip">
+        <a href="#release-2155-2026-06-23" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.25
+              2.1.55
             
           </span>
         </div>
@@ -976,10 +976,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.55/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.55
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -995,6 +1022,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1760,37 +1818,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.25
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.25/" class="md-nav__link">
         
   
   
@@ -1806,37 +1837,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -8915,13 +8915,13 @@
 
 
 
-<h1 id="release-2125-2026-06-10">Release 2.1.25 (2026-06-10)<a class="headerlink" href="#release-2125-2026-06-10" title="Permanent link">&para;</a></h1>
+<h1 id="release-2155-2026-06-23">Release 2.1.55 (2026-06-23)<a class="headerlink" href="#release-2155-2026-06-23" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>offer "none of the above" for primary-language (#1580)</strong>
-The init wizard forced a primary-language choice among the five languages with no way to express a language-less repo, so adopting a repo like .github (documentation, no language) could only be escaped with Ctrl-C.</li>
+<li><strong>wait for SSH readiness before the cloud-init probe so a boot race is not a hard fail (#1776)</strong>
+On a fresh off-platform box, await_readiness raced sshd startup: a single cloud-init probe that hit the IAP boot-time 4003 connect error (ssh exit 255) was conflated with a real cloud-init fault and hard-failed the create at a non-deterministic point with a misleading message.</li>
 </ul>
-<p>Pull primary-language out of the generic required-enum loop and give it its own prompt with a separate "0. None of the above" option, set apart from the real languages. Selecting it maps to an empty string so render_vergil_toml omits the primary-language key entirely, which the config parser and vrg-validate already treat as a valid language-less repo. The five-language enum, the on-disk omission model, and the lack of any default are all unchanged.</p>
+<p>Add an explicit, bounded SSH-readiness wait ahead of the cloud-init poll (and the verbose log tail, which also tunnels in), so neither races sshd. Connection-class failures (ssh 255 / IAP 4003) are now distinguished from cloud-init's own error/degraded exits by return code and treated as 'still booting, retry'; only an exhausted timeout is terminal, with a message that says the box never became reachable. The readiness probes run quietly via a new transport quiet flag so the expected connect errors no longer spam the operator with raw 4003 noise.</p>
 
 
 
