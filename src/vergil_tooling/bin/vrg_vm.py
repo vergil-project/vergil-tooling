@@ -80,6 +80,7 @@ from vergil_tooling.lib.vm_spec import (
     instance_name,
     parse_instance_name,
     spec_fingerprint,
+    split_state_slug,
     state_slug,
     validate_repo_segment,
 )
@@ -1760,7 +1761,39 @@ def _off_platform_vms() -> list[OffPlatformVm]:
     return vms
 
 
-def _cloud_list_rows() -> list[dict[str, object]]:
+def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
+    """Classify a recorded off-platform box against the repo's current profile.
+
+    'orphaned' when the repo dropped its [vm], no longer declares this instance, or
+    no longer composes this (off-platform, provider); 'ok' when it still matches.
+    The handle is recovered exactly from the readable slug — no lossy label round-trip.
+    """
+    identity_name, org, repo, inst_name = split_state_slug(vm.name)
+    if org is None or repo is None:
+        return "ok"  # a base box carries no per-repo spec
+    identity = config.identities.get(identity_name)
+    if identity is None:
+        return "orphaned"
+    repo_dir = Path(identity.projects_dir) / org / repo
+    if not (repo_dir / "vergil.toml").exists():
+        return "orphaned"
+    try:
+        stanza = read_config(repo_dir).vm
+        spec = compose_vm_spec(
+            identity=identity_name,
+            base=_base_footprint(identity),
+            stanza=stanza,
+            override=identity.overrides.get((org, repo)),
+            instance=inst_name,
+        )
+    except (ConfigError, SpecError):
+        return "orphaned"
+    if not spec.off_platform or spec.provider != vm.provider:
+        return "orphaned"
+    return "ok"
+
+
+def _cloud_list_rows(config: IdentityConfig) -> list[dict[str, object]]:
     """Display rows for off-platform VMs (the cloud half of ``vrg-vm list``).
 
     Reuses the shared ``_off_platform_vms()`` enumeration; an unauthed/unreachable
@@ -1774,9 +1807,11 @@ def _cloud_list_rows() -> list[dict[str, object]]:
         if not vm.vm_present:
             status = "no-vm"
             disk = vm.volume_size or "—"
+            spec = _classify_off_platform(vm, config)
         else:
             status = vm.status or f"unknown (no {vm.provider} creds)"
             disk = "—"
+            spec = _classify_off_platform(vm, config)
         rows.append(
             {
                 "identity": vm.identity or "—",
@@ -1785,6 +1820,7 @@ def _cloud_list_rows() -> list[dict[str, object]]:
                 "backend": vm.provider,
                 "status": status,
                 "disk": disk,
+                "spec": spec,
             }
         )
     return rows
@@ -1822,11 +1858,11 @@ def _cmd_list(args: argparse.Namespace) -> int:
                 f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
             )
 
-    for r in _cloud_list_rows():
+    for r in _cloud_list_rows(config):
         print(
             f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
             f"{r['backend']!s:<13} {r['status']!s:<11} "
-            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {'—':<22}"
+            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 
     return 0

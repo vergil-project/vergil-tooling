@@ -17,6 +17,7 @@ from vergil_tooling.lib.vm_spec import (
     lima_name_budget,
     parse_instance_name,
     spec_fingerprint,
+    split_state_slug,
     state_slug,
     validate_instance_name,
     validate_repo_segment,
@@ -878,3 +879,19 @@ def test_state_slug_forms() -> None:
     assert state_slug("vergil-user") == "vergil-user"
     assert state_slug("vergil-user", "lmf", "mq") == "vergil-user--lmf--mq"
     assert state_slug("vergil-user", "lmf", "mq", "cloud-x86") == "vergil-user--lmf--mq--cloud-x86"
+
+
+def test_split_state_slug_roundtrips() -> None:
+    assert split_state_slug("vergil-user") == ("vergil-user", None, None, None)
+    assert split_state_slug("vergil-user--lmf--mq") == ("vergil-user", "lmf", "mq", None)
+    assert split_state_slug("vergil-user--lmf--mq--cloud-x86") == (
+        "vergil-user",
+        "lmf",
+        "mq",
+        "cloud-x86",
+    )
+
+
+def test_split_state_slug_invalid_raises() -> None:
+    with pytest.raises(ValueError, match="unparseable"):
+        split_state_slug("a--b")  # 2 segments — not a valid form

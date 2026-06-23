@@ -3957,7 +3957,8 @@ class TestCloudList:
         from vergil_tooling.bin.vrg_vm import _cloud_list_rows
 
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
-        assert _cloud_list_rows() == []
+        config = IdentityConfig(identities={}, default_identity=None)
+        assert _cloud_list_rows(config) == []
 
     def test_off_platform_vms_recovers_identity_from_labels(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4128,6 +4129,250 @@ def test_list_shows_instance_column_and_no_vm_row(
     assert "native-ha" in out
     assert "no-vm" in out
     assert "200GiB" in out
+
+
+# ---------------------------------------------------------------------------
+# Helpers for _classify_off_platform tests
+# ---------------------------------------------------------------------------
+
+_REPO_TOML_HEAD = """\
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+_GCP_NAMED_INSTANCE_VM = """
+[vm]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+
+[vm.vergil-user.instances.cloud-x86]
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+"""
+
+_AZURE_NAMED_INSTANCE_VM = """
+[vm]
+backend = "off-platform"
+provider = "azure"
+region = "eastus"
+instance = "Standard_D8s_v3"
+volume = "300GiB"
+
+[vm.vergil-user.instances.cloud-x86]
+provider = "azure"
+region = "eastus"
+instance = "Standard_D8s_v3"
+volume = "300GiB"
+"""
+
+_NO_VM_TOML = """
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+
+def _make_classify_repo(projects: Path, org: str, repo: str, vm_section: str) -> None:
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "vergil.toml").write_text(_REPO_TOML_HEAD + vm_section)
+
+
+def _config_with_gcp_instance(
+    identity_name: str, org: str, repo: str, inst_name: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity declares a GCP named instance."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, _GCP_NAMED_INSTANCE_VM)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_with_azure_instance(
+    identity_name: str, org: str, repo: str, inst_name: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity declares an Azure named instance."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, _AZURE_NAMED_INSTANCE_VM)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_no_repo_vm(identity_name: str, org: str, repo: str, tmp_path: Path) -> IdentityConfig:
+    """IdentityConfig whose identity has a repo with no [vm] stanza."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, "")
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_no_vergil_toml(
+    identity_name: str, org: str, repo: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity has no vergil.toml in the repo dir."""
+    projects = tmp_path / "projects"
+    # Create the repo dir but no vergil.toml
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _classify_off_platform
+# ---------------------------------------------------------------------------
+
+
+def test_classify_off_platform_orphaned_when_provider_switched(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # The repo's current profile composes off-platform/azure, but the recorded box is gcp.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_with_azure_instance("vergil-user", "lmf", "mq", "cloud-x86", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_orphaned_when_stanza_dropped(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    # vergil.toml present but no [vm] stanza -> SpecError -> orphaned
+    config = _config_no_repo_vm("vergil-user", "lmf", "mq", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_ok_when_matches(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_with_gcp_instance("vergil-user", "lmf", "mq", "cloud-x86", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "ok"
+
+
+def test_classify_off_platform_base_slug_returns_ok(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # A base slug (no org/repo) carries no per-repo spec -> always ok.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org=None,
+        repo=None,
+        instance=None,
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = IdentityConfig(identities={}, default_identity=None)
+    assert vrg_vm._classify_off_platform(vm, config) == "ok"
+
+
+def test_classify_off_platform_identity_not_in_config_orphaned(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # The slug decodes a valid identity name, but it's not in this config.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = IdentityConfig(identities={}, default_identity=None)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_no_vergil_toml_orphaned(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_no_vergil_toml("vergil-user", "lmf", "mq", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
 
 
 class TestCloudUnderProvision:

@@ -402,6 +402,27 @@ def state_slug(
     return _SLUG_SEP.join(segments)
 
 
+def split_state_slug(slug: str) -> tuple[str, str | None, str | None, str | None]:
+    """Reverse state_slug. 1 segment = base; 3 = default dedicated; 4 = named instance.
+
+    Unambiguous because identity/org/repo never contain '--' (repo names with '--'
+    are rejected at parse time), so this is the exact inverse — no labels needed.
+
+    Deliberate symmetry: ``split_state_slug`` uses ``'--'`` (cloud/state paths);
+    ``parse_instance_name`` uses ``'.'`` (Lima instance names). The delimiters and
+    segment rules differ — do NOT merge them.
+    """
+    parts = slug.split(_SLUG_SEP)
+    if len(parts) == 1:
+        return parts[0], None, None, None
+    if len(parts) == 3:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], None
+    if len(parts) == 4:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], parts[3]
+    msg = f"unparseable state slug: {slug!r}"
+    raise ValueError(msg)
+
+
 def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
     """Reverse instance_name. Returns (identity, org, repo); org/repo are None for base."""
     parts = name.split(_TIER_SEP, 2)
