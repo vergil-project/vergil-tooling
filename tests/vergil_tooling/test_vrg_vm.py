@@ -4570,6 +4570,27 @@ class TestVolumeRows:
         assert row["zone"] == "us-central1-a"
         assert row["region"] == "us-central1"
         assert row["provider"] == "gcp"
+        assert row["instance"] == "—"  # default labels have no vergil-instance
+
+    def test_builds_row_with_instance_label(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        home = tmp_path / "home"
+        _write_volume_state(
+            home,
+            "vergil-lmf-cloud",
+            labels={
+                "vergil-identity": "vergil",
+                "vergil-org": "lmf",
+                "vergil-repo": "cloud",
+                "vergil-instance": "cloud-x86",
+            },
+        )
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        (row,) = _volume_rows()
+        assert row["instance"] == "cloud-x86"
 
     def test_placeholder_row_for_never_applied_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4584,6 +4605,7 @@ class TestVolumeRows:
         assert row["identity"] == "—"
         assert row["name"] == "—"
         assert row["size"] == "—"
+        assert row["instance"] == "—"
 
     def test_falls_back_to_state_key_when_labels_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
