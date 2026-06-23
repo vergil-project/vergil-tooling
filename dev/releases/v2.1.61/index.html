@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.37/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.35/">
+        <link rel="next" href="../v2.1.60/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.36 - VERGIL Tooling</title>
+        <title>2.1.61 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2136-2026-06-14" class="md-skip">
+        <a href="#release-2161-2026-06-23" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.36
+              2.1.61
             
           </span>
         </div>
@@ -988,10 +988,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.61/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.61
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1007,6 +1034,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1688,37 +1768,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.36
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.36/" class="md-nav__link">
         
   
   
@@ -1734,48 +1787,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9100,6 +9111,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9117,19 +9139,51 @@
 
 
 
-<h1 id="release-2136-2026-06-14">Release 2.1.36 (2026-06-14)<a class="headerlink" href="#release-2136-2026-06-14" title="Permanent link">&para;</a></h1>
+<h1 id="release-2161-2026-06-23">Release 2.1.61 (2026-06-23)<a class="headerlink" href="#release-2161-2026-06-23" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>self-heal poisoned uv cache in the in-VM tooling install (#1657)</strong>
-vrg-vm session runs 'uv tool install --reinstall vergil-tooling' inside the VM. --reinstall removes the existing tool before reinstalling, so when the uv cache holds a corrupt artifact (e.g. a zero-byte wheel METADATA left by an unclean VM stop) the reinstall fails after removal and the VM is left with no tooling — permanently bricking the session until the cache is cleared by hand.</li>
+<li><strong>update a running box in place over IAP instead of rebuilding (#1815)</strong>
+Corrects the stateless premise #1803 baked in: <code>vrg-vm update</code> of a running off-platform box rebuilt it (an ~8-min recreate that destroys the live session), and <code>update --all</code> skipped off-platform boxes and only reported them.</li>
 </ul>
-<p>Wrap the uv tool install invocation (install and update paths) in a helper that, on failure, clears the VM uv cache and retries once, so a poisoned cache self-recovers. Also make try_update_tooling stop reporting success when nothing is installed: warn and continue only if a working version remains, otherwise abort loudly with a recovery hint.</p>
+<p>The tooling update is already transport-generic, so a running box updates in place over its IAP transport exactly as Lima does over limactl — seconds, non-disruptive, no capacity/quota risk. Rebuild stays reserved for what genuinely needs a fresh image.</p>
+<ul>
+<li>update_plugins is now transport-generic (moved lima.py -&gt; vm_guest.py, taking a Transport) so the plugin refresh runs over IAP.</li>
+<li><code>update &lt;off-platform&gt;</code> updates in place via the box's IAP transport; a non-running box is refused with an identity-qualified start hint, no longer redirected to rebuild.</li>
+<li><code>update --all</code> updates running off-platform boxes in place and skips/reports non-running ones, folded into the unified updated/skipped/failed accounting (fail-deferred).</li>
+<li>Off-platform labels, the <code>update</code> ref, and the <code>list</code> rows now carry identity, so two boxes that share an org/repo (one per identity) stay distinct instead of collapsing into identical, identity-less lines.</li>
+</ul>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add vergil-forge local host design (#1655)</strong>
-Design for a new standalone repo that stands up and operates a persistent, local-first Forgejo instance on owned hardware — the Phase 0 prerequisite of the forge-abstraction strategy (#1521).</li>
+<li><strong>park shared-workspace NFS design (#1796) (#1814)</strong></li>
+<li>docs(off-platform): add shared-workspace-over-NFS design for vergil-user/vergil-audit</li>
 </ul>
-<p>Captures the Lima service VM running Forgejo + Postgres on host-mounted data, the Postgres-over-SQLite decision (parallel-agent write concurrency), the Forgejo/Codeberg duality and per-repo solo/shared roles, a config-driven off-box backup target that transitions GitHub to Codeberg, host-local v1 networking, and the vrg-forge lifecycle CLI. Defers shared-repo sync, Codeberg backup, TLS, and CI runners as named later phases.</p>
+<p>Design for the two identities sharing one writable tree and shared project memory off-platform via a fleet-wide self-managed NFS server (small GCE VM + zonal pd-balanced SSD + snapshots), replacing the per-identity persistent volume. Records the cost analysis that rejected managed Filestore (~2-5x cheaper at the ~1 TiB scale the working trees need) and the behavioral trust boundary the dual-agent IPC channel requires.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>auto-fall back across a region's zones on a capacity stockout (#1816)</strong>
+On a fresh off-platform create, sweep the region's zones until the instance
+lands instead of failing on the first stocked zone. Hit live: n2-standard-8/16
+unavailable across us-central1-a/b/c on the same night.</p>
+</li>
+<li>
+<p>region_zones(): enumerate a region's UP zones via gcloud.</p>
+</li>
+<li>is_zone_capacity_error(): match the GCP stockout signature (ZONE_RESOURCE_POOL_
+  EXHAUSTED / 'does not have enough resources') so a capacity failure is retried
+  while a real error still aborts.</li>
+<li>apply_vm_with_zone_fallback(): try the VM in the chosen zone; on a capacity
+  stockout, destroy the empty volume and recreate volume+VM in each fallback zone
+  until one succeeds, else raise a clear 'no zone in <region> has capacity'.</li>
+<li>_candidate_zones(): an explicit profile 'zone' is tried first; otherwise the
+  region's zones are shuffled to spread load.</li>
+</ul>
+<p>Fresh-volume only: a reattach (existing volume) is pinned to its zone — a zonal
+disk can't move without losing data — so it passes no fallback zones and a
+stockout there fails clearly. The per-attempt rollback also keeps a failed
+create cleanly retryable (no orphan firewall, cf #1804).</p>
+<p>Region-wide crunches (every zone stocked) still surface honestly; the message
+points at a different instance family / region / waiting.</p>
 
 
 
