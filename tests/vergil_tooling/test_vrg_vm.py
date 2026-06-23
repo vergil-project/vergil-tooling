@@ -4815,6 +4815,20 @@ class TestVolumesCommand:
         assert "INSTANCE" in out
         assert "cloud-x86" in out
 
+    def test_placeholder_row_renders_vm_type_dash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # When volume.tfstate is malformed (parse_volume_state returns None) and
+        # no vm.tfstate exists, _cmd_volumes must print the VM TYPE header and
+        # render the "—" placeholder without raising.
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud", raw="{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        assert main(["volumes"]) == 0
+        out = capsys.readouterr().out
+        assert "VM TYPE" in out
+        assert "—" in out
+
 
 # ---------------------------------------------------------------------------
 # Task 7 — _recorded_state_for_handle / RecordedState
