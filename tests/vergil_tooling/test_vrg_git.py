@@ -71,6 +71,7 @@ _ALLOWED_SIMPLE = [
     "push",
     "fetch",
     "pull",
+    "clone",
     "checkout",
     "switch",
     "stash",
@@ -605,7 +606,7 @@ def test_returns_subprocess_exit_code() -> None:
 
 
 class TestRemoteTokenInjection:
-    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote"])
+    @pytest.mark.parametrize("subcmd", ["push", "pull", "fetch", "ls-remote", "clone"])
     def test_injects_token_for_remote_commands(self, subcmd: str) -> None:
         with (
             patch(
