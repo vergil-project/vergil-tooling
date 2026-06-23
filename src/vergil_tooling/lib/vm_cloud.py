@@ -243,7 +243,9 @@ def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: s
         transport.run("mkdir", "-p", "/vergil/claude")
     else:
         print(f"  Reattaching existing checkout for {org}/{repo}...")
-        transport.run("git", "-C", path, "fetch", "--all")
+        # vrg-git (not raw git) so the installation token is injected, run inside the
+        # repo so `fetch` resolves the org from its own remote (#1790).
+        transport.run("vrg-git", "fetch", "--all", workdir=path)
 
 
 _FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
