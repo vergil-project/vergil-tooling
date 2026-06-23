@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.57] - 2026-06-23
+
+### Bug fixes
+
+- derive org from clone URL so vrg-git clone mints an installation token (#1786)
+
 ## [2.1.56] - 2026-06-23
 
 ### Bug fixes
