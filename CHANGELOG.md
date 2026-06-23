@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.59] - 2026-06-23
+
+### Features
+
+- add 'vrg-vm volumes' to surface persistent volumes from local tofu state (#1798)
+- allow an explicit zone in the off-platform profile (#1799)
+
 ## [2.1.58] - 2026-06-23
 
 ### Bug fixes
