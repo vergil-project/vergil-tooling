@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.vm_spec import spec_fingerprint
@@ -711,6 +711,91 @@ def read_zone(state_dir: Path) -> str:
         msg = f"no persisted zone at {zone_file} — apply the volume first"
         raise RuntimeError(msg)
     return zone_file.read_text(encoding="utf-8").strip()
+
+
+# A GCP zone-capacity stockout ("the zone does not have enough resources" /
+# ZONE_RESOURCE_POOL_EXHAUSTED) is transient and zone-specific, so it is worth retrying in
+# another zone — unlike a real config/quota error, which must abort. (#1813)
+_ZONE_CAPACITY_RE = re.compile(
+    r"does not have enough resources available|ZONE_RESOURCE_POOL_EXHAUSTED",
+    re.IGNORECASE,
+)
+
+
+def is_zone_capacity_error(exc: subprocess.CalledProcessError) -> bool:
+    """True when a tofu apply failed purely because the zone is out of capacity."""
+    blob = f"{exc.stderr or ''}{exc.stdout or ''}"
+    return bool(_ZONE_CAPACITY_RE.search(blob))
+
+
+def region_zones(region: str) -> list[str]:
+    """The UP zones of a GCP region, sorted (e.g. us-central1 -> -a/-b/-c/-f).
+
+    Used to sweep zones for capacity when an instance create is stocked out.
+    """
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "gcloud",
+            "compute",
+            "zones",
+            "list",
+            f"--filter=name~^{region}- AND status=UP",
+            "--format=value(name)",
+            f"--project={_resolve_project()}",
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return sorted(result.stdout.split())
+
+
+def apply_vm_with_zone_fallback(
+    modules_root: Path,
+    state_dir: Path,
+    backend: OffPlatformBackend,
+    *,
+    zone: str,
+    volume_id: str,
+    fallback_zones: list[str],
+) -> tuple[str, str, dict[str, str]]:
+    """Apply the VM in ``zone``; on a capacity stockout, recreate the (empty) volume + VM
+    in each ``fallback_zones`` entry until one lands. Returns ``(volume_id, zone, outputs)``.
+
+    Only the fresh-volume create path supplies fallback zones — a reattach (existing volume
+    with data) passes ``[]``, since a zonal disk cannot move zones without losing its data.
+    ``apply_vm`` already rolls back its own partial state (the firewall) on failure; between
+    fallback zones we additionally destroy the just-created *empty* volume. (#1813)
+    """
+    tried = [zone]
+    vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
+    try:
+        return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+    except subprocess.CalledProcessError as exc:
+        if not (fallback_zones and is_zone_capacity_error(exc)):
+            raise
+        print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
+
+    for next_zone in fallback_zones:
+        destroy_volume(modules_root, state_dir)  # the empty disk; rmtrees the state dir
+        state_dir.mkdir(parents=True, exist_ok=True)
+        volume_vars = cast("dict[str, Any]", {**backend.volume_vars(), "zone": next_zone})
+        volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars)
+        tried.append(zone)
+        vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
+        try:
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+        except subprocess.CalledProcessError as exc:
+            if not is_zone_capacity_error(exc):
+                raise
+            print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
+
+    msg = (
+        f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
+        f"(tried: {', '.join(tried)}). Try a different instance family (e.g. n2d-*), "
+        "another region, or wait for capacity."
+    )
+    raise RuntimeError(msg)
 
 
 # --- Volume state parsing ----------------------------------------------------

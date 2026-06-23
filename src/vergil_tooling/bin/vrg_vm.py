@@ -6,12 +6,13 @@ import argparse
 import datetime
 import json
 import os
+import random
 import shlex
 import shutil
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -683,6 +684,9 @@ class _CloudState:
     volume_id: str = ""
     host: str = ""
     transport: Transport | None = None
+    # Remaining zones to try if the VM apply hits a capacity stockout (#1813). Populated
+    # by tofu-volume on a fresh create; empty on a reattach (a zonal disk cannot move).
+    fallback_zones: list[str] = field(default_factory=list)
 
 
 def _require_modules(state: _CloudState) -> Path:
@@ -706,6 +710,19 @@ def _cs_fetch_modules(state: _CloudState) -> None:
     state.modules_root = vm_cloud.fetch_modules(state.tag)
 
 
+def _candidate_zones(backend: OffPlatformBackend) -> list[str]:
+    """Zone order to try for a fresh create: an explicit ``zone`` first (operator
+    preference), otherwise the region's zones shuffled to spread load. (#1813)
+    """
+    zones = vm_cloud.region_zones(backend.spec.region)
+    configured = backend.spec.zone
+    if configured:
+        return [configured, *(z for z in zones if z != configured)]
+    shuffled = list(zones)
+    random.shuffle(shuffled)
+    return shuffled
+
+
 def _cs_tofu_volume(state: _CloudState) -> None:
     modules_root = _require_modules(state)
     print("Applying persistent volume...")
@@ -713,6 +730,13 @@ def _cs_tofu_volume(state: _CloudState) -> None:
     # signatures are precisely typed. The dict is the backend's own contract, so the
     # spread is the right call shape — cast to Any to bridge the object→typed kwargs gap.
     volume_vars = cast("dict[str, Any]", state.backend.volume_vars())
+    # Fresh create -> sweep zones on a capacity stockout. A reattach (existing volume
+    # state) is pinned to its zone — a zonal disk holds data and cannot move (#1813).
+    if not (state.state_dir / "volume.tfstate").exists():
+        candidates = _candidate_zones(state.backend)
+        if candidates:
+            volume_vars["zone"] = candidates[0]
+            state.fallback_zones = candidates[1:]
     volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
     state.volume_id = volume_id
     state.zone = zone
@@ -721,9 +745,16 @@ def _cs_tofu_volume(state: _CloudState) -> None:
 def _cs_tofu_vm(state: _CloudState) -> None:
     modules_root = _require_modules(state)
     print("Applying VM...")
-    raw_vm_vars = state.backend.vm_vars(zone=state.zone, volume_id=state.volume_id)
-    vm_vars = cast("dict[str, Any]", raw_vm_vars)
-    out = vm_cloud.apply_vm(modules_root, state.state_dir, **vm_vars)
+    volume_id, zone, out = vm_cloud.apply_vm_with_zone_fallback(
+        modules_root,
+        state.state_dir,
+        state.backend,
+        zone=state.zone,
+        volume_id=state.volume_id,
+        fallback_zones=state.fallback_zones,
+    )
+    state.volume_id = volume_id
+    state.zone = zone
     state.host = out["host"]
     state.transport = state.backend.transport()
 

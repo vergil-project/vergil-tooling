@@ -13,6 +13,7 @@ from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.vm_cloud import (
     OffPlatformBackend,
     apply_vm,
+    apply_vm_with_zone_fallback,
     apply_volume,
     await_readiness,
     bootstrap_volume,
@@ -21,12 +22,14 @@ from vergil_tooling.lib.vm_cloud import (
     destroy_vm,
     destroy_volume,
     fetch_modules,
+    is_zone_capacity_error,
     link_cloud_claude_dirs,
     off_platform_transport,
     parse_volume_state,
     preflight,
     provision_params,
     read_zone,
+    region_zones,
     render_provision_env,
     tofu_state_dir,
     zone_to_region,
@@ -940,6 +943,160 @@ class TestReadZone:
     def test_missing_zone_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="no persisted zone"):
             read_zone(tmp_path)
+
+
+def _capacity_exc() -> subprocess.CalledProcessError:
+    return subprocess.CalledProcessError(
+        1, ["tofu", "apply"], stderr="Error: the zone does not have enough resources available"
+    )
+
+
+class TestZoneCapacity:
+    def test_detects_capacity_phrasings(self) -> None:
+        assert is_zone_capacity_error(_capacity_exc()) is True
+        pool = subprocess.CalledProcessError(1, [], stderr="ZONE_RESOURCE_POOL_EXHAUSTED")
+        assert is_zone_capacity_error(pool) is True
+
+    def test_other_errors_are_not_capacity(self) -> None:
+        other = subprocess.CalledProcessError(1, [], stderr="Error: quota 'CPUS' exceeded")
+        assert is_zone_capacity_error(other) is False
+
+    def test_region_zones_sorted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="us-central1-c\nus-central1-a\nus-central1-b\n"
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        assert region_zones("us-central1") == [
+            "us-central1-a",
+            "us-central1-b",
+            "us-central1-c",
+        ]
+
+
+class TestZoneFallback:
+    @staticmethod
+    def _backend() -> MagicMock:
+        backend = MagicMock()
+        backend.vm_vars.return_value = {}
+        backend.volume_vars.return_value = {}
+        backend.spec.region = "us-central1"
+        backend.spec.instance = "n2-standard-16"
+        return backend
+
+    def test_first_zone_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        av = MagicMock(return_value={"host": "h"})
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            self._backend(),
+            zone="us-central1-a",
+            volume_id="v1",
+            fallback_zones=["us-central1-b"],
+        )
+        assert result == ("v1", "us-central1-a", {"host": "h"})
+        av.assert_called_once()
+
+    def test_falls_back_across_zones_until_one_lands(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # zone a (initial) stocked, zone b (fallback) stocked, zone c lands.
+        av = MagicMock(side_effect=[_capacity_exc(), _capacity_exc(), {"host": "h"}])
+        avol = MagicMock(side_effect=[("v2", "us-central1-b"), ("v3", "us-central1-c")])
+        dv = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_volume", avol)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", dv)
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            self._backend(),
+            zone="us-central1-a",
+            volume_id="v1",
+            fallback_zones=["us-central1-b", "us-central1-c"],
+        )
+        assert result == ("v3", "us-central1-c", {"host": "h"})
+        assert dv.call_count == 2  # the empty disk is torn down before each retry
+        assert avol.call_count == 2  # recreated in each fallback zone
+        assert av.call_count == 3
+
+    def test_all_zones_stocked_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_volume",
+            MagicMock(return_value=("v2", "us-central1-b")),
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", MagicMock())
+        with pytest.raises(RuntimeError, match="no zone in us-central1 has capacity"):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-a",
+                volume_id="v1",
+                fallback_zones=["us-central1-b", "us-central1-c"],
+            )
+
+    def test_non_capacity_error_aborts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boom = subprocess.CalledProcessError(1, [], stderr="Error: bad config")
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=boom))
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-a",
+                volume_id="v1",
+                fallback_zones=["us-central1-b"],
+            )
+
+    def test_non_capacity_error_during_fallback_aborts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # zone a stocked -> fall back to zone b, which fails with a real (non-capacity) error.
+        boom = subprocess.CalledProcessError(1, [], stderr="Error: bad config")
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=[_capacity_exc(), boom])
+        )
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_volume",
+            MagicMock(return_value=("v2", "us-central1-b")),
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", MagicMock())
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-a",
+                volume_id="v1",
+                fallback_zones=["us-central1-b", "us-central1-c"],
+            )
+
+    def test_capacity_with_no_fallback_reraises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reattach (no fallback zones): a capacity error is fatal, not retried.
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-a",
+                volume_id="v1",
+                fallback_zones=[],
+            )
 
 
 class TestOffPlatformTransport:
