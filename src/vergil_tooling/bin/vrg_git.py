@@ -104,6 +104,20 @@ _FLAG_DENY: dict[str, set[str]] = {
 
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "clone"}
 
+# Owner/org of a GitHub clone URL — used to mint the installation token for
+# `clone`, which runs outside any repo (so the org can't come from a remote).
+_GITHUB_CLONE_URL_RE = re.compile(r"(?:https://github\.com/|git@github\.com:)([^/]+)/")
+
+
+def _org_from_clone_url(args: list[str]) -> str | None:
+    """Return the GitHub org/owner from the first github.com URL among clone args."""
+    for arg in args:
+        match = _GITHUB_CLONE_URL_RE.match(arg)
+        if match:
+            return match.group(1)
+    return None
+
+
 _PROTECTED_BRANCHES: set[str] = {"develop", "main"}
 _PROTECTED_PREFIXES: tuple[str, ...] = ("release/",)
 
@@ -368,7 +382,11 @@ def main(argv: list[str] | None = None) -> int:
 
     env = None
     if subcmd in _REMOTE_SUBCOMMANDS:
-        token = github.get_installation_token()
+        # clone runs outside any repo, so get_installation_token's default
+        # org-from-remote detection finds nothing — derive the org from the
+        # clone URL argument instead. (#1785)
+        org = _org_from_clone_url(argv[1:]) if subcmd == "clone" else None
+        token = github.get_installation_token(org)
         if token is not None:
             env = _git_auth_env(token)
 
