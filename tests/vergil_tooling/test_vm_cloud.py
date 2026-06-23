@@ -22,11 +22,13 @@ from vergil_tooling.lib.vm_cloud import (
     destroy_volume,
     fetch_modules,
     link_cloud_claude_dirs,
+    parse_volume_state,
     preflight,
     provision_params,
     read_zone,
     render_provision_env,
     tofu_state_dir,
+    zone_to_region,
 )
 from vergil_tooling.lib.vm_spec import ComposedSpec
 from vergil_tooling.lib.vm_transport import IapTransport
@@ -701,6 +703,7 @@ class TestRunTofu:
             "region": "us-central1",
             "size_gib": 300,
             "labels": {"vergil-org": "o"},
+            "zone": "",
         }
         # init then apply, both non-interactive, apply auto-approved + state/var-file
         init_args = run.call_args_list[0].args[0]
@@ -968,7 +971,12 @@ class TestOffPlatformBackend:
             "region": "us-central1",
             "size_gib": 300,
             "labels": b.labels,
+            "zone": "",
         }
+
+    def test_volume_vars_carries_explicit_zone(self) -> None:
+        b = OffPlatformBackend(_off_spec(zone="us-central1-a"), "vergil-user", "o", "r")
+        assert b.volume_vars()["zone"] == "us-central1-a"
 
     def test_vm_vars_composition(self) -> None:
         b = OffPlatformBackend(_off_spec(nested=True), "vergil-user", "o", "r")
@@ -987,3 +995,176 @@ class TestOffPlatformBackend:
         from vergil_tooling.lib.vm_spec import spec_fingerprint
 
         assert f"SPEC_FINGERPRINT={spec_fingerprint(_off_spec(nested=True))}" in env
+
+
+def _volume_tfstate(
+    *,
+    name: str = "vergil-lmf-cloud-data",
+    size: object = 300,
+    zone: str = "us-central1-a",
+    labels: dict[str, str] | None = None,
+) -> str:
+    """A minimal but realistic volume.tfstate carrying one google_compute_disk."""
+    if labels is None:
+        labels = {"vergil-identity": "vergil", "vergil-org": "lmf", "vergil-repo": "cloud"}
+    return json.dumps(
+        {
+            "version": 4,
+            "terraform_version": "1.8.0",
+            "resources": [
+                {
+                    "mode": "managed",
+                    "type": "google_compute_disk",
+                    "name": "data",
+                    "instances": [
+                        {
+                            "attributes": {
+                                "name": name,
+                                "size": size,
+                                "zone": zone,
+                                "labels": labels,
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+
+class TestZoneToRegion:
+    def test_strips_trailing_zone_suffix(self) -> None:
+        assert zone_to_region("us-central1-a") == "us-central1"
+
+    def test_multi_token_region_preserved(self) -> None:
+        assert zone_to_region("europe-west4-b") == "europe-west4"
+
+    def test_empty_zone_is_empty(self) -> None:
+        assert zone_to_region("") == ""
+
+    def test_zone_without_suffix_is_empty(self) -> None:
+        assert zone_to_region("noregion") == ""
+
+
+class TestParseVolumeState:
+    def test_parses_disk_attributes_and_labels(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate())
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.name == "vergil-lmf-cloud-data"
+        assert parsed.size_gib == 300
+        assert parsed.zone == "us-central1-a"
+        assert parsed.labels == {
+            "vergil-identity": "vergil",
+            "vergil-org": "lmf",
+            "vergil-repo": "cloud",
+        }
+
+    def test_normalizes_zone_selflink_url(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        url = "https://www.googleapis.com/compute/v1/projects/p/zones/us-central1-c"
+        state.write_text(_volume_tfstate(zone=url))
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.zone == "us-central1-c"
+
+    def test_string_size_coerced_to_int(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate(size="500"))
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.size_gib == 500
+
+    def test_non_numeric_size_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate(size="big"))
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.size_gib is None
+
+    def test_empty_placeholder_state_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text("{}")
+        assert parse_volume_state(state) is None
+
+    def test_malformed_json_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text("not json {")
+        assert parse_volume_state(state) is None
+
+    def test_missing_file_is_none(self, tmp_path: Path) -> None:
+        assert parse_volume_state(tmp_path / "absent.tfstate") is None
+
+    def test_no_applied_disk_resource_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(
+            json.dumps(
+                {
+                    "version": 4,
+                    "resources": [
+                        {"type": "google_compute_disk", "instances": []},
+                        {"type": "random_id", "instances": [{"attributes": {"hex": "abc"}}]},
+                    ],
+                }
+            )
+        )
+        assert parse_volume_state(state) is None
+
+    def test_absent_labels_yield_empty_dict(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(
+            json.dumps(
+                {
+                    "version": 4,
+                    "resources": [
+                        {
+                            "type": "google_compute_disk",
+                            "instances": [
+                                {"attributes": {"name": "d", "size": 100, "zone": "us-central1-a"}}
+                            ],
+                        }
+                    ],
+                }
+            )
+        )
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.labels == {}
+
+    def test_bool_size_is_none(self, tmp_path: Path) -> None:
+        # JSON ``true`` round-trips to a Python bool; a bool is not a disk size.
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate(size=True))
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.size_gib is None
+
+    def test_non_scalar_size_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate(size=[1, 2]))
+        parsed = parse_volume_state(state)
+        assert parsed is not None
+        assert parsed.size_gib is None
+
+    def test_top_level_non_object_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text("[]")
+        assert parse_volume_state(state) is None
+
+    def test_non_object_attributes_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(
+            json.dumps(
+                {
+                    "version": 4,
+                    "resources": [
+                        {
+                            "type": "google_compute_disk",
+                            "instances": [{"attributes": "not-an-object"}],
+                        }
+                    ],
+                }
+            )
+        )
+        assert parse_volume_state(state) is None

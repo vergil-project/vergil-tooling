@@ -284,6 +284,21 @@ class TestOffPlatformCompose:
         assert spec.volume == "300GiB"
         assert spec.dedicated is True  # declaring a backend dedicates the box
 
+    def test_zone_is_optional_defaults_empty_and_overrides(self) -> None:
+        # Omitted -> "" (the volume module falls back to ${region}-b).
+        default_spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
+        )
+        assert default_spec.zone == ""
+        # Declared in the role tier -> carried through the cascade (#1797).
+        zoned = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(zone="us-central1-a"),
+            override=None,
+        )
+        assert zoned.zone == "us-central1-a"
+
     def test_disk_is_carried_but_volume_is_authoritative_on_cloud(self) -> None:
         # `disk` stays at the base footprint (Lima knob); `volume` is the cloud size.
         spec = compose_vm_spec(

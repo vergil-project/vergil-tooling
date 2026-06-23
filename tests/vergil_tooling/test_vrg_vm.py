@@ -3468,3 +3468,188 @@ class TestResolveVmVerbose:
         # The flag is missing entirely on non-cloud-aware parsers (getattr default).
         monkeypatch.delenv("VERGIL_VM_VERBOSE", raising=False)
         assert _resolve_vm_verbose(self._ns()) is False
+
+
+def _write_volume_state(
+    home: Path,
+    state_key: str,
+    *,
+    provider: str = "gcp",
+    name: str = "vergil-lmf-cloud-data",
+    size: object = 300,
+    zone: str = "us-central1-a",
+    labels: dict[str, str] | None = None,
+    raw: str | None = None,
+) -> Path:
+    """Plant a volume.tfstate under a fake ~/.config/vergil/tofu tree."""
+    if labels is None:
+        labels = {"vergil-identity": "vergil", "vergil-org": "lmf", "vergil-repo": "cloud"}
+    tofu = home / ".config" / "vergil" / "tofu" / state_key / provider
+    tofu.mkdir(parents=True)
+    state = tofu / "volume.tfstate"
+    if raw is not None:
+        state.write_text(raw)
+        return state
+    state.write_text(
+        json.dumps(
+            {
+                "version": 4,
+                "resources": [
+                    {
+                        "type": "google_compute_disk",
+                        "instances": [
+                            {
+                                "attributes": {
+                                    "name": name,
+                                    "size": size,
+                                    "zone": zone,
+                                    "labels": labels,
+                                }
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    return state
+
+
+class TestVolumeRows:
+    def test_empty_when_no_tofu_dir(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
+        assert _volume_rows() == []
+
+    def test_builds_row_from_labels_and_attributes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        (row,) = _volume_rows()
+        assert row["identity"] == "vergil"
+        assert row["scope"] == "lmf/cloud"
+        assert row["name"] == "vergil-lmf-cloud-data"
+        assert row["size"] == "300GiB"
+        assert row["zone"] == "us-central1-a"
+        assert row["region"] == "us-central1"
+        assert row["provider"] == "gcp"
+
+    def test_placeholder_row_for_never_applied_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud", raw="{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        (row,) = _volume_rows()
+        assert row["scope"] == "vergil-lmf-cloud"  # falls back to state-dir name
+        assert row["identity"] == "—"
+        assert row["name"] == "—"
+        assert row["size"] == "—"
+
+    def test_falls_back_to_state_key_when_labels_missing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-x-y", labels={})
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        (row,) = _volume_rows()
+        assert row["scope"] == "vergil-x-y"
+        assert row["identity"] == "—"
+        assert row["name"] == "vergil-lmf-cloud-data"  # attributes still parse
+
+
+class TestVolumeLiveStatus:
+    def test_returns_live_status_when_present(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="READY\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "READY"
+
+    def test_missing_when_provider_reports_not_found(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "gcloud")
+        err.stderr = "ERROR: The resource 'd' was not found"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "MISSING"
+
+    def test_unknown_when_no_creds(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "gcloud")
+        err.stderr = "ERROR: (gcloud) credentials problem"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "unknown (no gcp creds)"
+
+    def test_unknown_when_gcloud_absent(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=FileNotFoundError):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "unknown (no gcloud)"
+
+    def test_non_gcp_provider_skips_query(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run") as run:
+            assert _volume_live_status("d", "z", "aws") == "unknown (no aws live check)"
+            run.assert_not_called()
+
+    def test_placeholder_volume_skips_query(self) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run") as run:
+            assert _volume_live_status("—", "—", "gcp") == "unknown (no gcp live check)"
+            run.assert_not_called()
+
+
+class TestVolumesCommand:
+    def test_lists_volumes_with_columns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        assert main(["volumes"]) == 0
+        out = capsys.readouterr().out
+        assert "IDENTITY" in out
+        assert "ORG/REPO" in out
+        assert "DISK NAME" in out
+        assert "REGION" in out
+        assert "lmf/cloud" in out
+        assert "vergil-lmf-cloud-data" in out
+        assert "300GiB" in out
+        assert "us-central1-a" in out
+        assert "us-central1" in out
+        assert "LIVE" not in out  # no --live
+
+    def test_empty_listing_prints_notice(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
+        assert main(["volumes"]) == 0
+        out = capsys.readouterr().out
+        assert "IDENTITY" in out  # header still printed
+        assert "no off-platform volumes found" in out
+
+    def test_live_flag_adds_column(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        with patch("vergil_tooling.bin.vrg_vm._volume_live_status", return_value="READY") as live:
+            assert main(["volumes", "--live"]) == 0
+        out = capsys.readouterr().out
+        assert "LIVE" in out
+        assert "READY" in out
+        live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")

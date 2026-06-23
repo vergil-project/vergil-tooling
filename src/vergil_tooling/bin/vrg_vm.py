@@ -1488,6 +1488,132 @@ def _cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _volume_rows() -> list[dict[str, object]]:
+    """Enumerate off-platform persistent volumes from local tofu state.
+
+    Globs ``~/.config/vergil/tofu/<state_key>/<provider>/volume.tfstate`` and
+    parses each into a display row: identity, org/repo, disk name, size, zone,
+    and region. Every field is sourced from the disk's stamped attributes and
+    ``vergil-*`` labels — no network, no gcloud — so the listing reflects exactly
+    what vrg-vm manages. A state that parses to no disk (a never-applied
+    placeholder) degrades to a row keyed by its state dir rather than dropping
+    out, so an operator still sees that the state exists.
+    """
+    rows: list[dict[str, object]] = []
+    tofu_root = Path.home() / ".config" / "vergil" / "tofu"
+    if not tofu_root.is_dir():
+        return rows
+    for volume_state in sorted(tofu_root.glob("*/*/volume.tfstate")):
+        provider_dir = volume_state.parent
+        provider = provider_dir.name
+        state_key = provider_dir.parent.name
+        parsed = vm_cloud.parse_volume_state(volume_state)
+        if parsed is None:
+            rows.append(
+                {
+                    "identity": "—",
+                    "scope": state_key,
+                    "name": "—",
+                    "size": "—",
+                    "zone": "—",
+                    "region": "—",
+                    "provider": provider,
+                }
+            )
+            continue
+        org = parsed.labels.get("vergil-org")
+        repo = parsed.labels.get("vergil-repo")
+        scope = f"{org}/{repo}" if org and repo else state_key
+        region = vm_cloud.zone_to_region(parsed.zone)
+        rows.append(
+            {
+                "identity": parsed.labels.get("vergil-identity") or "—",
+                "scope": scope,
+                "name": parsed.name or "—",
+                "size": f"{parsed.size_gib}GiB" if parsed.size_gib is not None else "—",
+                "zone": parsed.zone or "—",
+                "region": region or "—",
+                "provider": provider,
+            }
+        )
+    return rows
+
+
+def _volume_live_status(name: str, zone: str, provider: str) -> str:
+    """Best-effort live check of one volume against the cloud, never raising.
+
+    Returns the disk's live status (``READY``/``CREATING``/…) when it exists,
+    ``MISSING`` when the provider reports it absent (drift — deleted out of
+    band), or a degraded ``unknown (…)`` placeholder when the provider cannot be
+    queried (no gcloud, no creds, unknown provider). Only GCP is wired today; any
+    other provider yields the degraded placeholder rather than a false reading.
+    """
+    if provider != "gcp" or name in {"", "—"} or zone in {"", "—"}:
+        return f"unknown (no {provider} live check)"
+    try:
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "gcloud",
+                "compute",
+                "disks",
+                "describe",
+                name,
+                f"--zone={zone}",
+                "--format=value(status)",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+    except FileNotFoundError:
+        return "unknown (no gcloud)"
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").lower()
+        if "not found" in stderr or "was not found" in stderr:
+            return "MISSING"
+        return f"unknown (no {provider} creds)"
+    return result.stdout.strip() or "MISSING"
+
+
+def _cmd_volumes(args: argparse.Namespace) -> int:
+    """List off-platform persistent volumes from local tofu state.
+
+    The persistent volume is the long-lived, billable, quota-consuming object
+    that outlives every ephemeral cloud VM, so it is the one off-platform object
+    an operator most needs to enumerate and identify — for cleanup (which volume
+    to ``destroy-volume``) and for cost/quota management. ``--live`` adds a column
+    that cross-checks each disk against the provider to spot drift (a disk
+    deleted out of band, or one stuck mid-create).
+    """
+    rows = _volume_rows()
+    live = getattr(args, "live", False)
+    if live:
+        for r in rows:
+            r["live"] = _volume_live_status(str(r["name"]), str(r["zone"]), str(r["provider"]))
+
+    scope_w = max([24, *(len(str(r["scope"])) for r in rows)])
+    name_w = max([20, *(len(str(r["name"])) for r in rows)])
+    header = (
+        f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'DISK NAME':<{name_w}} "
+        f"{'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
+    )
+    if live:
+        header += f" {'LIVE':<22}"
+    print(header)
+    print("─" * len(header))
+    for r in rows:
+        line = (
+            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['name']!s:<{name_w}} "
+            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14}"
+        )
+        if live:
+            line += f" {r['live']!s:<22}"
+        print(line)
+    if not rows:
+        print("(no off-platform volumes found)")
+    return 0
+
+
 def _vm_active_sessions(instance: str) -> dict[str, dict[str, object]]:
     """Map active session id -> its row from a running VM's resolver.
 
@@ -1906,6 +2032,25 @@ def main(argv: list[str] | None = None) -> int:
     p_list.add_argument("--archived", action="store_true", help="With --sessions: only archived")
     p_list.add_argument("--all", action="store_true", help="With --sessions: include archived too")
 
+    p_volumes = sub.add_parser(
+        "volumes",
+        help="List off-platform persistent volumes",
+        description=(
+            "List every off-platform persistent volume from local tofu state — the "
+            "long-lived, billable, quota-consuming disks that outlive each ephemeral "
+            "cloud VM. Columns: IDENTITY, ORG/REPO, DISK NAME, SIZE, ZONE, REGION, all "
+            "read from the disk's stamped labels/attributes with no network call, so the "
+            "listing reflects exactly what vrg-vm manages. --live cross-checks each disk "
+            "against the provider (a LIVE column) to spot drift: a disk deleted out of "
+            "band shows MISSING; an unauthed/unreachable provider degrades to 'unknown'."
+        ),
+    )
+    p_volumes.add_argument(
+        "--live",
+        action="store_true",
+        help="Cross-check each volume against the cloud provider (adds a LIVE column)",
+    )
+
     p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
     _add_identity_args(p_session)
     p_session.add_argument(
@@ -1961,6 +2106,7 @@ def main(argv: list[str] | None = None) -> int:
         "destroy-volume": _cmd_destroy_volume,
         "rebuild": _cmd_rebuild,
         "list": _cmd_list,
+        "volumes": _cmd_volumes,
         "session": _cmd_session,
     }
     try:
