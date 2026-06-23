@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import progress
-from vergil_tooling.lib.vm_spec import spec_fingerprint
+from vergil_tooling.lib.vm_spec import spec_fingerprint, state_slug
 from vergil_tooling.lib.vm_transport import IapTransport
 
 if TYPE_CHECKING:
@@ -30,34 +30,34 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
-_MAX_NAME = 58  # GCP names <=63; the volume module appends "-data" (the longest suffix).
-_HASH_LEN = 6
-
-
 def _slug(value: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return s or "x"
 
 
-def cloud_resource_name(identity: str, org: str, repo: str) -> str:
-    """A deterministic RFC1035 name (<=59 chars) for the GCP instance/disk/firewall."""
-    base = "-".join(_slug(p) for p in (identity, org, repo))
-    if not base[:1].isalpha():
-        base = f"v-{base}"
-    if len(base) <= _MAX_NAME:
-        return base
-    digest = hashlib.sha256(f"{identity}/{org}/{repo}".encode()).hexdigest()[:_HASH_LEN]
-    keep = _MAX_NAME - _HASH_LEN - 1
-    return f"{base[:keep].rstrip('-')}-{digest}"
+def cloud_resource_name(slug: str) -> str:
+    """Deterministic short RFC1035 name 'vrg-<first 12 hex of sha256(slug)>' (16 chars).
+
+    The four-segment slug overflows GCP's 63-char limit, so the readable slug keys
+    the state path / labels while cloud resources take this opaque hash. Identity is
+    carried in labels (which `list` and `tofu import` read), never in the name.
+    """
+    digest = hashlib.sha256(slug.encode()).hexdigest()[:12]
+    return f"vrg-{digest}"
 
 
-def cloud_labels(identity: str, org: str, repo: str) -> dict[str, str]:
-    """Structured labels for label-based recovery (independent of the mangled name)."""
-    return {
+def cloud_labels(
+    identity: str, org: str, repo: str, name: str | None = None
+) -> dict[str, str]:
+    """Structured labels for label-based recovery (independent of the hashed name)."""
+    labels = {
         "vergil-identity": _slug(identity),
         "vergil-org": _slug(org),
         "vergil-repo": _slug(repo),
     }
+    if name:
+        labels["vergil-instance"] = _slug(name)
+    return labels
 
 
 # GitHub auto-generates a source archive for any tag at this URL — a single
@@ -917,14 +917,24 @@ class OffPlatformBackend:
     with ``LimaBackend`` and is ignored.
     """
 
-    def __init__(self, spec: ComposedSpec, identity: str, org: str, repo: str) -> None:
+    def __init__(
+        self,
+        spec: ComposedSpec,
+        identity: str,
+        org: str,
+        repo: str,
+        name: str | None = None,
+    ) -> None:
         self.spec = spec
         self.identity = identity
         self.org = org
         self.repo = repo
-        self.name = cloud_resource_name(identity, org, repo)
-        self.labels = cloud_labels(identity, org, repo)
-        self.state_key = self.name
+        self.instance_name = name
+        # Readable slug keys the state path; the cloud resource name is its hash.
+        self.slug = state_slug(identity, org, repo, name)
+        self.name = cloud_resource_name(self.slug)
+        self.labels = cloud_labels(identity, org, repo, name)
+        self.state_key = self.slug
         self.ssh_user = _effective_ssh_user()
         # Plain attribute (not a property): the Backend protocol declares
         # provider_label as a settable variable, which a read-only property fails.

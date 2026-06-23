@@ -17,6 +17,7 @@ from vergil_tooling.lib.vm_spec import (
     lima_name_budget,
     parse_instance_name,
     spec_fingerprint,
+    state_slug,
     validate_instance_name,
     validate_repo_segment,
 )
@@ -799,3 +800,12 @@ def test_fingerprint_excludes_instance_name() -> None:
         identity="vergil-user", base=BASE, stanza=stanza, override=None, instance="rdqm-rhel"
     )
     assert spec_fingerprint(default) == spec_fingerprint(named)
+
+
+def test_state_slug_forms() -> None:
+    assert state_slug("vergil-user") == "vergil-user"
+    assert state_slug("vergil-user", "lmf", "mq") == "vergil-user--lmf--mq"
+    assert (
+        state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+        == "vergil-user--lmf--mq--cloud-x86"
+    )

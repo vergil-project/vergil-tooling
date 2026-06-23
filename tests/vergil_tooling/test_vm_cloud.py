@@ -34,7 +34,7 @@ from vergil_tooling.lib.vm_cloud import (
     tofu_state_dir,
     zone_to_region,
 )
-from vergil_tooling.lib.vm_spec import ComposedSpec
+from vergil_tooling.lib.vm_spec import ComposedSpec, state_slug
 from vergil_tooling.lib.vm_transport import IapTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
@@ -67,34 +67,38 @@ class TestResolveProject:
 
 
 class TestCloudName:
-    def test_lowercases_and_replaces_dots(self) -> None:
-        name = cloud_resource_name("vergil-user", "Logical-Minds", "MQ.Cluster")
+    def test_rfc1035_and_fixed_length(self) -> None:
+        slug = state_slug("vergil-user", "Logical-Minds", "MQ.Cluster")
+        name = cloud_resource_name(slug)
         assert _RFC1035.fullmatch(name)
-        assert "." not in name and name == name.lower()
+        assert len(name) == 16  # "vrg-" + 12 hex
 
     def test_deterministic(self) -> None:
-        a = cloud_resource_name("vergil-user", "o", "r")
-        b = cloud_resource_name("vergil-user", "o", "r")
+        slug = state_slug("vergil-user", "o", "r")
+        a = cloud_resource_name(slug)
+        b = cloud_resource_name(slug)
         assert a == b
 
-    def test_truncates_long_names_to_58_with_hash(self) -> None:
-        name = cloud_resource_name("vergil-user", "a" * 40, "b" * 40)
-        # 58 leaves room for the volume module's "-data" suffix within GCP's 63-char cap.
-        assert len(name) <= 58
+    def test_always_fits_gcp_limit(self) -> None:
+        slug = state_slug("vergil-user", "a" * 40, "b" * 40)
+        name = cloud_resource_name(slug)
+        # 16 chars always fits within GCP's 63-char cap (and its "-data" suffix).
+        assert len(name) == 16
         assert _RFC1035.fullmatch(name)
 
-    def test_distinct_inputs_distinct_names_even_when_truncated(self) -> None:
-        n1 = cloud_resource_name("vergil-user", "a" * 40, "b" * 40)
-        n2 = cloud_resource_name("vergil-user", "a" * 40, "c" * 40)
+    def test_distinct_slugs_produce_distinct_names(self) -> None:
+        n1 = cloud_resource_name(state_slug("vergil-user", "a" * 40, "b" * 40))
+        n2 = cloud_resource_name(state_slug("vergil-user", "a" * 40, "c" * 40))
         assert n1 != n2
 
-    def test_prefixes_non_alpha_leading_name(self) -> None:
-        name = cloud_resource_name("9user", "org", "repo")
+    def test_always_starts_with_vrg(self) -> None:
+        # Hash prefix "vrg-" guarantees RFC1035-valid first char regardless of input.
+        name = cloud_resource_name(state_slug("9user", "org", "repo"))
+        assert name.startswith("vrg-")
         assert _RFC1035.fullmatch(name)
-        assert name.startswith("v-")
 
-    def test_empty_components_fall_back_to_placeholder(self) -> None:
-        name = cloud_resource_name("...", "...", "...")
+    def test_any_slug_produces_valid_name(self) -> None:
+        name = cloud_resource_name(state_slug("...", "...", "..."))
         assert _RFC1035.fullmatch(name)
 
 
@@ -1147,8 +1151,10 @@ class TestOffPlatformBackend:
     def test_init_computes_name_labels_and_ssh_user(self) -> None:
         b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
         assert b.provider_label == "gcp"
-        assert b.name == cloud_resource_name("vergil-user", "o", "r")
-        assert b.state_key == b.name
+        expected_slug = state_slug("vergil-user", "o", "r")
+        assert b.slug == expected_slug
+        assert b.name == cloud_resource_name(expected_slug)
+        assert b.state_key == expected_slug  # readable slug, not the hashed name
         assert b.labels == cloud_labels("vergil-user", "o", "r")
         assert b.ssh_user == "ubuntu"
 
@@ -1461,3 +1467,18 @@ class TestParseVolumeState:
             )
         )
         assert parse_volume_state(state) is None
+
+
+def test_cloud_resource_name_is_hashed_and_deterministic() -> None:
+    slug = "vergil-user--logical-minds-foundry--mq-cluster-tooling--cloud-x86"
+    name = cloud_resource_name(slug)
+    assert name.startswith("vrg-")
+    assert len(name) == 16  # "vrg-" + 12 hex
+    assert name == cloud_resource_name(slug)  # deterministic
+    assert cloud_resource_name(slug + "-other") != name
+
+
+def test_cloud_labels_includes_instance_when_named() -> None:
+    labels = cloud_labels("vergil-user", "lmf", "mq", "cloud-x86")
+    assert labels["vergil-instance"] == "cloud-x86"
+    assert "vergil-instance" not in cloud_labels("vergil-user", "lmf", "mq")

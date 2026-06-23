@@ -383,6 +383,26 @@ def instance_name(
     return f"{full[:keep].rstrip('._-')}-{digest}"
 
 
+_SLUG_SEP = "--"
+
+
+def state_slug(
+    identity: str, org: str | None = None, repo: str | None = None, name: str | None = None
+) -> str:
+    """The readable '--'-joined handle: state-path key and cloud-name hash input.
+
+    ``identity`` (base) / ``identity--org--repo`` (default dedicated) /
+    ``identity--org--repo--name`` (named). Reversal is via labels (cloud) and the
+    sidecar (Lima), not by splitting — but '--' keeps the path human-readable.
+    """
+    if org is None or repo is None:
+        return identity
+    segments = [identity, org, repo]
+    if name:
+        segments.append(name)
+    return _SLUG_SEP.join(segments)
+
+
 def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:
     """Reverse instance_name. Returns (identity, org, repo); org/repo are None for base."""
     parts = name.split(_TIER_SEP, 2)
