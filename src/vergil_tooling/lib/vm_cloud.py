@@ -646,24 +646,44 @@ def apply_vm(
     provision_env: str,
     labels: dict[str, str],
 ) -> dict[str, str]:
-    """Apply the VM module against the existing volume; return its outputs (host, ssh_user)."""
+    """Apply the VM module against the existing volume; return its outputs (host, ssh_user).
+
+    A VM apply creates the global ``google_compute_firewall.ssh`` before the zonal
+    instance. When the instance fails — most often a capacity stockout (#1797) — tofu
+    persists the already-created firewall to vm.tfstate but the apply errors out, so the
+    next create tries to re-create the global firewall and fails with a 409
+    ``already exists`` that blocks every retry (#1804). To keep a failed create cleanly
+    retryable we roll the partial apply back with a ``tofu destroy`` against the VM state
+    before re-raising. The VM state holds only the firewall and instance — the persistent
+    volume lives in its own state — so the rollback never touches the reusable disk.
+    """
     module_dir = modules_root / "gcp" / "vm"
     state = state_dir / "vm.tfstate"
-    _run_tofu(
-        module_dir,
-        state,
-        "apply",
-        {
-            "name": name,
-            "zone": zone,
-            "instance_type": instance_type,
-            "nested": nested,
-            "volume_id": volume_id,
-            "ssh_user": ssh_user,
-            "provision_env": provision_env,
-            "labels": labels,
-        },
-    )
+    try:
+        _run_tofu(
+            module_dir,
+            state,
+            "apply",
+            {
+                "name": name,
+                "zone": zone,
+                "instance_type": instance_type,
+                "nested": nested,
+                "volume_id": volume_id,
+                "ssh_user": ssh_user,
+                "provision_env": provision_env,
+                "labels": labels,
+            },
+        )
+    except subprocess.CalledProcessError:
+        # Best-effort rollback: tear down the partial state (the orphan firewall) so the
+        # retry starts clean. A rollback failure must never mask the real apply error, so
+        # swallow it and re-raise the original — the operator still sees why the create
+        # failed, and a stubborn orphan can be cleared with `vrg-vm destroy`.
+        print("VM apply failed — rolling back the partial state...", file=sys.stderr)
+        with contextlib.suppress(subprocess.CalledProcessError):
+            _run_tofu(module_dir, state, "destroy", {})
+        raise
     return _tofu_output(module_dir, state)
 
 
