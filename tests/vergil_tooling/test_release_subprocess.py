@@ -40,6 +40,23 @@ class TestStreamWithRetry:
             release_subprocess._stream_with_retry(("gh", "run", "watch"))
         assert m_progress.run.call_count == 2
 
+    def test_retries_transient_401_then_succeeds(self) -> None:
+        """A transient 'HTTP 401: Bad credentials' is retried, not propagated (#1819)."""
+        transient = subprocess.CalledProcessError(
+            1,
+            ("gh",),
+            output="",
+            stderr="HTTP 401: Bad credentials (https://api.github.com/graphql)",
+        )
+        with (
+            patch(_MOD + ".progress") as m_progress,
+            patch(_MOD + "._gh_env", return_value=None),
+            patch(_MOD + ".time"),
+        ):
+            m_progress.run.side_effect = [transient, None]
+            release_subprocess._stream_with_retry(("gh", "pr", "checks", "PR", "--watch"))
+        assert m_progress.run.call_count == 2
+
     def test_propagates_non_transient(self) -> None:
         fatal = subprocess.CalledProcessError(1, ("gh",), output="", stderr="not found")
         with (

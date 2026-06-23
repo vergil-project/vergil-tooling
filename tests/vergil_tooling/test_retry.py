@@ -33,6 +33,8 @@ class TestIsRetryable:
             "HTTP 503 Service Unavailable",
             "HTTP 504 Gateway Timeout",
             "HTTP 429 rate limit exceeded",
+            "HTTP 401: Bad credentials (https://api.github.com/graphql)",
+            "Bad credentials",
             "request timed out",
             "connection reset by peer",
         ],
