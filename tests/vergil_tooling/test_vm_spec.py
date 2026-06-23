@@ -728,20 +728,41 @@ def test_validate_repo_segment_rejects_double_dash() -> None:
 
 def test_compose_named_instance_overlays_tier5() -> None:
     role = RoleOverlay(
-        packages=[], cpus=12, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        packages=[],
+        cpus=12,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
         instances={
             "rdqm-rhel": RoleOverlay(
-                packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
-                apt_repos=[], vagrant_plugins=[], port_forwards=[],
-                backend="off-platform", provider="gcp", region="us-central1",
-                instance="n2-standard-8", volume="200GiB",
+                packages=[],
+                cpus=8,
+                memory="32GiB",
+                disk=None,
+                stale_days=None,
+                apt_repos=[],
+                vagrant_plugins=[],
+                port_forwards=[],
+                backend="off-platform",
+                provider="gcp",
+                region="us-central1",
+                instance="n2-standard-8",
+                volume="200GiB",
             )
         },
     )
     stanza = VmStanza(
-        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[],
+        packages=[],
+        cpus=None,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
         roles={"vergil-user": role},
     )
     spec = compose_vm_spec(
@@ -755,8 +776,15 @@ def test_compose_named_instance_overlays_tier5() -> None:
 
 def test_compose_default_instance_unchanged_when_none() -> None:
     stanza = VmStanza(
-        packages=[], cpus=12, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={},
+        packages=[],
+        cpus=12,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        roles={},
     )
     spec = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
     assert spec.cpus == 12  # tiers 1-4 only, today's behavior
@@ -764,15 +792,37 @@ def test_compose_default_instance_unchanged_when_none() -> None:
 
 def test_compose_missing_named_instance_errors_with_available() -> None:
     role = RoleOverlay(
-        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[],
-        instances={"cloud-x86": RoleOverlay(
-            packages=[], cpus=None, memory=None, disk=None, stale_days=None,
-            apt_repos=[], vagrant_plugins=[], port_forwards=[])},
+        packages=[],
+        cpus=None,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        instances={
+            "cloud-x86": RoleOverlay(
+                packages=[],
+                cpus=None,
+                memory=None,
+                disk=None,
+                stale_days=None,
+                apt_repos=[],
+                vagrant_plugins=[],
+                port_forwards=[],
+            )
+        },
     )
     stanza = VmStanza(
-        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={"vergil-user": role},
+        packages=[],
+        cpus=None,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        roles={"vergil-user": role},
     )
     with pytest.raises(SpecError, match="cloud-x86"):
         compose_vm_spec(
@@ -785,15 +835,37 @@ def test_fingerprint_excludes_instance_name() -> None:
     # default that resolve to the SAME effective footprint share a fingerprint, so
     # adding/renaming an instance never trips drift on the others.
     role = RoleOverlay(
-        packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[],
-        instances={"rdqm-rhel": RoleOverlay(
-            packages=[], cpus=8, memory="32GiB", disk=None, stale_days=None,
-            apt_repos=[], vagrant_plugins=[], port_forwards=[])},
+        packages=[],
+        cpus=8,
+        memory="32GiB",
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        instances={
+            "rdqm-rhel": RoleOverlay(
+                packages=[],
+                cpus=8,
+                memory="32GiB",
+                disk=None,
+                stale_days=None,
+                apt_repos=[],
+                vagrant_plugins=[],
+                port_forwards=[],
+            )
+        },
     )
     stanza = VmStanza(
-        packages=[], cpus=None, memory=None, disk=None, stale_days=None,
-        apt_repos=[], vagrant_plugins=[], port_forwards=[], roles={"vergil-user": role},
+        packages=[],
+        cpus=None,
+        memory=None,
+        disk=None,
+        stale_days=None,
+        apt_repos=[],
+        vagrant_plugins=[],
+        port_forwards=[],
+        roles={"vergil-user": role},
     )
     default = compose_vm_spec(identity="vergil-user", base=BASE, stanza=stanza, override=None)
     named = compose_vm_spec(
@@ -805,7 +877,4 @@ def test_fingerprint_excludes_instance_name() -> None:
 def test_state_slug_forms() -> None:
     assert state_slug("vergil-user") == "vergil-user"
     assert state_slug("vergil-user", "lmf", "mq") == "vergil-user--lmf--mq"
-    assert (
-        state_slug("vergil-user", "lmf", "mq", "cloud-x86")
-        == "vergil-user--lmf--mq--cloud-x86"
-    )
+    assert state_slug("vergil-user", "lmf", "mq", "cloud-x86") == "vergil-user--lmf--mq--cloud-x86"

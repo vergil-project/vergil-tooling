@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
+
 def _slug(value: str) -> str:
     s = re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
     return s or "x"
@@ -46,9 +47,7 @@ def cloud_resource_name(slug: str) -> str:
     return f"vrg-{digest}"
 
 
-def cloud_labels(
-    identity: str, org: str, repo: str, name: str | None = None
-) -> dict[str, str]:
+def cloud_labels(identity: str, org: str, repo: str, name: str | None = None) -> dict[str, str]:
     """Structured labels for label-based recovery (independent of the hashed name)."""
     labels = {
         "vergil-identity": _slug(identity),

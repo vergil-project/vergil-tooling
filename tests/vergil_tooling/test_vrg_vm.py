@@ -150,9 +150,7 @@ def config_file_top_model(tmp_path: Path) -> Path:
 def test_recover_handle_prefers_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_vm.read_instance_meta",
-        lambda inst: {
-            "schema": 1, "identity": "vergil-user", "org": "o", "repo": "r", "name": ""
-        },
+        lambda inst: {"schema": 1, "identity": "vergil-user", "org": "o", "repo": "r", "name": ""},
     )
     assert recover_handle("mangled-abc123") == ("vergil-user", "o", "r", None)
 

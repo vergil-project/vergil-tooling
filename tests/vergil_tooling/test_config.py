@@ -976,6 +976,7 @@ def test_parse_vm_stanza_named_instances() -> None:
         }
     }
     stanza = parse_vm_stanza(raw)
+    assert stanza is not None
     role = stanza.roles["vergil-user"]
     assert role.cpus == 12
     assert set(role.instances) == {"cloud-x86"}
@@ -998,12 +999,18 @@ def test_parse_vm_stanza_rejects_invalid_instance_name() -> None:
 
 
 def test_parse_vm_stanza_rejects_nested_instances_in_overlay() -> None:
-    raw = {
-        "vm": {
-            "vergil-user": {
-                "instances": {"cloud-x86": {"instances": {"nope": {}}}}
-            }
-        }
-    }
+    raw = {"vm": {"vergil-user": {"instances": {"cloud-x86": {"instances": {"nope": {}}}}}}}
     with pytest.raises(ConfigError, match="nested instances"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_instances_not_a_table() -> None:
+    raw = {"vm": {"vergil-user": {"instances": "not-a-table"}}}
+    with pytest.raises(ConfigError, match="must be a table"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_instance_entry_not_a_table() -> None:
+    raw = {"vm": {"vergil-user": {"instances": {"cloud-x86": "not-a-table"}}}}
+    with pytest.raises(ConfigError, match="must be a table"):
         parse_vm_stanza(raw)

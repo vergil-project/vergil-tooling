@@ -251,9 +251,7 @@ def _parse_role_overlay(
             if not isinstance(itable, dict):
                 msg = f"{source}: [vm.{name}.instances.{iname}] must be a table"
                 raise ConfigError(msg)
-            instances[iname] = _parse_role_overlay(
-                iname, itable, source, allow_instances=False
-            )
+            instances[iname] = _parse_role_overlay(iname, itable, source, allow_instances=False)
     return RoleOverlay(
         packages=list(raw.get("packages", [])),
         cpus=raw.get("cpus"),

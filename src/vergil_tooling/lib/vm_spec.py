@@ -213,8 +213,7 @@ def compose_vm_spec(
         if overlay is None:
             avail = ", ".join(sorted(instances)) if instances else "(none)"
             msg = (
-                f"identity {identity!r}: no instance {instance!r} for this repo; "
-                f"available: {avail}"
+                f"identity {identity!r}: no instance {instance!r} for this repo; available: {avail}"
             )
             raise SpecError(msg)
         _apply_overlay(acc, overlay)
