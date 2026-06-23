@@ -854,6 +854,8 @@ def apply_vm_with_zone_fallback(
             if not is_zone_capacity_error(exc):
                 raise
 
+    # fallback_instances (reattach) and fallback_zones (fresh create) are mutually exclusive
+    # today; if both ever populate, this message names only the families tried.
     if len(tried_instances) > 1:
         msg = (
             f"no nested-virt machine family has capacity in {zone} "
@@ -980,7 +982,7 @@ def parse_vm_machine_type(state_file: Path) -> str | None:
             continue
         machine_type = attrs.get("machine_type")
         if not machine_type:
-            return None
+            continue
         return str(machine_type).rsplit("/", 1)[-1]
     return None
 

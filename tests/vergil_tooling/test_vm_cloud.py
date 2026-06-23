@@ -1527,7 +1527,7 @@ class TestInstanceFallbackLadder:
         # NOT a validity proof — pins the curated values so an edit is deliberate.
         # Real nested-virt validity is verified by hand against GCP docs (#1836).
         assert NESTED_VIRT_FAMILIES == ("n2", "n2d", "c2", "c2d")
-        assert FALLBACK_SHAPES == frozenset({"standard-8", "standard-16"})  # noqa: SIM300
+        assert FALLBACK_SHAPES == frozenset({"standard-8", "standard-16"})  # noqa: SIM300 — variable == literal reads naturally for a change-detector pin
 
 
 class TestVmVarsInstanceOverride:
@@ -1551,6 +1551,7 @@ class TestVmVarsInstanceOverride:
         b = OffPlatformBackend(_off_spec(instance="n2-standard-16"), "vergil-user", "o", "r")
         v = b.vm_vars(zone="us-central1-b", volume_id="v1")
         assert v["instance_type"] == "n2-standard-16"
+        assert spec_fingerprint(_off_spec(instance="n2-standard-16")) in str(v["provision_env"])
 
 
 class TestFamilyFallback:
