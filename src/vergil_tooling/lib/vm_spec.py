@@ -288,6 +288,23 @@ def _validate_backend(identity: str, acc: _Acc) -> None:
 # enforces that loudly rather than silently producing a name that won't decode.
 _TIER_SEP = "."
 
+_INSTANCE_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def validate_instance_name(name: str) -> None:
+    """Reject an instance name that is not [a-z0-9]+ with single internal hyphens.
+
+    A double dash would break the readable ``--``-joined state slug; an empty or
+    upper-cased name is also rejected. Raises loudly (no-silent-failures).
+    """
+    if not _INSTANCE_NAME_RE.fullmatch(name):
+        msg = (
+            f"instance name {name!r} must be lowercase [a-z0-9-] with single internal "
+            f"hyphens (no '--', no leading/trailing hyphen)"
+        )
+        raise ValueError(msg)
+
+
 _UNIX_PATH_MAX = 104
 # Lima validates the longest socket path it might create:
 #   <home>/.lima/<instance>/ssh.sock.<16-char worst-case reservation>
