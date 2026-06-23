@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.33/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.31/">
+        <link rel="next" href="../v2.1.58/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.32 - VERGIL Tooling</title>
+        <title>2.1.59 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1432-2026-05-09" class="md-skip">
+        <a href="#release-2159-2026-06-23" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.32
+              2.1.59
             
           </span>
         </div>
@@ -984,10 +984,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.59/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.59
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1003,6 +1030,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4848,37 +4906,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.32
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.32/" class="md-nav__link">
         
   
   
@@ -4894,59 +4925,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9030,28 +9008,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -9079,25 +9035,29 @@
 
 
 
-<h1 id="release-1432-2026-05-09">Release 1.4.32 (2026-05-09)<a class="headerlink" href="#release-1432-2026-05-09" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>specify container-tag in publish-release workflow</strong></li>
-<li><strong>use current standard-actions workflow filenames until rename releases (#383)</strong></li>
-<li><strong>keep release job key until check name registry updates (#383)</strong></li>
-<li><strong>restore string comparison for workflow_call boolean inputs (#383)</strong></li>
-<li><strong>add missing container-tag to release job in cd.yml (#657)</strong></li>
-</ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>bump version to 1.4.31</strong></li>
-</ul>
+<h1 id="release-2159-2026-06-23">Release 2.1.59 (2026-06-23)<a class="headerlink" href="#release-2159-2026-06-23" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>rename release/version-bump check to version/version-bump (#383)</strong></li>
-<li><strong>rename publish workflows to cd convention, reformat ci.yml (#383)</strong></li>
-<li><strong>include ci.yml reformat in workflow rename (#383)</strong></li>
+<li><strong>add 'vrg-vm volumes' to surface persistent volumes from local tofu state (#1798)</strong>
+Off-platform persistent volumes — the long-lived, billable, quota-consuming disks that outlive every ephemeral cloud VM — had no tool-side visibility: enumerating them meant dropping to raw gcloud and eyeballing truncated names. The volume is the most important off-platform object to be able to see (for cleanup and SSD-quota management), yet it was invisible.</li>
 </ul>
+<p>Add a 'vrg-vm volumes' subcommand that builds a full inventory from purely local tofu state — no network, no gcloud. It globs ~/.config/vergil/tofu/<em>/</em>/volume.tfstate, parses each google_compute_disk.data resource, and renders a table of IDENTITY / ORG-REPO / DISK NAME / SIZE / ZONE / REGION, sourced from the disk's stamped vergil-* labels and attributes so the listing reflects exactly what vrg-vm manages. Identity/org/repo come from the labels (falling back to the state-dir name); region is derived from the zone. A never-applied placeholder state degrades to a state-keyed row rather than dropping out.</p>
+<p>The optional --live flag adds a LIVE column that cross-checks each disk against the provider to spot drift: a disk deleted out of band shows MISSING, an unauthed/unreachable or non-GCP provider degrades to 'unknown'. Parsing never raises — a malformed or unreadable state yields a placeholder row, never a crashed listing.</p>
+<ul>
+<li><strong>allow an explicit zone in the off-platform profile (#1799)</strong>
+The dispatch hard-pinned the off-platform volume (and thus the VM) to
+${region}-b: apply_volume never set var.zone. When that zone lacks capacity for
+the chosen machine type (e.g. n2-standard-16 stockout in us-central1-b) there
+was no way to target a sibling zone with the hardware.</li>
+</ul>
+<p>Add an optional 'zone' to the off-platform profile ([vm.*] in vergil.toml). It
+rides the same cascade as region/instance/volume (config RoleOverlay/VmStanza +
+_VM_KEYS/_VM_STR_SCALARS, vm_spec _Acc/ComposedSpec/overlay/override) and flows
+spec.zone -&gt; volume_vars -&gt; apply_volume -&gt; var.zone. The volume module already
+supports it. Optional: empty -&gt; the module's ${region}-b default (it coalesces
+the empty string away), so existing region-b volumes are unaffected.</p>
+<p>The disk is zonal, so zone is a volume-creation-time choice: changing it for an
+existing volume means destroy-volume + recreate.</p>
 
 
 
