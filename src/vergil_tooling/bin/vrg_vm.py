@@ -1534,6 +1534,7 @@ def _list_rows(
     rows.append(
         {
             "scope": "base",
+            "instance": "—",
             "backend": "local",
             "status": status.get(identity.vm_instance, "Not Created"),
             "cpus": cast("int", base["cpus"]),
@@ -1553,6 +1554,7 @@ def _list_rows(
             rows.append(
                 {
                     "scope": scope,
+                    "instance": d.instance_name or "—",
                     "backend": "local",
                     "status": st,
                     "cpus": "—",
@@ -1571,6 +1573,7 @@ def _list_rows(
         rows.append(
             {
                 "scope": scope,
+                "instance": d.instance_name or "—",
                 "backend": "local",
                 "status": st,
                 "cpus": spec.cpus,
@@ -1636,6 +1639,9 @@ class OffPlatformVm:
     org: str | None
     repo: str | None
     status: str
+    instance: str | None = None
+    volume_size: str | None = None
+    vm_present: bool = True
 
     @property
     def is_running(self) -> bool:
@@ -1734,6 +1740,9 @@ def _off_platform_vms() -> list[OffPlatformVm]:
         state_key = provider_dir.parent.name
         parsed = vm_cloud.parse_volume_state(volume_state)
         labels = parsed.labels if parsed else {}
+        size = f"{parsed.size_gib}GiB" if parsed and parsed.size_gib else None
+        vm_present = (provider_dir / "vm.tfstate").exists()
+        status = _cloud_status(provider_dir, state_key) if vm_present else ""
         vms.append(
             OffPlatformVm(
                 name=state_key,
@@ -1742,7 +1751,10 @@ def _off_platform_vms() -> list[OffPlatformVm]:
                 identity=labels.get("vergil-identity"),
                 org=labels.get("vergil-org"),
                 repo=labels.get("vergil-repo"),
-                status=_cloud_status(provider_dir, state_key),
+                instance=labels.get("vergil-instance"),
+                status=status,
+                volume_size=size,
+                vm_present=vm_present,
             )
         )
     return vms
@@ -1759,13 +1771,20 @@ def _cloud_list_rows() -> list[dict[str, object]]:
     """
     rows: list[dict[str, object]] = []
     for vm in _off_platform_vms():
-        status = vm.status or f"unknown (no {vm.provider} creds)"
+        if not vm.vm_present:
+            status = "no-vm"
+            disk = vm.volume_size or "—"
+        else:
+            status = vm.status or f"unknown (no {vm.provider} creds)"
+            disk = "—"
         rows.append(
             {
                 "identity": vm.identity or "—",
                 "scope": vm.scope,
+                "instance": vm.instance or "—",
                 "backend": vm.provider,
                 "status": status,
+                "disk": disk,
             }
         )
     return rows
@@ -1788,8 +1807,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
     probes = _probe_running(config.identities, discovered, status)
 
     header = (
-        f"{'IDENTITY':<14} {'SCOPE':<40} {'BACKEND':<13} {'STATUS':<11} {'CPUS':<5} "
-        f"{'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'IDENTITY':<14} {'SCOPE':<40} {'INSTANCE':<11} {'BACKEND':<13} {'STATUS':<11} "
+        f"{'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -1797,15 +1816,17 @@ def _cmd_list(args: argparse.Namespace) -> int:
     for id_name, identity in config.identities.items():
         for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
-                f"{id_name:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
+                f"{id_name:<14} {r['scope']!s:<40} {r.get('instance', '—')!s:<11} "
+                f"{r['backend']!s:<13} {r['status']!s:<11} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
                 f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
             )
 
     for r in _cloud_list_rows():
         print(
-            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
-            f"{'—':<5} {'—':<7} {'—':<7} {'—':<7} {'—':<7} {'—':<22}"
+            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<11} "
+            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {'—':<22}"
         )
 
     return 0

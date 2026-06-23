@@ -3875,14 +3875,40 @@ class TestCloudList:
         assert "BACKEND" in buf.getvalue()
         assert "local" in buf.getvalue()
 
-    def test_cloud_rows_enumerated_with_degraded_status(
+    def test_cloud_rows_enumerated_with_no_vm_status(
         self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Build a fake tofu state tree: ~/.config/vergil/tofu/<key>/<provider>/volume.tfstate
+        # volume.tfstate present, vm.tfstate absent -> no-vm row (volume orphaned from VM).
         fake_home = tmp_path / "home"
         tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
         tofu.mkdir(parents=True)
         (tofu / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        out = buf.getvalue()
+        assert "vergil-lmf-cloud" in out
+        assert "gcp" in out
+        assert "no-vm" in out
+
+    def test_cloud_rows_enumerated_with_degraded_status(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # volume.tfstate + vm.tfstate present, no zone -> degraded placeholder.
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
 
         import io
@@ -4062,6 +4088,46 @@ class TestCloudList:
         transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
         # Only the active row is retained, keyed by session id.
         assert set(rows) == {"c1"}
+
+
+def test_list_shows_instance_column_and_no_vm_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin import vrg_vm
+
+    # Off-platform: a volume exists, VM is gone -> no-vm row with size.
+    monkeypatch.setattr(
+        vrg_vm,
+        "_off_platform_vms",
+        lambda: [
+            vrg_vm.OffPlatformVm(
+                name="vergil-user--lmf--mq--native-ha",
+                provider="gcp",
+                state_dir=tmp_path,
+                identity="vergil-user",
+                org="lmf",
+                repo="mq",
+                instance="native-ha",
+                status="",
+                volume_size="200GiB",
+                vm_present=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(vrg_vm, "list_vms", lambda: [])
+    monkeypatch.setattr(
+        vrg_vm,
+        "load_config",
+        lambda p: IdentityConfig(identities={}, default_identity=None),
+    )
+    args = argparse.Namespace(config=None, sessions=False)
+    assert vrg_vm._cmd_list(args) == 0
+    out = capsys.readouterr().out
+    assert "INSTANCE" in out
+    assert "native-ha" in out
+    assert "no-vm" in out
+    assert "200GiB" in out
 
 
 class TestCloudUnderProvision:
