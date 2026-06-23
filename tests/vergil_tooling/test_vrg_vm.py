@@ -17,6 +17,7 @@ from vergil_tooling.bin.vrg_vm import (
     DedicatedRow,
     OffPlatformVm,
     Target,
+    _candidate_zones,
     _cloud_backend,
     _CloudState,
     _create_from_target,
@@ -3463,6 +3464,10 @@ class _CloudPatches:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_vm",
             return_value={"host": "cloud-host"},
         )
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            return_value=["us-central1-a", "us-central1-b", "us-central1-c"],
+        )
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.bootstrap_volume")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
@@ -3490,6 +3495,31 @@ class _CloudPatches:
             p.stop()
 
 
+class TestCandidateZones:
+    def test_configured_zone_is_tried_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            lambda _region: ["us-central1-a", "us-central1-b", "us-central1-c"],
+        )
+        backend = MagicMock()
+        backend.spec.region = "us-central1"
+        backend.spec.zone = "us-central1-c"
+        assert _candidate_zones(backend) == ["us-central1-c", "us-central1-a", "us-central1-b"]
+
+    def test_no_configured_zone_returns_all_region_zones(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            lambda _region: ["us-central1-a", "us-central1-b"],
+        )
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.random.shuffle", lambda _seq: None)
+        backend = MagicMock()
+        backend.spec.region = "us-central1"
+        backend.spec.zone = ""
+        assert _candidate_zones(backend) == ["us-central1-a", "us-central1-b"]
+
+
 class TestCloudStageGuards:
     def _state(self, tmp_path: Path) -> _CloudState:
         projects = tmp_path / "projects"
@@ -3501,6 +3531,42 @@ class TestCloudStageGuards:
             backend=_cloud_backend(target),
             state_dir=tmp_path / "state",
         )
+
+    def test_tofu_volume_reattach_skips_zone_sweep(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An existing volume.tfstate means a reattach: the zonal disk is pinned, so no
+        # zone enumeration/fallback (#1813).
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        state.state_dir.mkdir(parents=True, exist_ok=True)
+        (state.state_dir / "volume.tfstate").write_text("{}")
+        region_zones = MagicMock()
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", region_zones)
+        _cs_tofu_volume(state)
+        region_zones.assert_not_called()
+        assert state.fallback_zones == []
+        assert state.zone == "us-central1-b"
+
+    def test_tofu_volume_fresh_with_no_region_zones(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Fresh, but region_zones came back empty -> no zone override, no fallback.
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", MagicMock(return_value=[])
+        )
+        _cs_tofu_volume(state)
+        assert state.fallback_zones == []
 
     def test_require_modules_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="fetch-modules did not run"):
