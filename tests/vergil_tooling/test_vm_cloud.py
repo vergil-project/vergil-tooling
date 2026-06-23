@@ -1550,3 +1550,94 @@ class TestVmVarsInstanceOverride:
         b = OffPlatformBackend(_off_spec(instance="n2-standard-16"), "vergil-user", "o", "r")
         v = b.vm_vars(zone="us-central1-b", volume_id="v1")
         assert v["instance_type"] == "n2-standard-16"
+
+
+class TestFamilyFallback:
+    @staticmethod
+    def _backend() -> MagicMock:
+        backend = MagicMock()
+        backend.vm_vars.return_value = {}
+        backend.spec.region = "us-central1"
+        backend.spec.instance = "n2-standard-8"
+        return backend
+
+    def test_swaps_family_in_same_zone_without_touching_volume(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Requested family stocked, first fallback family lands — same zone, same disk.
+        av = MagicMock(side_effect=[_capacity_exc(), {"host": "h"}])
+        dv = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", dv)
+        backend = self._backend()
+
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            backend,
+            zone="us-central1-f",
+            volume_id="v1",
+            fallback_zones=[],
+            fallback_instances=["n2d-standard-8", "c2-standard-8"],
+        )
+
+        assert result == ("v1", "us-central1-f", {"host": "h"})
+        assert av.call_count == 2
+        dv.assert_not_called()  # the data disk is never destroyed on this path
+        backend.vm_vars.assert_any_call(
+            zone="us-central1-f", volume_id="v1", instance_override="n2d-standard-8"
+        )
+
+    def test_all_families_stocked_raises_naming_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        with pytest.raises(RuntimeError, match="no nested-virt machine family has capacity"):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=["n2d-standard-8", "c2-standard-8"],
+            )
+
+    def test_non_capacity_error_during_family_sweep_aborts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boom = subprocess.CalledProcessError(1, [], stderr="Error: bad config")
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm",
+            MagicMock(side_effect=[_capacity_exc(), boom]),
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=["n2d-standard-8", "c2-standard-8"],
+            )
+
+    def test_capacity_with_no_fallbacks_at_all_reraises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reattach of an unsupported shape: no families, no zones -> original error.
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=[],
+            )

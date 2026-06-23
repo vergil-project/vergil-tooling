@@ -797,43 +797,75 @@ def apply_vm_with_zone_fallback(
     zone: str,
     volume_id: str,
     fallback_zones: list[str],
+    fallback_instances: list[str] | None = None,
 ) -> tuple[str, str, dict[str, str]]:
-    """Apply the VM in ``zone``; on a capacity stockout, recreate the (empty) volume + VM
-    in each ``fallback_zones`` entry until one lands. Returns ``(volume_id, zone, outputs)``.
+    """Apply the VM in ``zone``; on a capacity stockout, recover by either swapping the
+    machine family in the SAME zone (reattach — the zonal data disk pins the zone) or,
+    on a fresh create, recreating the empty volume in each ``fallback_zones`` entry.
 
-    Only the fresh-volume create path supplies fallback zones — a reattach (existing volume
-    with data) passes ``[]``, since a zonal disk cannot move zones without losing its data.
-    ``apply_vm`` already rolls back its own partial state (the firewall) on failure; between
-    fallback zones we additionally destroy the just-created *empty* volume. (#1813)
+    ``fallback_instances`` (the ladder minus the requested type, from
+    ``instance_fallback_candidates``) is supplied on a reattach; ``fallback_zones`` on a
+    fresh create. The two are mutually exclusive today. Family fallback keeps
+    ``volume_id`` untouched — the disk holds data and never moves — whereas the zone
+    sweep destroys the *empty* disk to relocate it. With neither list a capacity error
+    is fatal. (#1813, #1836)
     """
-    tried = [zone]
+    instances = list(fallback_instances or [])
+    tried_zones = [zone]
+    tried_instances = [backend.spec.instance]
     vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
     try:
         return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
     except subprocess.CalledProcessError as exc:
-        if not (fallback_zones and is_zone_capacity_error(exc)):
+        if not is_zone_capacity_error(exc):
             raise
-        print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
+        if not instances and not fallback_zones:
+            raise  # reattach with no ladder (unsupported shape) — original behavior
 
+    # Family fallback — same zone, same volume (a zonal disk with data cannot move).
+    for instance in instances:
+        print(
+            f"  zone {zone}: {tried_instances[-1]} out of capacity — trying {instance}...",
+            file=sys.stderr,
+        )
+        tried_instances.append(instance)
+        vm_vars = cast(
+            "dict[str, Any]",
+            backend.vm_vars(zone=zone, volume_id=volume_id, instance_override=instance),
+        )
+        try:
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+        except subprocess.CalledProcessError as exc:
+            if not is_zone_capacity_error(exc):
+                raise
+
+    # Zone fallback — fresh create only; recreate the empty disk in each next zone.
     for next_zone in fallback_zones:
+        print(f"  zone {zone}: no capacity — trying {next_zone}...", file=sys.stderr)
         destroy_volume(modules_root, state_dir)  # the empty disk; rmtrees the state dir
         state_dir.mkdir(parents=True, exist_ok=True)
         volume_vars = cast("dict[str, Any]", {**backend.volume_vars(), "zone": next_zone})
         volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars)
-        tried.append(zone)
+        tried_zones.append(zone)
         vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
         try:
             return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
         except subprocess.CalledProcessError as exc:
             if not is_zone_capacity_error(exc):
                 raise
-            print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
 
-    msg = (
-        f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
-        f"(tried: {', '.join(tried)}). Try a different instance family (e.g. n2d-*), "
-        "another region, or wait for capacity."
-    )
+    if len(tried_instances) > 1:
+        msg = (
+            f"no nested-virt machine family has capacity in {zone} "
+            f"(tried: {', '.join(tried_instances)}). Wait for capacity, raise quota, "
+            "or try another region."
+        )
+    else:
+        msg = (
+            f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
+            f"(tried: {', '.join(tried_zones)}). Try a different instance family "
+            "(e.g. n2d-*), another region, or wait for capacity."
+        )
     raise RuntimeError(msg)
 
 
