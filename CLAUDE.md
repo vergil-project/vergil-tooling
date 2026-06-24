@@ -148,6 +148,35 @@ finalization are human actions. The PR handoff is:
    state file, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
 
+### Cloud session prompt contract (off-platform VMs)
+
+The PR handoff above assumes the agent and the human share one
+filesystem — true on the Mac (Lima), where the agent's worktree and the
+local `.vergil/pr-workflow.json` are visible to the human running
+`vrg-submit-pr`. **Cloud x86 VMs have no shared filesystem with the
+Mac**, so that handoff does not yet work there. Until the GitHub-relay
+transport lands (issue
+[#1858](https://github.com/vergil-project/vergil-tooling/issues/1858),
+Deliverable B), a cloud session must observe this boundary:
+
+- **Cloud x86 VMs are for runtime verification, builds,
+  triage/debugging, and issue registration — not PR-development.** The
+  MQ x86 work and other native-x86 / Red Hat stacks that cannot run
+  under Lima are exercised on a cloud VM for triage only.
+- **The GitHub issue is the cloud→Mac message bus.** A cloud triage
+  agent writes structured findings, repro steps, and diagnosis as
+  comments on the tracking issue (via `vrg-gh`); a Mac development agent
+  picks the issue up through the normal flow and does the PR-development
+  there via Lima, where the shared filesystem and `vrg-submit-pr` work
+  unchanged.
+
+This is a **best-effort advisory, not a hard guard.** The session layer
+(not `vrg-pr-workflow` itself) knows it is on a cloud VM, so the
+convention is carried here in the prompt contract. It extends the
+"agents must not run `vrg-submit-pr`" policy upstream: cloud agents do
+not do PR-development at all. If you find yourself about to prepare a PR
+in a cloud context, stop and hand the issue back to the Mac instead.
+
 ## Project Overview
 
 This is a Python package providing shared development tooling for all managed

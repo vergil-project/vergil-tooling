@@ -10,8 +10,10 @@
 **Date:** 2026-06-24
 
 **Status:** Design approved (brainstorming + paad:pushback, 2026-06-24).
-**Implementation parked** — the design lands as documentation; building Deliverables
-A and B is deferred. #1858 stays open to track the parked implementation.
+**Deliverable A shipped** (cloud-session prompt contract in `CLAUDE.md`,
+2026-06-24) — it unblocks the cloud x86 / MQ work with no code beyond the
+advisory. **Deliverable B remains parked** (gated on the channel feasibility
+spike — acceptance criterion 0). #1858 stays open to track B's implementation.
 
 ## Problem
 
