@@ -1373,10 +1373,22 @@ def _cmd_destroy_volume(args: argparse.Namespace) -> int:
     modules_root = vm_cloud.fetch_modules(tag)
     try:
         print(f"Destroying the persistent volume for {ref} (state: {backend.state_dir()})...")
-        vm_cloud.destroy_volume(modules_root, backend.state_dir())
+        destroyed = vm_cloud.destroy_volume(modules_root, backend.state_dir())
     finally:
         shutil.rmtree(modules_root.parent, ignore_errors=True)
-    print(f"Persistent volume for {ref} destroyed (local tofu state removed).")
+    if destroyed:
+        print(f"Persistent volume for {ref} destroyed (local tofu state removed).")
+    else:
+        # The state held no disk — tofu destroyed nothing. Say so loudly rather than
+        # report a phantom success: a cloud disk created under a different/legacy
+        # state dir may still exist (and keep pinning quota). (#1846)
+        print(
+            f"WARNING: no disk was present in the tofu state for {ref} — nothing was "
+            f"destroyed. The local state has been cleared, but a cloud disk under a "
+            f"different/legacy state may still exist; check `vrg-vm volumes` and your "
+            f"provider console.",
+            file=sys.stderr,
+        )
     return 0
 
 

@@ -693,14 +693,34 @@ def apply_vm(
 
 
 def destroy_vm(modules_root: Path, state_dir: Path) -> None:
-    """Destroy the disposable VM, reusing the stored tfvars; the volume is untouched."""
-    _run_tofu(modules_root / "gcp" / "vm", state_dir / "vm.tfstate", "destroy", {})
+    """Destroy the disposable VM, reusing the stored tfvars; the volume is untouched.
+
+    A no-op when there is no ``vm.tfstate`` (a volume-only box, the steady state
+    after a prior destroy preserved the volume): there is nothing to tear down, so
+    skip rather than letting ``_run_tofu`` raise on the absent tfvars. When the
+    state *does* exist but its tfvars are gone, ``_run_tofu`` still fails loudly —
+    that is a genuinely under-specified destroy, not an empty one. (#1845)
+    """
+    vm_state = state_dir / "vm.tfstate"
+    if not vm_state.exists():
+        return
+    _run_tofu(modules_root / "gcp" / "vm", vm_state, "destroy", {})
 
 
-def destroy_volume(modules_root: Path, state_dir: Path) -> None:
-    """Destroy the persistent volume, then remove the whole state dir for a clean rebuild."""
+def destroy_volume(modules_root: Path, state_dir: Path) -> bool:
+    """Destroy the persistent volume, then remove the whole state dir for a clean rebuild.
+
+    Returns whether the state actually managed a disk: ``True`` when a
+    ``google_compute_disk`` was present (a real teardown), ``False`` when it held
+    none (an empty/placeholder state, or one already drifted out of band — tofu
+    destroys nothing). The caller reports the no-op honestly rather than claiming a
+    disk was destroyed, which would mask a cloud disk orphaned under another state
+    dir. (#1846)
+    """
+    had_disk = parse_volume_state(state_dir / "volume.tfstate") is not None
     _run_tofu(modules_root / "gcp" / "volume", state_dir / "volume.tfstate", "destroy", {})
     shutil.rmtree(state_dir)
+    return had_disk
 
 
 def read_zone(state_dir: Path) -> str:
