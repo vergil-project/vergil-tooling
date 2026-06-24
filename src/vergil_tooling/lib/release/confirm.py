@@ -180,6 +180,57 @@ def _verify_jobs(
         print(f"  Job '{job_name}': success")
 
 
+_RELEASE_JOB_NAME = "release / release"
+
+
+def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
+    """Hard gate: the release job must exist and have concluded ``success``.
+
+    Matched EXACTLY (the reusable-workflow leaf ``release / release``), not by
+    the substring ``_find_job`` uses for the deferred sweep — the release job is
+    the single load-bearing assertion, so a future ``release``-prefixed job must
+    not satisfy it. A renamed/absent release job fails closed (#1853).
+    """
+    for job in jobs:
+        if job.get("name") == _RELEASE_JOB_NAME:
+            conclusion = job.get("conclusion")
+            if conclusion != "success":
+                raise ReleaseError(
+                    phase="confirm-main",
+                    command=f"verify job '{_RELEASE_JOB_NAME}'",
+                    message=(
+                        f"Release job did not succeed (conclusion: '{conclusion}')."
+                    ),
+                )
+            return
+    raise ReleaseError(
+        phase="confirm-main",
+        command=f"verify job '{_RELEASE_JOB_NAME}'",
+        message=f"Release job '{_RELEASE_JOB_NAME}' not found in the workflow run.",
+    )
+
+
+def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
+    """Ordered-unique families of non-release jobs that did not succeed.
+
+    A job "did not succeed" when its conclusion is neither ``success`` nor
+    ``skipped`` (a skipped job — e.g. codeql — is not a failure). Reusable
+    leaves are ``<family> / <job>``; collapse to the family so a matrix of
+    failed ``docker-publish`` leaves reports once as ``docker-publish``.
+    """
+    families: list[str] = []
+    for job in jobs:
+        name = job.get("name", "")
+        if name == _RELEASE_JOB_NAME:
+            continue
+        if job.get("conclusion") in ("success", "skipped"):
+            continue
+        family = name.split(" / ", 1)[0]
+        if family and family not in families:
+            families.append(family)
+    return families
+
+
 def _verify_artifacts(ctx: ReleaseContext) -> None:
     git.run("fetch", "--tags", "--force", "origin")
 

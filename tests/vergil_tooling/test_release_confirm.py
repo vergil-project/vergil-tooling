@@ -379,3 +379,60 @@ def test_confirm_develop_prints_run_url_before_watching(
         confirm_develop(ctx)
 
     assert "https://github.com/o/r/actions/runs/67890" in watch_output[0]
+
+
+def test_verify_release_job_success_returns() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_release_job
+
+    _verify_release_job([_job("release / release")])  # no raise
+
+
+def test_verify_release_job_failure_raises() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_release_job
+
+    with pytest.raises(ReleaseError, match="did not succeed"):
+        _verify_release_job([_job("release / release", conclusion="failure")])
+
+
+def test_verify_release_job_missing_raises() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_release_job
+
+    with pytest.raises(ReleaseError, match="not found"):
+        _verify_release_job([_job("docs / docs")])
+
+
+def test_verify_release_job_is_exact_not_substring() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_release_job
+
+    # a "release-notes" job must NOT satisfy the hard gate
+    with pytest.raises(ReleaseError, match="not found"):
+        _verify_release_job([_job("release-notes / build")])
+
+
+def test_collect_deferred_publish_collapses_families() -> None:
+    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+
+    jobs = [
+        _job("release / release"),
+        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
+        _job("docker-publish / publish: prod-python:3.14", conclusion="failure"),
+        _job("docs / docs", conclusion="failure"),
+    ]
+    assert _collect_deferred_publish(jobs) == ["docker-publish", "docs"]
+
+
+def test_collect_deferred_publish_ignores_success_and_skipped() -> None:
+    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+
+    jobs = [
+        _job("release / release"),
+        _job("docs / docs"),  # success
+        _job("codeql / analyze", conclusion="skipped"),
+    ]
+    assert _collect_deferred_publish(jobs) == []
+
+
+def test_release_job_name_constant() -> None:
+    from vergil_tooling.lib.release.confirm import _RELEASE_JOB_NAME
+
+    assert _RELEASE_JOB_NAME == "release / release"
