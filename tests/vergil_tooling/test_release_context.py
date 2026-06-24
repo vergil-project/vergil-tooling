@@ -129,7 +129,7 @@ def test_deferred_publish_failures_defaults_empty() -> None:
     ctx = ReleaseContext(
         repo="o/r",
         version="2.1.0",
-        repo_root=Path("/tmp/r"),
-        version_override=None,  # noqa: S108
+        repo_root=Path("/tmp/r"),  # noqa: S108
+        version_override=None,
     )
     assert ctx.deferred_publish_failures == []

@@ -353,8 +353,8 @@ def _state() -> ReleaseState:
     state.ctx = ReleaseContext(
         repo="o/r",
         version="2.1.2",
-        repo_root=Path("/tmp/r"),
-        version_override=None,  # noqa: S108
+        repo_root=Path("/tmp/r"),  # noqa: S108
+        version_override=None,
     )
     return state
 
