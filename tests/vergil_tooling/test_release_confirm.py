@@ -7,8 +7,6 @@ import pytest
 
 from vergil_tooling.lib.release.confirm import (
     _CD_POLL_ATTEMPTS,
-    _DEVELOP_EXPECTED_JOBS,
-    _MAIN_EXPECTED_JOBS,
     confirm_develop,
     confirm_main,
 )
@@ -61,13 +59,6 @@ def test_watch_cd_check_status_false_reports_completed(
     assert "CD workflow completed" in out
     assert "CD workflow succeeded" not in out
 
-
-def test_main_expected_jobs() -> None:
-    assert _MAIN_EXPECTED_JOBS == ("docs", "release")
-
-
-def test_develop_expected_jobs() -> None:
-    assert _DEVELOP_EXPECTED_JOBS == ("docs",)
 
 
 def test_confirm_main_success() -> None:
@@ -234,27 +225,6 @@ def test_confirm_develop_fails_no_cd_run() -> None:
         confirm_develop(ctx)
 
 
-def test_confirm_develop_fails_job_not_success() -> None:
-    ctx = _ctx()
-    with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "67890",
-                "https://github.com/o/r/actions/runs/67890",
-            ],
-        ),
-        patch(
-            _MOD + "._fetch_run_jobs",
-            return_value=[_job("docs / docs", conclusion="failure")],
-        ),
-        patch(_MOD + ".watch_workflow"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.read_output", return_value=_SHA),
-        pytest.raises(ReleaseError, match="did not succeed"),
-    ):
-        confirm_develop(ctx)
-
 
 def test_fetch_run_jobs_parses_jobs_array() -> None:
     from vergil_tooling.lib.release.confirm import _fetch_run_jobs
@@ -299,7 +269,7 @@ def test_settled_run_jobs_polls_until_leaf_conclusion_settles() -> None:
         patch(_MOD + "._fetch_run_jobs", side_effect=[lagging, settled]),
         patch(_MOD + ".time.sleep") as sleep,
     ):
-        jobs = _settled_run_jobs(ctx, "12345", _MAIN_EXPECTED_JOBS)
+        jobs = _settled_run_jobs(ctx, "12345", ("docs", "release"))
     assert jobs == settled
     sleep.assert_called_once()
 
@@ -458,4 +428,26 @@ def test_confirm_main_clean_run_defers_nothing() -> None:
         patch(_MOD + "._verify_artifacts"),
     ):
         confirm_main(ctx)
+    assert ctx.deferred_publish_failures == []
+
+
+def test_confirm_develop_defers_docs_failure() -> None:
+    ctx = _ctx()
+    jobs = [_job("docs / docs", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+    ):
+        confirm_develop(ctx)  # must NOT raise
+    assert ctx.deferred_publish_failures == ["docs"]
+    assert ctx.develop_cd_run_id == "9"
+
+
+def test_confirm_develop_clean_defers_nothing() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._settled_run_jobs", return_value=_DEVELOP_JOBS_OK),
+    ):
+        confirm_develop(ctx)
     assert ctx.deferred_publish_failures == []

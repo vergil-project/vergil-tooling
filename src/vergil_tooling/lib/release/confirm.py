@@ -14,8 +14,6 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _CD_WORKFLOW = "cd.yml"
-_MAIN_EXPECTED_JOBS = ("docs", "release")
-_DEVELOP_EXPECTED_JOBS = ("docs",)
 _CD_POLL_INTERVAL = 10
 _CD_POLL_ATTEMPTS = 30
 # A reusable-workflow leaf job's conclusion can lag the run-level status by a
@@ -47,13 +45,20 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
 
 def confirm_develop(ctx: ReleaseContext) -> None:
-    """Watch CD on develop after back-merge."""
-    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=True)
-    _verify_jobs(ctx, run_id, _DEVELOP_EXPECTED_JOBS, phase="confirm-develop")
-
+    """Watch CD on develop; defer a docs publish failure rather than raise."""
+    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=False)
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
-    print("Develop CD verified.")
+
+    jobs = _settled_run_jobs(ctx, run_id, ("docs",))
+    deferred = _collect_deferred_publish(jobs)
+    if deferred:
+        ctx.deferred_publish_failures.extend(
+            d for d in deferred if d not in ctx.deferred_publish_failures
+        )
+        print(f"  Publish deferred on develop: {', '.join(deferred)}")
+    else:
+        print("Develop CD verified.")
 
 
 def _watch_cd(
@@ -162,32 +167,6 @@ def _settled_run_jobs(
         if attempt < _JOB_SETTLE_ATTEMPTS - 1:
             time.sleep(_JOB_SETTLE_INTERVAL)
     return jobs
-
-
-def _verify_jobs(
-    ctx: ReleaseContext,
-    run_id: str,
-    expected: tuple[str, ...],
-    *,
-    phase: str,
-) -> None:
-    jobs = _settled_run_jobs(ctx, run_id, expected)
-    for job_name in expected:
-        job = _find_job(jobs, job_name)
-        if job is None:
-            raise ReleaseError(
-                phase=phase,
-                command=f"verify job '{job_name}'",
-                message=(f"Expected job '{job_name}' not found in workflow run {run_id}."),
-            )
-        conclusion = job.get("conclusion")
-        if conclusion != "success":
-            raise ReleaseError(
-                phase=phase,
-                command=f"verify job '{job_name}'",
-                message=(f"Job '{job_name}' did not succeed (conclusion: '{conclusion}')."),
-            )
-        print(f"  Job '{job_name}': success")
 
 
 _RELEASE_JOB_NAME = "release / release"
