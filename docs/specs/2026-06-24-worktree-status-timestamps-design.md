@@ -52,12 +52,17 @@ last_commit_ts: float | None = None
 last_modified_ts: float | None = None
 ```
 
-`gather_worktree_status` populates both:
+`gather_worktree_status` populates both, but only when called with
+`with_freshness=True` — the display-only concern of `vrg-worktree-status`.
+The `vrg-finalize-pr` straggler sweep shares this function and leaves the
+default `False`, so it neither computes nor pays for the timestamps:
 
-- **`last_commit_ts`** — a new `git.committer_timestamp(path, branch)`
-  helper running `git -C <path> log -1 --format=%ct <branch>` and
-  parsing the epoch integer. Returns `None` when the branch is unborn
-  (no commits).
+- **`last_commit_ts`** — a new `git.committer_timestamp(path)` helper
+  running `git -C <path> log -1 --format=%ct HEAD` and parsing the epoch
+  integer. Reads `HEAD` (a canonical worktree always has its branch
+  checked out, so `HEAD` is the branch tip); a git failure propagates
+  rather than being collapsed to `None`, consistent with the
+  no-silent-failures rule.
 
 - **`last_modified_ts`** — a new private `_newest_mtime(path)` that takes
   the maximum `st_mtime` over the union of:
