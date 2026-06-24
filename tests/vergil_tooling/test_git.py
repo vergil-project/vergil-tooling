@@ -305,3 +305,14 @@ def test_commits_ahead_parses_rev_list_count() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="3") as ro:
         assert git.commits_ahead("develop", "feature/x") == 3
     ro.assert_called_once_with("rev-list", "--count", "develop..feature/x")
+
+
+def test_committer_timestamp_returns_epoch_int() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="1700000000"):
+        assert git.committer_timestamp("/repo/.worktrees/issue-1-x") == 1700000000
+
+
+def test_committer_timestamp_invokes_log_with_dash_c() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value="1700000000") as mock_ro:
+        git.committer_timestamp("/wt")
+    mock_ro.assert_called_once_with("-C", "/wt", "log", "-1", "--format=%ct", "HEAD")

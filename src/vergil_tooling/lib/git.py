@@ -127,6 +127,15 @@ def commit_sha(ref: str) -> str:
     return read_output("rev-parse", ref)
 
 
+def committer_timestamp(path: str | Path) -> int:
+    """Return the committer date (epoch seconds) of *path*'s checked-out HEAD.
+
+    Run with ``-C`` so the caller need not change CWD. A canonical worktree
+    always has its branch checked out, so ``HEAD`` is the branch tip.
+    """
+    return int(read_output("-C", str(path), "log", "-1", "--format=%ct", "HEAD"))
+
+
 def merged_branches(target: str) -> list[str]:
     """Return local branches merged into *target*."""
     output = read_output("branch", "--merged", target, "--format=%(refname:short)")

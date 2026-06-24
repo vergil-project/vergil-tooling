@@ -13,6 +13,7 @@ for an authoritative merged/closed verdict; a failed lookup is shown as
 from __future__ import annotations
 
 import argparse
+import datetime
 import sys
 
 from vergil_tooling.lib import git, worktrees
@@ -28,7 +29,17 @@ _SORT_RANK = {
     WorktreeState.CLOSED: 5,
 }
 
-_COLUMNS = ("WORKTREE", "BRANCH", "PR", "STATE", "WORKFLOW", "AHEAD", "DIRTY")
+_COLUMNS = (
+    "WORKTREE",
+    "BRANCH",
+    "PR",
+    "STATE",
+    "WORKFLOW",
+    "AHEAD",
+    "DIRTY",
+    "LAST COMMIT",
+    "LAST MODIFIED",
+)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -51,7 +62,22 @@ def _workflow_cell(status: WorktreeStatus) -> str:
     return status.workflow_status if status.workflow_status is not None else "-"
 
 
-def _row(status: WorktreeStatus) -> tuple[str, ...]:
+def _format_age(ts: float | None, now: float) -> str:
+    """Render *ts* (epoch seconds) as a relative age: '2h ago' / '3d ago'.
+
+    ``None`` renders '-'. A future timestamp (clock skew, or a commit dated
+    just ahead of *now*) clamps to '0h ago' rather than a negative age.
+    """
+    if ts is None:
+        return "-"
+    elapsed = max(0.0, now - ts)
+    days = elapsed / 86400.0
+    if days < 1:
+        return f"{int(elapsed // 3600)}h ago"
+    return f"{int(days)}d ago"
+
+
+def _row(status: WorktreeStatus, now: float) -> tuple[str, ...]:
     pr = f"#{status.pr_number}" if status.pr_number is not None else "-"
     return (
         status.worktree.path.name,
@@ -61,6 +87,8 @@ def _row(status: WorktreeStatus) -> tuple[str, ...]:
         _workflow_cell(status),
         str(status.ahead),
         "yes" if status.dirty else "-",
+        _format_age(status.last_commit_ts, now),
+        _format_age(status.last_modified_ts, now),
     )
 
 
@@ -92,14 +120,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()
     statuses = [
-        worktrees.gather_worktree_status(wt, target=args.target_branch)
+        worktrees.gather_worktree_status(wt, target=args.target_branch, with_freshness=True)
         for wt in worktrees.list_worktrees(root)
     ]
     if not statuses:
         print("No canonical .worktrees/ worktrees found.")
         return 0
     statuses.sort(key=lambda s: (_SORT_RANK[s.state], s.worktree.branch))
-    print(_render_table([_row(s) for s in statuses]))
+    now = datetime.datetime.now(tz=datetime.UTC).timestamp()
+    print(_render_table([_row(s, now) for s in statuses]))
     print()
     print(_summary(statuses))
     # Surface any captured detail so neither a failed lookup (UNKNOWN) nor a

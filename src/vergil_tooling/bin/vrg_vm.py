@@ -1620,19 +1620,22 @@ def _list_rows(
     return rows
 
 
-def _cloud_status(state_dir: Path, state_key: str) -> str:
-    """Best-effort cloud status for one tofu state dir, never raising.
+def _cloud_instance_info(state_dir: Path, state_key: str) -> tuple[str, str]:
+    """Best-effort ``(status, external_ip)`` for one tofu state dir, never raising.
 
     The state_key (the state dir name) cannot be reversed to a spec, so this
     queries gcloud directly with the persisted zone rather than going through
-    ``OffPlatformBackend.status``. Any failure — no zone, no creds, no instance —
-    yields the empty string so the caller can show a degraded placeholder; it
-    never errors the whole ``list``.
+    ``OffPlatformBackend.status``. A single ``describe`` pulls both the run status
+    and the ephemeral external IP (``natIP``) — separator-joined so one round-trip
+    serves both columns. Any failure — no zone, no creds, no instance — yields
+    ``("", "")`` so the caller can show a degraded placeholder; it never errors the
+    whole ``list``. The external IP is ``""`` for an internal-only box (no
+    ``access_config``) or one that isn't running (#1855).
     """
     try:
         zone = vm_cloud.read_zone(state_dir)
     except RuntimeError:
-        return ""
+        return "", ""
     try:
         result = subprocess.run(  # noqa: S603
             [  # noqa: S607
@@ -1642,15 +1645,16 @@ def _cloud_status(state_dir: Path, state_key: str) -> str:
                 "describe",
                 state_key,
                 f"--zone={zone}",
-                "--format=value(status)",
+                "--format=value[separator='|'](status,networkInterfaces[0].accessConfigs[0].natIP)",
             ],
             capture_output=True,
             text=True,
             check=True,
         )
     except (subprocess.CalledProcessError, FileNotFoundError):
-        return ""
-    return result.stdout.strip()
+        return "", ""
+    status, _, external_ip = result.stdout.strip().partition("|")
+    return status, external_ip
 
 
 @dataclass(frozen=True)
@@ -1660,9 +1664,11 @@ class OffPlatformVm:
     ``identity`` / ``org`` / ``repo`` come from the persistent disk's ``vergil-*``
     labels (``None`` for a never-applied or unlabeled state). ``status`` is the raw
     best-effort cloud status (``"RUNNING"`` for a live box; ``""`` when the provider
-    cannot be reached). ``state_dir`` is the ``<state_key>/<provider>`` tofu
-    directory; ``name`` is both the state key and the deterministic cloud resource
-    name (the gcloud instance name).
+    cannot be reached). ``external_ip`` is the box's ephemeral public IP (``natIP``),
+    or ``""`` for an internal-only box or when the provider cannot be reached.
+    ``state_dir`` is the ``<state_key>/<provider>`` tofu directory; ``name`` is both
+    the state key and the deterministic cloud resource name (the gcloud instance
+    name).
     """
 
     name: str
@@ -1675,6 +1681,7 @@ class OffPlatformVm:
     instance: str | None = None
     volume_size: str | None = None
     vm_present: bool = True
+    external_ip: str = ""
 
     @property
     def is_running(self) -> bool:
@@ -1775,7 +1782,9 @@ def _off_platform_vms() -> list[OffPlatformVm]:
         labels = parsed.labels if parsed else {}
         size = f"{parsed.size_gib}GiB" if parsed and parsed.size_gib else None
         vm_present = (provider_dir / "vm.tfstate").exists()
-        status = _cloud_status(provider_dir, state_key) if vm_present else ""
+        status, external_ip = (
+            _cloud_instance_info(provider_dir, state_key) if vm_present else ("", "")
+        )
         vms.append(
             OffPlatformVm(
                 name=state_key,
@@ -1788,6 +1797,7 @@ def _off_platform_vms() -> list[OffPlatformVm]:
                 status=status,
                 volume_size=size,
                 vm_present=vm_present,
+                external_ip=external_ip,
             )
         )
     return vms
@@ -1863,6 +1873,7 @@ def _cloud_list_rows(config: IdentityConfig) -> list[dict[str, object]]:
                 "instance": vm.instance or "—",
                 "backend": vm.provider,
                 "status": status,
+                "external_ip": vm.external_ip or "—",
                 "disk": disk,
                 "spec": spec,
             }
@@ -1888,7 +1899,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
 
     header = (
         f"{'IDENTITY':<14} {'SCOPE':<40} {'INSTANCE':<11} {'BACKEND':<13} {'STATUS':<11} "
-        f"{'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} "
+        f"{'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -1897,7 +1909,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
         for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
                 f"{id_name:<14} {r['scope']!s:<40} {r.get('instance', '—')!s:<11} "
-                f"{r['backend']!s:<13} {r['status']!s:<11} "
+                f"{r['backend']!s:<13} {r['status']!s:<11} {'—':<15} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
                 f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
             )
@@ -1905,7 +1917,7 @@ def _cmd_list(args: argparse.Namespace) -> int:
     for r in _cloud_list_rows(config):
         print(
             f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
-            f"{r['backend']!s:<13} {r['status']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<11} {r['external_ip']!s:<15} "
             f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 

@@ -169,3 +169,52 @@ def test_close_and_finalize_fails_on_finalize_error() -> None:
     ):
         close_and_finalize(ctx)
     assert excinfo.value.detail == "validation failed"
+
+
+def test_close_and_finalize_publish_deferred_leaves_open() -> None:
+    from unittest.mock import patch
+
+    from vergil_tooling.lib.release import finalize
+
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["docker-publish"]
+    with (
+        patch.object(finalize, "comment_publish_deferred") as comment,
+        patch.object(finalize, "close_tracking_issue") as close,
+        patch.object(finalize, "progress"),
+    ):
+        finalize.close_and_finalize(ctx)
+    comment.assert_called_once()
+    close.assert_not_called()  # issue stays open
+
+
+def test_close_and_finalize_clean_closes_issue() -> None:
+    from unittest.mock import patch
+
+    from vergil_tooling.lib.release import finalize
+
+    ctx = _ctx()
+    with (
+        patch.object(finalize, "comment_publish_deferred") as comment,
+        patch.object(finalize, "close_tracking_issue") as close,
+        patch.object(finalize, "progress"),
+    ):
+        finalize.close_and_finalize(ctx)
+    close.assert_called_once()
+    comment.assert_not_called()
+
+
+def test_close_and_finalize_stage_failure_short_circuits() -> None:
+    from unittest.mock import patch
+
+    from vergil_tooling.lib.release import finalize
+
+    ctx = _ctx()
+    ctx.deferred_failures = ["confirm-main"]
+    with (
+        patch.object(finalize, "close_tracking_issue") as close,
+        patch.object(finalize, "progress") as prog,
+    ):
+        finalize.close_and_finalize(ctx)
+    close.assert_not_called()
+    prog.run.assert_not_called()  # cleanup skipped — resumable

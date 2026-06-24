@@ -123,3 +123,13 @@ def test_release_error_is_exception() -> None:
             command="git push",
             message="something broke",
         )
+
+
+def test_deferred_publish_failures_defaults_empty() -> None:
+    ctx = ReleaseContext(
+        repo="o/r",
+        version="2.1.0",
+        repo_root=Path("/tmp/r"),  # noqa: S108
+        version_override=None,
+    )
+    assert ctx.deferred_publish_failures == []
