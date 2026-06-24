@@ -1,7 +1,7 @@
 # Off-platform: Scaleway Elastic Metal backend + provider-dispatch abstraction
 
 - **Issue:** vergil-tooling#1851
-- **Status:** Design (brainstormed, pushback-reviewed)
+- **Status:** Design (brainstormed, pushback-reviewed, alignment-checked)
 - **Related:** #1836 / PR #1841 (nested-virt family fallback on GCP reattach)
 - **Coordination:** in-flight **Azure** backend — this spec defines the provider-dispatch seam Azure conforms to (see §2 and §8).
 
@@ -78,25 +78,25 @@ server is released. Since this box runs ~24/7 and its data is reproducible
 
 ### 2. Provider-dispatch abstraction (the seam Azure conforms to)
 
-Today `off-platform` resolves directly to a GCP-specific `OffPlatformBackend`. Introduce:
+Today `off-platform` resolves directly to a GCP-specific `OffPlatformBackend`. The seam
+lands in two steps across phases (don't abstract a lifecycle interface from a single GCP
+example — let the second consumer shape it):
 
-- `spec.provider` already exists; `select_backend` branches on it when
-  `spec.off_platform` is true: `"gcp"` → the GCP backend, `"scaleway"` → the Scaleway
-  backend. Unknown provider → explicit error.
-- A **provider-neutral backend interface** (extending the existing `Backend` protocol)
-  with the methods the off-platform engine calls. The minimum seam:
-  - `apply(state_dir) -> ApplyResult` (host/address + whatever transport needs),
-  - `destroy(state_dir)`, `rebuild(state_dir)`,
-  - `transport() -> Transport`,
-  - `status() -> str`,
-  - `fingerprint_fields() -> list[str]` (provider-specific declaration inputs).
-- **Fingerprint**: `spec_fingerprint` already includes `provider`; it must include the
-  provider-relevant fields only (Scaleway: provider/region/offer; *not* the GCP-only
-  `zone`/`volume`/`nested`). Each backend declares its fields so a non-applicable knob
-  never trips a spurious rebuild.
+- **Phase 1 — dispatch only.** `spec.provider` already exists; `select_backend` branches on
+  it when `spec.off_platform` is true: `"gcp"` → the GCP backend, anything else → an
+  explicit "unsupported provider" error. This branch is the one shared edit; Azure/Scaleway
+  add their own `provider` case here. (No interface change, no engine change — GCP-safe.)
+- **Phase 3 — provider-neutral interface + fingerprint.** When the Scaleway backend lands
+  (the second consumer), extract a provider-neutral interface (extending the existing
+  `Backend` protocol) for the methods the off-platform engine calls — roughly
+  `apply`/`destroy`/`rebuild`/`transport`/`status` plus a `fingerprint_fields()` so each
+  backend declares only its own declaration inputs (Scaleway: provider/region/offer; *not*
+  the GCP-only `zone`/`volume`/`nested`), so a non-applicable knob never trips a spurious
+  rebuild. The exact method set is fixed against two real implementations, not guessed now.
 
-This is the **only file both this work and Azure must touch** (`select_backend` +
-the interface). The contract above is the convergence point (see §8).
+**Phase-1 shared edit:** only `select_backend`'s `provider` branch. That dispatch point — not
+the fuller interface — is Azure's sole hard Phase-1 dependency (see §8). The interface
+extraction is §9, deferred to Phase 3.
 
 ### 3. OpenTofu module — `opentofu/modules/scaleway/server`
 
@@ -186,22 +186,30 @@ headline reliability claim is overstated for the first `create` (and any
 
 ### 8. Coordination with the in-flight Azure backend
 
-Both Azure and this work introduce provider branching. The convergence contract is §2:
-`select_backend` branches on `spec.provider`, and each provider implements the
-backend interface. Azure is a **cloud-VM** provider (it will likely keep a
-VM+disk shape and a private-networking transport), so it diverges from Scaleway's
-single-state/Tailscale specifics — but both must use the **same dispatch seam and
-interface**. Whichever lands second rebases onto the seam; this spec owns its
-definition. The only expected shared-file edits are `select_backend` and the backend
-interface/protocol module.
+Both Azure and this work introduce provider branching. Azure's **only hard Phase-1
+dependency is the `select_backend` `provider` dispatch point** (§2, Phase 1) — that's the
+single shared edit and the actual collision risk; whoever lands first adds the branch and
+the other adds its `provider` case beside it. Azure is a **cloud-VM** provider (it will
+likely keep a VM+disk shape and a private-networking transport), so it diverges from
+Scaleway's single-state/Tailscale specifics. The **provider-neutral interface itself is not
+a Phase-1 artifact** — it's extracted in Phase 3 (§9) once there are two real consumers
+(GCP + Scaleway) to shape it; Azure conforms to that interface when it lands relative to
+Phase 3, not before. So the only Phase-1 shared file is `select_backend`.
 
-### 9. Engine abstraction
+### 9. Engine abstraction — **Phase 3** (not Phase 1)
 
 `vm_cloud.py` is GCP-coupled: `gcloud` calls (`region_zones`, `_resolve_project`), the
 IAP transport, the two-state `apply_volume`/`apply_vm`, and the #1836 capacity
 fallback. Extract the provider-specific pieces behind the §2 interface so the engine's
 lifecycle-stage framework (`_cs_*` stages) is provider-neutral and the GCP behavior is
 unchanged. Keep the GCP capacity-fallback logic in the GCP backend, not the shared engine.
+
+**This is deliberately Phase 3, not Phase 1.** Abstracting the engine before a second
+backend exists would be speculative (the right interface comes from two implementations,
+not one) and would churn the shipped GCP path for no current consumer. Phase 1 ships only
+the `select_backend` dispatch branch (§2) + the dev-fetch override (§10); the engine
+extraction happens here in Phase 3, with the Scaleway backend as the validating second
+consumer and the full GCP test suite as the behavior-preservation guard.
 
 ### 10. Cross-repo split & module fetch (release-ordered)
 
@@ -251,17 +259,22 @@ two-repo, release-ordered change:
 
 ## Phased implementation
 
-1. **Provider-dispatch abstraction** — extract the seam (§2, §9); GCP behavior unchanged,
-   fully green. Independently testable and the foundation Azure also consumes. Includes the
-   dev-fetch override (§10), which is provider-neutral.
+1. **Provider dispatch + dev-fetch override** — the `select_backend` `provider` branch
+   (§2, Phase 1) and the `VRG_MODULES_PATH`/`VRG_MODULES_REF` overrides (§10). GCP behavior
+   unchanged, fully green, independently mergeable. This is the only Phase-1 shared edit and
+   Azure's sole hard Phase-1 dependency. **No interface or engine change here.**
 2. **Scaleway module in vergil-vm** (§3) — the `scaleway/server` OpenTofu module, merged and
    **tagged** in a vergil-vm release (the prerequisite for phase 3 e2e; see §10).
-3. **Scaleway backend + transport + lifecycle** — §1, §4, §5, §6, §7 on top of phases 1–2
-   (reinstall-via-API rebuild, Tailscale transport + readiness/break-glass, create-time
-   stock check). e2e uses the dev-fetch override until the phase-2 tag lands.
+3. **Scaleway backend + provider-neutral abstraction** — the engine/interface extraction
+   (§2 interface + `fingerprint_fields`, §9) *together with* the Scaleway backend that
+   validates it, plus §1, §4, §5, §6, §7 (reinstall-via-API rebuild, Tailscale transport +
+   readiness/break-glass, create-time stock check), on top of phases 1–2. The full GCP test
+   suite is the behavior-preservation guard; e2e uses the dev-fetch override until the
+   phase-2 tag lands.
 
-(Three implementation plans across two repos; this is one cohesive design. Phase 2 is the
-vergil-vm change and gates phase-3 e2e.)
+(Three implementation plans across two repos; this is one cohesive design. The provider-
+neutral interface is extracted in phase 3 — with two real consumers to shape it — not phase
+1. Phase 2 is the vergil-vm change and gates phase-3 e2e.)
 
 ## Alternatives considered
 
