@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.66] - 2026-06-24
+
+### Features
+
+- fall back across nested-virt machine families on a reattach stockout (#1836) (#1841)
+
 ## [2.1.65] - 2026-06-24
 
 ### Features
