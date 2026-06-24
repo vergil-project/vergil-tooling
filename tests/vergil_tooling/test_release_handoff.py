@@ -109,3 +109,15 @@ def test_run_consumer_refresh_returns_failure_code(
     assert "install commands failed" in err
     # The release itself is not implicated by a failed local refresh.
     assert "release itself completed" in err
+
+
+# -- consumer_refresh holds when publish is deferred (issue #1853) --
+
+
+def test_consumer_refresh_holds_when_publish_deferred() -> None:
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["docker-publish"]
+    consumer_refresh(ctx)  # must not read config / must not raise
+    assert ctx.consumer_refresh_commands is None
+    assert "held" in (ctx.consumer_refresh_message or "").lower()
+    assert "2.1.0" in (ctx.consumer_refresh_message or "")  # version named
