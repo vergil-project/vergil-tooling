@@ -113,14 +113,20 @@ handling (which keys off `deferred_publish_failures`).
    (`_watch_cd(..., check_status=False)` for the main-branch confirm). The
    run-level red is expected when a deferrable job fails.
 2. **Classify per job.** After the run settles, fetch all jobs. Hard-verify the
-   `release` job (`conclusion == "success"`) and the artifacts. For every other
-   job whose `conclusion != "success"`, append a structured entry to a **new**
-   context field `ctx.deferred_publish_failures` (job name + conclusion + run
-   URL) and print a warning. Do not raise.
+   `release` job and the artifacts. For every other job whose conclusion is
+   neither `success` nor `skipped`, append its **family** to a **new** context
+   field `ctx.deferred_publish_failures: list[str]`, and print a warning. Do not
+   raise. The family is the part of a reusable-workflow leaf name before
+   `" / "` (e.g. `docker-publish / publish: prod-base:latest` → `docker-publish`),
+   so a matrix of failed `docker-publish` leaves collapses to a single
+   `docker-publish` entry; the field holds ordered-unique families. The run URL
+   for the remediation comes from `ctx.cd_run_url` (already set), so no per-job
+   URL or conclusion is stored — `list[str]` is enough.
 
    A separate field is used rather than the existing `ctx.deferred_failures`
    because the latter is owned by the `_tracked` wrapper, which appends **stage
-   names** on stage exceptions. Mixing job names into it would conflate the two.
+   names** on stage exceptions. Mixing job families into it would conflate the
+   two — see the precedence rule under *Surface the deferral*.
 3. **Surface the deferral** via three consumers:
    - `close-finalize` must **not** close the tracking issue when
      `ctx.deferred_publish_failures` is non-empty; instead it posts a comment
@@ -134,6 +140,18 @@ handling (which keys off `deferred_publish_failures`).
      (e.g. CVE triage) is cleared. The comment states this explicitly and warns
      against `--resume`. A first-class `vrg-republish` helper is tracked
      separately as a follow-up (#1854).
+
+     **Precedence (both lists non-empty).** A genuine fail-defer *stage* error
+     (in `ctx.deferred_failures`, e.g. `promote` blew up) and a publish deferral
+     (in `ctx.deferred_publish_failures`) can co-occur. They have *opposite*
+     remediations — a stage error means the release is halted and **resumable**
+     (`--resume`), a publish deferral means it is **complete** (do *not*
+     `--resume`). `deferred_failures` therefore **takes precedence**:
+     `close-finalize` checks it first and short-circuits to the resume path,
+     leaving the issue open without the publish-deferral comment (the publish
+     deferral rides along in the same open issue). Emitting both would produce
+     contradictory `--resume` / don't-`--resume` guidance. This precedence is a
+     rule, not an accident of statement order — do not reorder the checks.
    - `consumer-refresh` must **guard** on `ctx.deferred_publish_failures`: when
      it is non-empty, it prints a **hold-warning** ("artifacts pending
      republish — do not advertise vX.Y.Z to consumers until republished")
@@ -147,7 +165,12 @@ handling (which keys off `deferred_publish_failures`).
      stage has already run) but it marks the run failed, so the existing
      `lib/progress.py` summary renders the deferred `PipelineError … exit 1`
      naming the unpublished artifacts. When the field is empty the stage is a
-     no-op and the run exits `0`.
+     no-op and the run exits `0`. **It is wired as a bare `Stage`, not via the
+     `_tracked` wrapper** (like `teardown-worktree`): `_tracked` appends the
+     stage name to `deferred_failures` and posts a "phase failed" tracking-issue
+     comment on any exception, so wrapping `publish-status` would both pollute
+     `deferred_failures` (re-conflating the two lists) and spam the issue. Its
+     raise must reach `run_pipeline` directly.
 
 ### Why not a `vergil.toml` opt-in
 
@@ -164,17 +187,23 @@ added then, against a concrete need.
   job into `ctx.deferred_publish_failures`. `confirm_develop`: record a failed
   `docs` job into the same list (do not raise). Add an exact-match helper (named
   constant for `release / release`); keep substring `_find_job` for the sweep.
+- `lib/release/tracking.py` — add `comment_publish_deferred(ctx, jobs)`, which
+  posts the deferred-publish remediation comment via the existing `_comment`
+  helper (names the CD re-run, warns against `--resume`).
 - `lib/release/finalize.py` — `close_and_finalize` honors a non-empty
-  `ctx.deferred_publish_failures`: leave the issue open and post a remediation
-  comment naming the CD re-run and warning against `vrg-release --resume`.
+  `ctx.deferred_publish_failures`: call `comment_publish_deferred` and leave the
+  issue open (but still run finalize-pr cleanup — the release is complete).
+  Checks `deferred_failures` **first** (the resume precedence above).
 - `lib/release/handoff.py` — `consumer_refresh` guards on
   `ctx.deferred_publish_failures`: print a hold-warning instead of upgrade
   guidance when non-empty.
-- `lib/release/context.py` — add `deferred_publish_failures` (job name,
-  conclusion, run URL), separate from the `_tracked`-owned `deferred_failures`.
+- `lib/release/context.py` — add `deferred_publish_failures: list[str]`
+  (ordered-unique failed job families), separate from the `_tracked`-owned
+  `deferred_failures`.
 - `lib/release/orchestrator.py` — append one terminal `publish-status` stage
   (mode `fail_defer`) that raises iff `ctx.deferred_publish_failures` is
-  non-empty. `confirm-main` keeps mode `fail_fast` (its *hard gate* is still
+  non-empty. Wired as a **bare `Stage`, not `_tracked`** (see the publish-status
+  note above). `confirm-main` keeps mode `fail_fast` (its *hard gate* is still
   fatal); the deferral itself is data on the context, surfaced by the new stage.
 
 ## Data flow

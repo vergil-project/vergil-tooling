@@ -496,7 +496,11 @@ def _publish_status_stage(state: ReleaseState) -> None:
     )
 ```
 
-In `build_stages()`, append as the final stage (after `consumer-refresh`):
+In `build_stages()`, append as the final stage (after `consumer-refresh`). Wire
+it as a **bare `Stage`, NOT `_tracked(...)`** (like `teardown-worktree`):
+`_tracked` appends the stage name to `deferred_failures` and posts a
+"phase failed" issue comment on any exception, so wrapping `publish-status`
+would re-conflate the two lists and spam the tracking issue.
 
 ```python
         Stage("publish-status", _publish_status_stage, mode="fail_defer"),
@@ -703,6 +707,13 @@ Replace `close_and_finalize`'s body (lines 45–54, the part before "Running vrg
         close_tracking_issue(ctx, summary)
         print("Tracking issue closed.")
 ```
+
+**Precedence is intentional, not incidental:** `deferred_failures` is checked
+**first** and short-circuits to the resume path. A genuine stage failure means
+the release is halted/resumable (`--resume`), which is the *opposite*
+remediation from a publish deferral (do *not* `--resume`); emitting both would
+contradict. When both lists are non-empty the resume path wins and the publish
+deferral rides along in the same still-open issue. Do not reorder these checks.
 
 (The existing "Running vrg-finalize-pr..." block stays as-is and now runs for both the close branch and the publish-deferred branch — the release is complete in both, so the branches must be pruned.)
 
