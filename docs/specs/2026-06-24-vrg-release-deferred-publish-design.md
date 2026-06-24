@@ -68,6 +68,15 @@ defers everything else.
 If the `release` job failed, or the tag/Release cannot be cut, the release is
 genuinely broken and must stop immediately — same as today.
 
+The `release` job is the single load-bearing assertion, so it is matched
+**exactly** (the reusable-workflow leaf name `release / release`, via a named
+constant), **not** by the loose substring matching `_find_job` uses elsewhere.
+Exact matching avoids a future `release`-containing job (e.g. `release-notes`)
+binding the hard gate to the wrong job. If the release job is ever renamed
+upstream, the exact lookup returns nothing and confirm-main hard-fails
+"release job not found" — fail-closed, which is the safe direction. The
+substring `_find_job` is retained only for the deferred-job sweep.
+
 ### Deferred jobs (the change)
 
 Every **other** job in the `cd.yml` run that did not conclude `success` —
@@ -82,7 +91,20 @@ Every **other** job in the `cd.yml` run that did not conclude `success` —
   clear summary line naming each failed publish job, and the release tracking
   issue is **left open** with a "republish" to-do rather than closed.
 
-`confirm-develop`'s `docs` check defers the same way, for consistency.
+### `confirm-develop` — unified reporting, not a behavior change
+
+`confirm-develop` is **already** `mode="fail_defer"`, so a `docs` failure there
+already does not abort the pipeline — that behavior needs no change. The only
+change is **reporting**: instead of letting `confirm_develop` raise (which would
+record the generic stage name `"confirm-develop"` into the `_tracked`-owned
+`deferred_failures` and surface a bare stage error), it records the failed
+`docs` job into the **same** `ctx.deferred_publish_failures` list that
+`confirm-main` uses, and does not raise. That way every deferred publish
+failure — docker-on-main, docs-on-main, docs-on-develop — flows through one
+surface: the `publish-status` summary, the open tracking issue, and the same
+remediation message. Without this, a docs-on-develop failure would report
+differently and would not trigger the "leave the issue open + how to republish"
+handling (which keys off `deferred_publish_failures`).
 
 ### Mechanics
 
@@ -99,11 +121,26 @@ Every **other** job in the `cd.yml` run that did not conclude `success` —
    A separate field is used rather than the existing `ctx.deferred_failures`
    because the latter is owned by the `_tracked` wrapper, which appends **stage
    names** on stage exceptions. Mixing job names into it would conflate the two.
-3. **Surface the deferral** via two independent consumers:
+3. **Surface the deferral** via three consumers:
    - `close-finalize` must **not** close the tracking issue when
      `ctx.deferred_publish_failures` is non-empty; instead it posts a comment
-     listing the deferred publish jobs and the remediation (re-run the publish /
-     nightly `no-cache` rebuild) and leaves the issue open.
+     and leaves the issue open. The comment names the **concrete** remediation,
+     because the intuitive next step is a trap: the release is already tagged
+     and `develop` already bumped, so `vrg-release --resume` does **not** apply
+     (it is for a *halted* release, not a *completed-with-deferral* one) and
+     will error on the existing tag. The correct remediation is a **CD-side
+     re-run** of the publish — `gh workflow run cd.yml` / Actions → CD → Run
+     workflow, or the nightly `no-cache` `ops.yml` rebuild — once the blocker
+     (e.g. CVE triage) is cleared. The comment states this explicitly and warns
+     against `--resume`. A first-class `vrg-republish` helper is tracked
+     separately as a follow-up (#1854).
+   - `consumer-refresh` must **guard** on `ctx.deferred_publish_failures`: when
+     it is non-empty, it prints a **hold-warning** ("artifacts pending
+     republish — do not advertise vX.Y.Z to consumers until republished")
+     instead of the normal upgrade guidance. Otherwise the run would print
+     "consumers can upgrade now" immediately before the deferred-failure
+     summary says the artifacts never shipped — contradictory output that
+     invites advertising a stale release.
    - A new terminal stage **`publish-status`** (mode `fail_defer`, last in the
      pipeline) raises a `ReleaseError` iff `ctx.deferred_publish_failures` is
      non-empty. Being `fail_defer`, it does not abort anything (every prior
@@ -122,11 +159,17 @@ added then, against a concrete need.
 
 ## Components touched
 
-- `lib/release/confirm.py` — `confirm_main` (narrow the hard gate, classify and
-  record deferred jobs); `confirm_develop` (defer `docs`); the `_verify_jobs` /
-  `_watch_cd` helpers.
+- `lib/release/confirm.py` — `confirm_main`: watch with `check_status=False`,
+  exact-match the `release` job for the hard gate, classify every other failed
+  job into `ctx.deferred_publish_failures`. `confirm_develop`: record a failed
+  `docs` job into the same list (do not raise). Add an exact-match helper (named
+  constant for `release / release`); keep substring `_find_job` for the sweep.
 - `lib/release/finalize.py` — `close_and_finalize` honors a non-empty
-  `ctx.deferred_failures` (leave the issue open, post a remediation comment).
+  `ctx.deferred_publish_failures`: leave the issue open and post a remediation
+  comment naming the CD re-run and warning against `vrg-release --resume`.
+- `lib/release/handoff.py` — `consumer_refresh` guards on
+  `ctx.deferred_publish_failures`: print a hold-warning instead of upgrade
+  guidance when non-empty.
 - `lib/release/context.py` — add `deferred_publish_failures` (job name,
   conclusion, run URL), separate from the `_tracked`-owned `deferred_failures`.
 - `lib/release/orchestrator.py` — append one terminal `publish-status` stage
@@ -149,8 +192,14 @@ back-merge-bump … promote … (all run normally; develop ⊇ main, vX.Y promot
         ▼
 close-finalize  (fail_defer)
   └─ ctx.deferred_publish_failures non-empty?
-        ├─ yes ─▶ leave tracking issue OPEN + remediation comment
+        ├─ yes ─▶ leave issue OPEN + comment: CD re-run remediation, NOT --resume
         └─ no  ─▶ close tracking issue
+        │
+        ▼
+consumer-refresh  (fail_defer)
+  └─ ctx.deferred_publish_failures non-empty?
+        ├─ yes ─▶ hold-warning ("pending republish; do not advertise vX.Y.Z")
+        └─ no  ─▶ normal upgrade guidance
         │
         ▼
 publish-status  (fail_defer, terminal)
@@ -167,6 +216,12 @@ publish-status  (fail_defer, terminal)
   classification reuses it so a still-settling job is not misread as failed.
 - If the CD run itself never appears or never reaches terminal, that remains a
   hard `confirm-main` failure (we cannot confirm the release at all).
+- `check_status=False` does **not** make the watch return early: `watch_workflow`
+  runs `gh run watch <run_id>`, which blocks until the run is terminal
+  regardless; `check_status` only toggles `--exit-status` (whether a red run
+  *propagates* as a failure). So the per-job classification never races a
+  still-running job, and `_settled_run_jobs` guards the conclusion-settle window
+  on top of that.
 
 ## Testing
 
@@ -175,19 +230,27 @@ publish-status  (fail_defer, terminal)
   `ctx.deferred_publish_failures == ["docker-publish"]`.
 - Unit: `release` = `failure` → raises (fatal), regardless of other jobs.
 - Unit: artifacts missing (`release` success but no tag) → raises (fatal).
-- Unit: `docs` = `failure` on develop → `confirm_develop` defers, no raise.
+- Unit: a job named `release-notes` present alongside `release / release` →
+  the hard gate binds to `release` exactly, not the substring match.
+- Unit: `docs` = `failure` on develop → `confirm_develop` records it into
+  `ctx.deferred_publish_failures` and does not raise.
 - Unit: `close_and_finalize` with non-empty `deferred_publish_failures` → issue
-  left open, remediation comment posted; with empty → issue closed.
+  left open; the comment names the CD re-run and warns against `--resume`; with
+  empty → issue closed.
+- Unit: `consumer_refresh` with non-empty `deferred_publish_failures` → prints
+  the hold-warning, not upgrade guidance; with empty → normal guidance.
 - Unit: `publish-status` stage raises (deferred) when
   `deferred_publish_failures` is non-empty, no-op when empty.
 - Integration: full pipeline with a stubbed CD run where only `docker-publish`
-  failed → all stages run, `develop ⊇ main`, rolling tag promoted, exit 1,
-  tracking issue open.
+  failed → all stages run, `develop ⊇ main`, rolling tag promoted, consumer
+  hold-warning shown, exit 1, tracking issue open with remediation comment.
 
 ## Scope
 
-In scope: `confirm-main` / `confirm-develop` job classification, the
-deferred-failure surfacing, and the `close-finalize` issue-handling change.
+In scope: `confirm-main` / `confirm-develop` job classification; the new
+`deferred_publish_failures` context field and `publish-status` terminal stage;
+the `close-finalize` issue-handling + remediation comment; and the
+`consumer-refresh` hold-warning guard.
 
 Out of scope: the `vergil-docker` Trivy CVE triage itself (a separate,
 recurring `.trivyignore` task); changing what the `cd.yml` jobs do; any
