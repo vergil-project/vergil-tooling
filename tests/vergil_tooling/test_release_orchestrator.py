@@ -9,6 +9,7 @@ from vergil_tooling.lib.release.context import ReleaseContext, ReleaseError
 from vergil_tooling.lib.release.orchestrator import (
     ReleaseState,
     _preflight_stage,
+    _publish_status_stage,
     _tracked,
     build_stages,
 )
@@ -42,6 +43,7 @@ def test_build_stages_order_and_modes() -> None:
         "promote",
         "close-finalize",
         "consumer-refresh",
+        "publish-status",
     ]
     assert stages[0].skip_flag == "skip_audit"
     fail_fast = {s.name for s in stages if s.mode == "fail_fast"}
@@ -344,3 +346,29 @@ def test_merge_release_skips_when_already_merged() -> None:
         merge_release(ctx)
     m_wm.assert_not_called()
     assert ctx.release_merge_sha == "merged"
+
+
+def _state() -> ReleaseState:
+    state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"), promote=True)  # noqa: S108
+    state.ctx = ReleaseContext(
+        repo="o/r", version="2.1.2", repo_root=Path("/tmp/r"), version_override=None  # noqa: S108
+    )
+    return state
+
+
+def test_publish_status_raises_when_deferred() -> None:
+    state = _state()
+    state.ctx.deferred_publish_failures = ["docker-publish"]
+    with pytest.raises(ReleaseError, match="docker-publish"):
+        _publish_status_stage(state)
+
+
+def test_publish_status_noop_when_clean() -> None:
+    state = _state()
+    _publish_status_stage(state)  # no raise
+
+
+def test_publish_status_is_terminal_fail_defer() -> None:
+    stages = build_stages()
+    assert stages[-1].name == "publish-status"
+    assert stages[-1].mode == "fail_defer"
