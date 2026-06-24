@@ -4019,18 +4019,110 @@ class TestCloudList:
         assert "gcp" in out
         assert "unknown (no gcp creds)" in out
 
-    def test_cloud_status_reads_live_status(self, tmp_path: Path) -> None:
-        from vergil_tooling.bin.vrg_vm import _cloud_status
+    def test_external_ip_column_header_present(self, config_file: Path) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            patch("vergil_tooling.bin.vrg_vm._cloud_list_rows", return_value=[]),
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        assert "EXTERNAL IP" in buf.getvalue()
+
+    def test_cloud_list_rows_carries_external_ip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+        config = IdentityConfig(identities={}, default_identity=None)
+        with patch(
+            "vergil_tooling.bin.vrg_vm._cloud_instance_info",
+            return_value=("RUNNING", "34.42.0.7"),
+        ):
+            rows = _cloud_list_rows(config)
+        assert len(rows) == 1
+        assert rows[0]["external_ip"] == "34.42.0.7"
+
+    def test_cloud_list_rows_external_ip_degrades_when_absent(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+        config = IdentityConfig(identities={}, default_identity=None)
+        # Internal-only box: running, but no external IP -> degrade to "—".
+        with patch(
+            "vergil_tooling.bin.vrg_vm._cloud_instance_info",
+            return_value=("RUNNING", ""),
+        ):
+            rows = _cloud_list_rows(config)
+        assert rows[0]["external_ip"] == "—"
+
+    def test_list_prints_external_ip_for_cloud_vm(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            patch(
+                "vergil_tooling.bin.vrg_vm._cloud_instance_info",
+                return_value=("RUNNING", "34.42.0.7"),
+            ),
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        assert "34.42.0.7" in buf.getvalue()
+
+    def test_cloud_instance_info_reads_live_status_and_external_ip(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_instance_info
 
         state_dir = tmp_path / "state"
         state_dir.mkdir()
         with patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"):
-            completed = MagicMock(stdout="RUNNING\n")
+            # One describe pulls both fields, separator-joined (status|natIP).
+            completed = MagicMock(stdout="RUNNING|34.42.0.7\n")
             with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
-                assert _cloud_status(state_dir, "key") == "RUNNING"
+                assert _cloud_instance_info(state_dir, "key") == ("RUNNING", "34.42.0.7")
 
-    def test_cloud_status_gcloud_failure_is_empty(self, tmp_path: Path) -> None:
-        from vergil_tooling.bin.vrg_vm import _cloud_status
+    def test_cloud_instance_info_internal_only_has_no_external_ip(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_instance_info
+
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"):
+            # An internal-only box (no access_config) yields an empty natIP field.
+            completed = MagicMock(stdout="RUNNING|\n")
+            with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+                assert _cloud_instance_info(state_dir, "key") == ("RUNNING", "")
+
+    def test_cloud_instance_info_gcloud_failure_is_empty(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_instance_info
 
         state_dir = tmp_path / "state"
         state_dir.mkdir()
@@ -4041,7 +4133,7 @@ class TestCloudList:
                 side_effect=subprocess.CalledProcessError(1, "gcloud"),
             ),
         ):
-            assert _cloud_status(state_dir, "key") == ""
+            assert _cloud_instance_info(state_dir, "key") == ("", "")
 
     def test_cloud_list_rows_empty_when_no_tofu_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4084,7 +4176,7 @@ class TestCloudList:
         }
         (tofu / "volume.tfstate").write_text(json.dumps(state))
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
-        # No persisted zone file -> _cloud_status degrades to "" without raising.
+        # No persisted zone file -> _cloud_instance_info degrades to ("", "") without raising.
         vms = _off_platform_vms()
         assert len(vms) == 1
         vm = vms[0]
@@ -4096,6 +4188,7 @@ class TestCloudList:
         assert vm.label == "lmf/cloud [lmf]"
         assert vm.update_ref == "lmf/cloud --identity lmf"
         assert vm.status == ""
+        assert vm.external_ip == ""
         assert vm.is_running is False
 
     def test_off_platform_vm_unlabeled_falls_back_to_resource_name(self) -> None:

@@ -22,6 +22,19 @@ def consumer_refresh(ctx: ReleaseContext) -> None:
     ``ctx.consumer_refresh_commands`` so ``vrg-release --install`` can
     execute exactly what the message shows (issue #1643).
     """
+    if ctx.deferred_publish_failures:
+        message = (
+            "⚠ Consumer refresh held: artifact publish was deferred "
+            f"({', '.join(ctx.deferred_publish_failures)}). Do NOT advertise "
+            f"v{ctx.version} to consumers until the CD publish is re-run and the "
+            "artifacts are delivered."
+        )
+        ctx.consumer_refresh_message = message
+        ctx.consumer_refresh_commands = None
+        print()
+        print(message)
+        return
+
     cfg = config.read_config(ctx.repo_root)
     template = cfg.publish.consumer_refresh
 

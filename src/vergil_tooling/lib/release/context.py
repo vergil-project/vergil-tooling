@@ -53,6 +53,14 @@ class ReleaseContext:
     # release stays resumable (#1612).
     deferred_failures: list[str] = field(default_factory=list)
 
+    # Families of CD publish jobs that did not succeed (e.g. "docker-publish",
+    # "docs"). The release itself is valid (tag + Release published); these are
+    # re-publishable. Surfaced by the publish-status stage (exit 1), the open
+    # tracking issue, and the consumer-refresh hold-warning. Separate from
+    # deferred_failures, which the _tracked wrapper fills with failed STAGE
+    # names (#1853).
+    deferred_publish_failures: list[str] = field(default_factory=list)
+
     promote: bool = True
 
     @property

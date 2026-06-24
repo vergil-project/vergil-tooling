@@ -14,8 +14,6 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
 
 _CD_WORKFLOW = "cd.yml"
-_MAIN_EXPECTED_JOBS = ("docs", "release")
-_DEVELOP_EXPECTED_JOBS = ("docs",)
 _CD_POLL_INTERVAL = 10
 _CD_POLL_ATTEMPTS = 30
 # A reusable-workflow leaf job's conclusion can lag the run-level status by a
@@ -25,32 +23,48 @@ _JOB_SETTLE_ATTEMPTS = 12
 
 
 def confirm_main(ctx: ReleaseContext) -> None:
-    """Watch CD on main and verify publish artifacts."""
-    run_id, run_url = _watch_cd(ctx, branch="main", check_status=True)
-    _verify_jobs(ctx, run_id, _MAIN_EXPECTED_JOBS, phase="confirm-main")
-
+    """Watch CD on main: hard-verify the release, defer other publish jobs."""
+    run_id, run_url = _watch_cd(ctx, branch="main")
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
+    jobs = _settled_run_jobs(ctx, run_id, ("release",))
+    _verify_release_job(jobs)
+
+    deferred = _collect_deferred_publish(jobs)
+    if deferred:
+        ctx.deferred_publish_failures.extend(
+            d for d in deferred if d not in ctx.deferred_publish_failures
+        )
+        print(f"  Publish deferred (release is valid): {', '.join(deferred)}")
+    else:
+        print("  All CD jobs succeeded.")
+
     _verify_artifacts(ctx)
-    print(f"All artifacts confirmed for v{ctx.version}.")
+    print(f"Release v{ctx.version} confirmed.")
 
 
 def confirm_develop(ctx: ReleaseContext) -> None:
-    """Watch CD on develop after back-merge."""
-    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=True)
-    _verify_jobs(ctx, run_id, _DEVELOP_EXPECTED_JOBS, phase="confirm-develop")
-
+    """Watch CD on develop; defer a docs publish failure rather than raise."""
+    run_id, run_url = _watch_cd(ctx, branch="develop")
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
-    print("Develop CD verified.")
+
+    jobs = _settled_run_jobs(ctx, run_id, ("docs",))
+    deferred = _collect_deferred_publish(jobs)
+    if deferred:
+        ctx.deferred_publish_failures.extend(
+            d for d in deferred if d not in ctx.deferred_publish_failures
+        )
+        print(f"  Publish deferred on develop: {', '.join(deferred)}")
+    else:
+        print("Develop CD verified.")
 
 
 def _watch_cd(
     ctx: ReleaseContext,
     *,
     branch: str,
-    check_status: bool = True,
 ) -> tuple[str, str]:
     print(f"Waiting for {_CD_WORKFLOW} on {branch}...")
     git.run("fetch", "origin", branch)
@@ -71,12 +85,9 @@ def _watch_cd(
     )
     print(f"  Workflow run: {run_url}")
 
-    watch_workflow(ctx.repo, run_id, check_status=check_status)
+    watch_workflow(ctx.repo, run_id, check_status=False)
 
-    if check_status:
-        print(f"  CD workflow succeeded: {run_url}")
-    else:
-        print(f"  CD workflow completed: {run_url}")
+    print(f"  CD workflow completed: {run_url}")
     return run_id, run_url
 
 
@@ -154,30 +165,53 @@ def _settled_run_jobs(
     return jobs
 
 
-def _verify_jobs(
-    ctx: ReleaseContext,
-    run_id: str,
-    expected: tuple[str, ...],
-    *,
-    phase: str,
-) -> None:
-    jobs = _settled_run_jobs(ctx, run_id, expected)
-    for job_name in expected:
-        job = _find_job(jobs, job_name)
-        if job is None:
-            raise ReleaseError(
-                phase=phase,
-                command=f"verify job '{job_name}'",
-                message=(f"Expected job '{job_name}' not found in workflow run {run_id}."),
-            )
-        conclusion = job.get("conclusion")
-        if conclusion != "success":
-            raise ReleaseError(
-                phase=phase,
-                command=f"verify job '{job_name}'",
-                message=(f"Job '{job_name}' did not succeed (conclusion: '{conclusion}')."),
-            )
-        print(f"  Job '{job_name}': success")
+_RELEASE_JOB_NAME = "release / release"
+
+
+def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
+    """Hard gate: the release job must exist and have concluded ``success``.
+
+    Matched EXACTLY (the reusable-workflow leaf ``release / release``), not by
+    the substring ``_find_job`` uses for the deferred sweep — the release job is
+    the single load-bearing assertion, so a future ``release``-prefixed job must
+    not satisfy it. A renamed/absent release job fails closed (#1853).
+    """
+    for job in jobs:
+        if job.get("name") == _RELEASE_JOB_NAME:
+            conclusion = job.get("conclusion")
+            if conclusion != "success":
+                raise ReleaseError(
+                    phase="confirm-main",
+                    command=f"verify job '{_RELEASE_JOB_NAME}'",
+                    message=(f"Release job did not succeed (conclusion: '{conclusion}')."),
+                )
+            return
+    raise ReleaseError(
+        phase="confirm-main",
+        command=f"verify job '{_RELEASE_JOB_NAME}'",
+        message=f"Release job '{_RELEASE_JOB_NAME}' not found in the workflow run.",
+    )
+
+
+def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
+    """Ordered-unique families of non-release jobs that did not succeed.
+
+    A job "did not succeed" when its conclusion is neither ``success`` nor
+    ``skipped`` (a skipped job — e.g. codeql — is not a failure). Reusable
+    leaves are ``<family> / <job>``; collapse to the family so a matrix of
+    failed ``docker-publish`` leaves reports once as ``docker-publish``.
+    """
+    families: list[str] = []
+    for job in jobs:
+        name = job.get("name", "")
+        if name == _RELEASE_JOB_NAME:
+            continue
+        if job.get("conclusion") in ("success", "skipped"):
+            continue
+        family = name.split(" / ", 1)[0]
+        if family and family not in families:
+            families.append(family)
+    return families
 
 
 def _verify_artifacts(ctx: ReleaseContext) -> None:

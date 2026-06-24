@@ -125,6 +125,33 @@ def comment_phase_failed(ctx: ReleaseContext, phase: str, exc: ReleaseError) -> 
     _comment(ctx, "\n".join(lines))
 
 
+def comment_publish_deferred(ctx: ReleaseContext, jobs: list[str]) -> None:
+    """Post a remediation comment for a deferred artifact publish.
+
+    The release is complete (tag + GitHub Release published); these CD publish
+    jobs must be re-run. ``vrg-release --resume`` does NOT apply — the version is
+    already tagged — so the comment says so explicitly (#1853).
+    """
+    job_list = ", ".join(jobs)
+    run = ctx.cd_run_url or "the CD run"
+    lines = [
+        "<!-- vrg-release:publish:deferred -->",
+        "",
+        f"**Artifact publish deferred** for `{ctx.version}`.",
+        "",
+        f"The release tag `{ctx.tag}` and the GitHub Release are published, but "
+        f"these CD publish jobs did not succeed: **{job_list}** ({run}).",
+        "",
+        "**To finish delivery** once the blocker is cleared: re-run the CD publish "
+        "— `gh workflow run cd.yml` (Actions → CD → Run workflow), or the nightly "
+        "`no-cache` ops rebuild.",
+        "",
+        "**Do not** run `vrg-release --resume`: the version is already tagged; "
+        "`--resume` is for a *halted* release, not a *completed-with-deferral* one.",
+    ]
+    _comment(ctx, "\n".join(lines))
+
+
 def close_tracking_issue(ctx: ReleaseContext, summary: str) -> None:
     """Post a summary comment and close the tracking issue."""
     _comment(ctx, summary)
