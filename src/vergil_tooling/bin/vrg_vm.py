@@ -713,6 +713,10 @@ class _CloudState:
     # Remaining zones to try if the VM apply hits a capacity stockout (#1813). Populated
     # by tofu-volume on a fresh create; empty on a reattach (a zonal disk cannot move).
     fallback_zones: list[str] = field(default_factory=list)
+    # Machine families to try (same pinned zone) if a reattach VM apply hits a capacity
+    # stockout — the ladder minus the requested type. Populated only on a reattach; empty
+    # on a fresh create, which sweeps fallback_zones instead. (#1836)
+    fallback_instances: list[str] = field(default_factory=list)
 
 
 def _require_modules(state: _CloudState) -> Path:
@@ -763,6 +767,12 @@ def _cs_tofu_volume(state: _CloudState) -> None:
         if candidates:
             volume_vars["zone"] = candidates[0]
             state.fallback_zones = candidates[1:]
+    else:
+        # Reattach: the zonal disk pins the zone, so recovery is a machine-family
+        # sweep in that zone rather than a zone sweep. (#1836)
+        state.fallback_instances = vm_cloud.instance_fallback_candidates(
+            state.backend.spec.instance
+        )[1:]
     volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
     state.volume_id = volume_id
     state.zone = zone
@@ -778,6 +788,7 @@ def _cs_tofu_vm(state: _CloudState) -> None:
         zone=state.zone,
         volume_id=state.volume_id,
         fallback_zones=state.fallback_zones,
+        fallback_instances=state.fallback_instances,
     )
     state.volume_id = volume_id
     state.zone = zone
@@ -1908,6 +1919,7 @@ def _volume_rows() -> list[dict[str, object]]:
         provider_dir = volume_state.parent
         provider = provider_dir.name
         state_key = provider_dir.parent.name
+        vm_type = vm_cloud.parse_vm_machine_type(provider_dir / "vm.tfstate") or "—"
         parsed = vm_cloud.parse_volume_state(volume_state)
         if parsed is None:
             rows.append(
@@ -1920,6 +1932,7 @@ def _volume_rows() -> list[dict[str, object]]:
                     "zone": "—",
                     "region": "—",
                     "provider": provider,
+                    "vm_type": vm_type,
                 }
             )
             continue
@@ -1937,6 +1950,7 @@ def _volume_rows() -> list[dict[str, object]]:
                 "zone": parsed.zone or "—",
                 "region": region or "—",
                 "provider": provider,
+                "vm_type": vm_type,
             }
         )
     return rows
@@ -1999,7 +2013,7 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
     inst_w = max([10, *(len(str(r.get("instance", "—"))) for r in rows)])
     header = (
         f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'INSTANCE':<{inst_w}} "
-        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
+        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14} {'VM TYPE':<16}"
     )
     if live:
         header += f" {'LIVE':<22}"
@@ -2009,7 +2023,7 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
         line = (
             f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} "
             f"{r.get('instance', '—')!s:<{inst_w}} {r['name']!s:<{name_w}} "
-            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14}"
+            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14} {r.get('vm_type', '—')!s:<16}"
         )
         if live:
             line += f" {r['live']!s:<22}"

@@ -35,12 +35,14 @@ from vergil_tooling.bin.vrg_vm import (
     _resolve_target,
     _resolve_vm_verbose,
     _target_ref,
+    _volume_rows,
     _warn_under,
     discover_dedicated,
     main,
     recover_handle,
     resolve_borrow,
 )
+from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec
@@ -3130,6 +3132,49 @@ class TestListRows:
         cfg = _identities(tmp_path, projects)
         assert main(["start", "lmf/mq", "--config", str(cfg)]) == 1
 
+    def test_volume_rows_include_landed_machine_type(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        provider = tmp_path / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        provider.mkdir(parents=True)
+        (provider / "volume.tfstate").write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {
+                            "type": "google_compute_disk",
+                            "instances": [
+                                {
+                                    "attributes": {
+                                        "name": "vergil-lmf-cloud-data",
+                                        "size": 300,
+                                        "zone": "us-central1-f",
+                                        "labels": {},
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+        (provider / "vm.tfstate").write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {
+                            "type": "google_compute_instance",
+                            "instances": [{"attributes": {"machine_type": "n2d-standard-8"}}],
+                        }
+                    ]
+                }
+            )
+        )
+        rows = _volume_rows()
+        assert rows
+        assert rows[0]["vm_type"] == "n2d-standard-8"
+
 
 class TestProbeRunning:
     def _identity(self, tmp_path: Path) -> Identity:
@@ -3614,6 +3659,40 @@ class TestCloudStageGuards:
         )
         _cs_tofu_volume(state)
         assert state.fallback_zones == []
+
+    def test_tofu_volume_reattach_populates_family_fallback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reattach: zone is pinned, so the recovery is a machine-family sweep (#1836).
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        state.state_dir.mkdir(parents=True, exist_ok=True)
+        (state.state_dir / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        _cs_tofu_volume(state)
+        expected = vm_cloud.instance_fallback_candidates(state.backend.spec.instance)[1:]
+        assert state.fallback_instances == expected
+        assert state.fallback_zones == []
+
+    def test_tofu_volume_fresh_create_leaves_family_fallback_empty(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Fresh create keeps the zone sweep and never engages family fallback.
+        state = self._state(tmp_path)
+        state.modules_root = tmp_path / "modules"
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
+            MagicMock(return_value=("vol-1", "us-central1-b")),
+        )
+        monkeypatch.setattr(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            MagicMock(return_value=["us-central1-a", "us-central1-b"]),
+        )
+        _cs_tofu_volume(state)
+        assert state.fallback_instances == []
 
     def test_require_modules_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="fetch-modules did not run"):
@@ -4735,6 +4814,20 @@ class TestVolumesCommand:
         out = capsys.readouterr().out
         assert "INSTANCE" in out
         assert "cloud-x86" in out
+
+    def test_placeholder_row_renders_vm_type_dash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # When volume.tfstate is malformed (parse_volume_state returns None) and
+        # no vm.tfstate exists, _cmd_volumes must print the VM TYPE header and
+        # render the "—" placeholder without raising.
+        home = tmp_path / "home"
+        _write_volume_state(home, "vergil-lmf-cloud", raw="{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        assert main(["volumes"]) == 0
+        out = capsys.readouterr().out
+        assert "VM TYPE" in out
+        assert "—" in out
 
 
 # ---------------------------------------------------------------------------
