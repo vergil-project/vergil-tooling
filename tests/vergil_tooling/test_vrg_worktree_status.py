@@ -54,7 +54,9 @@ _NOW = 1_700_000_000.0
 
 
 def test_row_renders_loaded_workflow_status_verbatim() -> None:
-    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"), _NOW)
+    row = _row(
+        _status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"), _NOW
+    )
     assert row[_WORKFLOW_COL] == "approved"
 
 
@@ -64,7 +66,9 @@ def test_row_renders_dash_when_no_workflow_file() -> None:
 
 
 def test_row_renders_unknown_on_workflow_read_error() -> None:
-    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_error="bad json"), _NOW)
+    row = _row(
+        _status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_error="bad json"), _NOW
+    )
     assert row[_WORKFLOW_COL] == "unknown"
 
 

@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()
     statuses = [
-        worktrees.gather_worktree_status(wt, target=args.target_branch)
+        worktrees.gather_worktree_status(wt, target=args.target_branch, with_freshness=True)
         for wt in worktrees.list_worktrees(root)
     ]
     if not statuses:

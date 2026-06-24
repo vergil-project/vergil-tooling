@@ -30,17 +30,6 @@ from vergil_tooling.lib.worktrees import (
 _MOD = "vergil_tooling.lib.worktrees"
 
 
-@pytest.fixture(autouse=True)
-def _stub_timestamps():
-    # gather_worktree_status now calls these; default them so existing
-    # gather tests (which stub git.read_output to "") are unaffected.
-    with (
-        patch(_MOD + ".git.committer_timestamp", return_value=1_700_000_000),
-        patch(_MOD + "._newest_mtime", return_value=1_700_000_000.0),
-    ):
-        yield
-
-
 def test_gather_populates_timestamps() -> None:
     wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
     with (
@@ -51,9 +40,26 @@ def test_gather_populates_timestamps() -> None:
         patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
         patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
     ):
-        status = gather_worktree_status(wt, target="develop")
+        status = gather_worktree_status(wt, target="develop", with_freshness=True)
     assert status.last_commit_ts == 1_699_900_000
     assert status.last_modified_ts == 1_699_999_999.0
+
+
+def test_gather_without_freshness_leaves_timestamps_none() -> None:
+    wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
+    with (
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".git.committer_timestamp") as commit_ts,
+        patch(_MOD + "._newest_mtime") as newest,
+    ):
+        status = gather_worktree_status(wt, target="develop")
+    assert status.last_commit_ts is None
+    assert status.last_modified_ts is None
+    commit_ts.assert_not_called()
+    newest.assert_not_called()
 
 
 _PORCELAIN = """\
@@ -550,6 +556,19 @@ def test_newest_mtime_takes_max_over_tracked_and_untracked(tmp_path: Path) -> No
     os.utime(untracked, (5000.0, 5000.0))
     # First read_output call → tracked listing; second → untracked listing.
     with patch(_MOD + ".git.read_output", side_effect=["tracked.py", "untracked.py"]):
+        assert _newest_mtime(tmp_path) == 5000.0
+
+
+def test_newest_mtime_keeps_max_when_later_file_is_older(tmp_path: Path) -> None:
+    """Cover the mtime > newest false branch: a later-listed file with a lower
+    mtime must not replace the already-tracked maximum."""
+    newer = tmp_path / "newer.py"
+    newer.write_text("x")
+    os.utime(newer, (5000.0, 5000.0))
+    older = tmp_path / "older.py"
+    older.write_text("y")
+    os.utime(older, (1000.0, 1000.0))
+    with patch(_MOD + ".git.read_output", side_effect=["newer.py\nolder.py", ""]):
         assert _newest_mtime(tmp_path) == 5000.0
 
 

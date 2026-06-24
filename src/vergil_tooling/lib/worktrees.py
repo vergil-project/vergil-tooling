@@ -56,8 +56,9 @@ class WorktreeStatus:
     workflow_status: str | None = None
     workflow_error: str | None = None
     pr_prepared: bool = False
-    # Freshness signals (epoch seconds), attached by gather_worktree_status.
-    # Defaulted so classify_worktree callers (the finalize sweep) are unaffected.
+    # Freshness signals (epoch seconds), attached by gather_worktree_status
+    # only when called with with_freshness=True (vrg-worktree-status). Left
+    # None for the finalize sweep, which neither needs nor pays for them.
     last_commit_ts: float | None = None
     last_modified_ts: float | None = None
 
@@ -195,7 +196,9 @@ def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool
     return state.status, None, prepared
 
 
-def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus:
+def gather_worktree_status(
+    worktree: Worktree, *, target: str, with_freshness: bool = False
+) -> WorktreeStatus:
     """Gather local + remote signals for *worktree* and classify it.
 
     The single source of truth shared by ``vrg-worktree-status`` and the
@@ -208,12 +211,19 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
     after a same-named PR merged (issue #1719) — the merged verdict is
     withheld so the branch is never classified removable; the mismatch is
     recorded in ``detail`` rather than swallowed.
+
+    Freshness timestamps (last_commit_ts / last_modified_ts) are gathered
+    only when ``with_freshness`` is set — the display-only concern of
+    ``vrg-worktree-status``; the finalize sweep leaves them unset.
     """
     ahead = git.commits_ahead(target, worktree.branch)
     dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
-    last_commit_ts = git.committer_timestamp(worktree.path)
-    last_modified_ts = _newest_mtime(worktree.path)
+    # Freshness is opt-in: only vrg-worktree-status needs it. The finalize
+    # straggler sweep also drives this function and must not pay for (or be
+    # broken by) the extra git log + filesystem walk.
+    last_commit_ts = git.committer_timestamp(worktree.path) if with_freshness else None
+    last_modified_ts = _newest_mtime(worktree.path) if with_freshness else None
 
     def _with_workflow(status: WorktreeStatus) -> WorktreeStatus:
         return replace(
