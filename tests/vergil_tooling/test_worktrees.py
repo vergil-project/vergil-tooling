@@ -29,6 +29,33 @@ from vergil_tooling.lib.worktrees import (
 
 _MOD = "vergil_tooling.lib.worktrees"
 
+
+@pytest.fixture(autouse=True)
+def _stub_timestamps():
+    # gather_worktree_status now calls these; default them so existing
+    # gather tests (which stub git.read_output to "") are unaffected.
+    with (
+        patch(_MOD + ".git.committer_timestamp", return_value=1_700_000_000),
+        patch(_MOD + "._newest_mtime", return_value=1_700_000_000.0),
+    ):
+        yield
+
+
+def test_gather_populates_timestamps() -> None:
+    wt = Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo")
+    with (
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
+        patch(_MOD + ".git.committer_timestamp", return_value=1_699_900_000),
+        patch(_MOD + "._newest_mtime", return_value=1_699_999_999.0),
+    ):
+        status = gather_worktree_status(wt, target="develop")
+    assert status.last_commit_ts == 1_699_900_000
+    assert status.last_modified_ts == 1_699_999_999.0
+
+
 _PORCELAIN = """\
 worktree /repo
 HEAD 1111111111111111111111111111111111111111

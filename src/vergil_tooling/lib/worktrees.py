@@ -56,6 +56,10 @@ class WorktreeStatus:
     workflow_status: str | None = None
     workflow_error: str | None = None
     pr_prepared: bool = False
+    # Freshness signals (epoch seconds), attached by gather_worktree_status.
+    # Defaulted so classify_worktree callers (the finalize sweep) are unaffected.
+    last_commit_ts: float | None = None
+    last_modified_ts: float | None = None
 
     @property
     def removable(self) -> bool:
@@ -208,6 +212,8 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
     ahead = git.commits_ahead(target, worktree.branch)
     dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
+    last_commit_ts = git.committer_timestamp(worktree.path)
+    last_modified_ts = _newest_mtime(worktree.path)
 
     def _with_workflow(status: WorktreeStatus) -> WorktreeStatus:
         return replace(
@@ -215,6 +221,8 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
             workflow_status=workflow_status,
             workflow_error=workflow_error,
             pr_prepared=pr_prepared,
+            last_commit_ts=last_commit_ts,
+            last_modified_ts=last_modified_ts,
         )
 
     detail: str | None = None
