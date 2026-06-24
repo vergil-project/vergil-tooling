@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import argparse
 import datetime
 import json
 import os
+import textwrap
 from typing import TYPE_CHECKING
 
 import pytest
@@ -706,3 +708,157 @@ def test_resolve_resumes_session_under_current_slug(
     monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
     assert _resolve("id", "tool") == 0
     assert capture_exec == [["claude", "--resume", "good", "-n", "id:01:tool"]]
+
+
+# --- _resolve_target / _resolve_instance named-instance tests (issue #1831) ---
+
+_REPO_TOML_HEAD = """\
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+_NAMED_INSTANCE_OFF_PLATFORM_VM = """
+[vm]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+
+[vm.vergil-user.instances.cloud-x86]
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+"""
+
+_NAMED_INSTANCE_LOCAL_VM = """
+[vm]
+packages = ["qemu-system-x86"]
+
+[vm.vergil-user.instances.rdqm-rhel]
+"""
+
+
+def _make_args(
+    *,
+    workspace: str | None = None,
+    name: str | None = None,
+    identity: str | None = None,
+    command: str = "create",
+    config: Path | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        config=config,
+        identity=identity,
+        workspace=workspace,
+        name=name,
+        command=command,
+    )
+
+
+def _make_identity_config(tmp_path: Path, projects: Path) -> Path:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent(f"""\
+        default_identity = "vergil-user"
+        vergil = "v2.0"
+
+        [identities.vergil-user]
+        vm_instance = "vergil-user"
+        projects_dir = "{projects}"
+    """)
+    )
+    return p
+
+
+def _make_repo(projects: Path, org: str, repo: str, vm_section: str = "") -> None:
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True)
+    (repo_dir / "vergil.toml").write_text(_REPO_TOML_HEAD + vm_section)
+
+
+@pytest.fixture()
+def named_instance_config(tmp_path: Path) -> Path:
+    """Identity config with lmf/mq declaring an off-platform named instance 'cloud-x86'."""
+    projects = tmp_path / "projects"
+    _make_repo(projects, "lmf", "mq", _NAMED_INSTANCE_OFF_PLATFORM_VM)
+    return _make_identity_config(tmp_path, projects)
+
+
+@pytest.fixture()
+def named_instance_local_config(tmp_path: Path) -> Path:
+    """Identity config with lmf/mq declaring a local named instance 'rdqm-rhel'."""
+    projects = tmp_path / "projects"
+    _make_repo(projects, "lmf", "mq", _NAMED_INSTANCE_LOCAL_VM)
+    return _make_identity_config(tmp_path, projects)
+
+
+def test_resolve_target_named_instance(named_instance_config: Path) -> None:
+    from vergil_tooling.bin.vrg_vm import Target, _resolve_target
+    from vergil_tooling.lib.vm_cloud import OffPlatformBackend
+
+    args = _make_args(
+        workspace="lmf/mq", name="cloud-x86", identity="vergil-user", config=named_instance_config
+    )
+    target = _resolve_target(args)
+    assert isinstance(target, Target)
+    assert target.instance_name_arg == "cloud-x86"
+    assert target.instance == "vergil-user.lmf.mq.cloud-x86"
+    assert target.spec.off_platform
+    assert isinstance(target.backend, OffPlatformBackend)
+    assert target.backend.slug == "vergil-user--lmf--mq--cloud-x86"
+
+
+def test_destroy_volume_named_targets_instance_volume(named_instance_config: Path) -> None:
+    # destroy-volume --name must resolve the NAMED instance's volume state, not the
+    # default's — it is irreversible and billable.
+    from vergil_tooling.bin.vrg_vm import _resolve_target
+    from vergil_tooling.lib.vm_cloud import OffPlatformBackend
+
+    args = _make_args(
+        command="destroy-volume",
+        workspace="lmf/mq",
+        name="cloud-x86",
+        identity="vergil-user",
+        config=named_instance_config,
+    )
+    target = _resolve_target(args)
+    assert isinstance(target.backend, OffPlatformBackend)
+    assert target.backend.state_key == "vergil-user--lmf--mq--cloud-x86"
+
+
+def test_update_named_resolves_instance_lima_name(named_instance_local_config: Path) -> None:
+    # update (single) routes through _resolve_instance, which must honor --name.
+    from vergil_tooling.bin.vrg_vm import _resolve_instance
+
+    args = _make_args(
+        command="update",
+        workspace="lmf/mq",
+        name="rdqm-rhel",
+        identity="vergil-user",
+        config=named_instance_local_config,
+    )
+    _name, _identity, _config, instance = _resolve_instance(args)
+    assert instance == "vergil-user.lmf.mq.rdqm-rhel"
+
+
+def test_resolve_target_name_without_workspace_raises(named_instance_config: Path) -> None:
+    # --name without an org/repo workspace must raise SpecError.
+    from vergil_tooling.bin.vrg_vm import _resolve_target
+    from vergil_tooling.lib.vm_spec import SpecError
+
+    args = _make_args(
+        workspace=None, name="cloud-x86", identity="vergil-user", config=named_instance_config
+    )
+    with pytest.raises(SpecError, match="--name requires"):
+        _resolve_target(args)

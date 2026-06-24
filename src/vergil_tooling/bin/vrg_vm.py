@@ -80,6 +80,10 @@ from vergil_tooling.lib.vm_spec import (
     instance_name,
     parse_instance_name,
     spec_fingerprint,
+    split_state_slug,
+    state_slug,
+    validate_instance_name,
+    validate_repo_segment,
 )
 from vergil_tooling.lib.vm_transport import LimaTransport
 
@@ -111,6 +115,7 @@ class Target:
     instance: str
     fingerprint: str
     backend: Backend
+    instance_name_arg: str | None = None
 
 
 class BorrowError(Exception):
@@ -192,6 +197,11 @@ def _base_footprint(identity: Identity) -> dict[str, object]:
     }
 
 
+def _requested_name(args: argparse.Namespace) -> str | None:
+    """Return the --name value from args, or None if the flag is absent."""
+    return getattr(args, "name", None)
+
+
 def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     """Derive (org, repo) for VM selection.
 
@@ -220,13 +230,19 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
     """
     name, identity, config = _resolve(args)
     workspace = getattr(args, "workspace", None)
+    inst_name = _requested_name(args)
     base = _base_footprint(identity)
     org, repo = _workspace_org_repo(workspace)
 
     if org is None or repo is None:
+        if inst_name is not None:
+            msg = "--name requires an <org>/<repo> workspace (named instances are per-repo)"
+            raise SpecError(msg)
         spec = compose_vm_spec(identity=name, base=base, stanza=None, override=None)
         backend = select_backend(spec, identity=name, org=None, repo=None)
         return Target(name, identity, config, None, None, spec, identity.vm_instance, "", backend)
+
+    validate_repo_segment(repo)
 
     requested_vm = _read_repo_vm(identity, org, repo)
     borrow = resolve_borrow(identity, org, repo, requested_vm)
@@ -239,13 +255,15 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
         eff_org, eff_repo, eff_vm = org, repo, requested_vm
 
     override = identity.overrides.get((eff_org, eff_repo))
-    spec = compose_vm_spec(identity=name, base=base, stanza=eff_vm, override=override)
-    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo)
+    spec = compose_vm_spec(
+        identity=name, base=base, stanza=eff_vm, override=override, instance=inst_name
+    )
+    backend = select_backend(spec, identity=name, org=eff_org, repo=eff_repo, name=inst_name)
 
     if not spec.dedicated:
         return Target(name, identity, config, org, repo, spec, identity.vm_instance, "", backend)
 
-    inst = instance_name(name, eff_org, eff_repo)
+    inst = instance_name(name, eff_org, eff_repo, inst_name)
     return Target(
         name,
         identity,
@@ -256,23 +274,25 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
         inst,
         spec_fingerprint(spec),
         backend,
+        inst_name,
     )
 
 
-def _resolve_instance(args: argparse.Namespace) -> tuple[str, Identity, IdentityConfig, str]:
-    """Resolve just the instance NAME for lifecycle commands (stop/restart/destroy/update).
+def _resolve_instance(
+    args: argparse.Namespace,
+) -> tuple[str, Identity, IdentityConfig, str]:
+    """Resolve the Lima instance NAME for lifecycle commands (stop/restart).
 
-    These are all MANAGE commands. The borrow block (``[vm] shared_from``) and the
-    off-platform/Lima split are owned by the ``_resolve_target`` call each command
-    now runs first, so this helper only maps an ``org/repo`` (or its absence) to an
-    instance name. A repo with no readable ``vergil.toml`` (a true orphan) resolves
-    to its own instance name, so an orphaned dedicated VM (whose repo dropped its
-    `[vm]`) stays reachable; anything else is base.
+    Maps an ``org/repo`` (or its absence) plus an optional ``--name`` to a Lima
+    instance name. A repo with no readable ``vergil.toml`` still resolves to its own
+    instance name so an orphaned dedicated VM stays reachable.
     """
     name, identity, config = _resolve(args)
     org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    inst_name = _requested_name(args)
     if org is not None and repo is not None:
-        instance = instance_name(name, org, repo)
+        validate_repo_segment(repo)
+        instance = instance_name(name, org, repo, inst_name)
     else:
         instance = identity.vm_instance
     return name, identity, config, instance
@@ -285,19 +305,19 @@ def _target_ref(target: Target) -> str:
     return f"--identity {target.identity_name}"
 
 
-def recover_triple(instance: str) -> tuple[str, str | None, str | None]:
-    """Reverse an instance name into (identity, org, repo).
+def recover_handle(instance: str) -> tuple[str, str | None, str | None, str | None]:
+    """Reverse an instance name into the four-part handle (identity, org, repo, name).
 
-    Prefers the per-instance sidecar (the only reliable source once a long name
-    has been truncated+hashed); falls back to parsing the name for legacy short
-    names and base boxes that predate the sidecar.
+    Prefers the per-instance sidecar (reliable once a long name is truncated+hashed);
+    falls back to parsing for legacy short names and base boxes that predate the
+    sidecar, where ``name`` is None.
     """
     meta = read_instance_meta(instance)
     if meta is not None:
-        # Sidecar fields are always strings on disk; the mapping is typed
-        # ``dict[str, object]`` only because it also carries an int schema.
-        return str(meta["identity"]), str(meta["org"]), str(meta["repo"])
-    return parse_instance_name(instance)
+        name = str(meta.get("name") or "") or None
+        return str(meta["identity"]), str(meta["org"]), str(meta["repo"]), name
+    ident, org, repo = parse_instance_name(instance)
+    return ident, org, repo, None
 
 
 def _warn_under(target: Target) -> None:
@@ -607,11 +627,17 @@ def _create_from_target(target: Target, template: Path) -> None:
             fingerprint=target.fingerprint,
             nested=target.spec.nested,
         )
-        # Persist (identity, org, repo) so recover_triple can reverse the name
+        # Persist (identity, org, repo) so recover_handle can reverse the name
         # even after it has been truncated+hashed to fit UNIX_PATH_MAX.
         # org/repo are guaranteed non-None for dedicated targets.
         assert target.org is not None and target.repo is not None  # noqa: S101
-        write_instance_meta(target.instance, target.identity_name, target.org, target.repo)
+        write_instance_meta(
+            target.instance,
+            target.identity_name,
+            target.org,
+            target.repo,
+            target.instance_name_arg,
+        )
     else:
         create_vm(
             target.instance,
@@ -1113,7 +1139,7 @@ def _all_update_targets(
             targets.append((id_name, identity, identity.vm_instance))
         for inst in sorted(status):
             try:
-                ident, org, repo = recover_triple(inst)
+                ident, org, repo, _inst_name = recover_handle(inst)
             except ValueError:
                 continue
             if ident == id_name and org is not None and repo is not None:
@@ -1232,40 +1258,82 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cloud_destroy(target: Target, args: argparse.Namespace) -> int:
-    """Destroy the disposable cloud VM, leaving the persistent volume intact."""
-    backend = _cloud_backend(target)
-    tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(target.config, target.identity)
-    modules_root = vm_cloud.fetch_modules(tag)
-    try:
-        print(f"Destroying cloud VM '{backend.name}' (volume preserved)...")
-        vm_cloud.destroy_vm(modules_root, backend.state_dir())
-    finally:
-        shutil.rmtree(modules_root.parent, ignore_errors=True)
-    print(f"Cloud VM '{backend.name}' destroyed (persistent volume preserved).")
+def _destroy_recorded(
+    rs: RecordedState,
+    args: argparse.Namespace,
+    config: IdentityConfig,
+    identity: Identity,
+) -> int:
+    """Tear down the Lima box and every recorded provider state for a handle."""
+    if rs.lima_instance is not None:
+        print(f"Destroying Lima VM '{rs.lima_instance}'...")
+        delete_vm(rs.lima_instance)
+    if rs.tofu_dirs:
+        tag = args.tag if getattr(args, "tag", "") else resolve_vm_tag(config, identity)
+        modules_root = vm_cloud.fetch_modules(tag)
+        try:
+            for provider, state_dir in rs.tofu_dirs:
+                print(f"Destroying cloud VM under {provider} (volume preserved): {state_dir}")
+                vm_cloud.destroy_vm(modules_root, state_dir)
+        finally:
+            shutil.rmtree(modules_root.parent, ignore_errors=True)
+    print("Destroyed (persistent volumes preserved — use destroy-volume to remove them).")
     return 0
 
 
 def _cmd_destroy(args: argparse.Namespace) -> int:
-    target = _resolve_target(args)
-    if target.spec.off_platform:
-        return _cloud_destroy(target, args)
-
-    name, _identity, _config, instance = _resolve_instance(args)
-
-    status = vm_status(instance)
-    if not status:
-        print(
-            f"VM '{instance}' does not exist.",
-            file=sys.stderr,
+    name, identity, config = _resolve(args)
+    org, repo = _workspace_org_repo(getattr(args, "workspace", None))
+    inst_name = getattr(args, "name", None)
+    if org is None or repo is None:
+        rs = RecordedState(
+            lima_instance=(
+                identity.vm_instance
+                if identity.vm_instance in {vm["name"] for vm in list_vms()}
+                else None
+            ),
+            tofu_dirs=[],
         )
+    else:
+        validate_repo_segment(repo)
+        if inst_name is not None:
+            try:
+                validate_instance_name(inst_name)
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                return 1
+        requested_vm = _read_repo_vm(identity, org, repo)
+        borrow = resolve_borrow(identity, org, repo, requested_vm)
+        if borrow is not None:
+            raise BorrowError(_borrow_block_msg(args.command, org, repo, borrow.org, borrow.repo))
+        rs = _recorded_state_for_handle(name, org, repo, inst_name)
+
+    if rs.lima_instance is None and not rs.tofu_dirs:
+        print("No recorded state to destroy for this handle.", file=sys.stderr)
         return 1
 
-    print(f"Destroying VM '{instance}' (identity: {name})...")
-    delete_vm(instance)
+    # Confirmation contract.
+    box_count = (1 if rs.lima_instance else 0) + len(rs.tofu_dirs)
+    box_word = "box" if box_count == 1 else "boxes"
+    print(f"Will destroy the following recorded {box_word}:")
+    if rs.lima_instance:
+        print(f"  - Lima: {rs.lima_instance}")
+    for provider, state_dir in rs.tofu_dirs:
+        print(f"  - {provider}: {state_dir}")
+    if not getattr(args, "yes", False):
+        if not sys.stdin.isatty():
+            print(
+                f"Refusing to destroy {box_count} recorded {box_word} non-interactively"
+                " — re-run with --yes to confirm.",
+                file=sys.stderr,
+            )
+            return 1
+        answer = input("Proceed? [y/N] ").strip().lower()
+        if answer not in {"y", "yes"}:
+            print("Aborted.", file=sys.stderr)
+            return 1
 
-    print(f"VM '{instance}' destroyed.")
-    return 0
+    return _destroy_recorded(rs, args, config, identity)
 
 
 def _cmd_destroy_volume(args: argparse.Namespace) -> int:
@@ -1347,6 +1415,7 @@ class DedicatedRow:
     instance: str
     state: str  # "present" | "orphaned"
     stanza: VmStanza | None = None
+    instance_name: str | None = None
 
 
 def _classify_instance(
@@ -1395,13 +1464,13 @@ def discover_dedicated(
     rows: list[DedicatedRow] = []
     for name in instances:
         try:
-            ident, org, repo = recover_triple(name)
+            ident, org, repo, inst_name = recover_handle(name)
         except ValueError:
             continue
         if ident != identity_name or org is None or repo is None:
             continue
         state, stanza = _classify_instance(projects_dir, org, repo, name)
-        rows.append(DedicatedRow(org, repo, name, state, stanza))
+        rows.append(DedicatedRow(org, repo, name, state, stanza, inst_name))
     return rows
 
 
@@ -1475,6 +1544,7 @@ def _list_rows(
     rows.append(
         {
             "scope": "base",
+            "instance": "—",
             "backend": "local",
             "status": status.get(identity.vm_instance, "Not Created"),
             "cpus": cast("int", base["cpus"]),
@@ -1494,6 +1564,7 @@ def _list_rows(
             rows.append(
                 {
                     "scope": scope,
+                    "instance": d.instance_name or "—",
                     "backend": "local",
                     "status": st,
                     "cpus": "—",
@@ -1512,6 +1583,7 @@ def _list_rows(
         rows.append(
             {
                 "scope": scope,
+                "instance": d.instance_name or "—",
                 "backend": "local",
                 "status": st,
                 "cpus": spec.cpus,
@@ -1577,6 +1649,9 @@ class OffPlatformVm:
     org: str | None
     repo: str | None
     status: str
+    instance: str | None = None
+    volume_size: str | None = None
+    vm_present: bool = True
 
     @property
     def is_running(self) -> bool:
@@ -1620,6 +1695,41 @@ class OffPlatformVm:
         return self.name
 
 
+@dataclass
+class RecordedState:
+    """Everything actually built under one handle, discovered from disk + Lima."""
+
+    lima_instance: str | None
+    tofu_dirs: list[tuple[str, Path]]  # (provider, provider_state_dir)
+
+
+def _recorded_state_for_handle(
+    identity: str, org: str, repo: str, name: str | None
+) -> RecordedState:
+    """Enumerate the Lima box and every tofu provider state recorded for a handle.
+
+    Acts on reality, not the live profile: the Lima instance named for the handle
+    (if it exists) plus every ``~/.config/vergil/tofu/<slug>/<provider>/`` directory
+    carrying recorded state. The slug is deterministic, so this is a direct glob of
+    the handle's own subtree.
+    """
+    lima = instance_name(identity, org, repo, name)
+    existing = {vm["name"] for vm in list_vms()}
+    lima_instance = lima if lima in existing else None
+
+    slug = state_slug(identity, org, repo, name)
+    handle_root = Path.home() / ".config" / "vergil" / "tofu" / slug
+    tofu_dirs: list[tuple[str, Path]] = []
+    if handle_root.is_dir():
+        for provider_dir in sorted(p for p in handle_root.iterdir() if p.is_dir()):
+            has_state = (provider_dir / "volume.tfstate").exists() or (
+                provider_dir / "vm.tfstate"
+            ).exists()
+            if has_state:
+                tofu_dirs.append((provider_dir.name, provider_dir))
+    return RecordedState(lima_instance, tofu_dirs)
+
+
 def _off_platform_vms() -> list[OffPlatformVm]:
     """Enumerate off-platform VMs from local tofu state under ~/.config/vergil/tofu.
 
@@ -1640,6 +1750,9 @@ def _off_platform_vms() -> list[OffPlatformVm]:
         state_key = provider_dir.parent.name
         parsed = vm_cloud.parse_volume_state(volume_state)
         labels = parsed.labels if parsed else {}
+        size = f"{parsed.size_gib}GiB" if parsed and parsed.size_gib else None
+        vm_present = (provider_dir / "vm.tfstate").exists()
+        status = _cloud_status(provider_dir, state_key) if vm_present else ""
         vms.append(
             OffPlatformVm(
                 name=state_key,
@@ -1648,13 +1761,61 @@ def _off_platform_vms() -> list[OffPlatformVm]:
                 identity=labels.get("vergil-identity"),
                 org=labels.get("vergil-org"),
                 repo=labels.get("vergil-repo"),
-                status=_cloud_status(provider_dir, state_key),
+                instance=labels.get("vergil-instance"),
+                status=status,
+                volume_size=size,
+                vm_present=vm_present,
             )
         )
     return vms
 
 
-def _cloud_list_rows() -> list[dict[str, object]]:
+def _classify_off_platform(vm: OffPlatformVm, config: IdentityConfig) -> str:
+    """Classify a recorded off-platform box against the repo's current profile.
+
+    'orphaned' when the repo dropped its [vm], no longer declares this instance, or
+    no longer composes this (off-platform, provider); 'ok' when it still matches.
+    The handle is recovered exactly from the readable slug — no lossy label round-trip.
+
+    A repo whose vergil.toml fails to parse is classified 'ok' conservatively —
+    flagging it orphaned would invite destroying a VM whose spec may still be
+    declared — and the failure is warned loudly with the config path (mirrors the
+    Lima-path ``_classify_instance`` treatment of ConfigError).
+    """
+    identity_name, org, repo, inst_name = split_state_slug(vm.name)
+    if org is None or repo is None:
+        return "ok"  # a base box carries no per-repo spec
+    identity = config.identities.get(identity_name)
+    if identity is None:
+        return "orphaned"
+    repo_dir = Path(identity.projects_dir) / org / repo
+    config_path = repo_dir / "vergil.toml"
+    if not config_path.exists():
+        return "orphaned"
+    try:
+        stanza = read_config(repo_dir).vm
+        spec = compose_vm_spec(
+            identity=identity_name,
+            base=_base_footprint(identity),
+            stanza=stanza,
+            override=identity.overrides.get((org, repo)),
+            instance=inst_name,
+        )
+    except ConfigError as exc:
+        print(
+            f"WARNING: cannot parse {config_path}: {exc} — "
+            f"listing '{vm.name}' as present (unverified)",
+            file=sys.stderr,
+        )
+        return "ok"
+    except SpecError:
+        return "orphaned"
+    if not spec.off_platform or spec.provider != vm.provider:
+        return "orphaned"
+    return "ok"
+
+
+def _cloud_list_rows(config: IdentityConfig) -> list[dict[str, object]]:
     """Display rows for off-platform VMs (the cloud half of ``vrg-vm list``).
 
     Reuses the shared ``_off_platform_vms()`` enumeration; an unauthed/unreachable
@@ -1665,13 +1826,22 @@ def _cloud_list_rows() -> list[dict[str, object]]:
     """
     rows: list[dict[str, object]] = []
     for vm in _off_platform_vms():
-        status = vm.status or f"unknown (no {vm.provider} creds)"
+        spec = _classify_off_platform(vm, config)
+        if not vm.vm_present:
+            status = "no-vm"
+            disk = vm.volume_size or "—"
+        else:
+            status = vm.status or f"unknown (no {vm.provider} creds)"
+            disk = "—"
         rows.append(
             {
                 "identity": vm.identity or "—",
                 "scope": vm.scope,
+                "instance": vm.instance or "—",
                 "backend": vm.provider,
                 "status": status,
+                "disk": disk,
+                "spec": spec,
             }
         )
     return rows
@@ -1694,8 +1864,8 @@ def _cmd_list(args: argparse.Namespace) -> int:
     probes = _probe_running(config.identities, discovered, status)
 
     header = (
-        f"{'IDENTITY':<14} {'SCOPE':<40} {'BACKEND':<13} {'STATUS':<11} {'CPUS':<5} "
-        f"{'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
+        f"{'IDENTITY':<14} {'SCOPE':<40} {'INSTANCE':<11} {'BACKEND':<13} {'STATUS':<11} "
+        f"{'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
@@ -1703,15 +1873,17 @@ def _cmd_list(args: argparse.Namespace) -> int:
     for id_name, identity in config.identities.items():
         for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
             print(
-                f"{id_name:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
+                f"{id_name:<14} {r['scope']!s:<40} {r.get('instance', '—')!s:<11} "
+                f"{r['backend']!s:<13} {r['status']!s:<11} "
                 f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
                 f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
             )
 
-    for r in _cloud_list_rows():
+    for r in _cloud_list_rows(config):
         print(
-            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['backend']!s:<13} {r['status']!s:<11} "
-            f"{'—':<5} {'—':<7} {'—':<7} {'—':<7} {'—':<7} {'—':<22}"
+            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<11} "
+            f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 
     return 0
@@ -1742,6 +1914,7 @@ def _volume_rows() -> list[dict[str, object]]:
                 {
                     "identity": "—",
                     "scope": state_key,
+                    "instance": "—",
                     "name": "—",
                     "size": "—",
                     "zone": "—",
@@ -1758,6 +1931,7 @@ def _volume_rows() -> list[dict[str, object]]:
             {
                 "identity": parsed.labels.get("vergil-identity") or "—",
                 "scope": scope,
+                "instance": parsed.labels.get("vergil-instance") or "—",
                 "name": parsed.name or "—",
                 "size": f"{parsed.size_gib}GiB" if parsed.size_gib is not None else "—",
                 "zone": parsed.zone or "—",
@@ -1822,9 +1996,10 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
 
     scope_w = max([24, *(len(str(r["scope"])) for r in rows)])
     name_w = max([20, *(len(str(r["name"])) for r in rows)])
+    inst_w = max([10, *(len(str(r.get("instance", "—"))) for r in rows)])
     header = (
-        f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'DISK NAME':<{name_w}} "
-        f"{'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
+        f"{'IDENTITY':<14} {'ORG/REPO':<{scope_w}} {'INSTANCE':<{inst_w}} "
+        f"{'DISK NAME':<{name_w}} {'SIZE':<8} {'ZONE':<16} {'REGION':<14}"
     )
     if live:
         header += f" {'LIVE':<22}"
@@ -1832,7 +2007,8 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
     print("─" * len(header))
     for r in rows:
         line = (
-            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['name']!s:<{name_w}} "
+            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} "
+            f"{r.get('instance', '—')!s:<{inst_w}} {r['name']!s:<{name_w}} "
             f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14}"
         )
         if live:
@@ -2140,6 +2316,17 @@ def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_name_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Named VM instance for this repo (default: the unnamed default instance). "
+            "Must be declared under [vm.<identity>.instances.<name>]."
+        ),
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",
@@ -2151,6 +2338,7 @@ def main(argv: list[str] | None = None) -> int:
     p_create = sub.add_parser("create", help="Create and provision a new VM")
     _add_identity_args(p_create)
     _add_workspace_arg(p_create)
+    _add_name_arg(p_create)
     p_create.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -2167,6 +2355,7 @@ def main(argv: list[str] | None = None) -> int:
     p_start = sub.add_parser("start", help="Start VM and inject credentials")
     _add_identity_args(p_start)
     _add_workspace_arg(p_start)
+    _add_name_arg(p_start)
     p_start.add_argument(
         "--allow-stale-vm",
         action="store_true",
@@ -2182,16 +2371,19 @@ def main(argv: list[str] | None = None) -> int:
     p_stop = sub.add_parser("stop", help="Stop VM")
     _add_identity_args(p_stop)
     _add_workspace_arg(p_stop)
+    _add_name_arg(p_stop)
 
     p_restart = sub.add_parser("restart", help="Restart VM and re-inject credentials")
     _add_identity_args(p_restart)
     _add_workspace_arg(p_restart)
+    _add_name_arg(p_restart)
 
     p_update = sub.add_parser(
         "update", help="Reinstall vergil-tooling and refresh plugins in a running box (in place)"
     )
     _add_identity_args(p_update)
     _add_workspace_arg(p_update)
+    _add_name_arg(p_update)
     p_update.add_argument(
         "--tag", default="", help="Override version tag (default: tag from initial install)"
     )
@@ -2210,10 +2402,17 @@ def main(argv: list[str] | None = None) -> int:
     p_destroy = sub.add_parser("destroy", help="Destroy VM entirely")
     _add_identity_args(p_destroy)
     _add_workspace_arg(p_destroy)
+    _add_name_arg(p_destroy)
     p_destroy.add_argument(
         "--tag",
         default="",
         help="OpenTofu module version tag for off-platform destroy (default: from config)",
+    )
+    p_destroy.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="Skip the confirmation prompt (required for non-interactive destroy)",
     )
 
     p_destroy_volume = sub.add_parser(
@@ -2222,6 +2421,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _add_identity_args(p_destroy_volume)
     _add_workspace_arg(p_destroy_volume)
+    _add_name_arg(p_destroy_volume)
     p_destroy_volume.add_argument(
         "--tag",
         default="",
@@ -2236,6 +2436,7 @@ def main(argv: list[str] | None = None) -> int:
     p_rebuild = sub.add_parser("rebuild", help="Destroy and recreate VM (stateless rebuild)")
     _add_identity_args(p_rebuild)
     _add_workspace_arg(p_rebuild)
+    _add_name_arg(p_rebuild)
     p_rebuild.add_argument(
         "--tag", default="", help="VM template version tag (default: vergil version from config)"
     )
@@ -2305,6 +2506,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p_session = sub.add_parser("session", help="Launch a Claude session in a VM")
     _add_identity_args(p_session)
+    p_session.add_argument(
+        "--name",
+        default=None,
+        help=(
+            "Named VM instance for this repo (default: the unnamed default instance). "
+            "Must be declared under [vm.<identity>.instances.<name>]."
+        ),
+    )
     p_session.add_argument(
         "--allow-stale-vm",
         action="store_true",

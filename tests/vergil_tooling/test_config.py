@@ -953,3 +953,64 @@ def test_project_ghas_is_recognized_key(tmp_path: Path, capsys: pytest.CaptureFi
     (tmp_path / "vergil.toml").write_text(_GHAS_TOML_TEMPLATE.format(ghas_line="ghas = true"))
     read_config(tmp_path)
     assert "unrecognized key 'ghas'" not in capsys.readouterr().err
+
+
+# -- named instances (vergil-tooling #1831) ------------------------------------
+
+
+def test_parse_vm_stanza_named_instances() -> None:
+    raw = {
+        "vm": {
+            "vergil-user": {
+                "cpus": 12,
+                "instances": {
+                    "cloud-x86": {
+                        "backend": "off-platform",
+                        "provider": "gcp",
+                        "region": "us-central1",
+                        "instance": "n2-standard-16",
+                        "volume": "300GiB",
+                    }
+                },
+            }
+        }
+    }
+    stanza = parse_vm_stanza(raw)
+    assert stanza is not None
+    role = stanza.roles["vergil-user"]
+    assert role.cpus == 12
+    assert set(role.instances) == {"cloud-x86"}
+    inst = role.instances["cloud-x86"]
+    assert inst.backend == "off-platform"
+    assert inst.instance == "n2-standard-16"
+    assert inst.instances == {}  # no nested instances
+
+
+def test_parse_vm_stanza_rejects_all_identity_instances_tier() -> None:
+    raw = {"vm": {"instances": {"cloud-x86": {"cpus": 4}}}}
+    with pytest.raises(ConfigError, match="no all-identity .*instances"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_invalid_instance_name() -> None:
+    raw = {"vm": {"vergil-user": {"instances": {"bad--name": {"cpus": 4}}}}}
+    with pytest.raises(ConfigError, match="instance name"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_nested_instances_in_overlay() -> None:
+    raw = {"vm": {"vergil-user": {"instances": {"cloud-x86": {"instances": {"nope": {}}}}}}}
+    with pytest.raises(ConfigError, match="nested instances"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_instances_not_a_table() -> None:
+    raw = {"vm": {"vergil-user": {"instances": "not-a-table"}}}
+    with pytest.raises(ConfigError, match="must be a table"):
+        parse_vm_stanza(raw)
+
+
+def test_parse_vm_stanza_rejects_instance_entry_not_a_table() -> None:
+    raw = {"vm": {"vergil-user": {"instances": {"cloud-x86": "not-a-table"}}}}
+    with pytest.raises(ConfigError, match="must be a table"):
+        parse_vm_stanza(raw)

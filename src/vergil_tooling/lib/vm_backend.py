@@ -29,15 +29,16 @@ def select_backend(
     identity: str | None = None,
     org: str | None = None,
     repo: str | None = None,
+    name: str | None = None,
 ) -> Backend:
     """Return the backend for a composed spec — the one dispatch decision point.
 
     Off-platform specs require ``identity``/``org``/``repo`` to derive the cloud
-    resource name and labels; a missing one is a programming error and fails loudly.
+    resource name and labels; ``name`` selects a named instance (None = default).
     """
     if spec.off_platform:
         if identity is None or org is None or repo is None:
             msg = "off-platform backend requires identity, org, and repo"
             raise ValueError(msg)
-        return OffPlatformBackend(spec, identity, org, repo)
+        return OffPlatformBackend(spec, identity, org, repo, name)
     return LimaBackend()

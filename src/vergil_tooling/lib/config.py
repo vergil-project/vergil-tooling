@@ -5,11 +5,13 @@ from __future__ import annotations
 import os
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+from vergil_tooling.lib.vm_spec import validate_instance_name
 
 CONFIG_FILE = "vergil.toml"
 
@@ -127,6 +129,10 @@ class RoleOverlay:
     instance: str | None = None
     volume: str | None = None
     zone: str | None = None
+    # Named-instance overlays (vergil-tooling #1831). Each value is itself a
+    # RoleOverlay parsed from [vm.<identity>.instances.<name>]; an instance overlay
+    # never carries its own nested instances. Empty for the common (unnamed) case.
+    instances: dict[str, RoleOverlay] = field(default_factory=dict)
 
 
 @dataclass
@@ -215,14 +221,37 @@ def _parse_shared_from(value: Any, source: str) -> tuple[str, str]:
     return (parts[0], parts[1])
 
 
-def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FILE) -> RoleOverlay:
+def _parse_role_overlay(
+    name: str, raw: dict[str, Any], source: str = CONFIG_FILE, *, allow_instances: bool = True
+) -> RoleOverlay:
     if _SHARED_FROM_KEY in raw:
         msg = f"{source}: shared_from is not allowed in a role overlay [vm.{name}]"
         raise ConfigError(msg)
     for key in raw:
+        if key == "instances" and allow_instances:
+            continue
+        if key == "instances" and not allow_instances:
+            msg = f"{source}: [vm.{name}.instances.{name}] must not contain nested instances"
+            raise ConfigError(msg)
         if key not in _VM_KEYS:
             print(f"{source}: unrecognized key '{key}' in [vm.{name}]", file=sys.stderr)
     scalars = {k: _vm_str_scalar(raw, k, f"[vm.{name}]", source) for k in _VM_STR_SCALARS}
+    instances: dict[str, RoleOverlay] = {}
+    if allow_instances:
+        raw_instances = raw.get("instances", {})
+        if not isinstance(raw_instances, dict):
+            msg = f"{source}: [vm.{name}].instances must be a table"
+            raise ConfigError(msg)
+        for iname, itable in raw_instances.items():
+            try:
+                validate_instance_name(iname)
+            except ValueError as exc:
+                msg = f"{source}: [vm.{name}.instances.{iname}]: {exc}"
+                raise ConfigError(msg) from exc
+            if not isinstance(itable, dict):
+                msg = f"{source}: [vm.{name}.instances.{iname}] must be a table"
+                raise ConfigError(msg)
+            instances[iname] = _parse_role_overlay(iname, itable, source, allow_instances=False)
     return RoleOverlay(
         packages=list(raw.get("packages", [])),
         cpus=raw.get("cpus"),
@@ -233,6 +262,7 @@ def _parse_role_overlay(name: str, raw: dict[str, Any], source: str = CONFIG_FIL
         vagrant_plugins=list(raw.get("vagrant_plugins", [])),
         port_forwards=list(raw.get("port_forwards", [])),
         nested=raw.get("nested"),
+        instances=instances,
         **scalars,
     )
 
@@ -249,6 +279,12 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
         if key == _SHARED_FROM_KEY:
             shared_from = _parse_shared_from(value, source)
         elif isinstance(value, dict):
+            if key == "instances":
+                msg = (
+                    f"{source}: no all-identity [vm.instances] tier — declare named "
+                    f"instances under [vm.<identity>.instances.<name>]"
+                )
+                raise ConfigError(msg)
             roles[key] = _parse_role_overlay(key, value, source)
         elif key in _VM_KEYS:
             fields[key] = value
@@ -307,16 +343,16 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     _warn_unrecognized_keys(raw, source)
     project_raw = raw.get("project", {})
 
-    for field in _REQUIRED_PROJECT_FIELDS:
-        if field not in project_raw or not project_raw[field]:
-            msg = f"{source}: missing or empty required field '{field}'"
+    for required_field in _REQUIRED_PROJECT_FIELDS:
+        if required_field not in project_raw or not project_raw[required_field]:
+            msg = f"{source}: missing or empty required field '{required_field}'"
             raise ConfigError(msg)
 
-    for field in _REQUIRED_PROJECT_FIELDS:
-        value = project_raw[field]
-        if value not in _ENUMS[field]:
-            allowed = ", ".join(sorted(_ENUMS[field]))
-            msg = f"{source}: invalid {field} '{value}' (allowed: {allowed})"
+    for required_field in _REQUIRED_PROJECT_FIELDS:
+        value = project_raw[required_field]
+        if value not in _ENUMS[required_field]:
+            allowed = ", ".join(sorted(_ENUMS[required_field]))
+            msg = f"{source}: invalid {required_field} '{value}' (allowed: {allowed})"
             raise ConfigError(msg)
 
     raw_lang = project_raw.get("primary-language", "")

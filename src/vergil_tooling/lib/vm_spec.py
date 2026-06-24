@@ -172,8 +172,9 @@ def compose_vm_spec(
     base: Mapping[str, object],
     stanza: VmStanza | None,
     override: Mapping[str, object] | None,
+    instance: str | None = None,
 ) -> ComposedSpec:
-    """Overlay the five precedence tiers into the effective spec for one (identity, repo)."""
+    """Overlay the precedence tiers into the effective spec for one (identity, repo[, name])."""
     # Tier 1+2: built-in/base footprint from the identity.
     acc = _Acc(
         cpus=cast("int", base["cpus"]),
@@ -198,13 +199,26 @@ def compose_vm_spec(
     )
 
     # Tiers 3 + 4: repo [vm] (all-identity), then [vm.<identity>] role overlay.
+    role = None
     if stanza is not None:
         _apply_overlay(acc, stanza)
         role = stanza.roles.get(identity)
         if role is not None:
             _apply_overlay(acc, role)
 
-    # Tier 5: host override (wins). Flag any scalar pushed below the repo-declared floor.
+    # Tier 5: the named-instance overlay, if a name was requested.
+    if instance is not None:
+        instances = role.instances if role is not None else {}
+        overlay = instances.get(instance)
+        if overlay is None:
+            avail = ", ".join(sorted(instances)) if instances else "(none)"
+            msg = (
+                f"identity {identity!r}: no instance {instance!r} for this repo; available: {avail}"
+            )
+            raise SpecError(msg)
+        _apply_overlay(acc, overlay)
+
+    # Host override (wins). Flag any scalar pushed below the repo-declared floor.
     under: list[str] = []
     if override:
         acc.customized = True
@@ -288,6 +302,33 @@ def _validate_backend(identity: str, acc: _Acc) -> None:
 # enforces that loudly rather than silently producing a name that won't decode.
 _TIER_SEP = "."
 
+_INSTANCE_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def validate_instance_name(name: str) -> None:
+    """Reject an instance name that is not [a-z0-9]+ with single internal hyphens.
+
+    A double dash would break the readable ``--``-joined state slug; an empty or
+    upper-cased name is also rejected. Raises loudly (no-silent-failures).
+    """
+    if not _INSTANCE_NAME_RE.fullmatch(name):
+        msg = (
+            f"instance name {name!r} must be lowercase [a-z0-9-] with single internal "
+            f"hyphens (no '--', no leading/trailing hyphen)"
+        )
+        raise ValueError(msg)
+
+
+def validate_repo_segment(repo: str) -> None:
+    """Reject a repo name containing '--', which would make the state slug ambiguous."""
+    if "--" in repo:
+        msg = (
+            f"repo name {repo!r} must not contain '--' (it would make the "
+            f"'--'-joined instance handle ambiguous)"
+        )
+        raise ValueError(msg)
+
+
 _UNIX_PATH_MAX = 104
 # Lima validates the longest socket path it might create:
 #   <home>/.lima/<instance>/ssh.sock.<16-char worst-case reservation>
@@ -303,14 +344,18 @@ def lima_name_budget(home: str | None = None) -> int:
 
 
 def instance_name(
-    identity: str, org: str | None, repo: str | None, *, home: str | None = None
+    identity: str,
+    org: str | None,
+    repo: str | None,
+    name: str | None = None,
+    *,
+    home: str | None = None,
 ) -> str:
-    """Derive the Lima instance name. Bare identity = base box; ``.``-joined = dedicated.
+    """Derive the Lima instance name. Bare identity = base; ``.``-joined = dedicated.
 
-    Dedicated names are returned verbatim when they fit ``lima_name_budget``; over
-    budget they are truncated and hashed (mirroring ``vm_cloud.cloud_resource_name``)
-    so Lima's worst-case socket path stays under UNIX_PATH_MAX. ``recover_triple``
-    (vrg_vm) reverses a mangled name via the per-instance sidecar.
+    A named instance appends ``.<name>`` as a fourth segment. Over budget, the name
+    is truncated and hashed (the digest input includes ``name`` so distinct instances
+    differ); ``recover_handle`` (vrg_vm) reverses a mangled name via the sidecar.
     """
     if org is None or repo is None:
         return identity
@@ -318,7 +363,10 @@ def instance_name(
         if _TIER_SEP in value:
             msg = f"{tier} name {value!r} must not contain '{_TIER_SEP}'"
             raise ValueError(msg)
-    full = _TIER_SEP.join((identity, org, repo))
+    segments = [identity, org, repo]
+    if name:
+        segments.append(name)
+    full = _TIER_SEP.join(segments)
     budget = lima_name_budget(home)
     if len(full) <= budget:
         return full
@@ -328,9 +376,51 @@ def instance_name(
             f"{identity!r}: budget {budget} < {len(identity) + 7}"
         )
         raise SpecError(msg)
-    digest = hashlib.sha256(f"{identity}/{org}/{repo}".encode()).hexdigest()[:6]
+    digest_src = "/".join(segments)
+    digest = hashlib.sha256(digest_src.encode()).hexdigest()[:6]
     keep = budget - 7
     return f"{full[:keep].rstrip('._-')}-{digest}"
+
+
+_SLUG_SEP = "--"
+
+
+def state_slug(
+    identity: str, org: str | None = None, repo: str | None = None, name: str | None = None
+) -> str:
+    """The readable '--'-joined handle: state-path key and cloud-name hash input.
+
+    ``identity`` (base) / ``identity--org--repo`` (default dedicated) /
+    ``identity--org--repo--name`` (named). Reversal is via labels (cloud) and the
+    sidecar (Lima), not by splitting — but '--' keeps the path human-readable.
+    """
+    if org is None or repo is None:
+        return identity
+    segments = [identity, org, repo]
+    if name:
+        segments.append(name)
+    return _SLUG_SEP.join(segments)
+
+
+def split_state_slug(slug: str) -> tuple[str, str | None, str | None, str | None]:
+    """Reverse state_slug. 1 segment = base; 3 = default dedicated; 4 = named instance.
+
+    Unambiguous because identity/org/repo never contain '--' (repo names with '--'
+    are rejected at parse time), so this is the exact inverse — no labels needed.
+
+    Deliberate symmetry: ``split_state_slug`` uses ``'--'`` (cloud/state paths);
+    ``parse_instance_name`` uses ``'.'`` (Lima instance names). The delimiters and
+    segment rules differ — do NOT merge them.
+    """
+    parts = slug.split(_SLUG_SEP)
+    if len(parts) == 1:
+        return parts[0], None, None, None
+    if len(parts) == 3:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], None
+    if len(parts) == 4:  # noqa: PLR2004
+        return parts[0], parts[1], parts[2], parts[3]
+    msg = f"unparseable state slug: {slug!r}"
+    raise ValueError(msg)
 
 
 def parse_instance_name(name: str) -> tuple[str, str | None, str | None]:

@@ -17,10 +17,11 @@ def test_write_then_read_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(lima.Path, "home", classmethod(lambda cls: tmp_path))
     lima.write_instance_meta("u.org.repo", "vergil-user", "org", "repo")
     assert lima.read_instance_meta("u.org.repo") == {
-        "schema": 1,
+        "schema": 2,
         "identity": "vergil-user",
         "org": "org",
         "repo": "repo",
+        "name": "",
     }
 
 

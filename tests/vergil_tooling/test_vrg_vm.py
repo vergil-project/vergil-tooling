@@ -3,7 +3,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 import textwrap
 import types
 from pathlib import Path
@@ -36,7 +38,7 @@ from vergil_tooling.bin.vrg_vm import (
     _warn_under,
     discover_dedicated,
     main,
-    recover_triple,
+    recover_handle,
     resolve_borrow,
 )
 from vergil_tooling.lib.identity import Identity, IdentityConfig
@@ -147,26 +149,59 @@ def config_file_top_model(tmp_path: Path) -> Path:
     return p
 
 
-def test_recover_triple_prefers_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_recover_handle_prefers_sidecar(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "vergil_tooling.bin.vrg_vm.read_instance_meta",
-        lambda inst: {"schema": 1, "identity": "vergil-user", "org": "o", "repo": "r"},
+        lambda inst: {"schema": 1, "identity": "vergil-user", "org": "o", "repo": "r", "name": ""},
     )
-    assert recover_triple("mangled-abc123") == ("vergil-user", "o", "r")
+    assert recover_handle("mangled-abc123") == ("vergil-user", "o", "r", None)
 
 
-def test_recover_triple_falls_back_to_parse_for_legacy_name(
+def test_recover_handle_falls_back_to_parse_for_legacy_name(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.read_instance_meta", lambda inst: None)
-    assert recover_triple("vergil-user.acme.widgets") == ("vergil-user", "acme", "widgets")
+    assert recover_handle("vergil-user.acme.widgets") == ("vergil-user", "acme", "widgets", None)
 
 
-def test_recover_triple_falls_back_to_parse_for_base_box(
+def test_recover_handle_falls_back_to_parse_for_base_box(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.read_instance_meta", lambda inst: None)
-    assert recover_triple("vergil-user") == ("vergil-user", None, None)
+    assert recover_handle("vergil-user") == ("vergil-user", None, None, None)
+
+
+def test_recover_handle_roundtrips_named_instance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+    from vergil_tooling.lib.lima import write_instance_meta
+
+    inst = "vergil-user.lmf.mq.cloud-x86"
+    write_instance_meta(inst, "vergil-user", "lmf", "mq", "cloud-x86")
+    assert recover_handle(inst) == ("vergil-user", "lmf", "mq", "cloud-x86")
+
+
+def test_recover_handle_default_instance_name_none(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+    from vergil_tooling.lib.lima import write_instance_meta
+
+    inst = "vergil-user.lmf.mq"
+    write_instance_meta(inst, "vergil-user", "lmf", "mq")
+    assert recover_handle(inst) == ("vergil-user", "lmf", "mq", None)
+
+
+def test_recover_handle_parse_fallback_no_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin.vrg_vm import recover_handle
+
+    assert recover_handle("vergil-user.lmf.mq") == ("vergil-user", "lmf", "mq", None)
 
 
 def _stub_target(
@@ -196,6 +231,7 @@ def _stub_target(
             repo=repo,
             instance=instance,
             fingerprint="fp",
+            instance_name_arg=None,
         ),
     )
 
@@ -203,7 +239,7 @@ def _stub_target(
 def test_create_from_target_writes_sidecar_for_dedicated(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    calls: list[tuple[str, ...]] = []
+    calls: list[tuple[object, ...]] = []
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.create_vm", lambda *a, **k: None)
     monkeypatch.setattr("vergil_tooling.bin.vrg_vm.write_instance_meta", lambda *a: calls.append(a))
     target = _stub_target(
@@ -214,7 +250,7 @@ def test_create_from_target_writes_sidecar_for_dedicated(
         instance="vergil-user.acme.widgets",
     )
     _create_from_target(target, tmp_path / "t.yaml")
-    assert calls == [("vergil-user.acme.widgets", "vergil-user", "acme", "widgets")]
+    assert calls == [("vergil-user.acme.widgets", "vergil-user", "acme", "widgets", None)]
 
 
 def test_create_from_target_skips_sidecar_for_base(
@@ -661,15 +697,18 @@ class TestRestart:
 
 class TestDestroy:
     @patch("vergil_tooling.bin.vrg_vm.delete_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Running")
-    def test_destroy(self, _status: MagicMock, mock_delete: MagicMock, config_file: Path) -> None:
-        result = main(["destroy", "--config", str(config_file)])
+    @patch(
+        "vergil_tooling.bin.vrg_vm.list_vms",
+        return_value=[{"name": "vergil-agent", "status": "Running"}],
+    )
+    def test_destroy(self, _list: MagicMock, mock_delete: MagicMock, config_file: Path) -> None:
+        result = main(["destroy", "--yes", "--config", str(config_file)])
         assert result == 0
         mock_delete.assert_called_once_with("vergil-agent")
 
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="")
-    def test_destroy_nonexistent(self, _status: MagicMock, config_file: Path) -> None:
-        result = main(["destroy", "--config", str(config_file)])
+    @patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[])
+    def test_destroy_nonexistent(self, _list: MagicMock, config_file: Path) -> None:
+        result = main(["destroy", "--yes", "--config", str(config_file)])
         assert result == 1
 
 
@@ -2905,13 +2944,19 @@ class TestDedicatedGateThroughCommands:
 
 class TestLifecyclePositional:
     @patch("vergil_tooling.bin.vrg_vm.delete_vm")
-    @patch("vergil_tooling.bin.vrg_vm.vm_status", return_value="Stopped")
+    @patch(
+        "vergil_tooling.bin.vrg_vm._recorded_state_for_handle",
+        return_value=None,  # will be set in test
+    )
     def test_destroy_targets_dedicated_instance(
-        self, _status: MagicMock, mock_delete: MagicMock, tmp_path: Path
+        self, mock_rs: MagicMock, mock_delete: MagicMock, tmp_path: Path
     ) -> None:
+        from vergil_tooling.bin.vrg_vm import RecordedState
+
         # No repo/spec needed: an orphan (repo dropped [vm]) is still reachable by name.
+        mock_rs.return_value = RecordedState(lima_instance="vergil-user.lmf.mq", tofu_dirs=[])
         cfg = _identities(tmp_path, tmp_path / "projects")
-        assert main(["destroy", "lmf/mq", "--config", str(cfg)]) == 0
+        assert main(["destroy", "--yes", "lmf/mq", "--config", str(cfg)]) == 0
         mock_delete.assert_called_once_with("vergil-user.lmf.mq")
 
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
@@ -3679,12 +3724,22 @@ class TestCloudDestroy:
     def test_cloud_destroy_calls_destroy_vm(
         self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        with _CloudPatches(tmp_path / "state") as m:
-            result = main(["destroy", "lmf/cloud", "--config", str(_cloud_repo)])
+        from vergil_tooling.bin.vrg_vm import RecordedState
+
+        state_dir = tmp_path / "state" / "gcp"
+        rs = RecordedState(lima_instance=None, tofu_dirs=[("gcp", state_dir)])
+        with (
+            _CloudPatches(tmp_path / "state") as m,
+            patch(
+                "vergil_tooling.bin.vrg_vm._recorded_state_for_handle",
+                return_value=rs,
+            ),
+        ):
+            result = main(["destroy", "--yes", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 0
-        m["destroy_vm"].assert_called_once()
+        m["destroy_vm"].assert_called_once_with(ANY, state_dir)
         m["destroy_volume"].assert_not_called()
-        assert "destroyed" in capsys.readouterr().out
+        assert "Destroyed" in capsys.readouterr().out
 
 
 class TestCloudRebuild:
@@ -3820,14 +3875,40 @@ class TestCloudList:
         assert "BACKEND" in buf.getvalue()
         assert "local" in buf.getvalue()
 
-    def test_cloud_rows_enumerated_with_degraded_status(
+    def test_cloud_rows_enumerated_with_no_vm_status(
         self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # Build a fake tofu state tree: ~/.config/vergil/tofu/<key>/<provider>/volume.tfstate
+        # volume.tfstate present, vm.tfstate absent -> no-vm row (volume orphaned from VM).
         fake_home = tmp_path / "home"
         tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
         tofu.mkdir(parents=True)
         (tofu / "volume.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+
+        import io
+        from contextlib import redirect_stdout
+
+        buf = io.StringIO()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.list_vms", return_value=[]),
+            redirect_stdout(buf),
+        ):
+            result = main(["list", "--config", str(config_file)])
+        assert result == 0
+        out = buf.getvalue()
+        assert "vergil-lmf-cloud" in out
+        assert "gcp" in out
+        assert "no-vm" in out
+
+    def test_cloud_rows_enumerated_with_degraded_status(
+        self, config_file: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # volume.tfstate + vm.tfstate present, no zone -> degraded placeholder.
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
 
         import io
@@ -3876,7 +3957,8 @@ class TestCloudList:
         from vergil_tooling.bin.vrg_vm import _cloud_list_rows
 
         monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "empty"))
-        assert _cloud_list_rows() == []
+        config = IdentityConfig(identities={}, default_identity=None)
+        assert _cloud_list_rows(config) == []
 
     def test_off_platform_vms_recovers_identity_from_labels(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4007,6 +4089,330 @@ class TestCloudList:
         transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
         # Only the active row is retained, keyed by session id.
         assert set(rows) == {"c1"}
+
+
+def test_list_shows_instance_column_and_no_vm_row(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin import vrg_vm
+
+    # Off-platform: a volume exists, VM is gone -> no-vm row with size.
+    monkeypatch.setattr(
+        vrg_vm,
+        "_off_platform_vms",
+        lambda: [
+            vrg_vm.OffPlatformVm(
+                name="vergil-user--lmf--mq--native-ha",
+                provider="gcp",
+                state_dir=tmp_path,
+                identity="vergil-user",
+                org="lmf",
+                repo="mq",
+                instance="native-ha",
+                status="",
+                volume_size="200GiB",
+                vm_present=False,
+            )
+        ],
+    )
+    monkeypatch.setattr(vrg_vm, "list_vms", lambda: [])
+    monkeypatch.setattr(
+        vrg_vm,
+        "load_config",
+        lambda p: IdentityConfig(identities={}, default_identity=None),
+    )
+    args = argparse.Namespace(config=None, sessions=False)
+    assert vrg_vm._cmd_list(args) == 0
+    out = capsys.readouterr().out
+    assert "INSTANCE" in out
+    assert "native-ha" in out
+    assert "no-vm" in out
+    assert "200GiB" in out
+
+
+# ---------------------------------------------------------------------------
+# Helpers for _classify_off_platform tests
+# ---------------------------------------------------------------------------
+
+_REPO_TOML_HEAD = """\
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+_GCP_NAMED_INSTANCE_VM = """
+[vm]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+
+[vm.vergil-user.instances.cloud-x86]
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "300GiB"
+"""
+
+_AZURE_NAMED_INSTANCE_VM = """
+[vm]
+backend = "off-platform"
+provider = "azure"
+region = "eastus"
+instance = "Standard_D8s_v3"
+volume = "300GiB"
+
+[vm.vergil-user.instances.cloud-x86]
+provider = "azure"
+region = "eastus"
+instance = "Standard_D8s_v3"
+volume = "300GiB"
+"""
+
+_NO_VM_TOML = """
+[project]
+repository-type = "tooling"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["3.14"]
+"""
+
+
+def _make_classify_repo(projects: Path, org: str, repo: str, vm_section: str) -> None:
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "vergil.toml").write_text(_REPO_TOML_HEAD + vm_section)
+
+
+def _config_with_gcp_instance(
+    identity_name: str, org: str, repo: str, inst_name: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity declares a GCP named instance."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, _GCP_NAMED_INSTANCE_VM)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_with_azure_instance(
+    identity_name: str, org: str, repo: str, inst_name: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity declares an Azure named instance."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, _AZURE_NAMED_INSTANCE_VM)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_no_repo_vm(identity_name: str, org: str, repo: str, tmp_path: Path) -> IdentityConfig:
+    """IdentityConfig whose identity has a repo with no [vm] stanza."""
+    projects = tmp_path / "projects"
+    _make_classify_repo(projects, org, repo, "")
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+def _config_no_vergil_toml(
+    identity_name: str, org: str, repo: str, tmp_path: Path
+) -> IdentityConfig:
+    """IdentityConfig whose identity has no vergil.toml in the repo dir."""
+    projects = tmp_path / "projects"
+    # Create the repo dir but no vergil.toml
+    repo_dir = projects / org / repo
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    ident = Identity(
+        vm_instance=identity_name,
+        projects_dir=str(projects),
+    )
+    return IdentityConfig(identities={identity_name: ident}, default_identity=identity_name)
+
+
+# ---------------------------------------------------------------------------
+# Tests for _classify_off_platform
+# ---------------------------------------------------------------------------
+
+
+def test_classify_off_platform_orphaned_when_provider_switched(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # The repo's current profile composes off-platform/azure, but the recorded box is gcp.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_with_azure_instance("vergil-user", "lmf", "mq", "cloud-x86", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_orphaned_when_stanza_dropped(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    # vergil.toml present but no [vm] stanza -> SpecError -> orphaned
+    config = _config_no_repo_vm("vergil-user", "lmf", "mq", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_ok_when_matches(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_with_gcp_instance("vergil-user", "lmf", "mq", "cloud-x86", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "ok"
+
+
+def test_classify_off_platform_base_slug_returns_ok(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # A base slug (no org/repo) carries no per-repo spec -> always ok.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org=None,
+        repo=None,
+        instance=None,
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = IdentityConfig(identities={}, default_identity=None)
+    assert vrg_vm._classify_off_platform(vm, config) == "ok"
+
+
+def test_classify_off_platform_identity_not_in_config_orphaned(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    # The slug decodes a valid identity name, but it's not in this config.
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = IdentityConfig(identities={}, default_identity=None)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_no_vergil_toml_orphaned(tmp_path: Path) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+    config = _config_no_vergil_toml("vergil-user", "lmf", "mq", tmp_path)
+    assert vrg_vm._classify_off_platform(vm, config) == "orphaned"
+
+
+def test_classify_off_platform_config_error_returns_ok_with_warning(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A malformed vergil.toml triggers a stderr WARNING and conservatively returns 'ok'.
+
+    Mirrors _classify_instance: a broken config must not be treated as orphaned
+    (which could mislead an operator into destroying a live cloud box). The box is
+    listed as 'ok' (unverified) until the config is fixed.
+    """
+    from vergil_tooling.bin import vrg_vm
+
+    projects = tmp_path / "projects"
+    repo_dir = projects / "lmf" / "mq"
+    repo_dir.mkdir(parents=True, exist_ok=True)
+    (repo_dir / "vergil.toml").write_text("[invalid toml")  # malformed -> ConfigError on read
+
+    ident = Identity(vm_instance="vergil-user", projects_dir=str(projects))
+    config = IdentityConfig(identities={"vergil-user": ident}, default_identity="vergil-user")
+
+    vm = vrg_vm.OffPlatformVm(
+        name="vergil-user--lmf--mq--cloud-x86",
+        provider="gcp",
+        state_dir=tmp_path,
+        identity="vergil-user",
+        org="lmf",
+        repo="mq",
+        instance="cloud-x86",
+        status="Running",
+        volume_size=None,
+        vm_present=True,
+    )
+
+    result = vrg_vm._classify_off_platform(vm, config)
+    assert result == "ok"
+    captured = capsys.readouterr()
+    assert "WARNING" in captured.err
+    assert "vergil-user--lmf--mq--cloud-x86" in captured.err
+    assert "unverified" in captured.err
 
 
 class TestCloudUnderProvision:
@@ -4164,6 +4570,27 @@ class TestVolumeRows:
         assert row["zone"] == "us-central1-a"
         assert row["region"] == "us-central1"
         assert row["provider"] == "gcp"
+        assert row["instance"] == "—"  # default labels have no vergil-instance
+
+    def test_builds_row_with_instance_label(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _volume_rows
+
+        home = tmp_path / "home"
+        _write_volume_state(
+            home,
+            "vergil-lmf-cloud",
+            labels={
+                "vergil-identity": "vergil",
+                "vergil-org": "lmf",
+                "vergil-repo": "cloud",
+                "vergil-instance": "cloud-x86",
+            },
+        )
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+        (row,) = _volume_rows()
+        assert row["instance"] == "cloud-x86"
 
     def test_placeholder_row_for_never_applied_state(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4178,6 +4605,7 @@ class TestVolumeRows:
         assert row["identity"] == "—"
         assert row["name"] == "—"
         assert row["size"] == "—"
+        assert row["instance"] == "—"
 
     def test_falls_back_to_state_key_when_labels_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -4279,3 +4707,511 @@ class TestVolumesCommand:
         assert "LIVE" in out
         assert "READY" in out
         live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")
+
+    def test_volumes_shows_instance_column(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+        from vergil_tooling.bin import vrg_vm
+
+        monkeypatch.setattr(
+            vrg_vm,
+            "_volume_rows",
+            lambda: [
+                {
+                    "identity": "vergil-user",
+                    "scope": "lmf/mq",
+                    "instance": "cloud-x86",
+                    "name": "vrg-abc123",
+                    "size": "300GiB",
+                    "zone": "us-central1-b",
+                    "region": "us-central1",
+                    "provider": "gcp",
+                }
+            ],
+        )
+        args = vrg_vm.argparse.Namespace(live=False)
+        assert vrg_vm._cmd_volumes(args) == 0
+        out = capsys.readouterr().out
+        assert "INSTANCE" in out
+        assert "cloud-x86" in out
+
+
+# ---------------------------------------------------------------------------
+# Task 7 — _recorded_state_for_handle / RecordedState
+# ---------------------------------------------------------------------------
+#
+# instance_name() computes a Lima socket-path budget from the home directory.
+# pytest's tmp_path is typically ≥50 chars, leaving <14 chars of budget — not
+# enough for "vergil-user.lmf.mq.cloud-x86" (30 chars).  We therefore use a
+# short home path created via tempfile.mkdtemp() (~13 chars), which leaves a
+# budget of ≥57 chars — enough for the full unmangled instance name.
+
+
+@pytest.fixture
+def short_home(monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """Home dir short enough to fit a Lima socket-path budget; auto-removed after the test."""
+    short = Path(tempfile.mkdtemp())
+    monkeypatch.setattr("pathlib.Path.home", lambda: short)
+    yield short
+    shutil.rmtree(short, ignore_errors=True)
+
+
+def test_recorded_state_enumerates_lima_and_tofu(
+    monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
+) -> None:
+    home = short_home
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    for provider in ("gcp", "azure"):
+        d = home / ".config" / "vergil" / "tofu" / slug / provider
+        d.mkdir(parents=True)
+        (d / "vm.tfstate").write_text("{}")
+    # Lima instance presence is mocked via list_vms
+    monkeypatch.setattr(
+        "vergil_tooling.bin.vrg_vm.list_vms",
+        lambda: [{"name": "vergil-user.lmf.mq.cloud-x86", "status": "Running"}],
+    )
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance == "vergil-user.lmf.mq.cloud-x86"
+    assert {p for p, _ in rs.tofu_dirs} == {"gcp", "azure"}
+
+
+def test_recorded_state_no_lima_when_absent(
+    monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
+) -> None:
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance is None
+    assert rs.tofu_dirs == []
+
+
+def test_recorded_state_volume_tfstate_included(
+    monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
+) -> None:
+    """volume.tfstate alone (no vm.tfstate) is still detected as recorded state."""
+    home = short_home
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "volume.tfstate").write_text("{}")
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.lima_instance is None
+    assert {p for p, _ in rs.tofu_dirs} == {"gcp"}
+
+
+def test_recorded_state_both_tfstate_files_included(
+    monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
+) -> None:
+    """A dir with both volume.tfstate and vm.tfstate appears exactly once."""
+    home = short_home
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "volume.tfstate").write_text("{}")
+    (d / "vm.tfstate").write_text("{}")
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert len(rs.tofu_dirs) == 1
+    assert rs.tofu_dirs[0][0] == "gcp"
+
+
+def test_recorded_state_dir_without_tfstate_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+    short_home: Path,
+) -> None:
+    """A provider dir with no .tfstate files is not included in tofu_dirs."""
+    home = short_home
+    monkeypatch.setattr("vergil_tooling.bin.vrg_vm.list_vms", lambda: [])
+    from vergil_tooling.bin.vrg_vm import _recorded_state_for_handle
+    from vergil_tooling.lib.vm_spec import state_slug
+
+    slug = state_slug("vergil-user", "lmf", "mq", "cloud-x86")
+    d = home / ".config" / "vergil" / "tofu" / slug / "gcp"
+    d.mkdir(parents=True)
+    (d / "other.json").write_text("{}")  # no tfstate file
+
+    rs = _recorded_state_for_handle("vergil-user", "lmf", "mq", "cloud-x86")
+    assert rs.tofu_dirs == []
+
+
+# ---------------------------------------------------------------------------
+# Task 8 --- _cmd_destroy / confirmation contract
+# ---------------------------------------------------------------------------
+
+
+class _FakeIdentity:
+    vm_instance = "vergil-user"
+
+
+class _FakeConfig:
+    pass
+
+
+def _destroy_args(
+    workspace: str | None = None,
+    name: str | None = None,
+    yes: bool = False,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="destroy",
+        workspace=workspace,
+        name=name,
+        yes=yes,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def test_destroy_refuses_non_interactive_without_yes(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    assert "--yes" in capsys.readouterr().err
+
+
+def test_destroy_yes_tears_down_lima_and_all_providers(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(
+        lima_instance="vergil-user.lmf.mq.cloud-x86",
+        tofu_dirs=[("gcp", Path("/x/gcp")), ("azure", Path("/x/azure"))],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    deleted: list[str] = []
+    destroyed: list[Path] = []
+    monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d: destroyed.append(d))
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
+    assert destroyed == [Path("/x/gcp"), Path("/x/azure")]
+
+
+def test_destroy_nothing_recorded_returns_one(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_recorded_state_for_handle",
+        lambda *a: vrg_vm.RecordedState(lima_instance=None, tofu_dirs=[]),
+    )
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    assert vrg_vm._cmd_destroy(args) == 1
+    assert "no recorded" in capsys.readouterr().err.lower()
+
+
+def test_destroy_interactive_y_proceeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    deleted: list[str] = []
+    monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_destroy_interactive_n_aborts(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    assert "aborted" in capsys.readouterr().err.lower()
+
+
+def test_destroy_rejects_malformed_instance_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """destroy --name with a grammar-violating name (e.g. 'Bad_Name') must reject loudly
+    before touching recorded state — not silently fall through to 'no recorded state'."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    # _recorded_state_for_handle must NOT be called — validation fires before it.
+    called: list[object] = []
+
+    def _fake_recorded_state(*a: object) -> vrg_vm.RecordedState:
+        called.append(a)
+        return vrg_vm.RecordedState(lima_instance=None, tofu_dirs=[])
+
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", _fake_recorded_state)
+    args = _destroy_args(workspace="lmf/mq", name="Bad_Name", yes=True)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Bad_Name" in err
+    assert called == [], "recorded-state lookup must not run after a malformed name"
+
+
+def test_destroy_single_box_uses_singular_wording(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """When exactly one box will be destroyed the listing header says 'box', not 'boxes',
+    and the non-interactive refusal says '1 recorded box'."""
+    from vergil_tooling.bin import vrg_vm
+
+    rs = vrg_vm.RecordedState(lima_instance="vergil-user.lmf.mq.cloud-x86", tofu_dirs=[])
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=False)
+
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 1
+    out = capsys.readouterr()
+    assert "the following recorded box:" in out.out
+    assert "1 recorded box" in out.err
+    assert "boxes" not in out.out
+    assert "boxes" not in out.err
+
+
+# ---------------------------------------------------------------------------
+# Task 9 — stop/start/restart resolve by handle, Lima-only
+# ---------------------------------------------------------------------------
+
+
+def _stop_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="stop",
+        workspace=workspace,
+        name=name,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def _start_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="start",
+        workspace=workspace,
+        name=name,
+        tag="",
+        timeout="30m",
+        allow_stale_vm=False,
+        identity="vergil-user",
+        config=None,
+    )
+
+
+def _restart_args(
+    workspace: str | None = None,
+    name: str | None = None,
+) -> argparse.Namespace:
+    return argparse.Namespace(
+        command="restart",
+        workspace=workspace,
+        name=name,
+        tag="",
+        identity="vergil-user",
+        config=None,
+    )
+
+
+class _FakeTarget:
+    """Minimal stand-in for Target with a configurable off_platform flag."""
+
+    def __init__(self, *, off_platform: bool = False) -> None:
+        self.spec = types.SimpleNamespace(off_platform=off_platform)
+        self.identity_name = "vergil-user"
+
+
+def test_stop_named_instance_targets_handle_lima(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stop --name routes stop_vm to the 4-segment Lima instance name."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(vrg_vm, "_reject_if_off_platform", lambda args: False)
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_instance",
+        lambda args: (
+            "vergil-user",
+            _FakeIdentity(),
+            _FakeConfig(),
+            "vergil-user.lmf.mq.cloud-x86",
+        ),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _stop_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_stop(args) == 0
+    assert stopped == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_stop_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """stop --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _stop_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_stop(args) == 1
+    assert stopped == []
+    assert "ephemeral" in capsys.readouterr().err.lower()
+
+
+def test_start_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """start --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    args = _start_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_start(args) == 1
+    assert "ephemeral" in capsys.readouterr().err.lower()
+
+
+def test_restart_named_instance_targets_handle_lima(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """restart --name routes stop_vm/start_vm to the 4-segment Lima instance name."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(vrg_vm, "_reject_if_off_platform", lambda args: False)
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_instance",
+        lambda args: (
+            "vergil-user",
+            _FakeIdentity(),
+            _FakeConfig(),
+            "vergil-user.lmf.mq.cloud-x86",
+        ),
+    )
+    stopped: list[str] = []
+    started: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    monkeypatch.setattr(vrg_vm, "start_vm", lambda i: started.append(i))
+    monkeypatch.setattr(vrg_vm, "inject_credentials", lambda transport, identity: None)
+    args = _restart_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_restart(args) == 0
+    assert stopped == ["vergil-user.lmf.mq.cloud-x86"]
+    assert started == ["vergil-user.lmf.mq.cloud-x86"]
+
+
+def test_restart_named_off_platform_still_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """restart --name rejects off-platform targets before touching the VM."""
+    from vergil_tooling.bin import vrg_vm
+
+    monkeypatch.setattr(
+        vrg_vm,
+        "_resolve_target",
+        lambda args, **k: _FakeTarget(off_platform=True),
+    )
+    stopped: list[str] = []
+    monkeypatch.setattr(vrg_vm, "stop_vm", lambda i: stopped.append(i))
+    args = _restart_args(workspace="lmf/mq", name="cloud-x86")
+    assert vrg_vm._cmd_restart(args) == 1
+    assert stopped == []
+    assert "ephemeral" in capsys.readouterr().err.lower()
