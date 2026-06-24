@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.68] - 2026-06-24
+
+### Documentation
+
+- Scaleway Elastic Metal design + provider-dispatch Phase 1 plan (#1851) (#1852)
+
+### Features
+
+- defer artifact-publish failures so vrg-release never strands develop (#1859)
+- add EXTERNAL IP column to list for off-platform VMs (#1860)
+
+### Vrg-worktree-status
+
+- add LAST COMMIT and LAST MODIFIED age columns (#1861)
+
 ## [2.1.67] - 2026-06-24
 
 ### Bug fixes
