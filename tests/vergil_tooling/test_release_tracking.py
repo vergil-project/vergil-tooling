@@ -346,3 +346,17 @@ def test_comment_phase_failed_no_detail() -> None:
         patch(_MOD + ".github.run"),
     ):
         comment_phase_failed(ctx, "merge-release", exc)
+
+
+def test_comment_publish_deferred_names_jobs_and_warns_resume() -> None:
+    from vergil_tooling.lib.release.tracking import comment_publish_deferred
+
+    ctx = _ctx()
+    ctx.tag = "v2.1.2"
+    ctx.cd_run_url = "https://run/55"
+    with patch(_MOD + "._comment") as comment:
+        comment_publish_deferred(ctx, ["docker-publish", "docs"])
+    body = comment.call_args[0][1]
+    assert "docker-publish" in body and "docs" in body
+    assert "--resume" in body  # explicitly steers away from it
+    assert "https://run/55" in body
