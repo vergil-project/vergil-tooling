@@ -38,7 +38,7 @@ def _ctx() -> ReleaseContext:
     return ctx
 
 
-def test_watch_cd_check_status_false_reports_completed(
+def test_watch_cd_reports_completed(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from vergil_tooling.lib.release.confirm import _watch_cd
@@ -53,12 +53,11 @@ def test_watch_cd_check_status_false_reports_completed(
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.read_output", return_value=_SHA),
     ):
-        run_id, run_url = _watch_cd(ctx, branch="main", check_status=False)
+        run_id, run_url = _watch_cd(ctx, branch="main")
     assert run_id == "12345"
     out = capsys.readouterr().out
     assert "CD workflow completed" in out
     assert "CD workflow succeeded" not in out
-
 
 
 def test_confirm_main_success() -> None:
@@ -223,7 +222,6 @@ def test_confirm_develop_fails_no_cd_run() -> None:
         pytest.raises(ReleaseError, match="No CD workflow run found on develop"),
     ):
         confirm_develop(ctx)
-
 
 
 def test_fetch_run_jobs_parses_jobs_array() -> None:
@@ -451,3 +449,26 @@ def test_confirm_develop_clean_defers_nothing() -> None:
     ):
         confirm_develop(ctx)
     assert ctx.deferred_publish_failures == []
+
+
+def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
+    """When no expected job ever settles, _settled_run_jobs exhausts all
+    attempts and returns the final (unsettled) jobs snapshot."""
+    from vergil_tooling.lib.release.confirm import _JOB_SETTLE_ATTEMPTS, _settled_run_jobs
+
+    ctx = _ctx()
+    # Jobs that never contain the expected "release" job.
+    unsettled = [_job("docs / docs")]
+    with (
+        patch(
+            _MOD + "._fetch_run_jobs",
+            return_value=unsettled,
+        ) as mock_fetch,
+        patch(_MOD + ".time.sleep") as mock_sleep,
+    ):
+        result = _settled_run_jobs(ctx, "runid", ("release",))
+
+    assert result == unsettled
+    assert mock_fetch.call_count == _JOB_SETTLE_ATTEMPTS
+    # sleep is called between attempts (not after the last one)
+    assert mock_sleep.call_count == _JOB_SETTLE_ATTEMPTS - 1

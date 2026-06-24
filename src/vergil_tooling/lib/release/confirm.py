@@ -24,7 +24,7 @@ _JOB_SETTLE_ATTEMPTS = 12
 
 def confirm_main(ctx: ReleaseContext) -> None:
     """Watch CD on main: hard-verify the release, defer other publish jobs."""
-    run_id, run_url = _watch_cd(ctx, branch="main", check_status=False)
+    run_id, run_url = _watch_cd(ctx, branch="main")
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
@@ -46,7 +46,7 @@ def confirm_main(ctx: ReleaseContext) -> None:
 
 def confirm_develop(ctx: ReleaseContext) -> None:
     """Watch CD on develop; defer a docs publish failure rather than raise."""
-    run_id, run_url = _watch_cd(ctx, branch="develop", check_status=False)
+    run_id, run_url = _watch_cd(ctx, branch="develop")
     ctx.develop_cd_run_id = run_id
     ctx.develop_cd_run_url = run_url
 
@@ -65,7 +65,6 @@ def _watch_cd(
     ctx: ReleaseContext,
     *,
     branch: str,
-    check_status: bool = True,
 ) -> tuple[str, str]:
     print(f"Waiting for {_CD_WORKFLOW} on {branch}...")
     git.run("fetch", "origin", branch)
@@ -86,12 +85,9 @@ def _watch_cd(
     )
     print(f"  Workflow run: {run_url}")
 
-    watch_workflow(ctx.repo, run_id, check_status=check_status)
+    watch_workflow(ctx.repo, run_id, check_status=False)
 
-    if check_status:
-        print(f"  CD workflow succeeded: {run_url}")
-    else:
-        print(f"  CD workflow completed: {run_url}")
+    print(f"  CD workflow completed: {run_url}")
     return run_id, run_url
 
 
@@ -187,9 +183,7 @@ def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
                 raise ReleaseError(
                     phase="confirm-main",
                     command=f"verify job '{_RELEASE_JOB_NAME}'",
-                    message=(
-                        f"Release job did not succeed (conclusion: '{conclusion}')."
-                    ),
+                    message=(f"Release job did not succeed (conclusion: '{conclusion}')."),
                 )
             return
     raise ReleaseError(

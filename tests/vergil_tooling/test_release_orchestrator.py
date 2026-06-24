@@ -351,13 +351,17 @@ def test_merge_release_skips_when_already_merged() -> None:
 def _state() -> ReleaseState:
     state = ReleaseState(version_override=None, repo_root=Path("/tmp/r"), promote=True)  # noqa: S108
     state.ctx = ReleaseContext(
-        repo="o/r", version="2.1.2", repo_root=Path("/tmp/r"), version_override=None  # noqa: S108
+        repo="o/r",
+        version="2.1.2",
+        repo_root=Path("/tmp/r"),
+        version_override=None,  # noqa: S108
     )
     return state
 
 
 def test_publish_status_raises_when_deferred() -> None:
     state = _state()
+    assert state.ctx is not None
     state.ctx.deferred_publish_failures = ["docker-publish"]
     with pytest.raises(ReleaseError, match="docker-publish"):
         _publish_status_stage(state)
