@@ -749,6 +749,51 @@ def region_zones(region: str) -> list[str]:
     return sorted(result.stdout.split())
 
 
+# --- Instance-family fallback ladder (#1836) ---------------------------------
+#
+# A capacity stockout is specific to a (zone, machine-family) pair: a different
+# family in the same zone often has capacity when the requested one does not. On a
+# reattach the zonal data disk pins the zone, so swapping the family is the only
+# recovery (see apply_vm_with_zone_fallback). The ladder may contain ONLY families
+# that support GCP nested virtualization — nested KVM is the point of these VMs, and
+# a family without it would boot a box with no /dev/kvm and fail the provision.
+# GCE nested virt requires an Intel (VT-x) processor: AMD, Arm, E2, memory-optimized,
+# and H4D VMs are all excluded, so the AMD families (n2d, c2d) are NOT eligible —
+# only the Intel families n2 and c2 are. Verified against GCP's nested-virt overview
+# (docs.cloud.google.com/compute/docs/instances/nested-virtualization/overview, which
+# lists "AMD and Arm processors" among the unsupported), corroborated by the
+# general-purpose machine docs ("N2D VMs don't support ... nested virtualization");
+# checked 2026-06-24. The unit test is only a change-detector — re-verify on edit.
+NESTED_VIRT_FAMILIES = ("n2", "c2")
+
+# Shapes verified to exist for EVERY family in the ladder and actually run
+# off-platform. Family-fallback engages only for these, so we never synthesize an
+# invalid machine type. Adding a size is one line here.
+FALLBACK_SHAPES = frozenset({"standard-8", "standard-16"})
+
+
+def instance_fallback_candidates(requested: str) -> list[str]:
+    """Ordered machine types to try for ``requested``, the requested type first.
+
+    Splits ``requested`` into ``(family, shape)`` (``n2-standard-8`` ->
+    ``("n2", "standard-8")``). When the shape is in ``FALLBACK_SHAPES`` the result is
+    the requested type, then every other ``NESTED_VIRT_FAMILIES`` member at the same
+    shape, deduped. When the shape is unsupported the result is just ``[requested]``
+    (no fallback). If the requested family is not in the ladder (e.g. a misconfigured
+    ``e2`` declared with nested virt) the requested type still leads and the full
+    ladder follows, so fallback still reaches the nested-virt-safe families.
+    """
+    _family, _, shape = requested.partition("-")
+    if not shape or shape not in FALLBACK_SHAPES:
+        return [requested]
+    candidates = [requested]
+    for family in NESTED_VIRT_FAMILIES:
+        candidate = f"{family}-{shape}"
+        if candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
 def apply_vm_with_zone_fallback(
     modules_root: Path,
     state_dir: Path,
@@ -757,43 +802,77 @@ def apply_vm_with_zone_fallback(
     zone: str,
     volume_id: str,
     fallback_zones: list[str],
+    fallback_instances: list[str] | None = None,
 ) -> tuple[str, str, dict[str, str]]:
-    """Apply the VM in ``zone``; on a capacity stockout, recreate the (empty) volume + VM
-    in each ``fallback_zones`` entry until one lands. Returns ``(volume_id, zone, outputs)``.
+    """Apply the VM in ``zone``; on a capacity stockout, recover by either swapping the
+    machine family in the SAME zone (reattach — the zonal data disk pins the zone) or,
+    on a fresh create, recreating the empty volume in each ``fallback_zones`` entry.
 
-    Only the fresh-volume create path supplies fallback zones — a reattach (existing volume
-    with data) passes ``[]``, since a zonal disk cannot move zones without losing its data.
-    ``apply_vm`` already rolls back its own partial state (the firewall) on failure; between
-    fallback zones we additionally destroy the just-created *empty* volume. (#1813)
+    ``fallback_instances`` (the ladder minus the requested type, from
+    ``instance_fallback_candidates``) is supplied on a reattach; ``fallback_zones`` on a
+    fresh create. The two are mutually exclusive today. Family fallback keeps
+    ``volume_id`` untouched — the disk holds data and never moves — whereas the zone
+    sweep destroys the *empty* disk to relocate it. With neither list a capacity error
+    is fatal. (#1813, #1836)
     """
-    tried = [zone]
+    instances = list(fallback_instances or [])
+    tried_zones = [zone]
+    tried_instances = [backend.spec.instance]
     vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
     try:
         return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
     except subprocess.CalledProcessError as exc:
-        if not (fallback_zones and is_zone_capacity_error(exc)):
+        if not is_zone_capacity_error(exc):
             raise
-        print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
+        if not instances and not fallback_zones:
+            raise  # reattach with no ladder (unsupported shape) — original behavior
 
+    # Family fallback — same zone, same volume (a zonal disk with data cannot move).
+    for instance in instances:
+        print(
+            f"  zone {zone}: {tried_instances[-1]} out of capacity — trying {instance}...",
+            file=sys.stderr,
+        )
+        tried_instances.append(instance)
+        vm_vars = cast(
+            "dict[str, Any]",
+            backend.vm_vars(zone=zone, volume_id=volume_id, instance_override=instance),
+        )
+        try:
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+        except subprocess.CalledProcessError as exc:
+            if not is_zone_capacity_error(exc):
+                raise
+
+    # Zone fallback — fresh create only; recreate the empty disk in each next zone.
     for next_zone in fallback_zones:
+        print(f"  zone {zone}: no capacity — trying {next_zone}...", file=sys.stderr)
         destroy_volume(modules_root, state_dir)  # the empty disk; rmtrees the state dir
         state_dir.mkdir(parents=True, exist_ok=True)
         volume_vars = cast("dict[str, Any]", {**backend.volume_vars(), "zone": next_zone})
         volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars)
-        tried.append(zone)
+        tried_zones.append(zone)
         vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
         try:
             return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
         except subprocess.CalledProcessError as exc:
             if not is_zone_capacity_error(exc):
                 raise
-            print(f"  zone {zone}: no capacity — trying another...", file=sys.stderr)
 
-    msg = (
-        f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
-        f"(tried: {', '.join(tried)}). Try a different instance family (e.g. n2d-*), "
-        "another region, or wait for capacity."
-    )
+    # fallback_instances (reattach) and fallback_zones (fresh create) are mutually exclusive
+    # today; if both ever populate, this message names only the families tried.
+    if len(tried_instances) > 1:
+        msg = (
+            f"no nested-virt machine family has capacity in {zone} "
+            f"(tried: {', '.join(tried_instances)}). Wait for capacity, raise quota, "
+            "or try another region."
+        )
+    else:
+        msg = (
+            f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
+            f"(tried: {', '.join(tried_zones)}). Try a different instance family "
+            "(e.g. n2d-*), another region, or wait for capacity."
+        )
     raise RuntimeError(msg)
 
 
@@ -880,6 +959,36 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
             zone=_zone_name(str(attrs.get("zone", ""))),
             labels=labels,
         )
+    return None
+
+
+def parse_vm_machine_type(state_file: Path) -> str | None:
+    """Return the bare machine type from a ``vm.tfstate``'s instance, or ``None``.
+
+    Mirrors ``parse_volume_state``: ``None`` when the file is absent, unreadable,
+    malformed, or carries no applied ``google_compute_instance``. ``machine_type`` may
+    be a bare type or a full selfLink — normalize to the bare name. This is the single
+    source of truth for the family a reattach fallback actually landed on. (#1836)
+    """
+    try:
+        data = json.loads(state_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for resource in data.get("resources", []):
+        if not isinstance(resource, dict) or resource.get("type") != "google_compute_instance":
+            continue
+        instances = resource.get("instances") or []
+        if not instances or not isinstance(instances[0], dict):
+            continue
+        attrs = instances[0].get("attributes")
+        if not isinstance(attrs, dict):
+            continue
+        machine_type = attrs.get("machine_type")
+        if not machine_type:
+            continue
+        return str(machine_type).rsplit("/", 1)[-1]
     return None
 
 
@@ -988,7 +1097,9 @@ class OffPlatformBackend:
             "zone": self.spec.zone,
         }
 
-    def vm_vars(self, *, zone: str, volume_id: str) -> dict[str, object]:
+    def vm_vars(
+        self, *, zone: str, volume_id: str, instance_override: str | None = None
+    ) -> dict[str, object]:
         provision_env = render_provision_env(
             provision_params(
                 packages=list(self.spec.packages),
@@ -1004,7 +1115,10 @@ class OffPlatformBackend:
         return {
             "name": self.name,
             "zone": zone,
-            "instance_type": self.spec.instance,
+            # A family fallback swaps the machine type here ONLY; self.spec is never
+            # mutated, so fingerprint=spec_fingerprint(self.spec) above stays the
+            # declared hash and the drift check never reads a fallback as drift. (#1836)
+            "instance_type": instance_override or self.spec.instance,
             "nested": self.spec.nested,
             "volume_id": volume_id,
             "ssh_user": self.ssh_user,

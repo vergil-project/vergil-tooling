@@ -11,6 +11,8 @@ import pytest
 
 from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.vm_cloud import (
+    FALLBACK_SHAPES,
+    NESTED_VIRT_FAMILIES,
     OffPlatformBackend,
     apply_vm,
     apply_vm_with_zone_fallback,
@@ -22,9 +24,11 @@ from vergil_tooling.lib.vm_cloud import (
     destroy_vm,
     destroy_volume,
     fetch_modules,
+    instance_fallback_candidates,
     is_zone_capacity_error,
     link_cloud_claude_dirs,
     off_platform_transport,
+    parse_vm_machine_type,
     parse_volume_state,
     preflight,
     provision_params,
@@ -34,7 +38,7 @@ from vergil_tooling.lib.vm_cloud import (
     tofu_state_dir,
     zone_to_region,
 )
-from vergil_tooling.lib.vm_spec import ComposedSpec, state_slug
+from vergil_tooling.lib.vm_spec import ComposedSpec, spec_fingerprint, state_slug
 from vergil_tooling.lib.vm_transport import IapTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
@@ -1482,3 +1486,224 @@ def test_cloud_labels_includes_instance_when_named() -> None:
     labels = cloud_labels("vergil-user", "lmf", "mq", "cloud-x86")
     assert labels["vergil-instance"] == "cloud-x86"
     assert "vergil-instance" not in cloud_labels("vergil-user", "lmf", "mq")
+
+
+class TestInstanceFallbackLadder:
+    def test_requested_first_then_same_shape_siblings(self) -> None:
+        assert instance_fallback_candidates("n2-standard-8") == [
+            "n2-standard-8",
+            "c2-standard-8",
+        ]
+
+    def test_dedups_when_requested_family_in_ladder(self) -> None:
+        # c2 is in the ladder; it must appear once, still requested-first.
+        result = instance_fallback_candidates("c2-standard-16")
+        assert result[0] == "c2-standard-16"
+        assert result.count("c2-standard-16") == 1
+        assert set(result) == {
+            "c2-standard-16",
+            "n2-standard-16",
+        }
+
+    def test_unsupported_shape_yields_no_fallback(self) -> None:
+        assert instance_fallback_candidates("n2-highmem-8") == ["n2-highmem-8"]
+        assert instance_fallback_candidates("n2-standard-4") == ["n2-standard-4"]
+
+    def test_requested_family_not_in_ladder_still_leads(self) -> None:
+        # A misconfigured non-nested-virt family: original first, then full ladder.
+        assert instance_fallback_candidates("e2-standard-8") == [
+            "e2-standard-8",
+            "n2-standard-8",
+            "c2-standard-8",
+        ]
+
+    def test_ladder_change_detector(self) -> None:
+        # NOT a validity proof — pins the curated values so an edit is deliberate.
+        # Real nested-virt validity is verified by hand against GCP docs (#1836):
+        # GCE nested virt is Intel-only, so the AMD families (n2d, c2d) are excluded.
+        assert NESTED_VIRT_FAMILIES == ("n2", "c2")
+        assert FALLBACK_SHAPES == frozenset({"standard-8", "standard-16"})  # noqa: SIM300 — variable == literal reads naturally for a change-detector pin
+
+
+class TestVmVarsInstanceOverride:
+    def test_override_swaps_machine_type_but_keeps_declared_fingerprint(self) -> None:
+        spec = _off_spec(instance="n2-standard-8")
+        b = OffPlatformBackend(spec, "vergil-user", "o", "r")
+        declared_fp = spec_fingerprint(spec)
+        would_be_landed_fp = spec_fingerprint(dataclasses.replace(spec, instance="n2d-standard-8"))
+
+        v = b.vm_vars(zone="us-central1-f", volume_id="v1", instance_override="n2d-standard-8")
+
+        # The tofu machine type is the fallback family...
+        assert v["instance_type"] == "n2d-standard-8"
+        # ...but the stamped fingerprint is the DECLARED one, never the landed family's.
+        assert declared_fp in str(v["provision_env"])
+        assert would_be_landed_fp not in str(v["provision_env"])
+        # ...and the spec object is never mutated.
+        assert b.spec.instance == "n2-standard-8"
+
+    def test_default_uses_declared_instance(self) -> None:
+        b = OffPlatformBackend(_off_spec(instance="n2-standard-16"), "vergil-user", "o", "r")
+        v = b.vm_vars(zone="us-central1-b", volume_id="v1")
+        assert v["instance_type"] == "n2-standard-16"
+        assert spec_fingerprint(_off_spec(instance="n2-standard-16")) in str(v["provision_env"])
+
+
+class TestFamilyFallback:
+    @staticmethod
+    def _backend() -> MagicMock:
+        backend = MagicMock()
+        backend.vm_vars.return_value = {}
+        backend.spec.region = "us-central1"
+        backend.spec.instance = "n2-standard-8"
+        return backend
+
+    def test_swaps_family_in_same_zone_without_touching_volume(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Requested family stocked, first fallback family lands — same zone, same disk.
+        av = MagicMock(side_effect=[_capacity_exc(), {"host": "h"}])
+        dv = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", dv)
+        backend = self._backend()
+
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            backend,
+            zone="us-central1-f",
+            volume_id="v1",
+            fallback_zones=[],
+            fallback_instances=["n2d-standard-8", "c2-standard-8"],
+        )
+
+        assert result == ("v1", "us-central1-f", {"host": "h"})
+        assert av.call_count == 2
+        dv.assert_not_called()  # the data disk is never destroyed on this path
+        backend.vm_vars.assert_any_call(
+            zone="us-central1-f", volume_id="v1", instance_override="n2d-standard-8"
+        )
+
+    def test_all_families_stocked_raises_naming_them(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        with pytest.raises(RuntimeError, match="no nested-virt machine family has capacity"):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=["n2d-standard-8", "c2-standard-8"],
+            )
+
+    def test_non_capacity_error_during_family_sweep_aborts(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        boom = subprocess.CalledProcessError(1, [], stderr="Error: bad config")
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm",
+            MagicMock(side_effect=[_capacity_exc(), boom]),
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=["n2d-standard-8", "c2-standard-8"],
+            )
+
+    def test_capacity_with_no_fallbacks_at_all_reraises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Reattach of an unsupported shape: no families, no zones -> original error.
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.apply_vm", MagicMock(side_effect=_capacity_exc())
+        )
+        with pytest.raises(subprocess.CalledProcessError):
+            apply_vm_with_zone_fallback(
+                tmp_path / "m",
+                tmp_path / "s",
+                self._backend(),
+                zone="us-central1-f",
+                volume_id="v1",
+                fallback_zones=[],
+                fallback_instances=[],
+            )
+
+
+class TestParseVmMachineType:
+    def _state(self, machine_type: str) -> str:
+        return json.dumps(
+            {
+                "resources": [
+                    {
+                        "type": "google_compute_instance",
+                        "instances": [{"attributes": {"machine_type": machine_type}}],
+                    }
+                ]
+            }
+        )
+
+    def test_returns_bare_type_from_selflink(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state("projects/p/zones/us-central1-f/machineTypes/n2d-standard-8"))
+        assert parse_vm_machine_type(f) == "n2d-standard-8"
+
+    def test_returns_bare_type_when_already_bare(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state("n2-standard-8"))
+        assert parse_vm_machine_type(f) == "n2-standard-8"
+
+    def test_none_when_absent_or_empty(self, tmp_path: Path) -> None:
+        assert parse_vm_machine_type(tmp_path / "missing.tfstate") is None
+        empty = tmp_path / "vm.tfstate"
+        empty.write_text("{}")
+        assert parse_vm_machine_type(empty) is None
+
+    def test_none_when_json_is_not_an_object(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text("[]")  # valid JSON, but not a dict
+        assert parse_vm_machine_type(f) is None
+
+    def test_skips_non_dict_and_non_instance_resources(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps(
+                {"resources": ["not-a-dict", {"type": "google_compute_disk", "instances": []}]}
+            )
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_instance_resource_has_no_usable_instance(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps({"resources": [{"type": "google_compute_instance", "instances": ["x"]}]})
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_attributes_not_a_dict(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {"type": "google_compute_instance", "instances": [{"attributes": "nope"}]}
+                    ]
+                }
+            )
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_machine_type_is_empty(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state(""))  # falsy machine_type -> continue -> None
+        assert parse_vm_machine_type(f) is None
