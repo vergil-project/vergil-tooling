@@ -9,7 +9,9 @@
 
 **Date:** 2026-06-24
 
-**Status:** Design (from brainstorming, 2026-06-24).
+**Status:** Design approved (brainstorming + paad:pushback, 2026-06-24).
+**Implementation parked** — the design lands as documentation; building Deliverables
+A and B is deferred. #1858 stays open to track the parked implementation.
 
 ## Problem
 
