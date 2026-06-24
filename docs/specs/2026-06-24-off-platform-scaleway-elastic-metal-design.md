@@ -1,7 +1,7 @@
 # Off-platform: Scaleway Elastic Metal backend + provider-dispatch abstraction
 
 - **Issue:** vergil-tooling#1851
-- **Status:** Design (brainstormed)
+- **Status:** Design (brainstormed, pushback-reviewed)
 - **Related:** #1836 / PR #1841 (nested-virt family fallback on GCP reattach)
 - **Coordination:** in-flight **Azure** backend — this spec defines the provider-dispatch seam Azure conforms to (see §2 and §8).
 
@@ -62,9 +62,17 @@ server is released. Since this box runs ~24/7 and its data is reproducible
 
 - **create** → provision one `scaleway_baremetal_server` (offer, zone, OS image, SSH
   key, cloud-init user-data). Provisioning runs `templates/provision/*.sh` unchanged.
-- **rebuild** → **OS reinstall on the same allocated server** (Scaleway supports
-  reinstall/reprovision in place). Keeps the box — **no capacity loss** — wipes the
-  disk. This is the bare-metal analog of GCP's rebuild, minus the disk-survival.
+- **rebuild** → **OS reinstall on the same allocated server**, driven via the Scaleway
+  **install/reinstall API** against the stored server ID — **not** via a Terraform
+  `os`/`user_data` change. The platform supports in-place reinstall (a dedicated
+  Elastic Metal operation that keeps the allocation), but the `scaleway_baremetal_server`
+  Terraform resource's `ForceNew` behavior on `os`/`user_data` is unverified — if those
+  are `ForceNew`, a plain `terraform apply` would destroy+recreate and **lose the box**,
+  reintroducing the GCP capacity-loss failure. Driving reinstall through the API makes the
+  "keep the box, no capacity loss" guarantee independent of provider-version semantics.
+  Terraform owns create/destroy; the server ID is persisted in state so rebuild targets it.
+  Keeps the box, wipes the disk. *(Build task: confirm the TF `ForceNew` flags and, if
+  needed, ensure the resource isn't replaced when the API-driven reinstall changes the OS.)*
 - **destroy** → release the server; capacity returns to Scaleway's pool, all state gone.
 - Native KVM: the `nested` flag and `70-nested-virt.sh` are satisfied with no config.
 
@@ -99,8 +107,13 @@ A single module using the first-class `scaleway` Terraform provider:
   rendered cloud-init).
 - Reuses the existing `templates/provision/*.sh` via the cloud-init `user-data` path
   exactly as the GCP module does — the provisioning scripts are backend-neutral already.
+  **Caveat:** Scaleway accepts **`text/plain` user-data only** ([cloud-init concepts](https://www.scaleway.com/en/docs/elastic-metal/concepts/));
+  the rendered provision document must be a single text/plain payload (cloud-config is
+  normally text/plain, so this is expected to be fine — confirm at build, no multipart MIME).
+- The module itself lives in **vergil-vm**, not this repo, and is fetched by v-tag — see §10.
 - No volume module, no firewall-for-IAP, no `enable_nested_virtualization`.
-- Outputs: the server's tailnet hostname/address for the transport (see §4).
+- Outputs: the server ID (for API-driven reinstall, §1) and the tailnet hostname/address
+  for the transport (see §4).
 
 ### 4. Transport — Tailscale/WireGuard overlay
 
@@ -116,6 +129,25 @@ Scaleway metal has a public IP; we deliberately do **not** expose SSH on it.
   preserving the GCP IAP security posture (no public attack surface, roaming-proof).
 - **Prerequisite:** the operator's machine is on the same tailnet, and an auth key is
   configured (per-identity, alongside the Scaleway token). Documented in setup.
+
+**Readiness probe.** The GCP path polls cloud-init status over IAP; tailnet-only SSH has
+a blind window until `tailscaled` is up and joined. So `await-readiness` for Scaleway
+waits for the node to appear on the tailnet — via the Tailscale API, or by polling
+SSH-over-MagicDNS for the cloud-init readiness/fingerprint marker — on a bounded timeout.
+On timeout it fails **loudly**, pointing at the break-glass below; it does not hang or
+silently pass.
+
+**Lockout / break-glass.** If `tailscaled` never comes up (expired/invalid key, Tailscale
+outage, ACL/tag mistake) the box has no public SSH and is unreachable over the network.
+This is **not** a brick: Scaleway provides hardware-level **out-of-band KVM / serial
+console** access, which is always available. The readiness-timeout error names it as the
+manual recovery path. The tooling does not automate console recovery in v1.
+
+**Auth-key lifecycle & exposure.** Keys are **ephemeral, pre-authorized, tagged, short-TTL,
+and minted per provision** (every create *and* every rebuild/reinstall gets a fresh key).
+The key is injected via cloud-init user-data, which is readable in Scaleway's instance
+metadata/console — a secret surface — so the short TTL + single-use ephemerality keep a
+leaked key near-worthless and self-expiring. User-data is **not** treated as a secret store.
 
 ### 5. Credentials & configuration
 
@@ -135,14 +167,22 @@ Replacing GCP's ADC/project:
 - Validate the offer name and zone against the provider at compose/apply time; a typo
   must fail loudly with the list of valid offers, not a cryptic Terraform error.
 
-### 7. Stock-out handling
+### 7. Stock-out handling — multi-zone stock check at create
 
-Elastic Metal offers can be **out of stock** in a given zone (a real, if rarer,
-analog to GCP's capacity stockout). v1: detect the out-of-stock apply error, surface
-a clear message naming the offer/zone and pointing at the other Scaleway zones
-(`fr-par-1/2`, `nl-ams-1`, `pl-waw-2`). A zone sweep can reuse the #1836 pattern but
-is **deferred** unless stock-outs prove common — bare metal you hold doesn't churn the
-way on-demand VMs do.
+The "assigned box, no churn" reliability win applies to *holding* a server; **acquiring**
+one still has to find available stock, and Elastic Metal offers (especially the cheap AMD
+class) **do go out of stock per zone**. So the create path must handle this, or the
+headline reliability claim is overstated for the first `create` (and any
+`destroy`→`create`).
+
+- **Create-time multi-zone stock check.** Elastic Metal exposes per-zone offer
+  availability (console/API — confirm the exact endpoint at build). The create path checks
+  the target offer across Scaleway zones (`fr-par-1/2`, `nl-ams-1`, `pl-waw-2`), provisions
+  in the first available zone, and if none have stock, fails **loudly**: "offer X out of
+  stock in all zones — try offer Y or wait." This is the create-time analog of the #1836
+  zone/family fallback.
+- Once acquired, the box is held (no churn), so this only gates initial acquisition and
+  full teardown→recreate — not rebuild (which reinstalls the same held server, §1).
 
 ### 8. Coordination with the in-flight Azure backend
 
@@ -163,6 +203,30 @@ fallback. Extract the provider-specific pieces behind the §2 interface so the e
 lifecycle-stage framework (`_cs_*` stages) is provider-neutral and the GCP behavior is
 unchanged. Keep the GCP capacity-fallback logic in the GCP backend, not the shared engine.
 
+### 10. Cross-repo split & module fetch (release-ordered)
+
+The OpenTofu module is **not** local to vergil-tooling. The off-platform engine fetches
+modules from a **vergil-vm v-tag archive**:
+
+```python
+_MODULES_URL = "https://github.com/vergil-project/vergil-vm/archive/refs/tags/{tag}.tar.gz"
+_TAG_RE = re.compile(r"^v\d+\.\d+(\.\d+)?$")   # tags only — no branch/local override today
+```
+
+So the Scaleway module (`opentofu/modules/scaleway/server`) lives in **vergil-vm** and is
+only fetchable once it's in a **released vergil-vm tag**. This makes the feature a
+two-repo, release-ordered change:
+
+- **Sequence:** vergil-vm Scaleway-module PR → vergil-vm release (v-tag) → vergil-tooling
+  backend referencing that tag. The backend cannot be e2e-"done" until the module is tagged.
+- **Dev-fetch override (new, small):** add a `fetch_modules` escape hatch —
+  `VRG_MODULES_REF` (a git ref/branch) and/or `VRG_MODULES_PATH` (a local checkout) — so
+  the backend is developable and e2e-testable against an unreleased module *before* the prod
+  tag exists. Without it, every iteration requires cutting a vergil-vm release. The override
+  is dev-only and useful beyond this feature; production still resolves to the v-tag.
+- **Coordination:** the module PR (vergil-vm) and the backend PR (vergil-tooling) are
+  tracked together under #1851; the module must merge+tag first.
+
 ## Testing
 
 - **Dispatch**: `select_backend` returns the Scaleway backend for `provider="scaleway"`,
@@ -172,19 +236,32 @@ unchanged. Keep the GCP capacity-fallback logic in the GCP backend, not the shar
 - **Module var mapping**: spec → `scaleway_baremetal_server` vars (offer/zone/os/ssh/
   user-data) are correct; cloud-init carries the provision env + Tailscale auth key.
 - **Transport**: `TailscaleTransport` targets the MagicDNS name; no public SSH assumed.
-- **Lifecycle**: rebuild maps to reinstall (same server), destroy to release; single-state
-  (no volume calls).
-- **Stock-out**: the out-of-stock apply error surfaces the clear message, not a raw trace.
+- **Readiness**: the readiness probe waits on the tailnet marker and, on timeout, raises a
+  loud error naming the console break-glass (never hangs, never silently passes).
+- **Lifecycle**: rebuild drives the **reinstall API against the stored server ID** (same
+  server, not a destroy+recreate) and mints a fresh ephemeral key; destroy releases;
+  single-state (no volume calls).
+- **Stock check**: create sweeps zones for offer availability and provisions in the first
+  with stock; all-out-of-stock raises the clear message, not a raw trace.
+- **Module fetch**: `VRG_MODULES_REF` / `VRG_MODULES_PATH` override resolves modules from a
+  branch/local path; absent the override, production resolves to the v-tag (and rejects a
+  non-tag ref).
 - **e2e (gated, costs money)**: real provision on Scaleway, `/dev/kvm` present, reachable
-  over tailnet — mirrors the gated GCP cloud e2e.
+  over tailnet, rebuild keeps the same server ID — mirrors the gated GCP cloud e2e.
 
 ## Phased implementation
 
 1. **Provider-dispatch abstraction** — extract the seam (§2, §9); GCP behavior unchanged,
-   fully green. Independently testable and the foundation Azure also consumes.
-2. **Scaleway backend + module + transport** — §1, §3, §4, §5, §6, §7 on top of phase 1.
+   fully green. Independently testable and the foundation Azure also consumes. Includes the
+   dev-fetch override (§10), which is provider-neutral.
+2. **Scaleway module in vergil-vm** (§3) — the `scaleway/server` OpenTofu module, merged and
+   **tagged** in a vergil-vm release (the prerequisite for phase 3 e2e; see §10).
+3. **Scaleway backend + transport + lifecycle** — §1, §4, §5, §6, §7 on top of phases 1–2
+   (reinstall-via-API rebuild, Tailscale transport + readiness/break-glass, create-time
+   stock check). e2e uses the dev-fetch override until the phase-2 tag lands.
 
-(Likely two implementation plans; this is one cohesive design.)
+(Three implementation plans across two repos; this is one cohesive design. Phase 2 is the
+vergil-vm change and gates phase-3 e2e.)
 
 ## Alternatives considered
 
