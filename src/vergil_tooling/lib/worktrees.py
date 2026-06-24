@@ -143,6 +143,29 @@ def _resolve_pr_state(branch: str) -> tuple[int | None, str | None, str | None]:
     return None, None, None
 
 
+def _newest_mtime(path: Path) -> float | None:
+    """Return the newest mtime across *path*'s tracked + untracked files.
+
+    The file set is ``git ls-files`` (tracked) ∪ ``ls-files --others
+    --exclude-standard`` (untracked, not gitignored), so ``.gitignore`` is
+    honored and ``.venv`` / ``node_modules`` / build artifacts are skipped.
+    A file listed but gone by the time it is stat'd (a benign race) is
+    skipped, not an error. Returns ``None`` when no eligible files exist.
+    """
+    tracked = git.read_output("-C", str(path), "ls-files")
+    untracked = git.read_output("-C", str(path), "ls-files", "--others", "--exclude-standard")
+    names = [n for n in (*tracked.splitlines(), *untracked.splitlines()) if n]
+    newest: float | None = None
+    for name in names:
+        try:
+            mtime = (path / name).stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
 def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool]:
     """Read the worktree's local ``.vergil/pr-workflow.json`` prep signals.
 

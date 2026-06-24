@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from vergil_tooling.lib.worktrees import (
     Worktree,
     WorktreeState,
     WorktreeStatus,
+    _newest_mtime,
     _probe_pr_workflow,
     classify_worktree,
     gather_worktree_status,
@@ -510,3 +512,28 @@ def test_rebase_onto_propagates_conflict() -> None:
         pytest.raises(subprocess.CalledProcessError),
     ):
         rebase_onto(wt, "develop")
+
+
+def test_newest_mtime_takes_max_over_tracked_and_untracked(tmp_path: Path) -> None:
+    tracked = tmp_path / "tracked.py"
+    tracked.write_text("x")
+    os.utime(tracked, (1000.0, 1000.0))
+    untracked = tmp_path / "untracked.py"
+    untracked.write_text("y")
+    os.utime(untracked, (5000.0, 5000.0))
+    # First read_output call → tracked listing; second → untracked listing.
+    with patch(_MOD + ".git.read_output", side_effect=["tracked.py", "untracked.py"]):
+        assert _newest_mtime(tmp_path) == 5000.0
+
+
+def test_newest_mtime_skips_listed_but_missing_file(tmp_path: Path) -> None:
+    present = tmp_path / "present.py"
+    present.write_text("x")
+    os.utime(present, (2000.0, 2000.0))
+    with patch(_MOD + ".git.read_output", side_effect=["present.py\nghost.py", ""]):
+        assert _newest_mtime(tmp_path) == 2000.0
+
+
+def test_newest_mtime_none_when_no_files(tmp_path: Path) -> None:
+    with patch(_MOD + ".git.read_output", side_effect=["", ""]):
+        assert _newest_mtime(tmp_path) is None
