@@ -51,6 +51,21 @@ def _workflow_cell(status: WorktreeStatus) -> str:
     return status.workflow_status if status.workflow_status is not None else "-"
 
 
+def _format_age(ts: float | None, now: float) -> str:
+    """Render *ts* (epoch seconds) as a relative age: '2h ago' / '3d ago'.
+
+    ``None`` renders '-'. A future timestamp (clock skew, or a commit dated
+    just ahead of *now*) clamps to '0h ago' rather than a negative age.
+    """
+    if ts is None:
+        return "-"
+    elapsed = max(0.0, now - ts)
+    days = elapsed / 86400.0
+    if days < 1:
+        return f"{int(elapsed // 3600)}h ago"
+    return f"{int(days)}d ago"
+
+
 def _row(status: WorktreeStatus) -> tuple[str, ...]:
     pr = f"#{status.pr_number}" if status.pr_number is not None else "-"
     return (

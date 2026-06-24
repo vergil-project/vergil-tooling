@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
-from vergil_tooling.bin.vrg_worktree_status import _row, main
+from vergil_tooling.bin.vrg_worktree_status import _format_age, _row, main
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
 
 if TYPE_CHECKING:
@@ -43,6 +43,8 @@ def _status(
 
 # Column index of WORKFLOW in a rendered row (between STATE and AHEAD).
 _WORKFLOW_COL = 4
+
+_NOW = 1_700_000_000.0
 
 
 def test_row_renders_loaded_workflow_status_verbatim() -> None:
@@ -171,3 +173,19 @@ def test_main_surfaces_reused_branch_detail(capsys: pytest.CaptureFixture[str]) 
     assert "note: feature/286-build-buckets:" in out
     assert "#293" in out
     assert "0 cruft" in out
+
+
+def test_format_age_hours() -> None:
+    assert _format_age(_NOW - 2 * 3600, _NOW) == "2h ago"
+
+
+def test_format_age_days() -> None:
+    assert _format_age(_NOW - 3 * 86400, _NOW) == "3d ago"
+
+
+def test_format_age_none_is_dash() -> None:
+    assert _format_age(None, _NOW) == "-"
+
+
+def test_format_age_future_clamps_to_zero() -> None:
+    assert _format_age(_NOW + 5000, _NOW) == "0h ago"
