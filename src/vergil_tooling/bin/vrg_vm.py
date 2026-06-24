@@ -2023,7 +2023,7 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
         line = (
             f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} "
             f"{r.get('instance', '—')!s:<{inst_w}} {r['name']!s:<{name_w}} "
-            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14} {r['vm_type']!s:<16}"
+            f"{r['size']!s:<8} {r['zone']!s:<16} {r['region']!s:<14} {r.get('vm_type', '—')!s:<16}"
         )
         if live:
             line += f" {r['live']!s:<22}"
