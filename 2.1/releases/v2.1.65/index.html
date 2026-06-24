@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.33/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.31/">
+        <link rel="next" href="../v2.1.64/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.32 - VERGIL Tooling</title>
+        <title>2.1.65 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2132-2026-06-11" class="md-skip">
+        <a href="#release-2165-2026-06-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.32
+              2.1.65
             
           </span>
         </div>
@@ -996,10 +996,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.65/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.65
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1015,6 +1042,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1920,37 +1978,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.32
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.32/" class="md-nav__link">
         
   
   
@@ -1966,37 +1997,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9188,10 +9188,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -9215,13 +9215,13 @@
 
 
 
-<h1 id="release-2132-2026-06-11">Release 2.1.32 (2026-06-11)<a class="headerlink" href="#release-2132-2026-06-11" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2165-2026-06-24">Release 2.1.65 (2026-06-24)<a class="headerlink" href="#release-2165-2026-06-24" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>write release artifacts into the worktree, not repo_root (#1626) (#1627)</strong></li>
+<li><strong>multiple VM instances per repo (named instances) (#1837)</strong></li>
+<li>docs(vm): tooling-side design for named VM instances</li>
 </ul>
-<h1 id="1600-moved-vrg-release-into-a-managed-worktree-preflight-creates-it-and-oschdirs-in-so-every-gitrun-index-op-now-executes-with-the-worktree-as-cwd-but-the-artifact-generation-calls-still-passed-ctxrepo_root-the-main-checkout-to-versionbump-and-changeloggenerate_changeloggenerate_release_notes-so-changelogmd-releasesvxyzmd-and-version-were-written-into-the-main-checkout-while-git-add-ran-in-the-worktree-the-relative-git-add-changelogmd-silently-no-opped-against-the-worktree-copy-the-absolute-git-add-failed-with-fatal-is-outside-repository-breaking-every-release-and-leaving-the-main-checkouts-develop-tree-dirty">1600 moved vrg-release into a managed worktree: preflight creates it and os.chdir's in, so every git.run() index op now executes with the worktree as cwd. But the artifact-generation calls still passed ctx.repo_root (the main checkout) to version.bump and changelog.generate_changelog/generate_release_notes, so CHANGELOG.md, releases/vX.Y.Z.md, and VERSION were written into the main checkout while git add ran in the worktree. The relative 'git add CHANGELOG.md' silently no-opped against the worktree copy; the absolute 'git add <main-repo notes path>' failed with 'fatal: ... is outside repository', breaking every release and leaving the main checkout's develop tree dirty.<a class="headerlink" href="#1600-moved-vrg-release-into-a-managed-worktree-preflight-creates-it-and-oschdirs-in-so-every-gitrun-index-op-now-executes-with-the-worktree-as-cwd-but-the-artifact-generation-calls-still-passed-ctxrepo_root-the-main-checkout-to-versionbump-and-changeloggenerate_changeloggenerate_release_notes-so-changelogmd-releasesvxyzmd-and-version-were-written-into-the-main-checkout-while-git-add-ran-in-the-worktree-the-relative-git-add-changelogmd-silently-no-opped-against-the-worktree-copy-the-absolute-git-add-failed-with-fatal-is-outside-repository-breaking-every-release-and-leaving-the-main-checkouts-develop-tree-dirty" title="Permanent link">&para;</a></h1>
-<p>Add ReleaseContext.work_root (worktree_path or repo_root) and use it for the bump and changelog calls in prepare.py and bump.py. repo_root stays the main checkout, which finalize chdir's back to so vrg-finalize-pr (which refuses to run outside the main worktree) still works. The fallback keeps the pre-worktree path correct when worktree_path is unset.</p>
+<p>Tooling companion (#1831) to the authoritative vergil-vm #242 design. Grounds the named-instances model in the actual vrg-vm code and records three keystone decisions from brainstorming: keep per-target delimiters and append the fourth handle segment (the slug's '--' is the readable handle, not the Lima name, which Lima rejects); key the tofu state path on the readable slug while the cloud resource name becomes a deterministic vrg-<hash>; greenfield, no migration. Specifies parsing of the per-identity [vm.<identity>.instances.<name>] namespace, tier-5 composition, --name across the verbs, recorded-state lifecycle dispatch (the Problem 1 fix), and the list INSTANCE/no-vm surface.</p>
 
 
 
