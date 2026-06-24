@@ -890,6 +890,8 @@ class TestRunTofu:
         monkeypatch.setenv("HOME", str(tmp_path))
         modules = tmp_path / "modules"
         state_dir = tofu_state_dir("k", "gcp")
+        # A real reuse scenario has both the VM state and its stored tfvars.
+        (state_dir / "vm.tfstate").write_text("{}")
         (state_dir / "vm.tfstate.tfvars.json").write_text('{"name": "vm-x"}')
         run = MagicMock(return_value=0)
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
@@ -918,16 +920,32 @@ class TestRunTofu:
         assert "plan" in plan_args
         assert "-auto-approve" not in plan_args
 
-    def test_destroy_without_vars_or_file_raises(
+    def test_destroy_vm_raises_when_state_present_but_tfvars_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        # A VM state exists but its tfvars were lost: destroy must still fail
+        # loudly rather than run an under-specified destroy (the original guard).
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        (state_dir / "vm.tfstate").write_text("{}")
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        with pytest.raises(RuntimeError, match="no tofu vars supplied"):
+            destroy_vm(modules, state_dir)
+
+    def test_destroy_vm_noop_when_no_vm_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A volume-only box has no vm.tfstate: nothing to destroy, so destroy_vm
+        # is a clean no-op — it must not reach tofu or raise. (#1845)
         monkeypatch.setenv("HOME", str(tmp_path))
         modules = tmp_path / "modules"
         state_dir = tofu_state_dir("k", "gcp")
         run = MagicMock(return_value=0)
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
-        with pytest.raises(RuntimeError, match="no tofu vars supplied"):
-            destroy_vm(modules, state_dir)
+        destroy_vm(modules, state_dir)
+        run.assert_not_called()
 
     def test_destroy_volume_cleans_state_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -940,6 +958,56 @@ class TestRunTofu:
         run = MagicMock(return_value=0)
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
         destroy_volume(modules, state_dir)
+        assert not state_dir.exists()
+
+    def test_destroy_volume_reports_no_disk_when_state_has_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # An empty/placeholder volume.tfstate (no google_compute_disk resource):
+        # tofu destroys nothing, so destroy_volume reports False so the caller can
+        # warn instead of claiming a disk was destroyed. (#1846)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        (state_dir / "volume.tfstate").write_text(json.dumps({"resources": []}))
+        (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "vol-x"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        assert destroy_volume(modules, state_dir) is False
+        assert not state_dir.exists()
+
+    def test_destroy_volume_reports_disk_when_present(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A volume.tfstate carrying a google_compute_disk: a real teardown, so
+        # destroy_volume reports True. (#1846)
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+        (state_dir / "volume.tfstate").write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {
+                            "type": "google_compute_disk",
+                            "instances": [
+                                {
+                                    "attributes": {
+                                        "name": "vol-x",
+                                        "size": 200,
+                                        "zone": "us-central1-f",
+                                    }
+                                }
+                            ],
+                        }
+                    ]
+                }
+            )
+        )
+        (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "vol-x"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        assert destroy_volume(modules, state_dir) is True
         assert not state_dir.exists()
 
 
