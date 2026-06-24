@@ -1492,21 +1492,17 @@ class TestInstanceFallbackLadder:
     def test_requested_first_then_same_shape_siblings(self) -> None:
         assert instance_fallback_candidates("n2-standard-8") == [
             "n2-standard-8",
-            "n2d-standard-8",
             "c2-standard-8",
-            "c2d-standard-8",
         ]
 
     def test_dedups_when_requested_family_in_ladder(self) -> None:
-        # n2d is in the ladder; it must appear once, still requested-first.
-        result = instance_fallback_candidates("n2d-standard-16")
-        assert result[0] == "n2d-standard-16"
-        assert result.count("n2d-standard-16") == 1
+        # c2 is in the ladder; it must appear once, still requested-first.
+        result = instance_fallback_candidates("c2-standard-16")
+        assert result[0] == "c2-standard-16"
+        assert result.count("c2-standard-16") == 1
         assert set(result) == {
-            "n2d-standard-16",
-            "n2-standard-16",
             "c2-standard-16",
-            "c2d-standard-16",
+            "n2-standard-16",
         }
 
     def test_unsupported_shape_yields_no_fallback(self) -> None:
@@ -1518,15 +1514,14 @@ class TestInstanceFallbackLadder:
         assert instance_fallback_candidates("e2-standard-8") == [
             "e2-standard-8",
             "n2-standard-8",
-            "n2d-standard-8",
             "c2-standard-8",
-            "c2d-standard-8",
         ]
 
     def test_ladder_change_detector(self) -> None:
         # NOT a validity proof — pins the curated values so an edit is deliberate.
-        # Real nested-virt validity is verified by hand against GCP docs (#1836).
-        assert NESTED_VIRT_FAMILIES == ("n2", "n2d", "c2", "c2d")
+        # Real nested-virt validity is verified by hand against GCP docs (#1836):
+        # GCE nested virt is Intel-only, so the AMD families (n2d, c2d) are excluded.
+        assert NESTED_VIRT_FAMILIES == ("n2", "c2")
         assert FALLBACK_SHAPES == frozenset({"standard-8", "standard-16"})  # noqa: SIM300 — variable == literal reads naturally for a change-detector pin
 
 

@@ -65,8 +65,9 @@ ordered family list, not a per-shape table:
 ```python
 # Ordered nested-virt-capable families, by preference. Size-independent —
 # a fallback swaps the family and keeps the requested shape untouched.
-# MUST match GCP's nested-virtualization supported-machine-types doc.
-NESTED_VIRT_FAMILIES = ["n2", "n2d", "c2", "c2d"]
+# Intel-only: GCE nested virt excludes AMD/Arm, so n2d/c2d are NOT eligible
+# (verified against GCP docs — see "Verify before shipping").
+NESTED_VIRT_FAMILIES = ["n2", "c2"]
 
 # Shapes verified to exist across the whole ladder and actually run off-platform.
 # Family-fallback engages only for these; adding a size later is one line.
@@ -79,7 +80,7 @@ candidate list is the requested family first, then the remaining
 `NESTED_VIRT_FAMILIES`, each combined with that same shape:
 
 ```
-n2-standard-8  →  [n2-standard-8, n2d-standard-8, c2-standard-8, c2d-standard-8]
+n2-standard-8  →  [n2-standard-8, c2-standard-8]
 ```
 
 **Edge case — requested family not in the ladder.** If the requested instance's
@@ -234,14 +235,21 @@ diffs in separate regions and rebase whichever lands second.
 ## Verify before shipping
 
 This is a **manual, human-performed gate** — the unit test (a change-detector)
-cannot do it. Before merge, the ladder's membership and order **must** be checked
-against GCP's current "nested virtualization — supported machine types"
-documentation, and the verification (doc URL + date) recorded in the PR.
-Confident: N1/N2/N2D/C2 support nested virtualization; E2 and the Tau families do
-not. **To confirm against the doc before inclusion: C2D (AMD) nested-virtualization
-support, and that every `FALLBACK_SHAPES × NESTED_VIRT_FAMILIES` machine type
-actually exists.** If C2D is not supported, drop it from `NESTED_VIRT_FAMILIES`
-and update the change-detector test to match.
+cannot do it.
+
+**Verified 2026-06-24.** GCE nested virtualization requires an Intel (VT-x)
+processor; the docs list **AMD and Arm processors, E2, memory-optimized, and H4D**
+as unsupported. So the AMD families **n2d and c2d are NOT eligible** and were
+dropped — the original draft ladder (`n2/n2d/c2/c2d`) would have booted VMs with no
+`/dev/kvm`. The shipped ladder is Intel-only: **`["n2", "c2"]`**, and both offer
+`standard-8` and `standard-16`. Sources:
+- nested-virt overview — `docs.cloud.google.com/compute/docs/instances/nested-virtualization/overview`
+  ("L1 VMs cannot use ... AMD and Arm processors").
+- general-purpose machine docs — corroborating "N2D VMs don't support ... nested
+  virtualization".
+
+Re-run this manual check (and update the change-detector test) whenever
+`NESTED_VIRT_FAMILIES` or `FALLBACK_SHAPES` changes.
 
 ## Alternatives considered
 

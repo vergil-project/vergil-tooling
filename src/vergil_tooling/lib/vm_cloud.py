@@ -756,10 +756,15 @@ def region_zones(region: str) -> list[str]:
 # reattach the zonal data disk pins the zone, so swapping the family is the only
 # recovery (see apply_vm_with_zone_fallback). The ladder may contain ONLY families
 # that support GCP nested virtualization — nested KVM is the point of these VMs, and
-# a family without it (e2, Tau) would boot a box with no /dev/kvm and fail the
-# provision. Membership/order is verified BY HAND against GCP's nested-virt
-# supported-machine-types doc before merge; the unit test is only a change-detector.
-NESTED_VIRT_FAMILIES = ("n2", "n2d", "c2", "c2d")
+# a family without it would boot a box with no /dev/kvm and fail the provision.
+# GCE nested virt requires an Intel (VT-x) processor: AMD, Arm, E2, memory-optimized,
+# and H4D VMs are all excluded, so the AMD families (n2d, c2d) are NOT eligible —
+# only the Intel families n2 and c2 are. Verified against GCP's nested-virt overview
+# (docs.cloud.google.com/compute/docs/instances/nested-virtualization/overview, which
+# lists "AMD and Arm processors" among the unsupported), corroborated by the
+# general-purpose machine docs ("N2D VMs don't support ... nested virtualization");
+# checked 2026-06-24. The unit test is only a change-detector — re-verify on edit.
+NESTED_VIRT_FAMILIES = ("n2", "c2")
 
 # Shapes verified to exist for EVERY family in the ladder and actually run
 # off-platform. Family-fallback engages only for these, so we never synthesize an
