@@ -140,6 +140,7 @@ def build_stages() -> list[Stage]:
             _tracked("consumer-refresh", consumer_refresh),
             mode="fail_defer",
         ),
+        Stage("publish-status", _publish_status_stage, mode="fail_defer"),
     ]
 
 
@@ -169,6 +170,29 @@ def _promote_phase(ctx: ReleaseContext) -> None:
         print("Skipping promote (--no-promote).")
         return
     promote(ctx.version)
+
+
+def _publish_status_stage(state: ReleaseState) -> None:
+    """Terminal fail_defer: surface deferred artifact-publish failures as exit 1.
+
+    Runs last, after every bookkeeping stage. Raising here marks the run failed
+    (fail_defer → exit 1 with the deferred summary) without aborting anything —
+    the release is already complete. No-op when nothing deferred.
+    """
+    ctx = state.ctx
+    if ctx is None or not ctx.deferred_publish_failures:
+        return
+    jobs = ", ".join(ctx.deferred_publish_failures)
+    raise ReleaseError(
+        phase="publish-status",
+        command="publish-status",
+        message=(
+            f"Release v{ctx.version} is published (tag + GitHub Release), but these "
+            f"CD publish jobs did not succeed: {jobs}. Re-run the CD publish to "
+            "deliver the artifacts — do NOT use vrg-release --resume (the version "
+            "is already tagged)."
+        ),
+    )
 
 
 def _phase_details(ctx: ReleaseContext, phase: str) -> str:

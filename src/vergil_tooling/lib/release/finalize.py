@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.managed_worktree import remove_worktree
 from vergil_tooling.lib.release.context import ReleaseError
-from vergil_tooling.lib.release.tracking import close_tracking_issue
+from vergil_tooling.lib.release.tracking import close_tracking_issue, comment_publish_deferred
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.release.context import ReleaseContext
@@ -49,9 +49,19 @@ def close_and_finalize(ctx: ReleaseContext) -> None:
             "and resume with vrg-release --resume."
         )
         return
-    summary = _build_summary(ctx)
-    close_tracking_issue(ctx, summary)
-    print("Tracking issue closed.")
+
+    if ctx.deferred_publish_failures:
+        comment_publish_deferred(ctx, ctx.deferred_publish_failures)
+        print(
+            "Leaving the tracking issue open — artifact publish deferred "
+            f"({', '.join(ctx.deferred_publish_failures)}). The release is "
+            "complete; re-run the CD publish to deliver the artifacts (NOT "
+            "--resume)."
+        )
+    else:
+        summary = _build_summary(ctx)
+        close_tracking_issue(ctx, summary)
+        print("Tracking issue closed.")
 
     print("Running vrg-finalize-pr...")
     # --cleanup-only is the non-interactive release path: no PR
