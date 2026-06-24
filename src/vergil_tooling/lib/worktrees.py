@@ -56,6 +56,11 @@ class WorktreeStatus:
     workflow_status: str | None = None
     workflow_error: str | None = None
     pr_prepared: bool = False
+    # Freshness signals (epoch seconds), attached by gather_worktree_status
+    # only when called with with_freshness=True (vrg-worktree-status). Left
+    # None for the finalize sweep, which neither needs nor pays for them.
+    last_commit_ts: float | None = None
+    last_modified_ts: float | None = None
 
     @property
     def removable(self) -> bool:
@@ -143,6 +148,29 @@ def _resolve_pr_state(branch: str) -> tuple[int | None, str | None, str | None]:
     return None, None, None
 
 
+def _newest_mtime(path: Path) -> float | None:
+    """Return the newest mtime across *path*'s tracked + untracked files.
+
+    The file set is ``git ls-files`` (tracked) ∪ ``ls-files --others
+    --exclude-standard`` (untracked, not gitignored), so ``.gitignore`` is
+    honored and ``.venv`` / ``node_modules`` / build artifacts are skipped.
+    A file listed but gone by the time it is stat'd (a benign race) is
+    skipped, not an error. Returns ``None`` when no eligible files exist.
+    """
+    tracked = git.read_output("-C", str(path), "ls-files")
+    untracked = git.read_output("-C", str(path), "ls-files", "--others", "--exclude-standard")
+    names = [n for n in (*tracked.splitlines(), *untracked.splitlines()) if n]
+    newest: float | None = None
+    for name in names:
+        try:
+            mtime = (path / name).stat().st_mtime
+        except FileNotFoundError:
+            continue
+        if newest is None or mtime > newest:
+            newest = mtime
+    return newest
+
+
 def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool]:
     """Read the worktree's local ``.vergil/pr-workflow.json`` prep signals.
 
@@ -168,7 +196,9 @@ def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool
     return state.status, None, prepared
 
 
-def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus:
+def gather_worktree_status(
+    worktree: Worktree, *, target: str, with_freshness: bool = False
+) -> WorktreeStatus:
     """Gather local + remote signals for *worktree* and classify it.
 
     The single source of truth shared by ``vrg-worktree-status`` and the
@@ -181,10 +211,19 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
     after a same-named PR merged (issue #1719) — the merged verdict is
     withheld so the branch is never classified removable; the mismatch is
     recorded in ``detail`` rather than swallowed.
+
+    Freshness timestamps (last_commit_ts / last_modified_ts) are gathered
+    only when ``with_freshness`` is set — the display-only concern of
+    ``vrg-worktree-status``; the finalize sweep leaves them unset.
     """
     ahead = git.commits_ahead(target, worktree.branch)
     dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
+    # Freshness is opt-in: only vrg-worktree-status needs it. The finalize
+    # straggler sweep also drives this function and must not pay for (or be
+    # broken by) the extra git log + filesystem walk.
+    last_commit_ts = git.committer_timestamp(worktree.path) if with_freshness else None
+    last_modified_ts = _newest_mtime(worktree.path) if with_freshness else None
 
     def _with_workflow(status: WorktreeStatus) -> WorktreeStatus:
         return replace(
@@ -192,6 +231,8 @@ def gather_worktree_status(worktree: Worktree, *, target: str) -> WorktreeStatus
             workflow_status=workflow_status,
             workflow_error=workflow_error,
             pr_prepared=pr_prepared,
+            last_commit_ts=last_commit_ts,
+            last_modified_ts=last_modified_ts,
         )
 
     detail: str | None = None
