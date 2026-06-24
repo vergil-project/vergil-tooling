@@ -1673,3 +1673,42 @@ class TestParseVmMachineType:
         empty = tmp_path / "vm.tfstate"
         empty.write_text("{}")
         assert parse_vm_machine_type(empty) is None
+
+    def test_none_when_json_is_not_an_object(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text("[]")  # valid JSON, but not a dict
+        assert parse_vm_machine_type(f) is None
+
+    def test_skips_non_dict_and_non_instance_resources(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps(
+                {"resources": ["not-a-dict", {"type": "google_compute_disk", "instances": []}]}
+            )
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_instance_resource_has_no_usable_instance(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps({"resources": [{"type": "google_compute_instance", "instances": ["x"]}]})
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_attributes_not_a_dict(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(
+            json.dumps(
+                {
+                    "resources": [
+                        {"type": "google_compute_instance", "instances": [{"attributes": "nope"}]}
+                    ]
+                }
+            )
+        )
+        assert parse_vm_machine_type(f) is None
+
+    def test_none_when_machine_type_is_empty(self, tmp_path: Path) -> None:
+        f = tmp_path / "vm.tfstate"
+        f.write_text(self._state(""))  # falsy machine_type -> continue -> None
+        assert parse_vm_machine_type(f) is None
