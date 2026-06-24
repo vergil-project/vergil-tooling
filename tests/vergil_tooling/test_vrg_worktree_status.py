@@ -26,6 +26,8 @@ def _status(
     workflow_status: str | None = None,
     workflow_error: str | None = None,
     pr_prepared: bool = False,
+    last_commit_ts: float | None = None,
+    last_modified_ts: float | None = None,
 ) -> WorktreeStatus:
     wt = Worktree(path=Path(f"/repo/.worktrees/{branch.replace('/', '-')}"), branch=branch)
     return WorktreeStatus(
@@ -38,27 +40,31 @@ def _status(
         workflow_status=workflow_status,
         workflow_error=workflow_error,
         pr_prepared=pr_prepared,
+        last_commit_ts=last_commit_ts,
+        last_modified_ts=last_modified_ts,
     )
 
 
 # Column index of WORKFLOW in a rendered row (between STATE and AHEAD).
 _WORKFLOW_COL = 4
+_LAST_COMMIT_COL = 7
+_LAST_MODIFIED_COL = 8
 
 _NOW = 1_700_000_000.0
 
 
 def test_row_renders_loaded_workflow_status_verbatim() -> None:
-    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"))
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"), _NOW)
     assert row[_WORKFLOW_COL] == "approved"
 
 
 def test_row_renders_dash_when_no_workflow_file() -> None:
-    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1))
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1), _NOW)
     assert row[_WORKFLOW_COL] == "-"
 
 
 def test_row_renders_unknown_on_workflow_read_error() -> None:
-    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_error="bad json"))
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_error="bad json"), _NOW)
     assert row[_WORKFLOW_COL] == "unknown"
 
 
@@ -173,6 +179,41 @@ def test_main_surfaces_reused_branch_detail(capsys: pytest.CaptureFixture[str]) 
     assert "note: feature/286-build-buckets:" in out
     assert "#293" in out
     assert "0 cruft" in out
+
+
+def test_row_renders_relative_ages() -> None:
+    row = _row(
+        _status(
+            "feature/1-x",
+            WorktreeState.NO_PR,
+            ahead=1,
+            last_commit_ts=_NOW - 3 * 86400,
+            last_modified_ts=_NOW - 2 * 3600,
+        ),
+        _NOW,
+    )
+    assert row[_LAST_COMMIT_COL] == "3d ago"
+    assert row[_LAST_MODIFIED_COL] == "2h ago"
+
+
+def test_row_renders_dash_for_missing_timestamps() -> None:
+    row = _row(_status("feature/1-x", WorktreeState.NO_PR, ahead=1), _NOW)
+    assert row[_LAST_COMMIT_COL] == "-"
+    assert row[_LAST_MODIFIED_COL] == "-"
+
+
+def test_main_includes_timestamp_headers(capsys: pytest.CaptureFixture[str]) -> None:
+    statuses = [_status("feature/1-a", WorktreeState.NO_PR, ahead=1)]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "LAST COMMIT" in out
+    assert "LAST MODIFIED" in out
 
 
 def test_format_age_hours() -> None:
