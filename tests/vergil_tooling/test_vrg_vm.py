@@ -3933,6 +3933,19 @@ class TestDestroyVolume:
         assert result == 0
         m["destroy_volume"].assert_called_once()
 
+    def test_warns_when_nothing_destroyed(
+        self, _cloud_repo: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # destroy_volume reports False (state held no disk): the command must warn
+        # that nothing was destroyed rather than claim success. (#1846)
+        with _CloudPatches(tmp_path / "state") as m:
+            m["destroy_volume"].return_value = False
+            result = main(["destroy-volume", "lmf/cloud", "--config", str(_cloud_repo), "--yes"])
+        captured = capsys.readouterr()
+        assert "nothing was destroyed" in captured.err.lower()
+        assert "destroyed (local tofu state removed)" not in captured.out
+        assert result == 0
+
 
 class TestCloudList:
     def test_backend_column_present(self, config_file: Path) -> None:
