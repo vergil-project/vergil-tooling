@@ -25,15 +25,25 @@ _JOB_SETTLE_ATTEMPTS = 12
 
 
 def confirm_main(ctx: ReleaseContext) -> None:
-    """Watch CD on main and verify publish artifacts."""
-    run_id, run_url = _watch_cd(ctx, branch="main", check_status=True)
-    _verify_jobs(ctx, run_id, _MAIN_EXPECTED_JOBS, phase="confirm-main")
-
+    """Watch CD on main: hard-verify the release, defer other publish jobs."""
+    run_id, run_url = _watch_cd(ctx, branch="main", check_status=False)
     ctx.cd_run_id = run_id
     ctx.cd_run_url = run_url
 
+    jobs = _settled_run_jobs(ctx, run_id, ("release",))
+    _verify_release_job(jobs)
+
+    deferred = _collect_deferred_publish(jobs)
+    if deferred:
+        ctx.deferred_publish_failures.extend(
+            d for d in deferred if d not in ctx.deferred_publish_failures
+        )
+        print(f"  Publish deferred (release is valid): {', '.join(deferred)}")
+    else:
+        print("  All CD jobs succeeded.")
+
     _verify_artifacts(ctx)
-    print(f"All artifacts confirmed for v{ctx.version}.")
+    print(f"Release v{ctx.version} confirmed.")
 
 
 def confirm_develop(ctx: ReleaseContext) -> None:

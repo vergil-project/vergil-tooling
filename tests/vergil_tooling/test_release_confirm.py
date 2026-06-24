@@ -133,47 +133,30 @@ def test_confirm_main_fails_no_cd_run() -> None:
         confirm_main(ctx)
 
 
-def test_confirm_main_fails_job_not_found() -> None:
+def test_confirm_main_fails_release_job_not_found() -> None:
+    # The release job is the only hard gate; a missing release job raises.
     ctx = _ctx()
+    jobs = [_job("docs / docs")]  # release job absent
     with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "12345",
-                "https://github.com/o/r/actions/runs/12345",
-            ],
-        ),
-        # 'docs' never appears — poll exhausts and it is reported missing.
-        patch(_MOD + "._fetch_run_jobs", return_value=[_job("release / release")]),
-        patch(_MOD + ".time.sleep"),
-        patch(_MOD + ".watch_workflow"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.read_output", return_value=_SHA),
-        pytest.raises(ReleaseError, match="not found in workflow run"),
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+        pytest.raises(ReleaseError, match="not found"),
     ):
         confirm_main(ctx)
 
 
-def test_confirm_main_fails_job_not_success() -> None:
+def test_confirm_main_non_release_job_failure_defers_not_raises() -> None:
+    # A failing docs job is recorded in deferred_publish_failures, not re-raised.
     ctx = _ctx()
+    jobs = [_job("docs / docs", conclusion="failure"), _job("release / release")]
     with (
-        patch(
-            _MOD + ".github.read_output",
-            side_effect=[
-                "12345",
-                "https://github.com/o/r/actions/runs/12345",
-            ],
-        ),
-        patch(
-            _MOD + "._fetch_run_jobs",
-            return_value=[_job("docs / docs", conclusion="failure"), _job("release / release")],
-        ),
-        patch(_MOD + ".watch_workflow"),
-        patch(_MOD + ".git.run"),
-        patch(_MOD + ".git.read_output", return_value=_SHA),
-        pytest.raises(ReleaseError, match="did not succeed"),
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
     ):
-        confirm_main(ctx)
+        confirm_main(ctx)  # must NOT raise
+    assert "docs" in ctx.deferred_publish_failures
 
 
 def test_confirm_main_fails_tag_missing() -> None:
@@ -436,3 +419,43 @@ def test_release_job_name_constant() -> None:
     from vergil_tooling.lib.release.confirm import _RELEASE_JOB_NAME
 
     assert _RELEASE_JOB_NAME == "release / release"
+
+
+def test_confirm_main_defers_docker_publish_failure() -> None:
+    ctx = _ctx()
+    jobs = [
+        _job("release / release"),
+        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
+    ]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)  # must NOT raise
+    assert ctx.deferred_publish_failures == ["docker-publish"]
+    assert ctx.cd_run_id == "123"
+
+
+def test_confirm_main_release_failure_still_raises() -> None:
+    ctx = _ctx()
+    jobs = [_job("release / release", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+        pytest.raises(ReleaseError, match="did not succeed"),
+    ):
+        confirm_main(ctx)
+    assert ctx.deferred_publish_failures == []
+
+
+def test_confirm_main_clean_run_defers_nothing() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=_MAIN_JOBS_OK),
+        patch(_MOD + "._verify_artifacts"),
+    ):
+        confirm_main(ctx)
+    assert ctx.deferred_publish_failures == []
