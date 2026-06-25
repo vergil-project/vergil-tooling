@@ -454,6 +454,30 @@ def test_probe_malformed_file_reports_error(tmp_path: Path) -> None:
     assert prepared is False
 
 
+def test_probe_v1_schema_file_reports_error(tmp_path: Path) -> None:
+    """A leftover v1 schema file gracefully degrades instead of crashing.
+
+    Issue #1872 design: the no-migration approach relies on _probe_pr_workflow
+    capturing unsupported-version errors so worktrees with stale v1 pr-workflow.json
+    files degrade gracefully.
+    """
+    import json
+
+    target = tmp_path / ".vergil"
+    target.mkdir(parents=True)
+    # Write a valid JSON document with schema_version=1 (old schema).
+    # from_dict checks schema_version BEFORE required fields, so even a
+    # minimal v1 document triggers the unsupported-version error.
+    v1_doc = {"schema_version": 1}
+    (target / "pr-workflow.json").write_text(json.dumps(v1_doc))
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    status, error, prepared = _probe_pr_workflow(wt)
+    assert status is None
+    assert error is not None
+    assert "unsupported schema_version" in error
+    assert prepared is False
+
+
 def test_gather_attaches_pr_workflow_probe(tmp_path: Path) -> None:
     _write_state(
         tmp_path,
