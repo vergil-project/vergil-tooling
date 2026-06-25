@@ -773,7 +773,9 @@ def _cs_tofu_volume(state: _CloudState) -> None:
         state.fallback_instances = vm_cloud.instance_fallback_candidates(
             state.backend.spec.instance
         )[1:]
-    volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
+    volume_id, zone = vm_cloud.apply_volume(
+        modules_root, state.state_dir, **volume_vars, provider=state.backend.provider_label
+    )
     state.volume_id = volume_id
     state.zone = zone
 
@@ -907,7 +909,7 @@ def _cloud_create(
         modules_root = vm_cloud.fetch_modules(tag)
         try:
             print(f"Destroying disposable VM '{backend.name}' before rebuild...")
-            vm_cloud.destroy_vm(modules_root, backend.state_dir())
+            vm_cloud.destroy_vm(modules_root, backend.state_dir(), provider=backend.provider_label)
         finally:
             shutil.rmtree(modules_root.parent, ignore_errors=True)
 
@@ -1285,7 +1287,7 @@ def _destroy_recorded(
         try:
             for provider, state_dir in rs.tofu_dirs:
                 print(f"Destroying cloud VM under {provider} (volume preserved): {state_dir}")
-                vm_cloud.destroy_vm(modules_root, state_dir)
+                vm_cloud.destroy_vm(modules_root, state_dir, provider=provider)
         finally:
             shutil.rmtree(modules_root.parent, ignore_errors=True)
     print("Destroyed (persistent volumes preserved — use destroy-volume to remove them).")
@@ -1373,7 +1375,9 @@ def _cmd_destroy_volume(args: argparse.Namespace) -> int:
     modules_root = vm_cloud.fetch_modules(tag)
     try:
         print(f"Destroying the persistent volume for {ref} (state: {backend.state_dir()})...")
-        destroyed = vm_cloud.destroy_volume(modules_root, backend.state_dir())
+        destroyed = vm_cloud.destroy_volume(
+            modules_root, backend.state_dir(), provider=backend.provider_label
+        )
     finally:
         shutil.rmtree(modules_root.parent, ignore_errors=True)
     if destroyed:

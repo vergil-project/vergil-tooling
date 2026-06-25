@@ -1011,6 +1011,118 @@ class TestRunTofu:
         assert not state_dir.exists()
 
 
+class TestModulePathProvider:
+    """apply_*/destroy_* must resolve the module dir under the spec's provider, not "gcp"."""
+
+    def test_apply_volume_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-1", "zone": "eastus-1"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+        # init chdir must point at <modules>/azure/volume
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'azure' / 'volume'}" in init_args
+
+    def test_apply_vm_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"host": "vm-1", "ssh_user": "azureuser"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_vm(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            zone="eastus-1",
+            instance_type="Standard_D8s_v3",
+            nested=False,
+            volume_id="disk-1",
+            ssh_user="azureuser",
+            provision_env="VERGIL_USER=azureuser",
+            labels={},
+            provider="azure",
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'azure' / 'vm'}" in init_args
+
+    def test_destroy_vm_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        (state_dir / "vm.tfstate").write_text("{}")
+        (state_dir / "vm.tfstate.tfvars.json").write_text('{"name": "n"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_vm(modules, state_dir, provider="azure")
+        destroy_args = run.call_args_list[1].args[0]
+        assert f"-chdir={modules / 'azure' / 'vm'}" in destroy_args
+
+    def test_destroy_volume_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "n"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_volume(modules, state_dir, provider="azure")
+        # init ran against azure/volume
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'volume'}" in init_args
+
+    def test_gcp_default_is_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (no provider kwarg) still resolves gcp/ — GCP regression guard."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "gcp")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "vol-1", "zone": "us-central1-a"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            region="us-central1",
+            size_gib=300,
+            labels={},
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'gcp' / 'volume'}" in init_args
+
+
 class TestReadZone:
     def test_reads_persisted_zone(self, tmp_path: Path) -> None:
         (tmp_path / "zone").write_text("us-central1-a\n")

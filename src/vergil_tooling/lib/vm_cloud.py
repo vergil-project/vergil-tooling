@@ -611,6 +611,7 @@ def apply_volume(
     size_gib: int,
     labels: dict[str, str],
     zone: str = "",
+    provider: str = "gcp",
 ) -> tuple[str, str]:
     """Apply the persistent-volume module; return ``(volume_id, zone)``.
 
@@ -618,8 +619,9 @@ def apply_volume(
     IAP transport can address the disk's zone without re-querying tofu. ``zone`` is an
     optional explicit GCP zone; empty falls back to the module's ``${region}-b`` default
     (the module coalesces it away), so existing region-b volumes are unaffected (#1797).
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    module_dir = modules_root / "gcp" / "volume"
+    module_dir = modules_root / provider / "volume"
     state = state_dir / "volume.tfstate"
     _run_tofu(
         module_dir,
@@ -650,6 +652,7 @@ def apply_vm(
     ssh_user: str,
     provision_env: str,
     labels: dict[str, str],
+    provider: str = "gcp",
 ) -> dict[str, str]:
     """Apply the VM module against the existing volume; return its outputs (host, ssh_user).
 
@@ -661,8 +664,9 @@ def apply_vm(
     retryable we roll the partial apply back with a ``tofu destroy`` against the VM state
     before re-raising. The VM state holds only the firewall and instance — the persistent
     volume lives in its own state — so the rollback never touches the reusable disk.
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    module_dir = modules_root / "gcp" / "vm"
+    module_dir = modules_root / provider / "vm"
     state = state_dir / "vm.tfstate"
     try:
         _run_tofu(
@@ -692,7 +696,7 @@ def apply_vm(
     return _tofu_output(module_dir, state)
 
 
-def destroy_vm(modules_root: Path, state_dir: Path) -> None:
+def destroy_vm(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> None:
     """Destroy the disposable VM, reusing the stored tfvars; the volume is untouched.
 
     A no-op when there is no ``vm.tfstate`` (a volume-only box, the steady state
@@ -700,14 +704,15 @@ def destroy_vm(modules_root: Path, state_dir: Path) -> None:
     skip rather than letting ``_run_tofu`` raise on the absent tfvars. When the
     state *does* exist but its tfvars are gone, ``_run_tofu`` still fails loudly —
     that is a genuinely under-specified destroy, not an empty one. (#1845)
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
     vm_state = state_dir / "vm.tfstate"
     if not vm_state.exists():
         return
-    _run_tofu(modules_root / "gcp" / "vm", vm_state, "destroy", {})
+    _run_tofu(modules_root / provider / "vm", vm_state, "destroy", {})
 
 
-def destroy_volume(modules_root: Path, state_dir: Path) -> bool:
+def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> bool:
     """Destroy the persistent volume, then remove the whole state dir for a clean rebuild.
 
     Returns whether the state actually managed a disk: ``True`` when a
@@ -716,9 +721,10 @@ def destroy_volume(modules_root: Path, state_dir: Path) -> bool:
     destroys nothing). The caller reports the no-op honestly rather than claiming a
     disk was destroyed, which would mask a cloud disk orphaned under another state
     dir. (#1846)
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
     had_disk = parse_volume_state(state_dir / "volume.tfstate") is not None
-    _run_tofu(modules_root / "gcp" / "volume", state_dir / "volume.tfstate", "destroy", {})
+    _run_tofu(modules_root / provider / "volume", state_dir / "volume.tfstate", "destroy", {})
     shutil.rmtree(state_dir)
     return had_disk
 
@@ -835,12 +841,13 @@ def apply_vm_with_zone_fallback(
     sweep destroys the *empty* disk to relocate it. With neither list a capacity error
     is fatal. (#1813, #1836)
     """
+    provider = backend.provider_label
     instances = list(fallback_instances or [])
     tried_zones = [zone]
     tried_instances = [backend.spec.instance]
     vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
     try:
-        return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+        return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
     except subprocess.CalledProcessError as exc:
         if not is_zone_capacity_error(exc):
             raise
@@ -859,7 +866,7 @@ def apply_vm_with_zone_fallback(
             backend.vm_vars(zone=zone, volume_id=volume_id, instance_override=instance),
         )
         try:
-            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
             if not is_zone_capacity_error(exc):
                 raise
@@ -867,14 +874,15 @@ def apply_vm_with_zone_fallback(
     # Zone fallback — fresh create only; recreate the empty disk in each next zone.
     for next_zone in fallback_zones:
         print(f"  zone {zone}: no capacity — trying {next_zone}...", file=sys.stderr)
-        destroy_volume(modules_root, state_dir)  # the empty disk; rmtrees the state dir
+        # Tear down the empty disk and rmtree the state dir before recreating.
+        destroy_volume(modules_root, state_dir, provider=provider)
         state_dir.mkdir(parents=True, exist_ok=True)
         volume_vars = cast("dict[str, Any]", {**backend.volume_vars(), "zone": next_zone})
-        volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars)
+        volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars, provider=provider)
         tried_zones.append(zone)
         vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
         try:
-            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
             if not is_zone_capacity_error(exc):
                 raise

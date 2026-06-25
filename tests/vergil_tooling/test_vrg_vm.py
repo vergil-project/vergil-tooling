@@ -3820,7 +3820,7 @@ class TestCloudDestroy:
         ):
             result = main(["destroy", "--yes", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 0
-        m["destroy_vm"].assert_called_once_with(ANY, state_dir)
+        m["destroy_vm"].assert_called_once_with(ANY, state_dir, provider="gcp")
         m["destroy_volume"].assert_not_called()
         assert "Destroyed" in capsys.readouterr().out
 
@@ -5243,7 +5243,7 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     destroyed: list[Path] = []
     monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
     monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
-    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d: destroyed.append(d))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: destroyed.append(d))
     monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
     monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
     args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
