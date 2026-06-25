@@ -82,7 +82,7 @@ are simply no longer referenced by the core.
 - Modify: `src/vergil_tooling/lib/pr_workflow/state.py`
 - Modify: `src/vergil_tooling/lib/pr_workflow/engine.py`
 - Modify: `src/vergil_tooling/bin/vrg_pr_workflow.py`
-- Rewrite: `tests/vergil_tooling/pr_workflow/test_state.py`, `test_engine_init.py`, `test_engine_reports.py`, `test_cli_e2e.py`
+- Rewrite: `tests/vergil_tooling/pr_workflow/test_state.py`, `test_engine_init.py`, `test_engine_reports.py`, `test_cli_e2e.py`, `test_submission.py`
 - Delete: `tests/vergil_tooling/pr_workflow/test_engine_directives.py`, `test_cli_orchestration.py`, `test_integration_paired.py`
 - Update fixtures: `tests/vergil_tooling/test_worktrees.py`, `tests/vergil_tooling/test_vrg_submit_pr.py`
 
@@ -729,17 +729,51 @@ ready to submit"). Inspect `test_vrg_submit_pr.py` for any direct
 it to the slim schema the same way (use `status="ready"`, drop
 `mode`/`owner`/`round`/`participants`).
 
-- [ ] **Step 16: Verify no other test builds the old schema**
+- [ ] **Step 16: Rewrite the `test_submission.py` fixture to the new `init_state`**
+
+`submission.py` itself is unchanged, but `test_submission.py` builds its state
+through the old `init_state` signature (`mode="solo"`, `user_token="u-1"`),
+which no longer exists. Update only the `_write_state` helper — every
+assertion in the file stays valid:
+
+```python
+def _write_state(root: Path, *, with_metadata: bool) -> None:
+    state = engine.init_state(
+        issue="1534",
+        branch="feature/1534-x",
+        base="develop",
+        head_sha="h0",
+        base_sha="b0",
+        now=_NOW,
+    )
+    if with_metadata:
+        engine.apply_report_ready(
+            state,
+            title="feat: x",
+            summary="did x",
+            notes="n",
+            linkage="Ref",
+            head_sha="h0",
+            now=_NOW,
+        )
+    LocalFileTransport(root, base="develop").write(state)
+```
+
+Run: `vrg-container-run -- uv run pytest tests/vergil_tooling/pr_workflow/test_submission.py -v`
+Expected: PASS (6 tests) — the helper now matches the slim `init_state`, and
+`read_pr_fields`/`record_submission` behavior is unchanged.
+
+- [ ] **Step 17: Verify no other test builds the old schema**
 
 Run: `cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-1872-remove-audit-loop && grep -rn --include="*.py" -e 'mode="solo"' -e 'mode="paired"' -e 'owner="user"' -e 'owner="audit"' -e 'participants=' tests/`
 Expected: no matches that construct a `WorkflowState` (argparse/identity hits are fine). Fix any stragglers.
 
-- [ ] **Step 17: Run the full suite; expect green**
+- [ ] **Step 18: Run the full suite; expect green**
 
 Run: `vrg-container-run -- vrg-validate`
 Expected: PASS. (`registry.py`, `settings.py`, transport waits, and their tests still exist and pass — they are removed in later tasks.)
 
-- [ ] **Step 18: Commit**
+- [ ] **Step 19: Commit**
 
 ```bash
 cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-1872-remove-audit-loop
@@ -750,6 +784,7 @@ vrg-git add src/vergil_tooling/lib/pr_workflow/state.py \
             tests/vergil_tooling/pr_workflow/test_engine_init.py \
             tests/vergil_tooling/pr_workflow/test_engine_reports.py \
             tests/vergil_tooling/pr_workflow/test_cli_e2e.py \
+            tests/vergil_tooling/pr_workflow/test_submission.py \
             tests/vergil_tooling/test_worktrees.py \
             tests/vergil_tooling/test_vrg_submit_pr.py
 vrg-commit --type refactor --scope pr-workflow \

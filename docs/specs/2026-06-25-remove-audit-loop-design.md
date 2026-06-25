@@ -94,8 +94,12 @@ submitted, created_at, updated_at, schema_version
 
 Drop `owner`, `mode`, `participants`, `checks`, `round`, `history`,
 `escalation`, `phase`. Bump `schema_version`. No migration: the file is
-ephemeral per-PR working state, regenerated each time, never read across a
-schema change.
+ephemeral per-PR working state, regenerated on each `report-ready`. One nuance:
+the worktree scanner (`worktrees._probe_pr_workflow`) *does* cross-read other
+worktrees' state files, so a leftover v1 file is read after the bump — but the
+load error is caught there and surfaced as a captured reason (never a crash or
+a silent failure), and it clears itself the next time that worktree runs
+`report-ready`. So the bump needs no migration code; it degrades gracefully.
 
 **Transport (`src/vergil_tooling/lib/pr_workflow/local_transport.py` and the
 `Transport` ABC in `src/vergil_tooling/lib/pr_workflow/transport.py`)**
