@@ -4985,6 +4985,84 @@ class TestVolumeLiveStatus:
             assert _volume_live_status("—", "—", "gcp") == "unknown (no gcp live check)"
             run.assert_not_called()
 
+    # ------------------------------------------------------------------
+    # Azure live-status branch
+    # ------------------------------------------------------------------
+
+    _ARM_ID = "/subscriptions/sub-123/resourceGroups/rg-test/providers/Microsoft.Compute/disks/d"
+
+    def test_azure_live_unattached(self) -> None:
+        """Azure Unattached diskState is returned as-is (disk exists, not in use)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Unattached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "Unattached"
+
+    def test_azure_live_attached(self) -> None:
+        """Azure Attached diskState is returned as-is."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Attached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "Attached"
+
+    def test_azure_live_missing_when_not_found(self) -> None:
+        """ResourceNotFound error from az disk show maps to MISSING (disk deleted out of band)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "az")
+        err.stderr = "(ResourceNotFound) The Resource 'vrg-abc' was not found"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "MISSING"
+
+    def test_azure_live_unknown_when_no_creds(self) -> None:
+        """CalledProcessError for auth failures degrades to 'unknown (no azure creds)'."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "az")
+        err.stderr = "ERROR: Please run 'az login'"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            result = _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            assert result == "unknown (no azure creds)"
+
+    def test_azure_live_unknown_when_az_absent(self) -> None:
+        """FileNotFoundError (az not installed) degrades to 'unknown (no az)'."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=FileNotFoundError):
+            result = _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            assert result == "unknown (no az)"
+
+    def test_azure_live_no_volume_id_degrades(self) -> None:
+        """Empty volume_id (volume not yet applied) degrades without calling az."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run") as run:
+            result = _volume_live_status("d", "1", "azure", volume_id="")
+            assert result == "unknown (no azure volume_id)"
+            run.assert_not_called()
+
+    def test_azure_live_uses_ids_flag(self) -> None:
+        """Verify az disk show is called with --ids <arm-id>."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Unattached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed) as run:
+            _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            argv = run.call_args[0][0]
+            assert argv[:3] == ["az", "disk", "show"]
+            assert "--ids" in argv
+            assert self._ARM_ID in argv
+
+    def test_gcp_live_status_unchanged(self) -> None:
+        """GCP live status branch is byte-identical to pre-Task-6 behavior (regression guard)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="READY\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "READY"
+
 
 class TestVolumesCommand:
     def test_lists_volumes_with_columns(
@@ -5026,7 +5104,7 @@ class TestVolumesCommand:
         out = capsys.readouterr().out
         assert "LIVE" in out
         assert "READY" in out
-        live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")
+        live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp", volume_id="")
 
     def test_volumes_shows_instance_column(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path

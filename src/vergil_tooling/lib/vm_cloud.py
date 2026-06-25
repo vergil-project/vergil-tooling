@@ -703,15 +703,15 @@ def destroy_vm(modules_root: Path, state_dir: Path, *, provider: str = "gcp") ->
 def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> bool:
     """Destroy the persistent volume, then remove the whole state dir for a clean rebuild.
 
-    Returns whether the state actually managed a disk: ``True`` when a
-    ``google_compute_disk`` was present (a real teardown), ``False`` when it held
-    none (an empty/placeholder state, or one already drifted out of band — tofu
-    destroys nothing). The caller reports the no-op honestly rather than claiming a
-    disk was destroyed, which would mask a cloud disk orphaned under another state
+    Returns whether the state actually managed a disk: ``True`` when a disk
+    resource was present (a real teardown), ``False`` when it held none (an
+    empty/placeholder state, or one already drifted out of band — tofu destroys
+    nothing). The caller reports the no-op honestly rather than claiming a disk
+    was destroyed, which would mask a cloud disk orphaned under another state
     dir. (#1846)
     ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    had_disk = parse_volume_state(state_dir / "volume.tfstate") is not None
+    had_disk = parse_volume_state(state_dir / "volume.tfstate", provider=provider) is not None
     _run_tofu(modules_root / provider / "volume", state_dir / "volume.tfstate", "destroy", {})
     shutil.rmtree(state_dir)
     return had_disk
@@ -915,15 +915,31 @@ def zone_to_region(zone: str) -> str:
     return zone.rsplit("-", 1)[0]
 
 
-def parse_volume_state(state_file: Path) -> VolumeState | None:
+def parse_volume_state(state_file: Path, provider: str = "gcp") -> VolumeState | None:
     """Parse a ``volume.tfstate``, returning the persistent disk's attributes.
 
     Returns ``None`` when the file is absent, unreadable, malformed, or carries
-    no applied ``google_compute_disk`` resource (e.g. the ``{}`` placeholder of a
-    never-applied state). A bad state degrades to a placeholder volume row in the
-    caller rather than erroring the whole listing — there is no network call and
-    no gcloud here, only the local state file.
+    no applied disk resource (e.g. the ``{}`` placeholder of a never-applied
+    state). A bad state degrades to a placeholder volume row in the caller
+    rather than erroring the whole listing — there is no network call here,
+    only the local state file.
+
+    ``provider`` selects which resource type and attribute names to look for:
+    - ``"gcp"`` (default): ``google_compute_disk``, size from ``size``,
+      labels from ``labels``.
+    - ``"azure"``: ``azurerm_managed_disk``, size from ``disk_size_gb``,
+      labels from ``tags``.  Azure zones are bare AZ integers (``"1"``);
+      GCP zones may be full selfLink URLs, normalised by :func:`_zone_name`.
+
+    GCP attribute names verified against existing usage; Azure attribute names
+    verified against the azurerm Terraform provider schema (2026-06-25):
+    https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/managed_disk
     """
+    from vergil_tooling.lib.vm_provider import strategy_for
+
+    strategy = strategy_for(provider)
+    disk_type = strategy.volume_disk_type()
+
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -931,7 +947,7 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
     if not isinstance(data, dict):
         return None
     for resource in data.get("resources", []):
-        if not isinstance(resource, dict) or resource.get("type") != "google_compute_disk":
+        if not isinstance(resource, dict) or resource.get("type") != disk_type:
             continue
         instances = resource.get("instances") or []
         if not instances or not isinstance(instances[0], dict):
@@ -939,13 +955,18 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
         attrs = instances[0].get("attributes")
         if not isinstance(attrs, dict):
             continue
-        raw_labels = attrs.get("labels") or {}
+        if provider == "azure":
+            raw_labels = attrs.get("tags") or {}
+            size_val = attrs.get("disk_size_gb")
+        else:
+            raw_labels = attrs.get("labels") or {}
+            size_val = attrs.get("size")
         labels = (
             {str(k): str(v) for k, v in raw_labels.items()} if isinstance(raw_labels, dict) else {}
         )
         return VolumeState(
             name=str(attrs.get("name", "")),
-            size_gib=_coerce_int(attrs.get("size")),
+            size_gib=_coerce_int(size_val),
             zone=_zone_name(str(attrs.get("zone", ""))),
             labels=labels,
         )
@@ -1209,34 +1230,8 @@ class OffPlatformBackend:
         return SshTransport(host=host, ssh_user=self.ssh_user, key_path=str(key_path))
 
     def status(self, instance: str | None = None) -> str:  # noqa: ARG002
-        try:
-            zone = read_zone(self.state_dir())
-        except RuntimeError:
-            return ""
-        try:
-            result = subprocess.run(  # noqa: S603
-                [  # noqa: S607
-                    "gcloud",
-                    "compute",
-                    "instances",
-                    "describe",
-                    self.name,
-                    f"--zone={zone}",
-                    f"--project={self._project()}",
-                    "--format=value(status)",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            return ""
-        raw = result.stdout.strip()
-        if raw == "RUNNING":
-            return "Running"
-        if raw in {"TERMINATED", "STOPPED"}:
-            return "Stopped"
-        return ""
+        """Delegate to the provider strategy for a normalized status string."""
+        return self.strategy.status(self.name, self.state_dir())
 
     def volume_vars(self) -> dict[str, object]:
         return {

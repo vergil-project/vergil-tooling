@@ -170,9 +170,6 @@ class TestAzureStrategyMethods:
         with pytest.raises(NotImplementedError):
             AzureStrategy().transport("vm", tmp_path, "azureuser")
 
-    def test_status_returns_empty(self, tmp_path: Path) -> None:
-        assert AzureStrategy().status("vm", tmp_path) == ""
-
     def test_volume_disk_type(self) -> None:
         assert AzureStrategy().volume_disk_type() == "azurerm_managed_disk"
 
@@ -186,6 +183,105 @@ class TestAzureStrategyMethods:
         with pytest.raises(SystemExit):
             AzureStrategy()._subscription()
         assert "az login" in capsys.readouterr().err
+
+
+_ARM_VOLUME_ID = (
+    "/subscriptions/sub-123/resourceGroups/rg-test/providers/Microsoft.Compute/disks/vrg-abc"
+)
+
+
+class TestAzureStatus:
+    """AzureStrategy.status maps PowerState codes to the normalized vocabulary.
+
+    PowerState code values verified against Azure docs (2026-06-25):
+    https://learn.microsoft.com/en-us/azure/virtual-machines/states-billing
+    """
+
+    def _write_volume_id(self, state_dir: Path) -> None:
+        (state_dir / "volume_id").write_text(_ARM_VOLUME_ID)
+
+    def test_running(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="PowerState/running\n", stderr=""
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == "Running"
+        call_args = sub.call_args[0][0]
+        assert call_args[:4] == ["az", "vm", "get-instance-view", "--name"]
+
+    def test_stopped_is_stopped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="PowerState/stopped\n", stderr=""
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == "Stopped"
+
+    def test_deallocated_is_stopped(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="PowerState/deallocated\n", stderr=""
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == "Stopped"
+
+    def test_transitional_is_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Transitional states (starting, stopping, deallocating) map to ''."""
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="PowerState/starting\n", stderr=""
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == ""
+
+    def test_no_creds_is_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """CalledProcessError (e.g. no creds / wrong sub) degrades to ''."""
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(side_effect=subprocess.CalledProcessError(1, "az"))
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == ""
+
+    def test_az_missing_is_empty(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """FileNotFoundError (az CLI not installed) degrades to ''."""
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(side_effect=FileNotFoundError("no az"))
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("vrg-x", tmp_path) == ""
+
+    def test_no_volume_id_is_empty(self, tmp_path: Path) -> None:
+        """No persisted volume_id (volume not yet applied) degrades to ''."""
+        assert AzureStrategy().status("vrg-x", tmp_path) == ""
+
+    def test_invalid_arm_id_is_empty(self, tmp_path: Path) -> None:
+        """Malformed volume_id (not a valid ARM resource ID) degrades to ''."""
+        (tmp_path / "volume_id").write_text("not-an-arm-id")
+        assert AzureStrategy().status("vrg-x", tmp_path) == ""
+
+    def test_resource_group_passed_to_az(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Verify the resource group extracted from the ARM ID is passed to az."""
+        self._write_volume_id(tmp_path)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout="PowerState/running\n", stderr=""
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        AzureStrategy().status("vrg-x", tmp_path)
+        argv = sub.call_args[0][0]
+        assert "--resource-group" in argv
+        rg_idx = argv.index("--resource-group")
+        assert argv[rg_idx + 1] == "rg-test"
 
 
 class TestAzureZoneCapacity:

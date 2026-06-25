@@ -398,8 +398,57 @@ class AzureStrategy:
         """Not yet implemented (Tasks 5/6/7)."""
         raise NotImplementedError("Azure transport is not yet implemented")
 
-    def status(self, name: str, state_dir: Path) -> str:  # noqa: ARG002
-        """Not yet implemented — return empty."""
+    def status(self, name: str, state_dir: Path) -> str:
+        """Return the Azure VM power state, or '' if unknown.
+
+        Runs ``az vm get-instance-view`` and maps the PowerState code:
+        - ``PowerState/running``                    → ``"Running"``
+        - ``PowerState/stopped``, ``PowerState/deallocated`` → ``"Stopped"``
+        - Transitional states (starting, stopping, deallocating)  → ``""``
+
+        PowerState code values verified against Azure docs (2026-06-25):
+        https://learn.microsoft.com/en-us/azure/virtual-machines/states-billing
+        """
+        from vergil_tooling.lib.vm_cloud import read_volume_id
+
+        try:
+            volume_id = read_volume_id(state_dir)
+        except RuntimeError:
+            return ""
+
+        from vergil_tooling.lib.vm_cloud import _azure_resource_group_from_volume_id
+
+        try:
+            resource_group = _azure_resource_group_from_volume_id(volume_id)
+        except ValueError:
+            return ""
+
+        try:
+            result = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "az",
+                    "vm",
+                    "get-instance-view",
+                    "--name",
+                    name,
+                    "--resource-group",
+                    resource_group,
+                    "--query",
+                    "instanceView.statuses[?starts_with(code,'PowerState/')].code",
+                    "-o",
+                    "tsv",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return ""
+        raw = result.stdout.strip()
+        if raw == "PowerState/running":
+            return "Running"
+        if raw in {"PowerState/stopped", "PowerState/deallocated"}:
+            return "Stopped"
         return ""
 
     def volume_disk_type(self) -> str:

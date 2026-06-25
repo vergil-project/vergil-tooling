@@ -1452,7 +1452,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="RUNNING\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == "Running"
 
     def test_status_terminated_is_stopped(
@@ -1465,7 +1465,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="TERMINATED\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == "Stopped"
 
     def test_status_unknown_state_is_empty(
@@ -1478,7 +1478,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="PROVISIONING\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == ""
 
     def test_status_no_creds_is_empty(
@@ -1489,8 +1489,20 @@ class TestOffPlatformBackend:
         b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
         (b.state_dir() / "zone").write_text("us-central1-b")
         sub = MagicMock(side_effect=subprocess.CalledProcessError(1, "gcloud"))
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == ""
+
+    def test_status_delegates_to_azure_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.status delegates to AzureStrategy.status for azure provider."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        mock_status = MagicMock(return_value="Running")
+        monkeypatch.setattr(b.strategy, "status", mock_status)
+        result = b.status()
+        assert result == "Running"
+        mock_status.assert_called_once_with(b.name, b.state_dir())
 
     def test_status_no_state_is_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1730,6 +1742,108 @@ class TestParseVolumeState:
             )
         )
         assert parse_volume_state(state) is None
+
+    # ------------------------------------------------------------------
+    # GCP regression — default path must be byte-identical to before
+    # ------------------------------------------------------------------
+
+    def test_gcp_still_parses_google_disk(self, tmp_path: Path) -> None:
+        """GCP parse_volume_state (provider='gcp') is byte-identical to pre-Task-6 behavior."""
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate())
+        parsed = parse_volume_state(state, provider="gcp")
+        assert parsed is not None
+        assert parsed.name == "vergil-lmf-cloud-data"
+        assert parsed.size_gib == 300
+        assert parsed.zone == "us-central1-a"
+        assert parsed.labels == {
+            "vergil-identity": "vergil",
+            "vergil-org": "lmf",
+            "vergil-repo": "cloud",
+        }
+
+    # ------------------------------------------------------------------
+    # Azure — azurerm_managed_disk with disk_size_gb / tags
+    # ------------------------------------------------------------------
+
+    def test_parses_azure_managed_disk(self, tmp_path: Path) -> None:
+        """Azure parse_volume_state reads disk_size_gb and tags from azurerm_managed_disk.
+
+        Attribute names verified against the azurerm Terraform provider schema (2026-06-25):
+        https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/managed_disk
+        """
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate())
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.name == "vrg-abc-data"
+        assert parsed.size_gib == 300
+        assert parsed.zone == "1"
+        assert parsed.labels == {
+            "vergil-identity": "vergil",
+            "vergil-org": "lmf",
+            "vergil-repo": "cloud",
+        }
+
+    def test_azure_disk_wrong_provider_returns_none(self, tmp_path: Path) -> None:
+        """An azurerm_managed_disk state returns None when provider='gcp' (type mismatch)."""
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate())
+        assert parse_volume_state(state, provider="gcp") is None
+
+    def test_azure_non_numeric_disk_size_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate(disk_size_gb="big"))
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.size_gib is None
+
+    def test_azure_absent_tags_yield_empty_dict(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate(tags={}))
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.labels == {}
+
+
+def _azure_volume_tfstate(
+    *,
+    name: str = "vrg-abc-data",
+    disk_size_gb: object = 300,
+    zone: str = "1",
+    tags: dict[str, str] | None = None,
+) -> str:
+    """A minimal but realistic volume.tfstate carrying one azurerm_managed_disk.
+
+    Azure zones are bare AZ integers ("1", "2", "3"), not GCP-style region+zone
+    strings.  Azure uses ``disk_size_gb`` (not ``size``) and ``tags`` (not
+    ``labels``) — verified against the azurerm provider schema (2026-06-25).
+    """
+    if tags is None:
+        tags = {"vergil-identity": "vergil", "vergil-org": "lmf", "vergil-repo": "cloud"}
+    return json.dumps(
+        {
+            "version": 4,
+            "terraform_version": "1.8.0",
+            "resources": [
+                {
+                    "mode": "managed",
+                    "type": "azurerm_managed_disk",
+                    "name": "data",
+                    "instances": [
+                        {
+                            "attributes": {
+                                "name": name,
+                                "disk_size_gb": disk_size_gb,
+                                "zone": zone,
+                                "tags": tags,
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    )
 
 
 def test_cloud_resource_name_is_hashed_and_deterministic() -> None:
