@@ -146,6 +146,61 @@ def test_last_session_name_ignores_other_type_with_token(tmp_path: Path) -> None
     assert r._last_session_name(f) is None
 
 
+def test_last_session_name_reads_via_bounded_tail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A large transcript whose only naming event is the last line: the scan must
+    # find it from the end via a bounded read, not by reading the whole file
+    # (the resume path runs this for every transcript in a slug, so a full
+    # forward read of accumulated history is what stalls reconnect).
+    f = tmp_path / "s.jsonl"
+    pad = "x" * 1000
+    lines = [f'{{"type":"user","message":"{pad}"}}' for _ in range(300)]
+    lines.append('{"type":"custom-title","customTitle":"id:09:z","sessionId":"s"}')
+    f.write_text("\n".join(lines) + "\n")
+    total = f.stat().st_size
+    assert total > 128 * 1024  # comfortably larger than one tail block
+
+    consumed = 0
+    real_open = type(f).open
+
+    class _CountingFile:
+        # Counts bytes/chars consumed however the implementation reads — line
+        # iteration (current forward scan) or block reads (a tail scan) — so the
+        # assertion below measures behavior, not a particular read strategy.
+        def __init__(self, fh: object) -> None:
+            self._fh = fh
+
+        def read(self, *a: object, **k: object) -> object:
+            nonlocal consumed
+            data = self._fh.read(*a, **k)  # type: ignore[attr-defined]
+            consumed += len(data)
+            return data
+
+        def __iter__(self) -> object:
+            nonlocal consumed
+            for line in self._fh:  # type: ignore[attr-defined]
+                consumed += len(line)
+                yield line
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._fh, name)
+
+        def __enter__(self) -> _CountingFile:
+            self._fh.__enter__()  # type: ignore[attr-defined]
+            return self
+
+        def __exit__(self, *exc: object) -> object:
+            return self._fh.__exit__(*exc)  # type: ignore[attr-defined]
+
+    def counting_open(self: Path, *a: object, **k: object) -> _CountingFile:
+        return _CountingFile(real_open(self, *a, **k))
+
+    monkeypatch.setattr(type(f), "open", counting_open)
+    assert r._last_session_name(f) == "id:09:z"
+    assert consumed < total  # bounded tail read, not the whole file
+
+
 # --- custom-title naming events (issue #1493) ---
 
 
