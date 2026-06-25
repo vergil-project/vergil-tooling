@@ -189,3 +189,77 @@ class IapTransport:
         remote = f"cd {workdir} && {inner}"
         cmd = [*self._base(), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
+
+
+class SshTransport:
+    """Transport over plain ``ssh`` to a public-IP host (Azure off-platform).
+
+    The vm module exposes a routable public IP (``host``) and the box is reached as
+    ``ssh -i <key> <ssh_user>@<host>``. The NSG that fronts port 22 is locked to the
+    operator's current /32, refreshed at session start (see vm_cloud.nsg_refresh).
+    Same run/pipe/popen/exec_session surface as the other transports.
+    """
+
+    def __init__(self, host: str, ssh_user: str, key_path: str) -> None:
+        self.host = host
+        self.ssh_user = ssh_user
+        self.key_path = key_path
+
+    def _base(self) -> list[str]:
+        return [
+            "ssh",
+            "-i",
+            self.key_path,
+            # accept-new: trust the key on first contact (the box is freshly created and
+            # its host key is unknown), but still detect a changed key thereafter.
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "UserKnownHostsFile=~/.config/vergil/known_hosts",
+            f"{self.ssh_user}@{self.host}",
+        ]
+
+    def run(
+        self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
+    ) -> subprocess.CompletedProcess[str]:
+        remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
+        try:
+            return subprocess.run(  # noqa: S603
+                [*self._base(), remote],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stderr and not quiet:
+                print(exc.stderr, end="", file=sys.stderr)
+            raise
+
+    def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
+        remote = f"cd {shlex.quote(workdir)} && {cmd}"
+        try:
+            subprocess.run(  # noqa: S603
+                [*self._base(), remote],
+                check=True,
+                input=input_data,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            if exc.stderr:
+                print(exc.stderr, end="", file=sys.stderr)
+            raise
+
+    def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
+        remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
+        return subprocess.Popen(  # noqa: S603
+            [*self._base(), remote],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+    def exec_session(self, workdir: str, inner: str) -> NoReturn:
+        remote = f"cd {workdir} && {inner}"
+        cmd = [*self._base(), "-t", remote]
+        os.execvp(cmd[0], cmd)  # noqa: S606, S607
