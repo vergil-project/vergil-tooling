@@ -236,6 +236,10 @@ _AZURE_CAPACITY_RE = re.compile(
 # https://learn.microsoft.com/en-us/azure/virtual-machines/vm-naming-conventions
 # Format: Standard_<Family><vCPUs><AdditiveFeatures>_v<Version>
 # Example: Standard_D8s_v5  → family=D, vCPUs=8, features=s, version=5
+# The ([a-z]*) additive-features group intentionally matches zero characters so
+# that feature-free sizes like Standard_D8_v5 parse correctly.  The ladder uses
+# only s-suffixed families (Dsv5/Dsv4/Fsv2) because the off-platform module
+# attaches a premium managed disk, which requires premium-storage-capable sizes.
 _AZURE_SIZE_RE = re.compile(r"^Standard_([A-Z]+)(\d+)([a-z]*)_v(\d+)$")
 
 # Family-code regex: parses the compact codes used in NESTED_VIRT_FAMILIES.

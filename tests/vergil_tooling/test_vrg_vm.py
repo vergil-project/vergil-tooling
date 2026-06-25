@@ -3641,9 +3641,17 @@ class TestCloudStageGuards:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
+        mock_region_zones = MagicMock(return_value=["us-central1-a", "us-central1-b"])
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
+            mock_region_zones,
+        )
         _cs_tofu_volume(state)
-        # region_zones is not on the reattach path — fallback_zones stays empty,
-        # and family fallback (not zone sweep) is populated for reattach.
+        # region_zones must NOT be called on the reattach path — the zonal disk
+        # is already pinned, so no zone sweep is needed.
+        mock_region_zones.assert_not_called()
+        # fallback_zones stays empty, and family fallback (not zone sweep) is
+        # populated for reattach.
         assert state.fallback_zones == []
         assert state.zone == "us-central1-b"
 

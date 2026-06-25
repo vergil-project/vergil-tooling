@@ -185,6 +185,7 @@ class TestAzureStrategyMethods:
         monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         with pytest.raises(SystemExit):
             AzureStrategy()._subscription()
+        assert "az login" in capsys.readouterr().err
 
 
 class TestAzureZoneCapacity:
