@@ -58,35 +58,64 @@ def _project_slug(cwd: str) -> str:
 _NAME_EVENT_FIELDS = {"agent-name": "agentName", "custom-title": "customTitle"}
 
 
+def _name_from_line(raw: bytes) -> str | None:
+    """Extract a session-name value from one transcript line, or ``None``.
+
+    A line names the session only if it is a JSON object whose ``type`` is a
+    recognized naming event (``agent-name``/``custom-title``) carrying a string
+    value in the matching field. The cheap substring guard skips the JSON parse
+    for the overwhelming majority of lines (ordinary turns) that cannot name.
+    """
+    line = raw.strip()
+    if not line or (b'"agent-name"' not in line and b'"custom-title"' not in line):
+        return None
+    try:
+        entry = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    event_type = entry.get("type")
+    if not isinstance(event_type, str):
+        return None
+    field = _NAME_EVENT_FIELDS.get(event_type)
+    if field is None:
+        return None
+    value = entry.get(field)
+    return value if isinstance(value, str) else None
+
+
 def _last_session_name(transcript: Path) -> str | None:
     """Return the last session-name value in a transcript, or ``None``.
 
     The last naming event in file order wins, regardless of which of the two
-    event types (``agent-name`` or ``custom-title``) carries it.
+    event types (``agent-name`` or ``custom-title``) carries it. The file is
+    read end-first in blocks and the scan stops at the first naming event seen
+    from the end — which is the last in file order — so a large transcript need
+    not be read in full. This matters because the resume path runs this for
+    every transcript in a project slug, and that history accumulates on a
+    persistent volume across VM rebuilds; a full forward read of all of it is
+    what stalls reconnect before Claude starts.
     """
-    last: str | None = None
     try:
-        with transcript.open() as fh:
-            for raw in fh:
-                line = raw.strip()
-                if not line or ('"agent-name"' not in line and '"custom-title"' not in line):
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                event_type = entry.get("type")
-                if not isinstance(event_type, str):
-                    continue
-                field = _NAME_EVENT_FIELDS.get(event_type)
-                if field is None:
-                    continue
-                value = entry.get(field)
-                if isinstance(value, str):
-                    last = value
+        with transcript.open("rb") as fh:
+            fh.seek(0, 2)
+            pos = fh.tell()
+            block = 64 * 1024
+            data = b""
+            while pos > 0:
+                step = min(block, pos)
+                pos -= step
+                fh.seek(pos)
+                data = fh.read(step) + data
+                lines = data.split(b"\n")
+                data = lines[0] if pos > 0 else b""
+                candidates = lines[1:] if pos > 0 else lines
+                for raw in reversed(candidates):
+                    name = _name_from_line(raw)
+                    if name is not None:
+                        return name
     except OSError:
         return None
-    return last
+    return None
 
 
 def name_by_session(projects_dir: Path, slug: str | None = None) -> dict[str, str]:
