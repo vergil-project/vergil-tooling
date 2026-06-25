@@ -1166,6 +1166,7 @@ class TestModulePathProvider:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
         modules = tmp_path / "modules"
         state_dir = tofu_state_dir("k", "azure")
         (state_dir / "vm.tfstate").write_text("{}")
@@ -1180,6 +1181,7 @@ class TestModulePathProvider:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
         modules = tmp_path / "modules"
         state_dir = tofu_state_dir("k", "azure")
         (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "n"}')
@@ -1214,6 +1216,160 @@ class TestModulePathProvider:
         )
         init_args = run.call_args_list[0].args[0]
         assert f"-chdir={tmp_path / 'modules' / 'gcp' / 'volume'}" in init_args
+
+
+class TestTofuStrategyEnv:
+    """apply_volume/apply_vm must inject the correct provider credentials into tofu.
+
+    Before this fix the four lifecycle functions called _run_tofu/_tofu_output without
+    a strategy, so an Azure apply ran azurerm with GOOGLE_CLOUD_PROJECT set and no
+    ARM_SUBSCRIPTION_ID — Azure was silently non-functional. The tests below assert
+    the correct env for both providers and serve as a regression guard.
+
+    NOTE: AzureStrategy.tofu_env() spreads ``os.environ`` before overriding with
+    ARM_SUBSCRIPTION_ID.  If a test fixture has GOOGLE_CLOUD_PROJECT in the process
+    environment the Azure env will inherit it.  We monkeypatch it away here to make
+    the assertion meaningful.  In production an operator's shell normally won't have
+    GOOGLE_CLOUD_PROJECT set while running an Azure workflow, but the code itself
+    does not explicitly remove it — that is a known (low-risk) leak worth a follow-up.
+    """
+
+    def test_azure_apply_volume_passes_arm_subscription_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An Azure apply_volume must set ARM_SUBSCRIPTION_ID and NOT set GOOGLE_CLOUD_PROJECT."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "azure-sub-123")
+        # Remove GOOGLE_CLOUD_PROJECT so the assertion that it is absent is meaningful;
+        # the autouse _default_gcp_project fixture sets it, and AzureStrategy.tofu_env
+        # spreads os.environ, so without this delenv the Azure env would silently carry it.
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-x", "zone": "eastus"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_volume(
+            modules,
+            state_dir,
+            name="vrg-azure-box",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("ARM_SUBSCRIPTION_ID") == "azure-sub-123", (
+                f"ARM_SUBSCRIPTION_ID missing or wrong in tofu env: {env}"
+            )
+            assert "GOOGLE_CLOUD_PROJECT" not in env, (
+                f"GOOGLE_CLOUD_PROJECT must not be present in Azure tofu env: {env}"
+            )
+
+    def test_azure_apply_vm_passes_arm_subscription_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An Azure apply_vm must set ARM_SUBSCRIPTION_ID and NOT set GOOGLE_CLOUD_PROJECT."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "azure-sub-456")
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"host": "20.1.2.3", "ssh_user": "ubuntu"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_vm(
+            modules,
+            state_dir,
+            name="vrg-azure-box",
+            zone="1",
+            instance_type="Standard_D8s_v5",
+            nested=False,
+            volume_id="/subscriptions/sub/resourceGroups/rg/providers/d",
+            ssh_user="ubuntu",
+            provision_env="VERGIL_USER=ubuntu",
+            labels={},
+            provider="azure",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("ARM_SUBSCRIPTION_ID") == "azure-sub-456", (
+                f"ARM_SUBSCRIPTION_ID missing or wrong in tofu env: {env}"
+            )
+            assert "GOOGLE_CLOUD_PROJECT" not in env, (
+                f"GOOGLE_CLOUD_PROJECT must not be present in Azure tofu env: {env}"
+            )
+
+    def test_gcp_apply_volume_still_has_google_cloud_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GCP apply_volume still injects GOOGLE_CLOUD_PROJECT — regression guard."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        # _default_gcp_project autouse fixture already sets GOOGLE_CLOUD_PROJECT=test-project
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "vol-1", "zone": "us-central1-a"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_volume(
+            modules,
+            state_dir,
+            name="vrg-gcp-box",
+            region="us-central1",
+            size_gib=300,
+            labels={},
+            provider="gcp",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("GOOGLE_CLOUD_PROJECT") == "test-project", (
+                f"GOOGLE_CLOUD_PROJECT must be present in GCP tofu env: {env}"
+            )
 
 
 class TestReadZone:

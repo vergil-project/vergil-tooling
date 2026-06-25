@@ -5421,7 +5421,8 @@ def test_destroy_azure_prunes_known_hosts(monkeypatch: pytest.MonkeyPatch, tmp_p
 
     mock_strategy = MagicMock()
     mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
-    monkeypatch.setattr("vergil_tooling.lib.vm_provider.strategy_for", lambda p: mock_strategy)
+    # strategy_for is imported at module level in vrg_vm, so patch the bound name there.
+    monkeypatch.setattr(vrg_vm, "strategy_for", lambda p: mock_strategy)
 
     args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
     rc = vrg_vm._cmd_destroy(args)
@@ -5459,7 +5460,8 @@ def test_destroy_gcp_does_not_prune_known_hosts(
 
     mock_strategy = MagicMock()
     mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
-    monkeypatch.setattr("vergil_tooling.lib.vm_provider.strategy_for", lambda p: mock_strategy)
+    # strategy_for is imported at module level in vrg_vm, so patch the bound name there.
+    monkeypatch.setattr(vrg_vm, "strategy_for", lambda p: mock_strategy)
 
     args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
     rc = vrg_vm._cmd_destroy(args)

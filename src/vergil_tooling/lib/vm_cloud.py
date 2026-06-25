@@ -30,7 +30,6 @@ from vergil_tooling.lib.vm_provider import (
     strategy_for,
 )
 from vergil_tooling.lib.vm_spec import spec_fingerprint, state_slug
-from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -606,6 +605,7 @@ def apply_volume(
     (the module coalesces it away), so existing region-b volumes are unaffected (#1797).
     ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
+    strategy = strategy_for(provider)
     module_dir = modules_root / provider / "volume"
     state = state_dir / "volume.tfstate"
     _run_tofu(
@@ -619,8 +619,9 @@ def apply_volume(
             "labels": labels,
             "zone": zone,
         },
+        strategy=strategy,
     )
-    out = _tofu_output(module_dir, state)
+    out = _tofu_output(module_dir, state, strategy=strategy)
     (state_dir / "zone").write_text(out["zone"], encoding="utf-8")
     (state_dir / "volume_id").write_text(out["volume_id"], encoding="utf-8")
     return out["volume_id"], out["zone"]
@@ -652,6 +653,7 @@ def apply_vm(
     volume lives in its own state — so the rollback never touches the reusable disk.
     ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
+    strategy = strategy_for(provider)
     module_dir = modules_root / provider / "vm"
     state = state_dir / "vm.tfstate"
     try:
@@ -669,6 +671,7 @@ def apply_vm(
                 "provision_env": provision_env,
                 "labels": labels,
             },
+            strategy=strategy,
         )
     except subprocess.CalledProcessError:
         # Best-effort rollback: tear down the partial state (the orphaned NIC/VM on
@@ -686,9 +689,9 @@ def apply_vm(
         # stubborn orphan can be cleared with `vrg-vm destroy`.
         print("VM apply failed — rolling back the partial state...", file=sys.stderr)
         with contextlib.suppress(subprocess.CalledProcessError):
-            _run_tofu(module_dir, state, "destroy", {})
+            _run_tofu(module_dir, state, "destroy", {}, strategy=strategy)
         raise
-    out = _tofu_output(module_dir, state)
+    out = _tofu_output(module_dir, state, strategy=strategy)
     (state_dir / "host").write_text(out.get("host", ""), encoding="utf-8")
     return out
 
@@ -703,10 +706,11 @@ def destroy_vm(modules_root: Path, state_dir: Path, *, provider: str = "gcp") ->
     that is a genuinely under-specified destroy, not an empty one. (#1845)
     ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
+    strategy = strategy_for(provider)
     vm_state = state_dir / "vm.tfstate"
     if not vm_state.exists():
         return
-    _run_tofu(modules_root / provider / "vm", vm_state, "destroy", {})
+    _run_tofu(modules_root / provider / "vm", vm_state, "destroy", {}, strategy=strategy)
 
 
 def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> bool:
@@ -720,8 +724,15 @@ def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp"
     dir. (#1846)
     ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
+    strategy = strategy_for(provider)
     had_disk = parse_volume_state(state_dir / "volume.tfstate", provider=provider) is not None
-    _run_tofu(modules_root / provider / "volume", state_dir / "volume.tfstate", "destroy", {})
+    _run_tofu(
+        modules_root / provider / "volume",
+        state_dir / "volume.tfstate",
+        "destroy",
+        {},
+        strategy=strategy,
+    )
     shutil.rmtree(state_dir)
     return had_disk
 
@@ -1222,27 +1233,7 @@ class OffPlatformBackend:
         return tofu_state_dir(self.state_key, self.spec.provider)
 
     def transport(self, instance: str | None = None) -> Transport:  # noqa: ARG002
-        if self.spec.provider == "azure":
-            return self._azure_transport()
-        zone = read_zone(self.state_dir())
-        return IapTransport(self.name, zone, self._project(), self.ssh_user)
-
-    def _azure_transport(self) -> SshTransport:
-        """Build an :class:`SshTransport` for an Azure box, refreshing the NSG rule first.
-
-        Reads the persisted public IP (``host``) and volume ID, derives the resource group
-        from the ARM volume ID, refreshes the NSG inbound-22 rule to the operator's
-        current /32, then returns an ``SshTransport`` keyed to the persisted keypair.
-        """
-        state_dir = self.state_dir()
-        host = read_host(state_dir)
-        volume_id = read_volume_id(state_dir)
-        resource_group = _azure_resource_group_from_volume_id(volume_id)
-        # NSG name follows the convention from the tofu volume module: <vm-name>-nsg.
-        nsg_name = f"{self.name}-nsg"
-        nsg_refresh(resource_group, nsg_name, "ssh-operator")
-        key_path, _pub = ensure_keypair(state_dir)
-        return SshTransport(host=host, ssh_user=self.ssh_user, key_path=str(key_path))
+        return self.strategy.transport(self.name, self.state_dir(), self.ssh_user)
 
     def status(self, instance: str | None = None) -> str:  # noqa: ARG002
         """Delegate to the provider strategy for a normalized status string."""

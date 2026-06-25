@@ -73,6 +73,7 @@ from vergil_tooling.lib.vm_guest import (
     vm_probe,
     vm_spec_status,
 )
+from vergil_tooling.lib.vm_provider import strategy_for
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     SpecError,
@@ -1292,8 +1293,6 @@ def _destroy_recorded(
                 # host key, so prune the vergil-managed known_hosts entry now so the
                 # next connect doesn't hard-fail on a host-key mismatch.
                 # GCP uses IAP tunnels — no host key is pinned by IP (no-op there).
-                from vergil_tooling.lib.vm_provider import strategy_for
-
                 strategy = strategy_for(provider)
                 try:
                     host = vm_cloud.read_host(state_dir)
