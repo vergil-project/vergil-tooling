@@ -5,7 +5,7 @@ import datetime
 import json
 import os
 import textwrap
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -162,38 +162,38 @@ def test_last_session_name_reads_via_bounded_tail(
     assert total > 128 * 1024  # comfortably larger than one tail block
 
     consumed = 0
-    real_open = type(f).open
+    real_open: Any = type(f).open
 
     class _CountingFile:
         # Counts bytes/chars consumed however the implementation reads — line
-        # iteration (current forward scan) or block reads (a tail scan) — so the
+        # iteration (a forward scan) or block reads (a tail scan) — so the
         # assertion below measures behavior, not a particular read strategy.
-        def __init__(self, fh: object) -> None:
+        def __init__(self, fh: Any) -> None:
             self._fh = fh
 
-        def read(self, *a: object, **k: object) -> object:
+        def read(self, *a: Any, **k: Any) -> Any:
             nonlocal consumed
-            data = self._fh.read(*a, **k)  # type: ignore[attr-defined]
+            data = self._fh.read(*a, **k)
             consumed += len(data)
             return data
 
-        def __iter__(self) -> object:
+        def __iter__(self) -> Any:
             nonlocal consumed
-            for line in self._fh:  # type: ignore[attr-defined]
+            for line in self._fh:
                 consumed += len(line)
                 yield line
 
-        def __getattr__(self, name: str) -> object:
+        def __getattr__(self, name: str) -> Any:
             return getattr(self._fh, name)
 
         def __enter__(self) -> _CountingFile:
-            self._fh.__enter__()  # type: ignore[attr-defined]
+            self._fh.__enter__()
             return self
 
-        def __exit__(self, *exc: object) -> object:
-            return self._fh.__exit__(*exc)  # type: ignore[attr-defined]
+        def __exit__(self, *exc: Any) -> Any:
+            return self._fh.__exit__(*exc)
 
-    def counting_open(self: Path, *a: object, **k: object) -> _CountingFile:
+    def counting_open(self: Path, *a: Any, **k: Any) -> _CountingFile:
         return _CountingFile(real_open(self, *a, **k))
 
     monkeypatch.setattr(type(f), "open", counting_open)
