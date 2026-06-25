@@ -934,6 +934,8 @@
       
         
       
+        
+      
     
     
     
@@ -986,6 +988,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.70/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.70
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9677,7 +9707,7 @@ adding new public surface. Versions: <code>v1.3.0</code> → <code>v1.3.1</code>
      the new release.</li>
 <li>The boundary tag (<code>develop-v1.3.1</code>) is created on <code>develop</code>.</li>
 <li><code>repository_dispatch</code> fires a <code>vergil-tooling-released</code>
-     event at <code>vergil-docker</code>, which rebuilds the dev
+     event at <code>vergil-containers</code>, which rebuilds the dev
      images against the now-current <code>v1.3</code> tag.</li>
 <li><code>version-bump-pr</code> opens an auto-bump PR on <code>develop</code>
      (e.g., <code>1.3.1</code> → <code>1.3.2</code>). Merge it.</li>
@@ -9717,17 +9747,17 @@ get the fix on the next normal action:</p>
 <h3 id="producer-steps_1">Producer steps<a class="headerlink" href="#producer-steps_1" title="Permanent link">&para;</a></h3>
 <p>Same five steps as patch, with one important addition: the rolling
 minor tag changes from <code>v1.3</code> to <code>v1.4</code>. The image's pin in
-<code>vergil-docker</code> and any per-repo dev-dep declarations
+<code>vergil-containers</code> and any per-repo dev-dep declarations
 <strong>must be bumped manually</strong> — the rolling-tag mechanism only handles
 patches within a minor.</p>
 <ol>
 <li>Cut and merge <code>release/v1.4.0</code> exactly like a patch release.</li>
-<li><strong>Bump <code>vergil-docker</code>'s pin</strong> in
-   <a href="https://github.com/vergil-project/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile"><code>docker/common/vergil-tooling-uv.dockerfile</code></a>:</li>
+<li><strong>Bump <code>vergil-containers</code>'s pin</strong> in
+   <a href="https://github.com/vergil-project/vergil-containers/blob/develop/docker/common/vergil-tooling-uv.dockerfile"><code>docker/common/vergil-tooling-uv.dockerfile</code></a>:</li>
 </ol>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">ARG</span><span class="w"> </span><span class="nv">ST_TOOLING_TAG</span><span class="o">=</span>v1.4<span class="w">   </span>#<span class="w"> </span>was<span class="w"> </span>v1.3
 </code></pre></div>
-<p>Open a small PR in <code>vergil-docker</code>, merge it, and the
+<p>Open a small PR in <code>vergil-containers</code>, merge it, and the
    next image rebuild (whether triggered by your release or a
    subsequent push there) carries the new minor.
 3. <strong>Coordinate consumer bumps.</strong> Each Python repo that has
@@ -9757,7 +9787,7 @@ patches within a minor.</p>
 </tr>
 <tr>
 <td>Dev container image</td>
-<td>Wait for <code>vergil-docker</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
+<td>Wait for <code>vergil-containers</code> to land the <code>ARG</code> bump, then pull the rebuilt image</td>
 </tr>
 </tbody>
 </table>
@@ -9777,7 +9807,7 @@ communication and migration window:</p>
 <li>Cut and merge <code>release/v2.0.0</code> like a minor release. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.</li>
-<li>Bump <code>vergil-docker</code>'s <code>ARG ST_TOOLING_TAG=</code> to <code>v2</code>
+<li>Bump <code>vergil-containers</code>'s <code>ARG ST_TOOLING_TAG=</code> to <code>v2</code>
    in a separate PR — coordinate so consumers can opt in on their
    own schedule.</li>
 <li>Notify consumer maintainers (e.g., update <code>vergil-tooling</code>'s
