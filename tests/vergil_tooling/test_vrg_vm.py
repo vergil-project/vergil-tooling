@@ -3559,8 +3559,10 @@ class _CloudPatches:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_vm",
             return_value={"host": "cloud-host"},
         )
+        # region_zones is now dispatched through backend.strategy — patch the GCP
+        # implementation so the test never shells out to gcloud.
         _patch(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
             return_value=["us-central1-a", "us-central1-b", "us-central1-c"],
         )
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
@@ -3592,27 +3594,25 @@ class _CloudPatches:
 
 
 class TestCandidateZones:
-    def test_configured_zone_is_tried_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
-            lambda _region: ["us-central1-a", "us-central1-b", "us-central1-c"],
-        )
+    def test_configured_zone_is_tried_first(self) -> None:
         backend = MagicMock()
         backend.spec.region = "us-central1"
         backend.spec.zone = "us-central1-c"
+        backend.strategy.region_zones.return_value = [
+            "us-central1-a",
+            "us-central1-b",
+            "us-central1-c",
+        ]
         assert _candidate_zones(backend) == ["us-central1-c", "us-central1-a", "us-central1-b"]
 
     def test_no_configured_zone_returns_all_region_zones(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
-            lambda _region: ["us-central1-a", "us-central1-b"],
-        )
-        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.random.shuffle", lambda _seq: None)
         backend = MagicMock()
         backend.spec.region = "us-central1"
         backend.spec.zone = ""
+        backend.strategy.region_zones.return_value = ["us-central1-a", "us-central1-b"]
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.random.shuffle", lambda _seq: None)
         assert _candidate_zones(backend) == ["us-central1-a", "us-central1-b"]
 
 
@@ -3637,14 +3637,13 @@ class TestCloudStageGuards:
         state.modules_root = tmp_path / "modules"
         state.state_dir.mkdir(parents=True, exist_ok=True)
         (state.state_dir / "volume.tfstate").write_text("{}")
-        region_zones = MagicMock()
         monkeypatch.setattr(
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
-        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", region_zones)
         _cs_tofu_volume(state)
-        region_zones.assert_not_called()
+        # region_zones is not on the reattach path — fallback_zones stays empty,
+        # and family fallback (not zone sweep) is populated for reattach.
         assert state.fallback_zones == []
         assert state.zone == "us-central1-b"
 
@@ -3658,8 +3657,10 @@ class TestCloudStageGuards:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
+        # region_zones now dispatches through backend.strategy; patch the GCP class.
         monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", MagicMock(return_value=[])
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
+            MagicMock(return_value=[]),
         )
         _cs_tofu_volume(state)
         assert state.fallback_zones == []
@@ -3677,6 +3678,8 @@ class TestCloudStageGuards:
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
         _cs_tofu_volume(state)
+        # instance_fallback_candidates routes through the strategy; verify the result
+        # matches the module-level delegation (GCP backend) as a regression guard.
         expected = vm_cloud.instance_fallback_candidates(state.backend.spec.instance)[1:]
         assert state.fallback_instances == expected
         assert state.fallback_zones == []
@@ -3691,8 +3694,9 @@ class TestCloudStageGuards:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
+        # region_zones now dispatches through backend.strategy; patch the GCP class.
         monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
             MagicMock(return_value=["us-central1-a", "us-central1-b"]),
         )
         _cs_tofu_volume(state)

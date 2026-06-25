@@ -1203,7 +1203,8 @@ class TestZoneCapacity:
                 [], 0, stdout="us-central1-c\nus-central1-a\nus-central1-b\n"
             )
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        # GcpStrategy.region_zones uses vm_provider.subprocess.run (not vm_cloud's).
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert region_zones("us-central1") == [
             "us-central1-a",
             "us-central1-b",
@@ -1219,6 +1220,11 @@ class TestZoneFallback:
         backend.volume_vars.return_value = {}
         backend.spec.region = "us-central1"
         backend.spec.instance = "n2-standard-16"
+        # Route capacity checks through the real GCP strategy so non-capacity
+        # errors are not silently swallowed.
+        from vergil_tooling.lib.vm_provider import GcpStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = GcpStrategy().is_zone_capacity_error
         return backend
 
     def test_first_zone_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1809,6 +1815,11 @@ class TestFamilyFallback:
         backend.vm_vars.return_value = {}
         backend.spec.region = "us-central1"
         backend.spec.instance = "n2-standard-8"
+        # Route capacity checks through the real GCP strategy so non-capacity
+        # errors (e.g. "bad config") are not silently swallowed.
+        from vergil_tooling.lib.vm_provider import GcpStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = GcpStrategy().is_zone_capacity_error
         return backend
 
     def test_swaps_family_in_same_zone_without_touching_volume(
@@ -1891,6 +1902,43 @@ class TestFamilyFallback:
                 fallback_zones=[],
                 fallback_instances=[],
             )
+
+    def test_azure_family_sweep_drives_via_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure backend: capacity check routes through strategy; data disk is never destroyed."""
+        azure_capacity_exc = subprocess.CalledProcessError(
+            1, ["tofu", "apply"], stderr="SkuNotAvailable in zone 1"
+        )
+        av = MagicMock(side_effect=[azure_capacity_exc, {"host": "h"}])
+        dv = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", dv)
+
+        backend = MagicMock()
+        backend.vm_vars.return_value = {}
+        backend.spec.region = "eastus"
+        backend.spec.instance = "Standard_D8s_v5"
+        from vergil_tooling.lib.vm_provider import AzureStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = AzureStrategy().is_zone_capacity_error
+
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            backend,
+            zone="1",
+            volume_id="vol-azure-1",
+            fallback_zones=[],
+            fallback_instances=["Standard_D8s_v4"],
+        )
+
+        assert result == ("vol-azure-1", "1", {"host": "h"})
+        assert av.call_count == 2
+        dv.assert_not_called()  # the data disk is never destroyed on a family sweep
+        backend.vm_vars.assert_any_call(
+            zone="1", volume_id="vol-azure-1", instance_override="Standard_D8s_v4"
+        )
 
 
 class TestParseVmMachineType:

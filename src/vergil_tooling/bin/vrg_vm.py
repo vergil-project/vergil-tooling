@@ -744,7 +744,7 @@ def _candidate_zones(backend: OffPlatformBackend) -> list[str]:
     """Zone order to try for a fresh create: an explicit ``zone`` first (operator
     preference), otherwise the region's zones shuffled to spread load. (#1813)
     """
-    zones = vm_cloud.region_zones(backend.spec.region)
+    zones = backend.strategy.region_zones(backend.spec.region)
     configured = backend.spec.zone
     if configured:
         return [configured, *(z for z in zones if z != configured)]
@@ -770,7 +770,7 @@ def _cs_tofu_volume(state: _CloudState) -> None:
     else:
         # Reattach: the zonal disk pins the zone, so recovery is a machine-family
         # sweep in that zone rather than a zone sweep. (#1836)
-        state.fallback_instances = vm_cloud.instance_fallback_candidates(
+        state.fallback_instances = state.backend.strategy.instance_fallback_candidates(
             state.backend.spec.instance
         )[1:]
     volume_id, zone = vm_cloud.apply_volume(

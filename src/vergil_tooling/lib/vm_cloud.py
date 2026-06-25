@@ -811,7 +811,7 @@ def apply_vm_with_zone_fallback(
     try:
         return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
     except subprocess.CalledProcessError as exc:
-        if not is_zone_capacity_error(exc):
+        if not backend.strategy.is_zone_capacity_error(exc):
             raise
         if not instances and not fallback_zones:
             raise  # reattach with no ladder (unsupported shape) — original behavior
@@ -830,7 +830,7 @@ def apply_vm_with_zone_fallback(
         try:
             return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
-            if not is_zone_capacity_error(exc):
+            if not backend.strategy.is_zone_capacity_error(exc):
                 raise
 
     # Zone fallback — fresh create only; recreate the empty disk in each next zone.
@@ -846,7 +846,7 @@ def apply_vm_with_zone_fallback(
         try:
             return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
-            if not is_zone_capacity_error(exc):
+            if not backend.strategy.is_zone_capacity_error(exc):
                 raise
 
     # fallback_instances (reattach) and fallback_zones (fresh create) are mutually exclusive
@@ -861,7 +861,7 @@ def apply_vm_with_zone_fallback(
         msg = (
             f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
             f"(tried: {', '.join(tried_zones)}). Try a different instance family "
-            "(e.g. n2d-*), another region, or wait for capacity."
+            "or wait for capacity."
         )
     raise RuntimeError(msg)
 

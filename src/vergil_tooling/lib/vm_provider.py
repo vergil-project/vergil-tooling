@@ -222,14 +222,62 @@ class GcpStrategy:
 # Azure strategy
 # ---------------------------------------------------------------------------
 
+# Azure capacity stockout errors (case-insensitive).  Unlike GCP's zone-specific
+# phrasing, Azure surfaces several distinct codes:
+#   SkuNotAvailable          – the requested VM SKU has no capacity in the zone
+#   ZonalAllocationFailed    – zone-pinned placement found no available host
+#   OverconstrainedAllocationRequest – too many constraints (zone + size) exhaust inventory
+_AZURE_CAPACITY_RE = re.compile(
+    r"SkuNotAvailable|ZonalAllocationFailed|OverconstrainedAllocationRequest",
+    re.IGNORECASE,
+)
+
+# Azure VM size naming convention (verified 2026-06-25 against Azure docs):
+# https://learn.microsoft.com/en-us/azure/virtual-machines/vm-naming-conventions
+# Format: Standard_<Family><vCPUs><AdditiveFeatures>_v<Version>
+# Example: Standard_D8s_v5  → family=D, vCPUs=8, features=s, version=5
+_AZURE_SIZE_RE = re.compile(r"^Standard_([A-Z]+)(\d+)([a-z]*)_v(\d+)$")
+
+# Family-code regex: parses the compact codes used in NESTED_VIRT_FAMILIES.
+# E.g. "Dsv5" → cap="D", lc="s", ver="5"; reassembles to Standard_D{n}s_v5.
+_AZURE_FAMILY_CODE_RE = re.compile(r"^([A-Z]+)([a-z]*)v(\d+)$")
+
 
 class AzureStrategy:
     name = "azure"
     module_segment = "azure"
 
+    # The ladder may contain ONLY families that support Azure nested virtualization.
+    # Azure nested virt requires Dv3+ era or later (Dv2/Av2 do NOT support it).
+    # Premium-storage "s" variants are used so the module's premium managed-disk
+    # attach works.  Verified 2026-06-25 against Azure docs:
+    #   Dsv5: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/dsv5-series
+    #   Dsv4: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/dsv4-series
+    #   Fsv2: https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/compute-optimized/fsv2-series
+    # VERIFY ON EDIT — re-check each family's "Nested Virtualization" row in Azure docs.
+    NESTED_VIRT_FAMILIES: tuple[str, ...] = ("Dsv5", "Dsv4", "Fsv2")
+
+    # vCPU counts verified to exist for EVERY family in the ladder.
+    # Dsv5/Dsv4: Standard_D8s_v4, Standard_D16s_v4, Standard_D8s_v5, Standard_D16s_v5
+    # Fsv2: Standard_F8s_v2, Standard_F16s_v2
+    # VERIFY ON EDIT — confirm each count is available in each family before editing.
+    FALLBACK_SHAPES: frozenset[str] = frozenset({"8", "16"})
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _size_for(self, family_code: str, n: str) -> str:
+        """Reconstruct an Azure size string from a family code and vCPU count.
+
+        ``family_code`` uses the compact form from ``NESTED_VIRT_FAMILIES``:
+        e.g. ``"Dsv5"`` → ``Standard_D{n}s_v5``.
+        """
+        m = _AZURE_FAMILY_CODE_RE.match(family_code)
+        if not m:  # pragma: no cover — defensive; NESTED_VIRT_FAMILIES constants are well-formed
+            return family_code
+        cap, lc, ver = m.groups()
+        return f"Standard_{cap}{n}{lc}_v{ver}"
 
     def _subscription(self) -> str:
         """Azure subscription ID: ``AZURE_SUBSCRIPTION_ID`` env or ``az account show``."""
@@ -287,16 +335,60 @@ class AzureStrategy:
         }
 
     def region_zones(self, region: str) -> list[str]:
-        """Azure uses locations, not zones — return the region itself."""
-        return [region]
+        """Azure availability zones in *region* as bare integer strings (e.g. ``["1","2","3"]``).
 
-    def is_zone_capacity_error(self, exc: subprocess.CalledProcessError) -> bool:  # noqa: ARG002
-        """Azure has different quota behavior — not treated as a zone-capacity error."""
-        return False
+        Zones are queried via ``az vm list-skus`` rather than assumed because not every
+        Azure region is zonal — some regions (e.g. westus) have no availability zones, in
+        which case the query returns no zone tokens and this method returns ``[]`` to
+        signal a regional (non-zonal) deployment.
+
+        The ``--query`` expression extracts the zone list from the first VM SKU in the
+        region; Azure AZs are region-wide so any SKU will return the same set.
+        """
+        result = subprocess.run(  # noqa: S603
+            [  # noqa: S607
+                "az",
+                "vm",
+                "list-skus",
+                "--location",
+                region,
+                "--resource-type",
+                "virtualMachines",
+                "--query",
+                "[0].locationInfo[0].zones",
+                "-o",
+                "tsv",
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return sorted(t for t in result.stdout.split() if t)
+
+    def is_zone_capacity_error(self, exc: subprocess.CalledProcessError) -> bool:
+        """True when a tofu apply failed because the zone/SKU has no Azure capacity."""
+        blob = f"{exc.stderr or ''}{exc.stdout or ''}"
+        return bool(_AZURE_CAPACITY_RE.search(blob))
 
     def instance_fallback_candidates(self, requested: str) -> list[str]:
-        """No family ladder for Azure — return the requested type only."""
-        return [requested]
+        """Ordered Azure machine types to try for *requested*, the requested type first.
+
+        Builds a same-vCPU ladder across ``NESTED_VIRT_FAMILIES``.  Only sizes whose
+        vCPU count is in ``FALLBACK_SHAPES`` get siblings — unsupported counts return
+        ``[requested]`` (no ladder, matching GCP's behaviour for non-ladder shapes).
+        """
+        m = _AZURE_SIZE_RE.match(requested)
+        if not m:
+            return [requested]
+        _cap, n, _lc, _ver = m.groups()
+        if n not in self.FALLBACK_SHAPES:
+            return [requested]
+        candidates: list[str] = [requested]
+        for family_code in self.NESTED_VIRT_FAMILIES:
+            candidate = self._size_for(family_code, n)
+            if candidate not in candidates:
+                candidates.append(candidate)
+        return candidates
 
     def transport(self, name: str, state_dir: Path, ssh_user: str) -> Transport:  # noqa: ARG002
         """Not yet implemented (Tasks 5/6/7)."""

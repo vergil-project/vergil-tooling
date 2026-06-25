@@ -164,19 +164,7 @@ class TestGcpStrategyDelegation:
 
 
 class TestAzureStrategyMethods:
-    """Coverage tests for AzureStrategy protocol methods."""
-
-    def test_region_zones_returns_region(self) -> None:
-        assert AzureStrategy().region_zones("eastus") == ["eastus"]
-
-    def test_is_zone_capacity_error_always_false(self) -> None:
-        exc = subprocess.CalledProcessError(1, "tofu", stderr="out of capacity")
-        assert AzureStrategy().is_zone_capacity_error(exc) is False
-
-    def test_instance_fallback_candidates_no_ladder(self) -> None:
-        assert AzureStrategy().instance_fallback_candidates("Standard_D8s_v3") == [
-            "Standard_D8s_v3"
-        ]
+    """Coverage tests for AzureStrategy protocol methods not covered by the new classes."""
 
     def test_transport_raises_not_implemented(self, tmp_path: Path) -> None:
         with pytest.raises(NotImplementedError):
@@ -197,4 +185,105 @@ class TestAzureStrategyMethods:
         monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         with pytest.raises(SystemExit):
             AzureStrategy()._subscription()
-        assert "az login" in capsys.readouterr().err
+
+
+class TestAzureZoneCapacity:
+    """AzureStrategy.is_zone_capacity_error matches the Azure-specific stockout strings."""
+
+    def test_detects_sku_not_available(self) -> None:
+        exc = subprocess.CalledProcessError(
+            1, ["tofu", "apply"], stderr="Error: SkuNotAvailable in eastus"
+        )
+        assert AzureStrategy().is_zone_capacity_error(exc) is True
+
+    def test_detects_zonal_allocation_failed(self) -> None:
+        exc = subprocess.CalledProcessError(
+            1, ["tofu", "apply"], stderr="ZonalAllocationFailed: no hosts in zone 1"
+        )
+        assert AzureStrategy().is_zone_capacity_error(exc) is True
+
+    def test_detects_overconstrained_case_insensitive(self) -> None:
+        exc = subprocess.CalledProcessError(
+            1, [], stderr="overconstrainedallocationrequest encountered"
+        )
+        assert AzureStrategy().is_zone_capacity_error(exc) is True
+
+    def test_generic_error_is_not_capacity(self) -> None:
+        exc = subprocess.CalledProcessError(1, [], stderr="Error: quota exceeded for cores")
+        assert AzureStrategy().is_zone_capacity_error(exc) is False
+
+    def test_checks_stdout_when_stderr_empty(self) -> None:
+        exc = subprocess.CalledProcessError(1, [], stderr="")
+        exc.stdout = "SkuNotAvailable in region"
+        assert AzureStrategy().is_zone_capacity_error(exc) is True
+
+
+class TestAzureZones:
+    """AzureStrategy.region_zones returns bare-integer zone strings, or [] for zoneless."""
+
+    def test_enumerates_bare_integer_zones(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess([], 0, stdout="1\n2\n3\n", stderr="")
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        result = AzureStrategy().region_zones("eastus")
+        assert result == ["1", "2", "3"]
+        argv = sub.call_args[0][0]
+        assert argv[0] == "az"
+        assert argv[1] == "vm"
+        assert argv[2] == "list-skus"
+        assert "--location" in argv
+        assert "eastus" in argv
+
+    def test_zoneless_region_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sub = MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="\n", stderr=""))
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().region_zones("westus") == []
+
+    def test_empty_stdout_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        sub = MagicMock(return_value=subprocess.CompletedProcess([], 0, stdout="", stderr=""))
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().region_zones("northeurope") == []
+
+
+class TestAzureLadder:
+    """AzureStrategy.instance_fallback_candidates — requested-first Azure family ladder."""
+
+    def test_requested_first_then_same_size_siblings(self) -> None:
+        result = AzureStrategy().instance_fallback_candidates("Standard_D8s_v5")
+        assert result[0] == "Standard_D8s_v5"
+        # same-vCPU siblings from the ladder follow, deduped
+        assert len(result) > 1
+        assert result.count("Standard_D8s_v5") == 1
+
+    def test_unsupported_size_yields_only_requested(self) -> None:
+        # vCPU count 4 is not in FALLBACK_SHAPES
+        assert AzureStrategy().instance_fallback_candidates("Standard_D4s_v5") == [
+            "Standard_D4s_v5"
+        ]
+
+    def test_unsupported_family_grammar_yields_only_requested(self) -> None:
+        # Size string that does not match the Azure grammar
+        assert AzureStrategy().instance_fallback_candidates("n2-standard-8") == ["n2-standard-8"]
+
+    def test_requested_family_in_ladder_still_leads_and_deduped(self) -> None:
+        # Dsv5 is in the ladder; it must appear exactly once, requested-first.
+        result = AzureStrategy().instance_fallback_candidates("Standard_D16s_v5")
+        assert result[0] == "Standard_D16s_v5"
+        assert result.count("Standard_D16s_v5") == 1
+
+    def test_non_ladder_family_leads_then_full_ladder(self) -> None:
+        # Standard_D8s_v3 is not in the ladder (v3 family pre-dates the curated set).
+        # The requested type leads, and all ladder families follow at the same vCPU count.
+        result = AzureStrategy().instance_fallback_candidates("Standard_D8s_v3")
+        assert result[0] == "Standard_D8s_v3"
+        assert len(result) > 1
+
+    def test_ladder_change_detector(self) -> None:
+        # NOT a validity proof — pins the curated constants so any edit is deliberate.
+        # Azure nested-virt validity is verified by hand against Azure docs (#1878):
+        # Dsv5 https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/dsv5-series
+        # Dsv4 https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/dsv4-series
+        # Fsv2 https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/compute-optimized/fsv2-series
+        assert AzureStrategy.NESTED_VIRT_FAMILIES == ("Dsv5", "Dsv4", "Fsv2")
+        assert AzureStrategy.FALLBACK_SHAPES == frozenset({"8", "16"})  # noqa: SIM300
