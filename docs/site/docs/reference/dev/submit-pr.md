@@ -101,8 +101,7 @@ vrg-submit-pr --finalize
    (template mode).
 5. Pushes the branch to origin with the human's host credentials.
 6. Creates the PR via `gh pr create` and deletes the template.
-7. Prints the `/vergil:pr-watch` line to paste into both agent
-   sessions, plus the PR URL — which can be passed straight to
+7. Prints the PR URL — which can be passed straight to
    [`vrg-finalize-pr`](finalize-pr.md).
 
 ## Chaining into finalize (`--finalize`)
@@ -112,8 +111,7 @@ vrg-submit-pr --finalize
 the PR is created, the tool hands off to the
 [`vrg-finalize-pr`](finalize-pr.md) wait-and-merge flow from the main
 worktree root. Use it when the decision to merge-on-green has already
-been made at submit time — it bypasses the local audit loop, so the
-`/vergil:pr-watch` line is not printed.
+been made at submit time.
 
 Semantics are identical to running `vrg-finalize-pr <pr-url>` by hand
 (same merge-strategy default, same post-merge cleanup), and the

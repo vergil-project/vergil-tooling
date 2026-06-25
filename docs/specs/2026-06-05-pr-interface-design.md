@@ -1,5 +1,10 @@
 # vrg-submit-pr / vrg-finalize-pr interface upgrade — design
 
+> **Superseded (2026-06-25, #1872):** the interactive dual-agent USER/AUDIT
+> loop described here was removed. See
+> `docs/specs/2026-06-25-remove-audit-loop-design.md`. The audit *identity*
+> infrastructure is retained as dormant; only the loop is gone.
+
 - **Issue:** vergil-project/vergil-tooling#1423
 - **Date:** 2026-06-05
 - **Status:** Approved — implemented (see docs/plans/2026-06-05-pr-interface.md)

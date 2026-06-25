@@ -52,10 +52,8 @@ def _write_workflow_state(
         issue=issue,
         branch=branch,
         base=base,
-        mode="solo",
         head_sha="h0",
         base_sha="b0",
-        user_token="u-1",
         now=now,
     )
     engine.apply_report_ready(
@@ -462,10 +460,8 @@ class TestTemplateMode:
             issue="1534",
             branch="feature/1534-x",
             base="develop",
-            mode="solo",
             head_sha="h0",
             base_sha="b0",
-            user_token="u-1",
             now=now,
         )
         engine.apply_report_ready(
@@ -503,10 +499,8 @@ class TestTemplateMode:
             issue="1606",
             branch="release/post-2.1.27",
             base="origin/develop",
-            mode="solo",
             head_sha="h0",
             base_sha="b0",
-            user_token="u-1",
             now=now,
         )
         engine.apply_report_ready(
@@ -670,10 +664,8 @@ class TestTemplateMode:
             issue="42",
             branch="feature/x",
             base="develop",
-            mode="solo",
             head_sha="h0",
             base_sha="b0",
-            user_token="u-1",
             now="2026-06-08T00:00:00Z",
         )
         LocalFileTransport(tmp_path, base="develop").write(state)

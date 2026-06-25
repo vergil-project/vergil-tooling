@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.70"
+version = "2.1.71"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
@@ -74,7 +74,6 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 vergil_tooling = ["data/*.json", "data/*.md", "data/*.sh", "data/licenses/*.txt", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
-"vergil_tooling.lib.pr_workflow.prompts" = ["*.md"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

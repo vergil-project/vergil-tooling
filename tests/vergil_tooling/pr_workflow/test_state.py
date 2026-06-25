@@ -1,109 +1,55 @@
-"""Tests for vergil_tooling.lib.pr_workflow.state."""
+"""Tests for the slimmed run-and-done WorkflowState (#1872)."""
 
 from __future__ import annotations
+
+import json
+from typing import Any
 
 import pytest
 
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
-from vergil_tooling.lib.pr_workflow.state import WorkflowState
+from vergil_tooling.lib.pr_workflow.state import SCHEMA_VERSION, WorkflowState
 
 
-def _minimal() -> WorkflowState:
-    return WorkflowState(
-        issue="1534",
-        branch="feature/1534-x",
-        base="origin/develop",
-        mode="paired",
-        owner="audit",
-        status="implementing",
-        round=0,
-        created_at="2026-06-08T15:00:00Z",
-        updated_at="2026-06-08T15:00:00Z",
-        participants={
-            "user": {"token": "u-1", "present_at": "2026-06-08T15:00:00Z"},
-            "audit": None,
-        },
-        git={"base_sha": "b0", "head_sha": "h0", "last_reviewed_sha": None},
-    )
-
-
-def test_roundtrip_through_json_preserves_fields() -> None:
-    state = _minimal()
-    restored = WorkflowState.from_json(state.to_json())
-    assert restored.to_dict() == state.to_dict()
-
-
-def test_to_dict_has_stable_top_level_keys() -> None:
-    keys = set(_minimal().to_dict())
-    assert keys == {
-        "schema_version",
-        "issue",
-        "branch",
-        "base",
-        "phase",
-        "mode",
-        "owner",
-        "status",
-        "round",
-        "created_at",
-        "updated_at",
-        "participants",
-        "pr_metadata",
-        "git",
-        "checks",
-        "escalation",
-        "error",
-        "history",
-        "submitted",
+def _state(**overrides: Any) -> WorkflowState:
+    base: dict[str, Any] = {
+        "issue": "42",
+        "branch": "feature/42-x",
+        "base": "origin/develop",
+        "status": "ready",
+        "created_at": "2026-06-25T00:00:00Z",
+        "updated_at": "2026-06-25T00:00:00Z",
+        "git": {"base_sha": "aaa", "head_sha": "bbb"},
     }
+    base.update(overrides)
+    return WorkflowState(**base)  # type: ignore[arg-type]
 
 
-def test_roundtrip_preserves_submitted_marker() -> None:
-    state = _minimal()
-    state.submitted = {
-        "pr_url": "https://github.com/o/r/pull/312",
-        "pr_number": 312,
-        "at": "2026-06-08T15:01:00Z",
-    }
+def test_round_trips_through_json() -> None:
+    state = _state(pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"})
     restored = WorkflowState.from_json(state.to_json())
-    assert restored.submitted == state.submitted
+    assert restored == state
 
 
-def test_from_json_rejects_non_json() -> None:
-    with pytest.raises(WorkflowError, match="not valid JSON"):
-        WorkflowState.from_json("{not json")
+def test_schema_version_is_two() -> None:
+    assert SCHEMA_VERSION == 2
+    assert json.loads(_state().to_json())["schema_version"] == 2
 
 
-def test_from_dict_rejects_missing_required_field() -> None:
-    data = _minimal().to_dict()
-    del data["owner"]
-    with pytest.raises(WorkflowError, match="owner"):
-        WorkflowState.from_dict(data)
+def test_unsupported_schema_version_rejected() -> None:
+    payload = json.loads(_state().to_json())
+    payload["schema_version"] = 1
+    with pytest.raises(WorkflowError, match="unsupported schema_version"):
+        WorkflowState.from_json(json.dumps(payload))
 
 
-def test_validate_rejects_bad_owner() -> None:
-    state = _minimal()
-    state.owner = "nobody"
-    with pytest.raises(WorkflowError, match="invalid owner"):
-        state.validate()
+def test_missing_required_field_rejected() -> None:
+    payload = json.loads(_state().to_json())
+    del payload["branch"]
+    with pytest.raises(WorkflowError, match="missing required field 'branch'"):
+        WorkflowState.from_json(json.dumps(payload))
 
 
-def test_validate_rejects_bad_mode() -> None:
-    state = _minimal()
-    state.mode = "bogus"
-    with pytest.raises(WorkflowError, match="invalid mode"):
-        state.validate()
-
-
-def test_validate_rejects_bad_status() -> None:
-    state = _minimal()
-    state.status = "bogus"
+def test_invalid_status_rejected() -> None:
     with pytest.raises(WorkflowError, match="invalid status"):
-        state.validate()
-
-
-def test_from_dict_rejects_unknown_schema_version() -> None:
-    data = _minimal().to_dict()
-    data["schema_version"] = 99
-    with pytest.raises(WorkflowError, match="schema_version"):
-        WorkflowState.from_dict(data)
+        WorkflowState.from_json(_state(status="reviewing").to_json())

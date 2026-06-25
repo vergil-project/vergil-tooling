@@ -117,6 +117,14 @@ shapes (a server-side hard gate) and branch protection, with the
 [Permission Model](permission-model.md) for the full
 defense-in-depth architecture.
 
+> **Note (2026-06-25, #1872):** The local interactive USER/AUDIT loop
+> (where a running AUDIT agent reviewed code in a shared worktree before
+> PR submission) was removed. The audit *identity* — the `vergil-audit`
+> GitHub App, its inverted permission shape, and the `audit` mode in
+> `VRG_IDENTITY_MODE` — is retained as dormant infrastructure for a
+> future API-driven review phase. The identity model described above
+> remains current and accurate.
+
 ## One App, all orgs
 
 A single App is installed on every account the contributor operates

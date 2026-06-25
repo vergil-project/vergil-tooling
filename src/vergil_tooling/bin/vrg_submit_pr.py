@@ -219,14 +219,13 @@ def _dry_run_chain_note(*, release: bool, install: bool) -> str:
 
 
 def _print_pr_watch(pr_url: str) -> None:
-    """Emit the paste-ready post-PR one-liner (§9 of the 2.1 workflow design).
+    """Emit the paste-ready post-PR monitoring one-liner.
 
-    Opening the PR auto-triggers the mechanized CI gates; the post-PR loop is
-    started by pasting this same line into *both* agent sessions. The skill
-    reads its own identity and runs the matching half of the loop.
+    Opening the PR auto-triggers the mechanized CI gates; this line starts the
+    USER agent's monitoring loop. (The dual-agent framing was removed in #1872.)
     """
     print()
-    print("Next — paste this into BOTH agent sessions (USER and AUDIT):")
+    print("Next — monitor the PR through CI:")
     print()
     print(f"    /vergil:pr-watch {pr_url}")
 

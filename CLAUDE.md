@@ -136,14 +136,13 @@ signals disagree.
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
 
-1. The agent records the PR metadata through the `vrg-pr-workflow`
-   oracle — `report-ready --title --summary --notes` (with an optional
-   `--linkage`) — which writes it to `.vergil/pr-workflow.json`. `title`,
-   `summary`, and `notes` are required and non-empty. `linkage` defaults
-   to `Ref` and must stay `Ref`: GitHub auto-close keywords
-   (`Closes`/`Fixes`/`Resolves`) are banned repo-wide because issues stay
-   open until post-merge workflows succeed, and `vrg-submit-pr` rejects
-   any non-`Ref` value before building the PR body.
+1. The agent records the PR metadata with `vrg-pr-workflow report-ready
+   --issue <N> --title --summary --notes` (optional `--linkage`), which writes
+   it to `.vergil/pr-workflow.json`. `title`, `summary`, and `notes` are
+   required and non-empty. `linkage` defaults to `Ref` and must stay `Ref`:
+   GitHub auto-close keywords (`Closes`/`Fixes`/`Resolves`) are banned repo-wide
+   because issues stay open until post-merge workflows succeed, and
+   `vrg-submit-pr` rejects any non-`Ref` value before building the PR body.
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
    state file, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).

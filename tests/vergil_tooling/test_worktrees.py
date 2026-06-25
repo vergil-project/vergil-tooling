@@ -396,13 +396,9 @@ def _write_state(worktree_root: Path, **overrides: object) -> None:
         issue="42",
         branch="feature/42-x",
         base="origin/develop",
-        mode="solo",
-        owner="user",
         status="implementing",
-        round=1,
         created_at="2026-06-22T00:00:00Z",
         updated_at="2026-06-22T00:00:00Z",
-        participants={},
         git={},
     )
     for key, value in overrides.items():
@@ -420,23 +416,23 @@ def test_probe_absent_file_is_not_prepared(tmp_path: Path) -> None:
 def test_probe_loaded_with_metadata_is_prepared(tmp_path: Path) -> None:
     _write_state(
         tmp_path,
-        status="approved",
+        status="ready",
         pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
     )
     wt = Worktree(path=tmp_path, branch="feature/42-x")
-    assert _probe_pr_workflow(wt) == ("approved", None, True)
+    assert _probe_pr_workflow(wt) == ("ready", None, True)
 
 
 def test_probe_already_submitted_is_not_prepared(tmp_path: Path) -> None:
     _write_state(
         tmp_path,
-        status="approved",
+        status="ready",
         pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
         submitted={"pr_url": "https://example/pull/9", "pr_number": 9},
     )
     wt = Worktree(path=tmp_path, branch="feature/42-x")
     status, error, prepared = _probe_pr_workflow(wt)
-    assert status == "approved"
+    assert status == "ready"
     assert error is None
     assert prepared is False
 
@@ -458,10 +454,34 @@ def test_probe_malformed_file_reports_error(tmp_path: Path) -> None:
     assert prepared is False
 
 
+def test_probe_v1_schema_file_reports_error(tmp_path: Path) -> None:
+    """A leftover v1 schema file gracefully degrades instead of crashing.
+
+    Issue #1872 design: the no-migration approach relies on _probe_pr_workflow
+    capturing unsupported-version errors so worktrees with stale v1 pr-workflow.json
+    files degrade gracefully.
+    """
+    import json
+
+    target = tmp_path / ".vergil"
+    target.mkdir(parents=True)
+    # Write a valid JSON document with schema_version=1 (old schema).
+    # from_dict checks schema_version BEFORE required fields, so even a
+    # minimal v1 document triggers the unsupported-version error.
+    v1_doc = {"schema_version": 1}
+    (target / "pr-workflow.json").write_text(json.dumps(v1_doc))
+    wt = Worktree(path=tmp_path, branch="feature/42-x")
+    status, error, prepared = _probe_pr_workflow(wt)
+    assert status is None
+    assert error is not None
+    assert "unsupported schema_version" in error
+    assert prepared is False
+
+
 def test_gather_attaches_pr_workflow_probe(tmp_path: Path) -> None:
     _write_state(
         tmp_path,
-        status="approved",
+        status="ready",
         pr_metadata={"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"},
     )
     wt = Worktree(path=tmp_path, branch="feature/42-x")
@@ -473,7 +493,7 @@ def test_gather_attaches_pr_workflow_probe(tmp_path: Path) -> None:
     ):
         status = gather_worktree_status(wt, target="develop")
     assert status.state is WorktreeState.NO_PR
-    assert status.workflow_status == "approved"
+    assert status.workflow_status == "ready"
     assert status.workflow_error is None
     assert status.pr_prepared is True
 
