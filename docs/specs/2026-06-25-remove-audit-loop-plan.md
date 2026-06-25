@@ -32,12 +32,17 @@
 
 ## Release sequencing (NOT part of this plan — context only)
 
-Per the design spec, two cross-system steps gate the *release* of this work but
-are out of scope for this plan: (1) the `vergil-claude-plugin` skill update
-(release-blocking predecessor — the skills must stop calling `vrg-pr-workflow
-next` before this ships, and all repos must pin v2.1 of the plugin); (2)
-relaxing the `vergil-audit/approved` branch-protection check to non-required.
-This plan implements only the in-repo tooling change.
+Per the design spec, exactly **one** cross-system step gates the *release* of
+this work (out of scope for this plan): the `vergil-claude-plugin`
+`issue-implement` rewrite. The everyday `issue-implement` skill drives
+`vrg-pr-workflow next`/`report-fixes` and calls `report-ready` without
+`--issue`; this plan deletes those subcommands and makes `report-ready` require
+`--issue`, so the plugin must be rewritten to the run-and-done form (and
+adopted by consumers) before tooling-with-#1872 reaches them. The
+`vergil-audit/approved` branch-protection step the earlier draft mentioned is a
+no-op: that check was never an enforced gate (it does not appear on merged PRs
+and PRs merge without it), so there is nothing to relax. This plan implements
+only the in-repo tooling change.
 
 ## File Structure
 
@@ -1250,7 +1255,7 @@ cd /Users/pmoore/dev/projects/vergil-project/vergil-tooling/.worktrees/issue-187
 vrg-pr-workflow report-ready --issue 1872 \
   --title "refactor(pr-workflow): remove the interactive dual-agent audit loop" \
   --summary "Collapse vrg-pr-workflow to a run-and-done PR-metadata recorder (report-ready + status), slim the state schema to v2, trim the transport, delete the check registry/settings, and relocate the six judgment prompts to docs/audit-criteria/. The audit identity (App, IdentityMode.AUDIT, vrg-audit-approve, Role.AUDIT) is retained as dormant infrastructure." \
-  --notes "Release-sequencing note for the human: the vergil-claude-plugin skill update and the vergil-audit/approved branch-protection relaxation must land per the design spec's Release sequencing section before/with this change."
+  --notes "Release-sequencing note for the human: the vergil-claude-plugin issue-implement rewrite (run-and-done; no vrg-pr-workflow next) is a release-blocking predecessor and must ship/adopt before tooling-with-#1872 reaches consumers. No branch-protection action is needed: vergil-audit/approved was never an enforced gate."
 ```
 
 Then stop. The human runs `vrg-submit-pr`.

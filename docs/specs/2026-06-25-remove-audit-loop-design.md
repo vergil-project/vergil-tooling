@@ -167,20 +167,20 @@ from the dead loop.
   interactive loop that once consumed them was removed in #1872, and that they
   are reference material, not wired into any running code.
 
-### 4. The merge gate — relax to non-required
+### 4. The merge gate — already non-enforced (no action)
 
-The `vergil-audit/approved` status check is required on branch protection, and
-its only poster was the loop being removed. Leaving it required would hang
-every PR. Therefore:
+The old design docs described a required `vergil-audit/approved` check, but it
+was never actually wired as an enforced gate. Evidence (2026-06-25): on a
+recently merged PR (#1865) the check list is entirely CI — CodeQL, Semgrep,
+Trivy, `audit/dependencies`, `quality`, `security`, `test`, `docs`, `version`
+— and `vergil-audit/approved` does not appear; PRs merge normally without it. A
+*required* check that nothing posts would block every PR, yet none are blocked.
+So there is no gate to relax and no merge-hang risk.
 
-- **Relax `vergil-audit/approved` to non-required** on branch protection so
-  merges proceed on human approval + CI. `vrg-audit-approve` stays dormant,
-  ready to re-require the check when the API review ships.
-
-This is an org-side ops action (a GitHub branch-protection setting, not repo
-code), but it is **release-coordinated, not a deferred follow-up**: it must
-land together with this change so PRs do not hang. See "Release sequencing"
-below.
+`vrg-audit-approve` stays dormant (it can still post the check on demand), so if
+a future API-driven review wants `vergil-audit/approved` to gate merges, the
+check can be *added* as a required context at that point. Nothing to do here in
+this change.
 
 ### 5. Documentation
 
@@ -222,17 +222,19 @@ below.
 
 ## Risks and mitigations
 
-- **Skills calling removed subcommands.** The current `/vergil:issue-implement`
-  and `/vergil:pr-watch` drive the workflow by calling `vrg-pr-workflow next`
-  (and `report-fixes`, etc.). Releasing tooling that deletes those subcommands
-  while a repo still runs the old skills hard-fails the agent session
-  mid-flight. Mitigated by sequencing: the plugin-skill update is a
-  release-blocking predecessor (see "Release sequencing"). This is the most
-  important coordination point — it is the exact mid-session-failure mode that
-  motivated removing this machinery, so it must not recur during the removal.
-- **Merge gate hang.** Relaxing `vergil-audit/approved` to non-required must
-  land with this change (see §4 and "Release sequencing"), or PRs hang
-  unmergeable once the loop that posted the check is gone.
+- **Skills calling removed subcommands.** Confirmed against the live plugin
+  (`vergil-claude-plugin` v2.1.14): the everyday `/vergil:issue-implement`
+  skill's *default* path runs `vrg-pr-workflow next --issue <N> --no-audit`,
+  then `report-ready` (no `--issue`), then a bare `vrg-pr-workflow next` review
+  loop. This change deletes `next` (and `report-fixes`/`submit-check`/…) and
+  makes `report-ready` require `--issue`, so the moment a repo runs
+  tooling-with-#1872 under the old plugin, `issue-implement` hard-errors on its
+  first oracle call. `/vergil:pr-watch` is **not** affected (it is post-PR and
+  uses `vrg-gh`/`vrg-git` + the retained `vrg-audit-approve`). Mitigated by
+  sequencing: the plugin `issue-implement` rewrite is the single release-blocking
+  predecessor (see "Release sequencing"). This is the exact mid-session-failure
+  mode that motivated removing this machinery, so it must not recur during the
+  removal.
 - **Stray audit-mode VM resolving to `user`.** Not applicable while the
   identity is retained — `IdentityMode.AUDIT` still resolves normally. No
   change to VM provisioning.
@@ -242,22 +244,28 @@ below.
 
 ## Release sequencing
 
-This change has two release-blocking predecessors that are *not* free to drift
-as open-ended follow-ups. They must be ordered:
+This change has exactly **one** release-blocking predecessor (the branch-
+protection step the earlier draft listed is a no-op — see §4). The order:
 
-1. **First — `vergil-claude-plugin` skills (predecessor, must land before the
-   tooling subcommand removals reach any repo).** Remove `/vergil:issue-audit`;
-   simplify `/vergil:issue-implement` (drop the audit hand-off line and stop
-   driving the workflow through `vrg-pr-workflow next`); simplify
-   `/vergil:pr-watch` to USER-only. As part of this work, **audit that every
-   consuming repo properly depends on v2.1 of the plugin**, so no repo runs
-   stale skills against the new tooling. Until this lands and propagates, the
-   tooling subcommand removals must not ship to consumers.
-2. **With the tooling release — branch protection.** Relax
-   `vergil-audit/approved` to non-required (org-side setting) so merges proceed
-   on human approval + CI once the loop's check-poster is gone.
-3. **Then — this work (#1872):** the `vrg-pr-workflow` collapse, transport/ABC
+1. **First — `vergil-claude-plugin` `issue-implement` rewrite (hard
+   predecessor; must ship and be adopted before tooling-with-#1872 reaches any
+   consuming repo).** Rewrite `/vergil:issue-implement` to the run-and-done
+   form: a single `vrg-pr-workflow report-ready --issue <N> --title --summary
+   --notes`, with no `next`/`report-fixes`/review-loop and no audit hand-off.
+   Delete `/vergil:issue-audit`. `/vergil:pr-watch` is unaffected by the tooling
+   change and can stay as-is (its dual-agent AUDIT half is a separate,
+   non-blocking cleanup). As part of this, **confirm consuming repos track the
+   updated plugin** so none run the stale skill against the new tooling.
+   - *Why it's load-bearing:* vergil-tooling is consumed by a version pin, and
+     the host install floats on the moving `@v2.1` tag. If #1872 lands in a
+     release that moves `@v2.1` before the plugin is updated, every repo picks
+     it up on its next container build and `issue-implement` breaks. Either ship
+     the plugin first, or release #1872 as a deliberate version step rather than
+     a silent `@v2.1` move.
+2. **Then — this work (#1872):** the `vrg-pr-workflow` collapse, transport/ABC
    trim, criteria relocation, docs, and tests.
+
+No branch-protection action is required (§4).
 
 ## Out of scope — genuine deferred follow-up
 
