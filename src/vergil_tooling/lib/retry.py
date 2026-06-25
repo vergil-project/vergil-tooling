@@ -1,14 +1,21 @@
 """Retry logic for transient GitHub API errors.
 
 Shared by ``github.py`` (library wrappers) and ``vrg_gh.py`` (CLI wrapper)
-so both paths handle HTTP 401/502/503/504/429 and network timeouts
-identically.
+so both paths handle HTTP 401/502/503/504/429 and ``net/http`` transport
+failures (TLS handshake, i/o timeout, connection refused, DNS lookup,
+EOF) identically.
 
 HTTP 401 "Bad credentials" is treated as transient: GitHub's API
 (notably the GraphQL endpoint behind ``gh pr checks --watch``)
 intermittently rejects a valid token, with the immediately following
 call succeeding. Retrying is safe even for write operations because a
 401 is rejected at authentication, before any mutation occurs.
+
+Transport-layer failures (TLS handshake timeout, i/o timeout, connection
+refused, DNS "no such host", "server misbehaving", EOF) are emitted by
+``gh``'s Go ``net/http`` stack when the request never reaches GitHub's
+application layer. Like the 401 case they occur before any server-side
+mutation, so retrying is safe for writes as well as reads.
 """
 
 from __future__ import annotations
@@ -25,14 +32,23 @@ MAX_RETRIES = 4
 BASE_DELAY_SECS = 2.0
 MAX_DELAY_SECS = 60.0
 _RETRYABLE_PATTERNS = (
+    # HTTP-layer transients
     "http 401",
     "bad credentials",
     "http 502",
     "http 503",
     "http 504",
     "http 429",
+    # net/http transport-layer transients (request never reached the app
+    # layer, so retrying is safe for writes too)
     "timed out",
+    "timeout",  # "TLS handshake timeout", "i/o timeout", "Client.Timeout"
+    "tls handshake",
     "connection reset",
+    "connection refused",
+    "no such host",  # DNS resolution failure
+    "server misbehaving",  # Go DNS resolver transient
+    "eof",  # "unexpected EOF" / "EOF" mid-request
 )
 
 
