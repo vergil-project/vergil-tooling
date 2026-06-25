@@ -1687,14 +1687,56 @@ class TestUpdateAll:
         assert mock_update.call_count == 2
         # The IAP transport must address the box by its gcloud instance name
         # (vrg-<hash>), not the readable state key, or the tunnel 404s (#1866).
+        # The provider is passed so GCP → IapTransport, Azure → SshTransport.
         mock_transport.assert_called_once_with(
-            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp")
+            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"), "gcp"
         )
         assert fake_transport in [c.args[0] for c in mock_update.call_args_list]
         out = capsys.readouterr().out
         assert "off-platform box 'lmf/cloud [lmf]'" in out
         assert "2 updated" in out
         assert "NOT updated" not in out
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport")
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_azure_box_uses_ssh_transport_not_rebuild(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        mock_transport: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # #1815: --all updates an Azure box IN PLACE over SshTransport — not a
+        # rebuild.  The key assertion is that off_platform_transport is called with
+        # provider='azure', so the factory returns SshTransport (not IapTransport).
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        fake_transport = MagicMock()
+        mock_transport.return_value = fake_transport
+        mock_list.return_value = []
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-azure-cloud",
+                provider="azure",
+                state_dir=Path("/x/azure"),
+                identity="lmf",
+                org="lmf",
+                repo="cloud",
+                status="RUNNING",
+            )
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        # off_platform_transport called with provider='azure' → SshTransport path
+        mock_transport.assert_called_once_with(
+            vm_cloud.cloud_resource_name("vergil-azure-cloud"), Path("/x/azure"), "azure"
+        )
+        # update was called with the returned transport — in-place, not rebuild
+        assert fake_transport in [c.args[0] for c in mock_update.call_args_list]
 
     @patch("vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -3559,8 +3601,10 @@ class _CloudPatches:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_vm",
             return_value={"host": "cloud-host"},
         )
+        # region_zones is now dispatched through backend.strategy — patch the GCP
+        # implementation so the test never shells out to gcloud.
         _patch(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
             return_value=["us-central1-a", "us-central1-b", "us-central1-c"],
         )
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
@@ -3592,27 +3636,25 @@ class _CloudPatches:
 
 
 class TestCandidateZones:
-    def test_configured_zone_is_tried_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
-            lambda _region: ["us-central1-a", "us-central1-b", "us-central1-c"],
-        )
+    def test_configured_zone_is_tried_first(self) -> None:
         backend = MagicMock()
         backend.spec.region = "us-central1"
         backend.spec.zone = "us-central1-c"
+        backend.strategy.region_zones.return_value = [
+            "us-central1-a",
+            "us-central1-b",
+            "us-central1-c",
+        ]
         assert _candidate_zones(backend) == ["us-central1-c", "us-central1-a", "us-central1-b"]
 
     def test_no_configured_zone_returns_all_region_zones(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
-            lambda _region: ["us-central1-a", "us-central1-b"],
-        )
-        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.random.shuffle", lambda _seq: None)
         backend = MagicMock()
         backend.spec.region = "us-central1"
         backend.spec.zone = ""
+        backend.strategy.region_zones.return_value = ["us-central1-a", "us-central1-b"]
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.random.shuffle", lambda _seq: None)
         assert _candidate_zones(backend) == ["us-central1-a", "us-central1-b"]
 
 
@@ -3637,14 +3679,21 @@ class TestCloudStageGuards:
         state.modules_root = tmp_path / "modules"
         state.state_dir.mkdir(parents=True, exist_ok=True)
         (state.state_dir / "volume.tfstate").write_text("{}")
-        region_zones = MagicMock()
         monkeypatch.setattr(
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
-        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", region_zones)
+        mock_region_zones = MagicMock(return_value=["us-central1-a", "us-central1-b"])
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
+            mock_region_zones,
+        )
         _cs_tofu_volume(state)
-        region_zones.assert_not_called()
+        # region_zones must NOT be called on the reattach path — the zonal disk
+        # is already pinned, so no zone sweep is needed.
+        mock_region_zones.assert_not_called()
+        # fallback_zones stays empty, and family fallback (not zone sweep) is
+        # populated for reattach.
         assert state.fallback_zones == []
         assert state.zone == "us-central1-b"
 
@@ -3658,8 +3707,10 @@ class TestCloudStageGuards:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
+        # region_zones now dispatches through backend.strategy; patch the GCP class.
         monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones", MagicMock(return_value=[])
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
+            MagicMock(return_value=[]),
         )
         _cs_tofu_volume(state)
         assert state.fallback_zones == []
@@ -3677,6 +3728,8 @@ class TestCloudStageGuards:
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
         _cs_tofu_volume(state)
+        # instance_fallback_candidates routes through the strategy; verify the result
+        # matches the module-level delegation (GCP backend) as a regression guard.
         expected = vm_cloud.instance_fallback_candidates(state.backend.spec.instance)[1:]
         assert state.fallback_instances == expected
         assert state.fallback_zones == []
@@ -3691,8 +3744,9 @@ class TestCloudStageGuards:
             "vergil_tooling.bin.vrg_vm.vm_cloud.apply_volume",
             MagicMock(return_value=("vol-1", "us-central1-b")),
         )
+        # region_zones now dispatches through backend.strategy; patch the GCP class.
         monkeypatch.setattr(
-            "vergil_tooling.bin.vrg_vm.vm_cloud.region_zones",
+            "vergil_tooling.lib.vm_provider.GcpStrategy.region_zones",
             MagicMock(return_value=["us-central1-a", "us-central1-b"]),
         )
         _cs_tofu_volume(state)
@@ -3820,7 +3874,7 @@ class TestCloudDestroy:
         ):
             result = main(["destroy", "--yes", "lmf/cloud", "--config", str(_cloud_repo)])
         assert result == 0
-        m["destroy_vm"].assert_called_once_with(ANY, state_dir)
+        m["destroy_vm"].assert_called_once_with(ANY, state_dir, provider="gcp")
         m["destroy_volume"].assert_not_called()
         assert "Destroyed" in capsys.readouterr().out
 
@@ -4351,7 +4405,9 @@ class TestCloudList:
             rows = _off_platform_active_sessions(vm)
         # The IAP session query addresses the box by its gcloud instance name
         # (vrg-<hash>), not the readable state key (#1866).
-        mk.assert_called_once_with(vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"))
+        mk.assert_called_once_with(
+            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"), "gcp"
+        )
         transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
         # Only the active row is retained, keyed by session id.
         assert set(rows) == {"c1"}
@@ -4973,6 +5029,84 @@ class TestVolumeLiveStatus:
             assert _volume_live_status("—", "—", "gcp") == "unknown (no gcp live check)"
             run.assert_not_called()
 
+    # ------------------------------------------------------------------
+    # Azure live-status branch
+    # ------------------------------------------------------------------
+
+    _ARM_ID = "/subscriptions/sub-123/resourceGroups/rg-test/providers/Microsoft.Compute/disks/d"
+
+    def test_azure_live_unattached(self) -> None:
+        """Azure Unattached diskState is returned as-is (disk exists, not in use)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Unattached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "Unattached"
+
+    def test_azure_live_attached(self) -> None:
+        """Azure Attached diskState is returned as-is."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Attached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "Attached"
+
+    def test_azure_live_missing_when_not_found(self) -> None:
+        """ResourceNotFound error from az disk show maps to MISSING (disk deleted out of band)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "az")
+        err.stderr = "(ResourceNotFound) The Resource 'vrg-abc' was not found"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            assert _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID) == "MISSING"
+
+    def test_azure_live_unknown_when_no_creds(self) -> None:
+        """CalledProcessError for auth failures degrades to 'unknown (no azure creds)'."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        err = subprocess.CalledProcessError(1, "az")
+        err.stderr = "ERROR: Please run 'az login'"
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=err):
+            result = _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            assert result == "unknown (no azure creds)"
+
+    def test_azure_live_unknown_when_az_absent(self) -> None:
+        """FileNotFoundError (az not installed) degrades to 'unknown (no az)'."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=FileNotFoundError):
+            result = _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            assert result == "unknown (no az)"
+
+    def test_azure_live_no_volume_id_degrades(self) -> None:
+        """Empty volume_id (volume not yet applied) degrades without calling az."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run") as run:
+            result = _volume_live_status("d", "1", "azure", volume_id="")
+            assert result == "unknown (no azure volume_id)"
+            run.assert_not_called()
+
+    def test_azure_live_uses_ids_flag(self) -> None:
+        """Verify az disk show is called with --ids <arm-id>."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="Unattached\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed) as run:
+            _volume_live_status("d", "1", "azure", volume_id=self._ARM_ID)
+            argv = run.call_args[0][0]
+            assert argv[:3] == ["az", "disk", "show"]
+            assert "--ids" in argv
+            assert self._ARM_ID in argv
+
+    def test_gcp_live_status_unchanged(self) -> None:
+        """GCP live status branch is byte-identical to pre-Task-6 behavior (regression guard)."""
+        from vergil_tooling.bin.vrg_vm import _volume_live_status
+
+        completed = MagicMock(stdout="READY\n")
+        with patch("vergil_tooling.bin.vrg_vm.subprocess.run", return_value=completed):
+            assert _volume_live_status("d", "us-central1-a", "gcp") == "READY"
+
 
 class TestVolumesCommand:
     def test_lists_volumes_with_columns(
@@ -5014,7 +5148,7 @@ class TestVolumesCommand:
         out = capsys.readouterr().out
         assert "LIVE" in out
         assert "READY" in out
-        live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp")
+        live.assert_called_once_with("vergil-lmf-cloud-data", "us-central1-a", "gcp", volume_id="")
 
     def test_volumes_shows_instance_column(
         self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
@@ -5240,10 +5374,15 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
     monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
     deleted: list[str] = []
-    destroyed: list[Path] = []
+    destroyed: list[tuple[Path, str]] = []
+
+    def _capture_destroy(root: Path, d: Path, **kw: object) -> None:
+        provider = cast("str", kw.get("provider", ""))
+        destroyed.append((d, provider))
+
     monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
     monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
-    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d: destroyed.append(d))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", _capture_destroy)
     monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
     monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
     args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
@@ -5251,7 +5390,84 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     rc = vrg_vm._cmd_destroy(args)
     assert rc == 0
     assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
-    assert destroyed == [Path("/x/gcp"), Path("/x/azure")]
+    assert destroyed == [(Path("/x/gcp"), "gcp"), (Path("/x/azure"), "azure")]
+
+
+def test_destroy_azure_prunes_known_hosts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """_destroy_recorded prunes the vergil known_hosts entry for Azure boxes."""
+    from vergil_tooling.bin import vrg_vm
+
+    state_dir = tmp_path / "azure-state"
+    state_dir.mkdir()
+    (state_dir / "host").write_text("203.0.113.5")
+
+    rs = vrg_vm.RecordedState(
+        lima_instance=None,
+        tofu_dirs=[("azure", state_dir)],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: None)
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+
+    pruned: list[str] = []
+    from unittest.mock import MagicMock
+
+    mock_strategy = MagicMock()
+    mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
+    # strategy_for is imported at module level in vrg_vm, so patch the bound name there.
+    monkeypatch.setattr(vrg_vm, "strategy_for", lambda p: mock_strategy)
+
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert pruned == ["203.0.113.5"]
+
+
+def test_destroy_gcp_does_not_prune_known_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GCP destroy does not call prune_known_hosts (host file absent, IAP pin-free)."""
+    from vergil_tooling.bin import vrg_vm
+
+    state_dir = tmp_path / "gcp-state"
+    state_dir.mkdir()
+    # No host file — GCP never writes one.
+
+    rs = vrg_vm.RecordedState(
+        lima_instance=None,
+        tofu_dirs=[("gcp", state_dir)],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: None)
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+
+    pruned: list[str] = []
+    from unittest.mock import MagicMock
+
+    mock_strategy = MagicMock()
+    mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
+    # strategy_for is imported at module level in vrg_vm, so patch the bound name there.
+    monkeypatch.setattr(vrg_vm, "strategy_for", lambda p: mock_strategy)
+
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    # No host file → RuntimeError → no prune call
+    assert pruned == []
 
 
 def test_destroy_nothing_recorded_returns_one(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -22,11 +23,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import progress
+from vergil_tooling.lib.vm_provider import (
+    FALLBACK_SHAPES,  # noqa: F401 — re-exported; tests import from vm_cloud
+    NESTED_VIRT_FAMILIES,  # noqa: F401 — re-exported; tests import from vm_cloud
+    GcpStrategy,
+    strategy_for,
+)
 from vergil_tooling.lib.vm_spec import spec_fingerprint, state_slug
-from vergil_tooling.lib.vm_transport import IapTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
+    from vergil_tooling.lib.vm_provider import Provider
     from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
@@ -184,8 +191,12 @@ def _tofu_version_ok(stdout: str) -> bool:
     return parts >= _TOFU_MIN
 
 
-def preflight() -> None:
-    """Verify the cloud host prerequisites: OpenTofu >= 1.8.0, gcloud, and ADC.
+def preflight(provider: str = "gcp") -> None:
+    """Verify the cloud host prerequisites: OpenTofu >= 1.8.0 plus provider-specific checks.
+
+    The OpenTofu version check is shared across all providers; the provider-specific
+    credential checks (gcloud+ADC for GCP, az+token for Azure) are delegated to the
+    strategy returned by :func:`strategy_for`.
 
     Each missing or unusable piece aborts with its own specific remediation
     rather than letting an opaque ``tofu``/``gcloud`` error surface later.
@@ -210,24 +221,7 @@ def preflight() -> None:
         print("ERROR: OpenTofu too old — install OpenTofu >= 1.8.0", file=sys.stderr)
         raise SystemExit(1)
 
-    if shutil.which("gcloud") is None:
-        print("ERROR: gcloud not found — install the gcloud CLI", file=sys.stderr)
-        raise SystemExit(1)
-
-    try:
-        subprocess.run(  # noqa: S603
-            ["gcloud", "auth", "application-default", "print-access-token"],  # noqa: S607
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(
-            "ERROR: no application-default credentials — run: "
-            "gcloud auth application-default login",
-            file=sys.stderr,
-        )
-        raise SystemExit(1) from None
+    strategy_for(provider).preflight()
 
 
 def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: str) -> None:
@@ -514,51 +508,36 @@ def tofu_state_dir(state_key: str, provider: str) -> Path:
     return path
 
 
-def _plugin_cache_dir() -> Path:
-    """Shared OpenTofu provider plugin cache, created on demand."""
-    path = Path.home() / ".config" / "vergil" / "tofu" / "plugin-cache"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def _resolve_project() -> str:
     """The GCP project for the off-platform backend: ``GOOGLE_CLOUD_PROJECT`` if set,
     else ``gcloud config get-value project``. The google OpenTofu provider does NOT read
     gcloud config, so we resolve it here and inject it into the tofu environment.
+
+    Thin delegation to :meth:`GcpStrategy._resolve_project` kept for backwards
+    compatibility (tests import ``vm_cloud._resolve_project``).
     """
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project:
-        result = subprocess.run(  # noqa: S603
-            ["gcloud", "config", "get-value", "project"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        project = result.stdout.strip()
-    if not project:
-        print(
-            "ERROR: no GCP project — set GOOGLE_CLOUD_PROJECT or run: "
-            "gcloud config set project <project>",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    return project
+    return GcpStrategy()._resolve_project()
 
 
-def _tofu_env() -> dict[str, str]:
+def _tofu_env(strategy: Provider | None = None) -> dict[str, str]:
     """Environment for every tofu invocation: non-interactive, shared plugin cache, and
-    the GCP project. The google provider reads ``GOOGLE_CLOUD_PROJECT`` (not gcloud
-    config), so without this every apply fails with ``project: required field is not set``.
+    the provider credentials. Defaults to GCP (for backwards compatibility).
+
+    ``strategy`` may be any :class:`~vergil_tooling.lib.vm_provider.Provider` instance;
+    when ``None`` a fresh :class:`~vergil_tooling.lib.vm_provider.GcpStrategy` is used.
     """
-    return {
-        **os.environ,
-        "TF_IN_AUTOMATION": "1",
-        "TF_PLUGIN_CACHE_DIR": str(_plugin_cache_dir()),
-        "GOOGLE_CLOUD_PROJECT": _resolve_project(),
-    }
+    if strategy is None:
+        strategy = GcpStrategy()
+    return strategy.tofu_env()
 
 
-def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, object]) -> None:
+def _run_tofu(
+    module_dir: Path,
+    state: Path,
+    action: str,
+    tofu_vars: dict[str, object],
+    strategy: Provider | None = None,
+) -> None:
     """Run ``tofu init`` then ``tofu <action>`` against a single state file.
 
     The var values are written next to the state as ``<state>.tfvars.json`` so a
@@ -574,7 +553,8 @@ def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, o
         msg = f"no tofu vars supplied and no stored {var_file} to reuse"
         raise RuntimeError(msg)
 
-    progress.run(["tofu", f"-chdir={module_dir}", "init", "-input=false"], env=_tofu_env())
+    env = _tofu_env(strategy)
+    progress.run(["tofu", f"-chdir={module_dir}", "init", "-input=false"], env=env)
 
     args = [
         "tofu",
@@ -586,17 +566,21 @@ def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, o
     ]
     if action in {"apply", "destroy"}:
         args.append("-auto-approve")
-    progress.run(args, env=_tofu_env())
+    progress.run(args, env=env)
 
 
-def _tofu_output(module_dir: Path, state: Path) -> dict[str, str]:
+def _tofu_output(
+    module_dir: Path,
+    state: Path,
+    strategy: Provider | None = None,
+) -> dict[str, str]:
     """Return ``tofu output -json`` for a state file flattened to ``{name: str(value)}``."""
     result = subprocess.run(  # noqa: S603
         ["tofu", f"-chdir={module_dir}", "output", "-json", f"-state={state}"],  # noqa: S607
         check=True,
         capture_output=True,
         text=True,
-        env=_tofu_env(),
+        env=_tofu_env(strategy),
     )
     data = json.loads(result.stdout)
     return {key: str(entry["value"]) for key, entry in data.items()}
@@ -611,6 +595,7 @@ def apply_volume(
     size_gib: int,
     labels: dict[str, str],
     zone: str = "",
+    provider: str = "gcp",
 ) -> tuple[str, str]:
     """Apply the persistent-volume module; return ``(volume_id, zone)``.
 
@@ -618,8 +603,10 @@ def apply_volume(
     IAP transport can address the disk's zone without re-querying tofu. ``zone`` is an
     optional explicit GCP zone; empty falls back to the module's ``${region}-b`` default
     (the module coalesces it away), so existing region-b volumes are unaffected (#1797).
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    module_dir = modules_root / "gcp" / "volume"
+    strategy = strategy_for(provider)
+    module_dir = modules_root / provider / "volume"
     state = state_dir / "volume.tfstate"
     _run_tofu(
         module_dir,
@@ -632,9 +619,11 @@ def apply_volume(
             "labels": labels,
             "zone": zone,
         },
+        strategy=strategy,
     )
-    out = _tofu_output(module_dir, state)
+    out = _tofu_output(module_dir, state, strategy=strategy)
     (state_dir / "zone").write_text(out["zone"], encoding="utf-8")
+    (state_dir / "volume_id").write_text(out["volume_id"], encoding="utf-8")
     return out["volume_id"], out["zone"]
 
 
@@ -650,6 +639,7 @@ def apply_vm(
     ssh_user: str,
     provision_env: str,
     labels: dict[str, str],
+    provider: str = "gcp",
 ) -> dict[str, str]:
     """Apply the VM module against the existing volume; return its outputs (host, ssh_user).
 
@@ -661,8 +651,10 @@ def apply_vm(
     retryable we roll the partial apply back with a ``tofu destroy`` against the VM state
     before re-raising. The VM state holds only the firewall and instance — the persistent
     volume lives in its own state — so the rollback never touches the reusable disk.
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    module_dir = modules_root / "gcp" / "vm"
+    strategy = strategy_for(provider)
+    module_dir = modules_root / provider / "vm"
     state = state_dir / "vm.tfstate"
     try:
         _run_tofu(
@@ -679,20 +671,32 @@ def apply_vm(
                 "provision_env": provision_env,
                 "labels": labels,
             },
+            strategy=strategy,
         )
     except subprocess.CalledProcessError:
-        # Best-effort rollback: tear down the partial state (the orphan firewall) so the
-        # retry starts clean. A rollback failure must never mask the real apply error, so
-        # swallow it and re-raise the original — the operator still sees why the create
-        # failed, and a stubborn orphan can be cleared with `vrg-vm destroy`.
+        # Best-effort rollback: tear down the partial state (the orphaned NIC/VM on
+        # Azure, or the orphan firewall on GCP) so the retry starts clean.  The
+        # rollback is state-driven — ``tofu destroy`` against vm.tfstate — so it
+        # covers the Azure ephemeral set (public IP + NIC + VM) automatically,
+        # provided those resources are in the vm module state (not the volume state).
+        # KNOWN RESIDUAL: the session-time NSG *source* rule added by ``nsg_refresh``
+        # (Task 3) is NOT in tofu state, so a rollback after a failed Azure apply
+        # will NOT clear that rule.  The rule is scoped to the operator's /32 so it
+        # is not a security gap, but it is a stale firewall entry until the next
+        # ``nsg_refresh`` overwrites it.  Track cleanup in the nsg_refresh teardown.
+        # A rollback failure must never mask the real apply error — swallow it and
+        # re-raise the original so the operator still sees why the create failed; a
+        # stubborn orphan can be cleared with `vrg-vm destroy`.
         print("VM apply failed — rolling back the partial state...", file=sys.stderr)
         with contextlib.suppress(subprocess.CalledProcessError):
-            _run_tofu(module_dir, state, "destroy", {})
+            _run_tofu(module_dir, state, "destroy", {}, strategy=strategy)
         raise
-    return _tofu_output(module_dir, state)
+    out = _tofu_output(module_dir, state, strategy=strategy)
+    (state_dir / "host").write_text(out.get("host", ""), encoding="utf-8")
+    return out
 
 
-def destroy_vm(modules_root: Path, state_dir: Path) -> None:
+def destroy_vm(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> None:
     """Destroy the disposable VM, reusing the stored tfvars; the volume is untouched.
 
     A no-op when there is no ``vm.tfstate`` (a volume-only box, the steady state
@@ -700,27 +704,60 @@ def destroy_vm(modules_root: Path, state_dir: Path) -> None:
     skip rather than letting ``_run_tofu`` raise on the absent tfvars. When the
     state *does* exist but its tfvars are gone, ``_run_tofu`` still fails loudly —
     that is a genuinely under-specified destroy, not an empty one. (#1845)
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
+    strategy = strategy_for(provider)
     vm_state = state_dir / "vm.tfstate"
     if not vm_state.exists():
         return
-    _run_tofu(modules_root / "gcp" / "vm", vm_state, "destroy", {})
+    _run_tofu(modules_root / provider / "vm", vm_state, "destroy", {}, strategy=strategy)
 
 
-def destroy_volume(modules_root: Path, state_dir: Path) -> bool:
+def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> bool:
     """Destroy the persistent volume, then remove the whole state dir for a clean rebuild.
 
-    Returns whether the state actually managed a disk: ``True`` when a
-    ``google_compute_disk`` was present (a real teardown), ``False`` when it held
-    none (an empty/placeholder state, or one already drifted out of band — tofu
-    destroys nothing). The caller reports the no-op honestly rather than claiming a
-    disk was destroyed, which would mask a cloud disk orphaned under another state
+    Returns whether the state actually managed a disk: ``True`` when a disk
+    resource was present (a real teardown), ``False`` when it held none (an
+    empty/placeholder state, or one already drifted out of band — tofu destroys
+    nothing). The caller reports the no-op honestly rather than claiming a disk
+    was destroyed, which would mask a cloud disk orphaned under another state
     dir. (#1846)
+    ``provider`` selects the cloud-specific module sub-directory (``gcp`` or ``azure``).
     """
-    had_disk = parse_volume_state(state_dir / "volume.tfstate") is not None
-    _run_tofu(modules_root / "gcp" / "volume", state_dir / "volume.tfstate", "destroy", {})
+    strategy = strategy_for(provider)
+    had_disk = parse_volume_state(state_dir / "volume.tfstate", provider=provider) is not None
+    _run_tofu(
+        modules_root / provider / "volume",
+        state_dir / "volume.tfstate",
+        "destroy",
+        {},
+        strategy=strategy,
+    )
     shutil.rmtree(state_dir)
     return had_disk
+
+
+def read_host(state_dir: Path) -> str:
+    """Read the public IP persisted by ``apply_vm`` for Azure; raise if absent or empty."""
+    host_file = state_dir / "host"
+    if not host_file.exists():
+        msg = f"no persisted host at {host_file} — apply the VM first"
+        raise RuntimeError(msg)
+    host = host_file.read_text(encoding="utf-8").strip()
+    if not host:
+        raise RuntimeError(
+            f"persisted host at {host_file} is empty — re-apply the VM to recover the public IP"
+        )
+    return host
+
+
+def read_volume_id(state_dir: Path) -> str:
+    """Read the volume ID persisted by ``apply_volume``; raise if absent."""
+    vid_file = state_dir / "volume_id"
+    if not vid_file.exists():
+        msg = f"no persisted volume_id at {vid_file} — apply the volume first"
+        raise RuntimeError(msg)
+    return vid_file.read_text(encoding="utf-8").strip()
 
 
 def read_zone(state_dir: Path) -> str:
@@ -732,86 +769,37 @@ def read_zone(state_dir: Path) -> str:
     return zone_file.read_text(encoding="utf-8").strip()
 
 
-# A GCP zone-capacity stockout ("the zone does not have enough resources" /
-# ZONE_RESOURCE_POOL_EXHAUSTED) is transient and zone-specific, so it is worth retrying in
-# another zone — unlike a real config/quota error, which must abort. (#1813)
-_ZONE_CAPACITY_RE = re.compile(
-    r"does not have enough resources available|ZONE_RESOURCE_POOL_EXHAUSTED",
-    re.IGNORECASE,
-)
+# --- Instance-family fallback ladder (#1836) ---------------------------------
+#
+# NESTED_VIRT_FAMILIES and FALLBACK_SHAPES are imported from vm_provider (where they
+# are defined inside GcpStrategy) and re-exported here so existing imports from
+# vm_cloud keep working.
+#
+# The thin delegation functions below keep existing call sites working.
 
 
 def is_zone_capacity_error(exc: subprocess.CalledProcessError) -> bool:
-    """True when a tofu apply failed purely because the zone is out of capacity."""
-    blob = f"{exc.stderr or ''}{exc.stdout or ''}"
-    return bool(_ZONE_CAPACITY_RE.search(blob))
+    """True when a tofu apply failed purely because the zone is out of capacity.
+
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
+    """
+    return GcpStrategy().is_zone_capacity_error(exc)
 
 
 def region_zones(region: str) -> list[str]:
     """The UP zones of a GCP region, sorted (e.g. us-central1 -> -a/-b/-c/-f).
 
-    Used to sweep zones for capacity when an instance create is stocked out.
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
     """
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gcloud",
-            "compute",
-            "zones",
-            "list",
-            f"--filter=name~^{region}- AND status=UP",
-            "--format=value(name)",
-            f"--project={_resolve_project()}",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return sorted(result.stdout.split())
-
-
-# --- Instance-family fallback ladder (#1836) ---------------------------------
-#
-# A capacity stockout is specific to a (zone, machine-family) pair: a different
-# family in the same zone often has capacity when the requested one does not. On a
-# reattach the zonal data disk pins the zone, so swapping the family is the only
-# recovery (see apply_vm_with_zone_fallback). The ladder may contain ONLY families
-# that support GCP nested virtualization — nested KVM is the point of these VMs, and
-# a family without it would boot a box with no /dev/kvm and fail the provision.
-# GCE nested virt requires an Intel (VT-x) processor: AMD, Arm, E2, memory-optimized,
-# and H4D VMs are all excluded, so the AMD families (n2d, c2d) are NOT eligible —
-# only the Intel families n2 and c2 are. Verified against GCP's nested-virt overview
-# (docs.cloud.google.com/compute/docs/instances/nested-virtualization/overview, which
-# lists "AMD and Arm processors" among the unsupported), corroborated by the
-# general-purpose machine docs ("N2D VMs don't support ... nested virtualization");
-# checked 2026-06-24. The unit test is only a change-detector — re-verify on edit.
-NESTED_VIRT_FAMILIES = ("n2", "c2")
-
-# Shapes verified to exist for EVERY family in the ladder and actually run
-# off-platform. Family-fallback engages only for these, so we never synthesize an
-# invalid machine type. Adding a size is one line here.
-FALLBACK_SHAPES = frozenset({"standard-8", "standard-16"})
+    return GcpStrategy().region_zones(region)
 
 
 def instance_fallback_candidates(requested: str) -> list[str]:
     """Ordered machine types to try for ``requested``, the requested type first.
 
-    Splits ``requested`` into ``(family, shape)`` (``n2-standard-8`` ->
-    ``("n2", "standard-8")``). When the shape is in ``FALLBACK_SHAPES`` the result is
-    the requested type, then every other ``NESTED_VIRT_FAMILIES`` member at the same
-    shape, deduped. When the shape is unsupported the result is just ``[requested]``
-    (no fallback). If the requested family is not in the ladder (e.g. a misconfigured
-    ``e2`` declared with nested virt) the requested type still leads and the full
-    ladder follows, so fallback still reaches the nested-virt-safe families.
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
     """
-    _family, _, shape = requested.partition("-")
-    if not shape or shape not in FALLBACK_SHAPES:
-        return [requested]
-    candidates = [requested]
-    for family in NESTED_VIRT_FAMILIES:
-        candidate = f"{family}-{shape}"
-        if candidate not in candidates:
-            candidates.append(candidate)
-    return candidates
+    return GcpStrategy().instance_fallback_candidates(requested)
 
 
 def apply_vm_with_zone_fallback(
@@ -835,14 +823,15 @@ def apply_vm_with_zone_fallback(
     sweep destroys the *empty* disk to relocate it. With neither list a capacity error
     is fatal. (#1813, #1836)
     """
+    provider = backend.provider_label
     instances = list(fallback_instances or [])
     tried_zones = [zone]
     tried_instances = [backend.spec.instance]
     vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
     try:
-        return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+        return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
     except subprocess.CalledProcessError as exc:
-        if not is_zone_capacity_error(exc):
+        if not backend.strategy.is_zone_capacity_error(exc):
             raise
         if not instances and not fallback_zones:
             raise  # reattach with no ladder (unsupported shape) — original behavior
@@ -859,24 +848,25 @@ def apply_vm_with_zone_fallback(
             backend.vm_vars(zone=zone, volume_id=volume_id, instance_override=instance),
         )
         try:
-            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
-            if not is_zone_capacity_error(exc):
+            if not backend.strategy.is_zone_capacity_error(exc):
                 raise
 
     # Zone fallback — fresh create only; recreate the empty disk in each next zone.
     for next_zone in fallback_zones:
         print(f"  zone {zone}: no capacity — trying {next_zone}...", file=sys.stderr)
-        destroy_volume(modules_root, state_dir)  # the empty disk; rmtrees the state dir
+        # Tear down the empty disk and rmtree the state dir before recreating.
+        destroy_volume(modules_root, state_dir, provider=provider)
         state_dir.mkdir(parents=True, exist_ok=True)
         volume_vars = cast("dict[str, Any]", {**backend.volume_vars(), "zone": next_zone})
-        volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars)
+        volume_id, zone = apply_volume(modules_root, state_dir, **volume_vars, provider=provider)
         tried_zones.append(zone)
         vm_vars = cast("dict[str, Any]", backend.vm_vars(zone=zone, volume_id=volume_id))
         try:
-            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars)
+            return volume_id, zone, apply_vm(modules_root, state_dir, **vm_vars, provider=provider)
         except subprocess.CalledProcessError as exc:
-            if not is_zone_capacity_error(exc):
+            if not backend.strategy.is_zone_capacity_error(exc):
                 raise
 
     # fallback_instances (reattach) and fallback_zones (fresh create) are mutually exclusive
@@ -891,7 +881,7 @@ def apply_vm_with_zone_fallback(
         msg = (
             f"no zone in {backend.spec.region} has capacity for {backend.spec.instance} "
             f"(tried: {', '.join(tried_zones)}). Try a different instance family "
-            "(e.g. n2d-*), another region, or wait for capacity."
+            "or wait for capacity."
         )
     raise RuntimeError(msg)
 
@@ -945,15 +935,31 @@ def zone_to_region(zone: str) -> str:
     return zone.rsplit("-", 1)[0]
 
 
-def parse_volume_state(state_file: Path) -> VolumeState | None:
+def parse_volume_state(state_file: Path, provider: str = "gcp") -> VolumeState | None:
     """Parse a ``volume.tfstate``, returning the persistent disk's attributes.
 
     Returns ``None`` when the file is absent, unreadable, malformed, or carries
-    no applied ``google_compute_disk`` resource (e.g. the ``{}`` placeholder of a
-    never-applied state). A bad state degrades to a placeholder volume row in the
-    caller rather than erroring the whole listing — there is no network call and
-    no gcloud here, only the local state file.
+    no applied disk resource (e.g. the ``{}`` placeholder of a never-applied
+    state). A bad state degrades to a placeholder volume row in the caller
+    rather than erroring the whole listing — there is no network call here,
+    only the local state file.
+
+    ``provider`` selects which resource type and attribute names to look for:
+    - ``"gcp"`` (default): ``google_compute_disk``, size from ``size``,
+      labels from ``labels``.
+    - ``"azure"``: ``azurerm_managed_disk``, size from ``disk_size_gb``,
+      labels from ``tags``.  Azure zones are bare AZ integers (``"1"``);
+      GCP zones may be full selfLink URLs, normalised by :func:`_zone_name`.
+
+    GCP attribute names verified against existing usage; Azure attribute names
+    verified against the azurerm Terraform provider schema (2026-06-25):
+    https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/managed_disk
     """
+    from vergil_tooling.lib.vm_provider import strategy_for
+
+    strategy = strategy_for(provider)
+    disk_type = strategy.volume_disk_type()
+
     try:
         data = json.loads(state_file.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -961,7 +967,7 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
     if not isinstance(data, dict):
         return None
     for resource in data.get("resources", []):
-        if not isinstance(resource, dict) or resource.get("type") != "google_compute_disk":
+        if not isinstance(resource, dict) or resource.get("type") != disk_type:
             continue
         instances = resource.get("instances") or []
         if not instances or not isinstance(instances[0], dict):
@@ -969,13 +975,18 @@ def parse_volume_state(state_file: Path) -> VolumeState | None:
         attrs = instances[0].get("attributes")
         if not isinstance(attrs, dict):
             continue
-        raw_labels = attrs.get("labels") or {}
+        if provider == "azure":
+            raw_labels = attrs.get("tags") or {}
+            size_val = attrs.get("disk_size_gb")
+        else:
+            raw_labels = attrs.get("labels") or {}
+            size_val = attrs.get("size")
         labels = (
             {str(k): str(v) for k, v in raw_labels.items()} if isinstance(raw_labels, dict) else {}
         )
         return VolumeState(
             name=str(attrs.get("name", "")),
-            size_gib=_coerce_int(attrs.get("size")),
+            size_gib=_coerce_int(size_val),
             zone=_zone_name(str(attrs.get("zone", ""))),
             labels=labels,
         )
@@ -1024,17 +1035,163 @@ def _effective_ssh_user() -> str:
     return os.environ.get("VRG_OFF_PLATFORM_SSH_USER", _DEFAULT_SSH_USER)
 
 
-def off_platform_transport(name: str, state_dir: Path) -> IapTransport:
-    """Build an IAP transport for an already-applied off-platform box from local state.
+# --- Azure keypair helpers ---------------------------------------------------
 
-    Mirrors :meth:`OffPlatformBackend.transport` but sourced purely from the
-    persisted tofu state (the resource ``name`` plus the apply ``zone`` file), so a
-    fan-out enumerator can reach a running box without composing its full spec.
-    Raises ``RuntimeError`` (via :func:`read_zone`) when no zone has been persisted
-    — i.e. the volume was never applied and there is nothing to reach.
+_DEFAULT_PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
+
+
+def _run_keygen(priv: Path) -> None:
+    """Generate an ed25519 keypair at *priv* and *priv*.pub via ssh-keygen.
+
+    Factored into a seam so tests can monkeypatch it without spawning a real process.
     """
-    zone = read_zone(state_dir)
-    return IapTransport(name, zone, _resolve_project(), _effective_ssh_user())
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            str(priv),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def ensure_keypair(state_dir: Path) -> tuple[Path, str]:
+    """Return ``(private_key_path, public_key_openssh)`` for *state_dir*, generating once.
+
+    If ``<state_dir>/id_ed25519`` already exists the keypair is reused unchanged
+    (idempotent). The public key string is stripped of surrounding whitespace.
+    """
+    priv = state_dir / "id_ed25519"
+    pub = priv.with_suffix(".pub")
+    if not priv.exists():
+        _run_keygen(priv)
+    return priv, pub.read_text(encoding="utf-8").strip()
+
+
+def _fetch_public_ip(url: str) -> str:
+    """Fetch the operator's current public IP from *url* and return it as a string.
+
+    Factored into a seam so tests can monkeypatch it without making a real HTTP call.
+    Raises ``urllib.error.URLError`` on network failure.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "vergil-tooling"})  # noqa: S310
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+        raw: bytes = resp.read()
+        return raw.decode("ascii").strip()
+
+
+def _operator_public_ip() -> str:
+    """Return the operator's current public IP address (fail-closed).
+
+    Queries the echo endpoint (default ``https://api.ipify.org``, overridable via
+    ``VRG_PUBLIC_IP_ENDPOINT``). Aborts with ``SystemExit`` if the response is empty,
+    not a valid IP address (including out-of-range octets), or unreachable — never
+    falls back to ``0.0.0.0/0`` or any wildcard.
+    This is a security property: the NSG rule must only ever admit the operator's /32.
+    """
+    url = os.environ.get("VRG_PUBLIC_IP_ENDPOINT", _DEFAULT_PUBLIC_IP_ENDPOINT)
+    try:
+        ip = _fetch_public_ip(url)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"ERROR: failed to discover operator public IP from {url}: {exc}\n"
+            "Refusing to proceed — the NSG would be left unreachable or wide-open.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not ip:
+        print(
+            f"ERROR: public IP endpoint {url!r} returned an empty response\n"
+            "Refusing to proceed — cannot safely restrict the NSG source.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        print(
+            f"ERROR: public IP endpoint {url!r} returned an unexpected value: {ip!r}\n"
+            "Refusing to proceed — cannot safely restrict the NSG source.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return ip
+
+
+def nsg_refresh(resource_group: str, nsg_name: str, rule: str) -> None:
+    """Rewrite the NSG inbound rule's source to the operator's current /32.
+
+    Calls ``az network nsg rule update -g <rg> --nsg-name <nsg> -n <rule>
+    --source-address-prefixes <ip>/32`` so the firewall locks port 22 to the
+    operator's roaming IP rather than a placeholder that blocks all traffic.
+    Fails loudly if the operator's IP cannot be discovered (see
+    :func:`_operator_public_ip`).
+    """
+    ip = _operator_public_ip()
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "az",
+            "network",
+            "nsg",
+            "rule",
+            "update",
+            "-g",
+            resource_group,
+            "--nsg-name",
+            nsg_name,
+            "-n",
+            rule,
+            "--source-address-prefixes",
+            f"{ip}/32",
+        ],
+        check=True,
+    )
+
+
+def _azure_resource_group_from_volume_id(volume_id: str) -> str:
+    """Extract the resource group name from an Azure ARM resource ID.
+
+    Azure ARM IDs follow the pattern:
+        /subscriptions/<sub>/resourceGroups/<rg>/providers/...
+    The resource group is at index 4 of the ``/``-split parts.
+    """
+    parts = volume_id.split("/")
+    # parts[0] is "" (leading slash), [1] "subscriptions", [2] <sub>,
+    # [3] "resourceGroups", [4] <rg>
+    if len(parts) < 5:  # noqa: PLR2004
+        msg = f"Cannot parse resource group from volume_id: {volume_id!r}"
+        raise ValueError(msg)
+    if parts[1].lower() != "subscriptions" or parts[3].lower() != "resourcegroups":
+        msg = (
+            f"volume_id does not match ARM ID structure "
+            f"(/subscriptions/<sub>/resourceGroups/<rg>/...): {volume_id!r}"
+        )
+        raise ValueError(msg)
+    return parts[4]
+
+
+def off_platform_transport(name: str, state_dir: Path, provider: str = "gcp") -> Transport:
+    """Build the right transport for an already-applied off-platform box from local state.
+
+    Delegates to the provider strategy so the caller never branches on *provider*:
+    GCP returns an :class:`IapTransport` (sourced from the persisted ``zone`` file);
+    Azure returns an :class:`SshTransport` (sourced from the persisted ``host`` /
+    ``volume_id`` files, after refreshing the NSG rule for the operator's current IP).
+
+    ``provider`` defaults to ``"gcp"`` so existing call sites that were written
+    before Azure support are unaffected by the signature change.
+
+    Raises ``RuntimeError`` when the required state files are absent (e.g. the
+    volume was never applied and there is nothing to reach).
+    """
+    from vergil_tooling.lib.vm_provider import strategy_for
+
+    return strategy_for(provider).transport(name, state_dir, _effective_ssh_user())
 
 
 class OffPlatformBackend:
@@ -1067,6 +1224,7 @@ class OffPlatformBackend:
         # Plain attribute (not a property): the Backend protocol declares
         # provider_label as a settable variable, which a read-only property fails.
         self.provider_label = spec.provider
+        self.strategy = strategy_for(spec.provider)
 
     def _project(self) -> str:
         return _resolve_project()
@@ -1074,39 +1232,12 @@ class OffPlatformBackend:
     def state_dir(self) -> Path:
         return tofu_state_dir(self.state_key, self.spec.provider)
 
-    def transport(self, instance: str | None = None) -> IapTransport:  # noqa: ARG002
-        zone = read_zone(self.state_dir())
-        return IapTransport(self.name, zone, self._project(), self.ssh_user)
+    def transport(self, instance: str | None = None) -> Transport:  # noqa: ARG002
+        return self.strategy.transport(self.name, self.state_dir(), self.ssh_user)
 
     def status(self, instance: str | None = None) -> str:  # noqa: ARG002
-        try:
-            zone = read_zone(self.state_dir())
-        except RuntimeError:
-            return ""
-        try:
-            result = subprocess.run(  # noqa: S603
-                [  # noqa: S607
-                    "gcloud",
-                    "compute",
-                    "instances",
-                    "describe",
-                    self.name,
-                    f"--zone={zone}",
-                    f"--project={self._project()}",
-                    "--format=value(status)",
-                ],
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError:
-            return ""
-        raw = result.stdout.strip()
-        if raw == "RUNNING":
-            return "Running"
-        if raw in {"TERMINATED", "STOPPED"}:
-            return "Stopped"
-        return ""
+        """Delegate to the provider strategy for a normalized status string."""
+        return self.strategy.status(self.name, self.state_dir())
 
     def volume_vars(self) -> dict[str, object]:
         return {
@@ -1132,7 +1263,7 @@ class OffPlatformBackend:
             vergil_user=self.ssh_user,
             home=f"/home/{self.ssh_user}",
         )
-        return {
+        result: dict[str, object] = {
             "name": self.name,
             "zone": zone,
             # A family fallback swaps the machine type here ONLY; self.spec is never
@@ -1145,3 +1276,11 @@ class OffPlatformBackend:
             "provision_env": provision_env,
             "labels": self.labels,
         }
+        # Azure: generate/persist an ed25519 keypair and pass the public key to the
+        # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
+        # (OS Login / metadata keys managed by gcloud) so it needs no injected key —
+        # ssh_public_key is absent from the GCP dict entirely.
+        if self.strategy.name == "azure":
+            _key_path, ssh_public_key = ensure_keypair(self.state_dir())
+            result["ssh_public_key"] = ssh_public_key
+        return result

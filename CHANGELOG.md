@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.73] - 2026-06-25
+
+### Features
+
+- Azure consumer — provider strategy, SshTransport, capacity, lifecycle (#1878) (#1892)
+
 ## [2.1.72] - 2026-06-25
 
 ### Documentation
