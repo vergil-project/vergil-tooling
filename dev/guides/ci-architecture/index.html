@@ -9867,7 +9867,7 @@ host prerequisite.</p>
 <div class="admonition tip">
 <p class="admonition-title">Tip</p>
 <p>Build the dev images locally before first use:
-<code>cd ../vergil-docker &amp;&amp; docker/build.sh</code></p>
+<code>cd ../vergil-containers &amp;&amp; docker/build.sh</code></p>
 </div>
 <p>Running <code>vrg-container-run -- uv run vrg-validate</code> before each commit runs
 common checks and per-language validation. The Claude Code hook guard
@@ -10024,7 +10024,7 @@ their check names gain a <code>security-and-standards /</code> prefix:</p>
 </ul>
 <h2 id="dev-container-images">Dev container images<a class="headerlink" href="#dev-container-images" title="Permanent link">&para;</a></h2>
 <p>Published to <code>ghcr.io/vergil-project/dev-&lt;language&gt;:&lt;version&gt;</code> from the
-<a href="https://github.com/vergil-project/vergil-docker">vergil-docker</a>
+<a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>
 repository.</p>
 <h3 id="available-images">Available images<a class="headerlink" href="#available-images" title="Permanent link">&para;</a></h3>
 <p><strong><code>dev-ruby</code></strong> (3.2, 3.3, 3.4)
@@ -10038,7 +10038,7 @@ repository.</p>
 :   Base: <code>golang:&lt;v&gt;</code>. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-docker
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker/build.sh
 </code></pre></div>
 <p>This builds all images. Individual images can be built with:</p>
@@ -10046,7 +10046,7 @@ repository.</p>
 </code></pre></div>
 <h3 id="publishing">Publishing<a class="headerlink" href="#publishing" title="Permanent link">&para;</a></h3>
 <p>Images are published automatically on push to <code>develop</code> or <code>main</code> in
-the <code>vergil-docker</code> repository via its
+the <code>vergil-containers</code> repository via its
 <code>.github/workflows/docker-publish.yml</code> workflow.</p>
 <h3 id="design-principles">Design principles<a class="headerlink" href="#design-principles" title="Permanent link">&para;</a></h3>
 <ul>
