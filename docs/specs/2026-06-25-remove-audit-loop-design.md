@@ -66,6 +66,14 @@ The oracle stops being a coordinator and becomes a metadata recorder.
 With no AUDIT agent, there are no findings to fix (`report-fixes`), no rounds,
 and no escalation path (`escalate`/`abort`/`resolve`).
 
+`report-fixes` also carried a second capability (#1565): revising the recorded
+PR metadata before submission. That is intentionally dropped, not lost.
+Pre-submit, an agent re-runs `report-ready`, which overwrites `pr_metadata`
+(its only guard is owner-is-user, and the simplified single-agent state has no
+turn-taking, so re-running is always safe). Post-submit, metadata corrections
+go through `vrg-pr-fix-body` against the live PR. The "revise" path consolidates
+onto those two; `report-fixes` is removed.
+
 **Engine (`src/vergil_tooling/lib/pr_workflow/engine.py`)**
 
 - Delete: `audit_ack`, `apply_check`, `_complete_review`,
@@ -89,9 +97,17 @@ Drop `owner`, `mode`, `participants`, `checks`, `round`, `history`,
 ephemeral per-PR working state, regenerated each time, never read across a
 schema change.
 
-**Transport (`src/vergil_tooling/lib/pr_workflow/local_transport.py`)**
+**Transport (`src/vergil_tooling/lib/pr_workflow/local_transport.py` and the
+`Transport` ABC in `src/vergil_tooling/lib/pr_workflow/transport.py`)**
 
-- Delete: `wait_until_owner`, `wait_until_present` (nothing waits anymore).
+- Delete from `LocalFileTransport`: `wait_until_owner`, `wait_until_present`
+  (nothing waits anymore).
+- **Trim the `Transport` ABC** (`transport.py`) by the same two methods, so the
+  abstract contract matches the surviving run-and-done surface
+  (`read`/`write`/`head_sha`/`merge_base`, whatever remains). This is
+  consistent with the parked #1865 cloud design, whose own note says a future
+  `GitHubTransport` implements "the same contract minus the polling loop." Keep
+  the ABC seam — only the dead polling methods go.
 - Keep: atomic read/write helpers.
 
 **Delete entirely**
@@ -159,8 +175,8 @@ every PR. Therefore:
 
 This is an org-side ops action (a GitHub branch-protection setting, not repo
 code), but it is **release-coordinated, not a deferred follow-up**: it must
-land together with this change so PRs do not hang. It is called out explicitly
-in the follow-ups as near-term and release-blocking.
+land together with this change so PRs do not hang. See "Release sequencing"
+below.
 
 ### 5. Documentation
 
@@ -202,9 +218,17 @@ in the follow-ups as near-term and release-blocking.
 
 ## Risks and mitigations
 
-- **Merge gate hang.** Mitigated by §4: relax the required check in the same
-  release. This is the one cross-system coordination point and is called out
-  as release-blocking.
+- **Skills calling removed subcommands.** The current `/vergil:issue-implement`
+  and `/vergil:pr-watch` drive the workflow by calling `vrg-pr-workflow next`
+  (and `report-fixes`, etc.). Releasing tooling that deletes those subcommands
+  while a repo still runs the old skills hard-fails the agent session
+  mid-flight. Mitigated by sequencing: the plugin-skill update is a
+  release-blocking predecessor (see "Release sequencing"). This is the most
+  important coordination point — it is the exact mid-session-failure mode that
+  motivated removing this machinery, so it must not recur during the removal.
+- **Merge gate hang.** Relaxing `vergil-audit/approved` to non-required must
+  land with this change (see §4 and "Release sequencing"), or PRs hang
+  unmergeable once the loop that posted the check is gone.
 - **Stray audit-mode VM resolving to `user`.** Not applicable while the
   identity is retained — `IdentityMode.AUDIT` still resolves normally. No
   change to VM provisioning.
@@ -212,13 +236,28 @@ in the follow-ups as near-term and release-blocking.
   dormant judgment checks in prose only (no code dependency — verified). Left
   untouched here; scheduled for a stale-code sweep follow-up.
 
-## Out of scope — follow-up issues to file
+## Release sequencing
 
-1. **`vergil-claude-plugin`** — remove `/vergil:issue-audit`; simplify
-   `/vergil:issue-implement` (drop the audit hand-off line); simplify
-   `/vergil:pr-watch` to USER-only.
-2. **Ops (near-term, release-coordinated)** — relax `vergil-audit/approved`
-   to non-required on branch protection. Must land with #1872.
-3. **Stale-code sweep** — re-evaluate whether `vrg-reword` and
-   `vrg-pr-fix-body` are still needed, and scrub their dead-check docstring
-   references.
+This change has two release-blocking predecessors that are *not* free to drift
+as open-ended follow-ups. They must be ordered:
+
+1. **First — `vergil-claude-plugin` skills (predecessor, must land before the
+   tooling subcommand removals reach any repo).** Remove `/vergil:issue-audit`;
+   simplify `/vergil:issue-implement` (drop the audit hand-off line and stop
+   driving the workflow through `vrg-pr-workflow next`); simplify
+   `/vergil:pr-watch` to USER-only. As part of this work, **audit that every
+   consuming repo properly depends on v2.1 of the plugin**, so no repo runs
+   stale skills against the new tooling. Until this lands and propagates, the
+   tooling subcommand removals must not ship to consumers.
+2. **With the tooling release — branch protection.** Relax
+   `vergil-audit/approved` to non-required (org-side setting) so merges proceed
+   on human approval + CI once the loop's check-poster is gone.
+3. **Then — this work (#1872):** the `vrg-pr-workflow` collapse, transport/ABC
+   trim, criteria relocation, docs, and tests.
+
+## Out of scope — genuine deferred follow-up
+
+- **Stale-code sweep** — re-evaluate whether `vrg-reword` and `vrg-pr-fix-body`
+  are still needed, and scrub their dead-check docstring references. This is the
+  only item that can safely defer; it neither blocks nor is blocked by the
+  release sequencing above.
