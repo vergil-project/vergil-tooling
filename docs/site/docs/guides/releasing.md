@@ -59,7 +59,7 @@ adding new public surface. Versions: `v1.3.0` → `v1.3.1`.
      the new release.
    - The boundary tag (`develop-v1.3.1`) is created on `develop`.
    - `repository_dispatch` fires a `vergil-tooling-released`
-     event at `vergil-docker`, which rebuilds the dev
+     event at `vergil-containers`, which rebuilds the dev
      images against the now-current `v1.3` tag.
    - `version-bump-pr` opens an auto-bump PR on `develop`
      (e.g., `1.3.1` → `1.3.2`). Merge it.
@@ -88,19 +88,19 @@ A minor release adds backwards-compatible new features. Versions:
 
 Same five steps as patch, with one important addition: the rolling
 minor tag changes from `v1.3` to `v1.4`. The image's pin in
-`vergil-docker` and any per-repo dev-dep declarations
+`vergil-containers` and any per-repo dev-dep declarations
 **must be bumped manually** — the rolling-tag mechanism only handles
 patches within a minor.
 
 1. Cut and merge `release/v1.4.0` exactly like a patch release.
-2. **Bump `vergil-docker`'s pin** in
+2. **Bump `vergil-containers`'s pin** in
    [`docker/common/vergil-tooling-uv.dockerfile`][docker-frag]:
 
    ```dockerfile
    ARG ST_TOOLING_TAG=v1.4   # was v1.3
    ```
 
-   Open a small PR in `vergil-docker`, merge it, and the
+   Open a small PR in `vergil-containers`, merge it, and the
    next image rebuild (whether triggered by your release or a
    subsequent push there) carries the new minor.
 3. **Coordinate consumer bumps.** Each Python repo that has
@@ -111,7 +111,7 @@ patches within a minor.
    (and anywhere else the documentation pins a minor) to the new
    tag.
 
-[docker-frag]: https://github.com/vergil-project/vergil-docker/blob/develop/docker/common/vergil-tooling-uv.dockerfile
+[docker-frag]: https://github.com/vergil-project/vergil-containers/blob/develop/docker/common/vergil-tooling-uv.dockerfile
 
 ### Consumer steps
 
@@ -121,7 +121,7 @@ Minor bumps are **deliberate opt-in** at every deployment target:
 |---|---|
 | Developer host | `uv tool install --reinstall 'vergil-tooling @ git+...@v1.4'` (or update the pinned tag in their notes / shell history) |
 | Python repo `.venv` | Edit `pyproject.toml` `[tool.uv.sources]` to `tag = "v1.4"`, then `uv lock --upgrade-package vergil-tooling` |
-| Dev container image | Wait for `vergil-docker` to land the `ARG` bump, then pull the rebuilt image |
+| Dev container image | Wait for `vergil-containers` to land the `ARG` bump, then pull the rebuilt image |
 
 The release author should announce the minor bump in the GitHub
 Release notes, calling out any new features and the `v1.4` pin
@@ -143,7 +143,7 @@ communication and migration window:
 2. Cut and merge `release/v2.0.0` like a minor release. The
    release notes prominently call out the breaking-change list and
    link to the migration guide.
-3. Bump `vergil-docker`'s `ARG ST_TOOLING_TAG=` to `v2`
+3. Bump `vergil-containers`'s `ARG ST_TOOLING_TAG=` to `v2`
    in a separate PR — coordinate so consumers can opt in on their
    own schedule.
 4. Notify consumer maintainers (e.g., update `vergil-tooling`'s

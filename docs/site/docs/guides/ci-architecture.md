@@ -68,7 +68,7 @@ Environment overrides:
 
 !!! tip
     Build the dev images locally before first use:
-    `cd ../vergil-docker && docker/build.sh`
+    `cd ../vergil-containers && docker/build.sh`
 
 Running `vrg-container-run -- uv run vrg-validate` before each commit runs
 common checks and per-language validation. The Claude Code hook guard
@@ -232,7 +232,7 @@ Jobs that remain inline keep their names unchanged:
 ## Dev container images
 
 Published to `ghcr.io/vergil-project/dev-<language>:<version>` from the
-[vergil-docker](https://github.com/vergil-project/vergil-docker)
+[vergil-containers](https://github.com/vergil-project/vergil-containers)
 repository.
 
 ### Available images
@@ -254,7 +254,7 @@ repository.
 ### Building locally
 
 ```bash
-cd ../vergil-docker
+cd ../vergil-containers
 docker/build.sh
 ```
 
@@ -267,7 +267,7 @@ docker build --build-arg RUBY_VERSION=3.4 -t dev-ruby:3.4 docker/ruby/
 ### Publishing
 
 Images are published automatically on push to `develop` or `main` in
-the `vergil-docker` repository via its
+the `vergil-containers` repository via its
 `.github/workflows/docker-publish.yml` workflow.
 
 ### Design principles
