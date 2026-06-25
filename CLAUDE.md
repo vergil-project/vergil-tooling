@@ -251,11 +251,11 @@ exactly one container per run:
   registry.
 
 Dev container images are maintained in
-[vergil-docker](https://github.com/vergil-project/vergil-docker).
+[vergil-containers](https://github.com/vergil-project/vergil-containers).
 
 ```bash
 # Build the dev image (one-time)
-cd ../vergil-docker && docker/build.sh
+cd ../vergil-containers && docker/build.sh
 
 # Run the full validation pipeline in one container
 # (the [validation] override in vergil.toml expands this to `uv run vrg-validate`)
@@ -304,7 +304,7 @@ Shared libraries under `src/vergil_tooling/lib/`:
 ### Docker Dev Images
 
 Dev container images (Dockerfiles, build script, publish workflow) are
-maintained in [vergil-docker](https://github.com/vergil-project/vergil-docker).
+maintained in [vergil-containers](https://github.com/vergil-project/vergil-containers).
 
 The `vrg-container-test` entry point auto-detects the project
 language (Gemfile, pyproject.toml, go.mod, pom.xml/mvnw) and runs the test
