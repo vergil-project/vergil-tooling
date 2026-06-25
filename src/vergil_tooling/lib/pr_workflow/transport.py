@@ -1,10 +1,10 @@
 """The transport interface.
 
-The engine never touches this directly; the CLI orchestrates engine + transport.
-``LocalFileTransport`` implements it now; a future ``GitHubTransport`` will
-implement the same contract (enforced by the shared contract test) so the
-identical loop can drive a live PR. Turn detection and termination live here,
-behind the interface — never in the engine.
+The CLI orchestrates engine + transport; the engine never touches transport
+directly. ``LocalFileTransport`` implements it now; a future ``GitHubTransport``
+would implement the same read/write/git-fact contract so the recorder can run
+against a remote relay. (The dual-agent polling methods were removed with the
+loop in #1872.)
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 class Transport(ABC):
-    """Read/write the workflow state and block until it is a role's turn."""
+    """Read/write the workflow state and surface git facts."""
 
     @abstractmethod
     def read(self) -> WorkflowState | None:
@@ -26,23 +26,6 @@ class Transport(ABC):
     @abstractmethod
     def write(self, state: WorkflowState) -> None:
         """Persist the state atomically."""
-
-    @abstractmethod
-    def wait_until_present(
-        self, *, timeout: float, waiting_for: str | None = None
-    ) -> WorkflowState:
-        """Block until a workflow exists. Raise WorkflowError on timeout.
-
-        ``waiting_for`` (when set) names what is being waited on, for a periodic
-        heartbeat so a long wait is visible rather than a silent hang."""
-
-    @abstractmethod
-    def wait_until_owner(
-        self, role: str, *, timeout: float, waiting_for: str | None = None
-    ) -> WorkflowState:
-        """Block until ``owner == role``. Raise WorkflowError on timeout, or if
-        the counterpart recorded a terminal error. ``waiting_for`` drives a
-        heartbeat for long waits (see ``wait_until_present``)."""
 
     @abstractmethod
     def head_sha(self) -> str:
