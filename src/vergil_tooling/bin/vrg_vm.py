@@ -891,7 +891,7 @@ def _cloud_create(
     """
     name, identity, config = target.identity_name, target.identity, target.config
     backend = _cloud_backend(target)
-    vm_cloud.preflight()
+    vm_cloud.preflight(backend.spec.provider)
 
     # Concurrency guard (create only): refuse to clobber a live box. Rebuild
     # destroys the disposable VM first, so a Running box is expected there.
@@ -2284,7 +2284,7 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     """
     name, identity, config = target.identity_name, target.identity, target.config
     backend = _cloud_backend(target)
-    vm_cloud.preflight()
+    vm_cloud.preflight(backend.spec.provider)
     _warn_cloud_under(target)
 
     transport = backend.transport()

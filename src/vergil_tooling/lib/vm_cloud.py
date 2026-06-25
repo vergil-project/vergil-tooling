@@ -23,6 +23,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import progress
+from vergil_tooling.lib.vm_provider import (
+    FALLBACK_SHAPES,  # noqa: F401 — re-exported; tests import from vm_cloud
+    NESTED_VIRT_FAMILIES,  # noqa: F401 — re-exported; tests import from vm_cloud
+    AzureStrategy,
+    GcpStrategy,
+    strategy_for,
+)
 from vergil_tooling.lib.vm_spec import spec_fingerprint, state_slug
 from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
@@ -185,8 +192,12 @@ def _tofu_version_ok(stdout: str) -> bool:
     return parts >= _TOFU_MIN
 
 
-def preflight() -> None:
-    """Verify the cloud host prerequisites: OpenTofu >= 1.8.0, gcloud, and ADC.
+def preflight(provider: str = "gcp") -> None:
+    """Verify the cloud host prerequisites: OpenTofu >= 1.8.0 plus provider-specific checks.
+
+    The OpenTofu version check is shared across all providers; the provider-specific
+    credential checks (gcloud+ADC for GCP, az+token for Azure) are delegated to the
+    strategy returned by :func:`strategy_for`.
 
     Each missing or unusable piece aborts with its own specific remediation
     rather than letting an opaque ``tofu``/``gcloud`` error surface later.
@@ -211,24 +222,7 @@ def preflight() -> None:
         print("ERROR: OpenTofu too old — install OpenTofu >= 1.8.0", file=sys.stderr)
         raise SystemExit(1)
 
-    if shutil.which("gcloud") is None:
-        print("ERROR: gcloud not found — install the gcloud CLI", file=sys.stderr)
-        raise SystemExit(1)
-
-    try:
-        subprocess.run(  # noqa: S603
-            ["gcloud", "auth", "application-default", "print-access-token"],  # noqa: S607
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        print(
-            "ERROR: no application-default credentials — run: "
-            "gcloud auth application-default login",
-            file=sys.stderr,
-        )
-        raise SystemExit(1) from None
+    strategy_for(provider).preflight()
 
 
 def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: str) -> None:
@@ -515,51 +509,36 @@ def tofu_state_dir(state_key: str, provider: str) -> Path:
     return path
 
 
-def _plugin_cache_dir() -> Path:
-    """Shared OpenTofu provider plugin cache, created on demand."""
-    path = Path.home() / ".config" / "vergil" / "tofu" / "plugin-cache"
-    path.mkdir(parents=True, exist_ok=True)
-    return path
-
-
 def _resolve_project() -> str:
     """The GCP project for the off-platform backend: ``GOOGLE_CLOUD_PROJECT`` if set,
     else ``gcloud config get-value project``. The google OpenTofu provider does NOT read
     gcloud config, so we resolve it here and inject it into the tofu environment.
+
+    Thin delegation to :meth:`GcpStrategy._resolve_project` kept for backwards
+    compatibility (tests import ``vm_cloud._resolve_project``).
     """
-    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if not project:
-        result = subprocess.run(  # noqa: S603
-            ["gcloud", "config", "get-value", "project"],  # noqa: S607
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        project = result.stdout.strip()
-    if not project:
-        print(
-            "ERROR: no GCP project — set GOOGLE_CLOUD_PROJECT or run: "
-            "gcloud config set project <project>",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-    return project
+    return GcpStrategy()._resolve_project()
 
 
-def _tofu_env() -> dict[str, str]:
+def _tofu_env(strategy: GcpStrategy | AzureStrategy | None = None) -> dict[str, str]:
     """Environment for every tofu invocation: non-interactive, shared plugin cache, and
-    the GCP project. The google provider reads ``GOOGLE_CLOUD_PROJECT`` (not gcloud
-    config), so without this every apply fails with ``project: required field is not set``.
+    the provider credentials. Defaults to GCP (for backwards compatibility).
+
+    ``strategy`` may be any :class:`~vergil_tooling.lib.vm_provider.Provider` instance;
+    when ``None`` a fresh :class:`~vergil_tooling.lib.vm_provider.GcpStrategy` is used.
     """
-    return {
-        **os.environ,
-        "TF_IN_AUTOMATION": "1",
-        "TF_PLUGIN_CACHE_DIR": str(_plugin_cache_dir()),
-        "GOOGLE_CLOUD_PROJECT": _resolve_project(),
-    }
+    if strategy is None:
+        strategy = GcpStrategy()
+    return strategy.tofu_env()
 
 
-def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, object]) -> None:
+def _run_tofu(
+    module_dir: Path,
+    state: Path,
+    action: str,
+    tofu_vars: dict[str, object],
+    strategy: GcpStrategy | AzureStrategy | None = None,
+) -> None:
     """Run ``tofu init`` then ``tofu <action>`` against a single state file.
 
     The var values are written next to the state as ``<state>.tfvars.json`` so a
@@ -575,7 +554,8 @@ def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, o
         msg = f"no tofu vars supplied and no stored {var_file} to reuse"
         raise RuntimeError(msg)
 
-    progress.run(["tofu", f"-chdir={module_dir}", "init", "-input=false"], env=_tofu_env())
+    env = _tofu_env(strategy)
+    progress.run(["tofu", f"-chdir={module_dir}", "init", "-input=false"], env=env)
 
     args = [
         "tofu",
@@ -587,17 +567,21 @@ def _run_tofu(module_dir: Path, state: Path, action: str, tofu_vars: dict[str, o
     ]
     if action in {"apply", "destroy"}:
         args.append("-auto-approve")
-    progress.run(args, env=_tofu_env())
+    progress.run(args, env=env)
 
 
-def _tofu_output(module_dir: Path, state: Path) -> dict[str, str]:
+def _tofu_output(
+    module_dir: Path,
+    state: Path,
+    strategy: GcpStrategy | AzureStrategy | None = None,
+) -> dict[str, str]:
     """Return ``tofu output -json`` for a state file flattened to ``{name: str(value)}``."""
     result = subprocess.run(  # noqa: S603
         ["tofu", f"-chdir={module_dir}", "output", "-json", f"-state={state}"],  # noqa: S607
         check=True,
         capture_output=True,
         text=True,
-        env=_tofu_env(),
+        env=_tofu_env(strategy),
     )
     data = json.loads(result.stdout)
     return {key: str(entry["value"]) for key, entry in data.items()}
@@ -765,86 +749,37 @@ def read_zone(state_dir: Path) -> str:
     return zone_file.read_text(encoding="utf-8").strip()
 
 
-# A GCP zone-capacity stockout ("the zone does not have enough resources" /
-# ZONE_RESOURCE_POOL_EXHAUSTED) is transient and zone-specific, so it is worth retrying in
-# another zone — unlike a real config/quota error, which must abort. (#1813)
-_ZONE_CAPACITY_RE = re.compile(
-    r"does not have enough resources available|ZONE_RESOURCE_POOL_EXHAUSTED",
-    re.IGNORECASE,
-)
+# --- Instance-family fallback ladder (#1836) ---------------------------------
+#
+# NESTED_VIRT_FAMILIES and FALLBACK_SHAPES are imported from vm_provider (where they
+# are defined inside GcpStrategy) and re-exported here so existing imports from
+# vm_cloud keep working.
+#
+# The thin delegation functions below keep existing call sites working.
 
 
 def is_zone_capacity_error(exc: subprocess.CalledProcessError) -> bool:
-    """True when a tofu apply failed purely because the zone is out of capacity."""
-    blob = f"{exc.stderr or ''}{exc.stdout or ''}"
-    return bool(_ZONE_CAPACITY_RE.search(blob))
+    """True when a tofu apply failed purely because the zone is out of capacity.
+
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
+    """
+    return GcpStrategy().is_zone_capacity_error(exc)
 
 
 def region_zones(region: str) -> list[str]:
     """The UP zones of a GCP region, sorted (e.g. us-central1 -> -a/-b/-c/-f).
 
-    Used to sweep zones for capacity when an instance create is stocked out.
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
     """
-    result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            "gcloud",
-            "compute",
-            "zones",
-            "list",
-            f"--filter=name~^{region}- AND status=UP",
-            "--format=value(name)",
-            f"--project={_resolve_project()}",
-        ],
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return sorted(result.stdout.split())
-
-
-# --- Instance-family fallback ladder (#1836) ---------------------------------
-#
-# A capacity stockout is specific to a (zone, machine-family) pair: a different
-# family in the same zone often has capacity when the requested one does not. On a
-# reattach the zonal data disk pins the zone, so swapping the family is the only
-# recovery (see apply_vm_with_zone_fallback). The ladder may contain ONLY families
-# that support GCP nested virtualization — nested KVM is the point of these VMs, and
-# a family without it would boot a box with no /dev/kvm and fail the provision.
-# GCE nested virt requires an Intel (VT-x) processor: AMD, Arm, E2, memory-optimized,
-# and H4D VMs are all excluded, so the AMD families (n2d, c2d) are NOT eligible —
-# only the Intel families n2 and c2 are. Verified against GCP's nested-virt overview
-# (docs.cloud.google.com/compute/docs/instances/nested-virtualization/overview, which
-# lists "AMD and Arm processors" among the unsupported), corroborated by the
-# general-purpose machine docs ("N2D VMs don't support ... nested virtualization");
-# checked 2026-06-24. The unit test is only a change-detector — re-verify on edit.
-NESTED_VIRT_FAMILIES = ("n2", "c2")
-
-# Shapes verified to exist for EVERY family in the ladder and actually run
-# off-platform. Family-fallback engages only for these, so we never synthesize an
-# invalid machine type. Adding a size is one line here.
-FALLBACK_SHAPES = frozenset({"standard-8", "standard-16"})
+    return GcpStrategy().region_zones(region)
 
 
 def instance_fallback_candidates(requested: str) -> list[str]:
     """Ordered machine types to try for ``requested``, the requested type first.
 
-    Splits ``requested`` into ``(family, shape)`` (``n2-standard-8`` ->
-    ``("n2", "standard-8")``). When the shape is in ``FALLBACK_SHAPES`` the result is
-    the requested type, then every other ``NESTED_VIRT_FAMILIES`` member at the same
-    shape, deduped. When the shape is unsupported the result is just ``[requested]``
-    (no fallback). If the requested family is not in the ladder (e.g. a misconfigured
-    ``e2`` declared with nested virt) the requested type still leads and the full
-    ladder follows, so fallback still reaches the nested-virt-safe families.
+    Thin delegation to :class:`~vergil_tooling.lib.vm_provider.GcpStrategy`.
     """
-    _family, _, shape = requested.partition("-")
-    if not shape or shape not in FALLBACK_SHAPES:
-        return [requested]
-    candidates = [requested]
-    for family in NESTED_VIRT_FAMILIES:
-        candidate = f"{family}-{shape}"
-        if candidate not in candidates:
-            candidates.append(candidate)
-    return candidates
+    return GcpStrategy().instance_fallback_candidates(requested)
 
 
 def apply_vm_with_zone_fallback(
@@ -1242,6 +1177,7 @@ class OffPlatformBackend:
         # Plain attribute (not a property): the Backend protocol declares
         # provider_label as a settable variable, which a read-only property fails.
         self.provider_label = spec.provider
+        self.strategy = strategy_for(spec.provider)
 
     def _project(self) -> str:
         return _resolve_project()
@@ -1249,7 +1185,7 @@ class OffPlatformBackend:
     def state_dir(self) -> Path:
         return tofu_state_dir(self.state_key, self.spec.provider)
 
-    def transport(self, instance: str | None = None) -> IapTransport | SshTransport:  # noqa: ARG002
+    def transport(self, instance: str | None = None) -> Transport:  # noqa: ARG002
         if self.spec.provider == "azure":
             return self._azure_transport()
         zone = read_zone(self.state_dir())
@@ -1326,14 +1262,7 @@ class OffPlatformBackend:
             vergil_user=self.ssh_user,
             home=f"/home/{self.ssh_user}",
         )
-        # Azure: generate/persist an ed25519 keypair and pass the public key to the
-        # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
-        # (OS Login / metadata keys managed by gcloud) so it needs no injected key.
-        if self.spec.provider == "azure":
-            _key_path, ssh_public_key = ensure_keypair(self.state_dir())
-        else:
-            ssh_public_key = ""
-        return {
+        result: dict[str, object] = {
             "name": self.name,
             "zone": zone,
             # A family fallback swaps the machine type here ONLY; self.spec is never
@@ -1345,5 +1274,12 @@ class OffPlatformBackend:
             "ssh_user": self.ssh_user,
             "provision_env": provision_env,
             "labels": self.labels,
-            "ssh_public_key": ssh_public_key,
         }
+        # Azure: generate/persist an ed25519 keypair and pass the public key to the
+        # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
+        # (OS Login / metadata keys managed by gcloud) so it needs no injected key —
+        # ssh_public_key is absent from the GCP dict entirely.
+        if self.strategy.name == "azure":
+            _key_path, ssh_public_key = ensure_keypair(self.state_dir())
+            result["ssh_public_key"] = ssh_public_key
+        return result

@@ -713,6 +713,18 @@ class TestTofuStateDirs:
         assert path == tmp_path / ".config" / "vergil" / "tofu" / "vergil-user-o-r" / "gcp"
         assert path.is_dir()
 
+    def test_tofu_env_with_explicit_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_tofu_env(strategy) delegates to strategy.tofu_env() (non-None branch)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        from vergil_tooling.lib.vm_cloud import _tofu_env
+        from vergil_tooling.lib.vm_provider import AzureStrategy
+
+        env = _tofu_env(AzureStrategy())
+        assert env["ARM_SUBSCRIPTION_ID"] == "sub-test"
+
 
 class TestRunTofu:
     def _setup_volume(
@@ -1016,6 +1028,35 @@ class TestRunTofu:
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
         assert destroy_volume(modules, state_dir) is True
         assert not state_dir.exists()
+
+    def test_azure_apply_volume_uses_azure_module_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """apply_volume with provider="azure" must pass -chdir=.../azure/volume to tofu."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-1", "zone": "eastus"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            modules,
+            state_dir,
+            name="n",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'volume'}" in init_args
+        assert f"-chdir={modules / 'gcp' / 'volume'}" not in init_args
 
 
 class TestModulePathProvider:
@@ -1485,6 +1526,31 @@ class TestOffPlatformBackend:
         from vergil_tooling.lib.vm_spec import spec_fingerprint
 
         assert f"SPEC_FINGERPRINT={spec_fingerprint(_off_spec(nested=True))}" in env
+
+    def test_vm_vars_includes_ssh_public_key_for_azure_and_absent_for_gcp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure vm_vars includes ssh_public_key; GCP vm_vars must NOT include it."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA test-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+
+        # Azure: key must be present
+        b_azure = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b_azure.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        azure_vars = b_azure.vm_vars(zone="eastus", volume_id="vol-1")
+        assert "ssh_public_key" in azure_vars
+        assert azure_vars["ssh_public_key"] == "ssh-ed25519 AAAA test-key"
+
+        # GCP: key must be absent
+        b_gcp = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        gcp_vars = b_gcp.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "ssh_public_key" not in gcp_vars
 
 
 def _volume_tfstate(
@@ -2155,12 +2221,11 @@ class TestNsgRefresh:
 
 
 class TestVmVarsSshPublicKey:
-    def test_gcp_vm_vars_has_empty_ssh_public_key(self) -> None:
-        """GCP vm_vars must always include ssh_public_key="" (GCP regression guard)."""
+    def test_gcp_vm_vars_omits_ssh_public_key(self) -> None:
+        """GCP vm_vars must NOT include ssh_public_key — GCP uses IAP, not injected keys."""
         b = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
         vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
-        assert "ssh_public_key" in vars_
-        assert vars_["ssh_public_key"] == ""
+        assert "ssh_public_key" not in vars_
 
     def test_azure_vm_vars_has_public_key(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
