@@ -1,8 +1,9 @@
 """GitHub CLI (``gh``) subprocess wrappers.
 
 All functions that use ``check=True`` retry transparently on transient
-GitHub API errors (HTTP 401, 502, 503, 504, 429 and network-level
-timeouts) with exponential backoff.
+GitHub API errors (HTTP 401, 502, 503, 504, 429 and ``net/http``
+transport failures such as TLS handshake/i/o timeouts, connection
+refused, DNS lookup failures, and EOF) with exponential backoff.
 """
 
 from __future__ import annotations
