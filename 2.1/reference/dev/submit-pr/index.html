@@ -938,6 +938,8 @@
       
         
       
+        
+      
     
     
     
@@ -990,6 +992,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.71/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.71
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9711,8 +9741,7 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
    (template mode).</li>
 <li>Pushes the branch to origin with the human's host credentials.</li>
 <li>Creates the PR via <code>gh pr create</code> and deletes the template.</li>
-<li>Prints the <code>/vergil:pr-watch</code> line to paste into both agent
-   sessions, plus the PR URL — which can be passed straight to
+<li>Prints the PR URL — which can be passed straight to
    <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a>.</li>
 </ol>
 <h2 id="chaining-into-finalize-finalize">Chaining into finalize (<code>--finalize</code>)<a class="headerlink" href="#chaining-into-finalize-finalize" title="Permanent link">&para;</a></h2>
@@ -9721,8 +9750,7 @@ requires a terminal; root launches fail fast when stdin is not a TTY.</p>
 the PR is created, the tool hands off to the
 <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a> wait-and-merge flow from the main
 worktree root. Use it when the decision to merge-on-green has already
-been made at submit time — it bypasses the local audit loop, so the
-<code>/vergil:pr-watch</code> line is not printed.</p>
+been made at submit time.</p>
 <p>Semantics are identical to running <code>vrg-finalize-pr &lt;pr-url&gt;</code> by hand
 (same merge-strategy default, same post-merge cleanup), and the
 failure modes split cleanly:</p>

@@ -938,6 +938,8 @@
       
         
       
+        
+      
     
     
     
@@ -990,6 +992,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.71/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.71
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9843,6 +9873,15 @@ shapes (a server-side hard gate) and branch protection, with the
 <code>vrg-gh</code>/<code>vrg-git</code> wrappers as a soft ergonomic layer on top. See
 <a href="../permission-model/">Permission Model</a> for the full
 defense-in-depth architecture.</p>
+<blockquote>
+<p><strong>Note (2026-06-25, #1872):</strong> The local interactive USER/AUDIT loop
+(where a running AUDIT agent reviewed code in a shared worktree before
+PR submission) was removed. The audit <em>identity</em> — the <code>vergil-audit</code>
+GitHub App, its inverted permission shape, and the <code>audit</code> mode in
+<code>VRG_IDENTITY_MODE</code> — is retained as dormant infrastructure for a
+future API-driven review phase. The identity model described above
+remains current and accurate.</p>
+</blockquote>
 <h2 id="one-app-all-orgs">One App, all orgs<a class="headerlink" href="#one-app-all-orgs" title="Permanent link">&para;</a></h2>
 <p>A single App is installed on every account the contributor operates
 in — their personal account and each org they own. Installation
