@@ -26,7 +26,6 @@ from vergil_tooling.lib import progress
 from vergil_tooling.lib.vm_provider import (
     FALLBACK_SHAPES,  # noqa: F401 — re-exported; tests import from vm_cloud
     NESTED_VIRT_FAMILIES,  # noqa: F401 — re-exported; tests import from vm_cloud
-    AzureStrategy,
     GcpStrategy,
     strategy_for,
 )
@@ -35,6 +34,7 @@ from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
+    from vergil_tooling.lib.vm_provider import Provider
     from vergil_tooling.lib.vm_spec import ComposedSpec
     from vergil_tooling.lib.vm_transport import Transport
 
@@ -520,7 +520,7 @@ def _resolve_project() -> str:
     return GcpStrategy()._resolve_project()
 
 
-def _tofu_env(strategy: GcpStrategy | AzureStrategy | None = None) -> dict[str, str]:
+def _tofu_env(strategy: Provider | None = None) -> dict[str, str]:
     """Environment for every tofu invocation: non-interactive, shared plugin cache, and
     the provider credentials. Defaults to GCP (for backwards compatibility).
 
@@ -537,7 +537,7 @@ def _run_tofu(
     state: Path,
     action: str,
     tofu_vars: dict[str, object],
-    strategy: GcpStrategy | AzureStrategy | None = None,
+    strategy: Provider | None = None,
 ) -> None:
     """Run ``tofu init`` then ``tofu <action>`` against a single state file.
 
@@ -573,7 +573,7 @@ def _run_tofu(
 def _tofu_output(
     module_dir: Path,
     state: Path,
-    strategy: GcpStrategy | AzureStrategy | None = None,
+    strategy: Provider | None = None,
 ) -> dict[str, str]:
     """Return ``tofu output -json`` for a state file flattened to ``{name: str(value)}``."""
     result = subprocess.run(  # noqa: S603

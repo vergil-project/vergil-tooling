@@ -38,10 +38,12 @@ class TestStrategyFor:
 class TestAzureTofuEnv:
     def test_subscription_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-from-env")
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
         env = AzureStrategy().tofu_env()
         assert env["ARM_SUBSCRIPTION_ID"] == "sub-from-env"
         assert env["TF_IN_AUTOMATION"] == "1"
         assert "plugin-cache" in env["TF_PLUGIN_CACHE_DIR"]
+        assert "GOOGLE_CLOUD_PROJECT" not in env
 
     def test_subscription_from_az_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("AZURE_SUBSCRIPTION_ID", raising=False)
@@ -51,6 +53,8 @@ class TestAzureTofuEnv:
         monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         env = AzureStrategy().tofu_env()
         assert env["ARM_SUBSCRIPTION_ID"] == "sub-from-cli"
+        argv = sub.call_args[0][0]
+        assert argv == ["az", "account", "show", "--query", "id", "-o", "tsv"]
 
     def test_empty_subscription_aborts(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("AZURE_SUBSCRIPTION_ID", raising=False)
