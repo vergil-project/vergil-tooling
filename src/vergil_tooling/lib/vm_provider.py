@@ -48,6 +48,7 @@ class Provider(Protocol):  # pragma: no cover
     def transport(self, name: str, state_dir: Path, ssh_user: str) -> Transport: ...
     def status(self, name: str, state_dir: Path) -> str: ...
     def volume_disk_type(self) -> str: ...
+    def prune_known_hosts(self, host: str) -> None: ...
 
 
 # ---------------------------------------------------------------------------
@@ -216,6 +217,9 @@ class GcpStrategy:
 
     def volume_disk_type(self) -> str:
         return "google_compute_disk"
+
+    def prune_known_hosts(self, host: str) -> None:  # noqa: ARG002
+        """GCP uses IAP tunnels — no host key is pinned by IP, so this is a no-op."""
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +399,30 @@ class AzureStrategy:
         return candidates
 
     def transport(self, name: str, state_dir: Path, ssh_user: str) -> Transport:  # noqa: ARG002
-        """Not yet implemented (Tasks 5/6/7)."""
-        raise NotImplementedError("Azure transport is not yet implemented")
+        """Build an SshTransport for an Azure box, refreshing the NSG rule first.
+
+        Reads the persisted public IP (``host``) and volume ID from ``state_dir``,
+        derives the resource group from the ARM volume ID, refreshes the NSG
+        inbound-22 rule to the operator's current /32, then returns an
+        ``SshTransport`` keyed to the persisted keypair.
+        """
+        from vergil_tooling.lib.vm_cloud import (
+            _azure_resource_group_from_volume_id,
+            ensure_keypair,
+            nsg_refresh,
+            read_host,
+            read_volume_id,
+        )
+        from vergil_tooling.lib.vm_transport import SshTransport
+
+        host = read_host(state_dir)
+        volume_id = read_volume_id(state_dir)
+        resource_group = _azure_resource_group_from_volume_id(volume_id)
+        # NSG name follows the convention from the tofu volume module: <vm-name>-nsg.
+        nsg_name = f"{name}-nsg"
+        nsg_refresh(resource_group, nsg_name, "ssh-operator")
+        key_path, _pub = ensure_keypair(state_dir)
+        return SshTransport(host=host, ssh_user=ssh_user, key_path=str(key_path))
 
     def status(self, name: str, state_dir: Path) -> str:
         """Return the Azure VM power state, or '' if unknown.
@@ -456,6 +482,22 @@ class AzureStrategy:
 
     def volume_disk_type(self) -> str:
         return "azurerm_managed_disk"
+
+    def prune_known_hosts(self, host: str) -> None:
+        """Remove the vergil-managed known_hosts entry for *host*.
+
+        A rebuilt Azure box keeps its public IP but regenerates its host key, so
+        the operator's vergil-managed ``known_hosts`` file must have the stale
+        entry pruned before the next SSH connect or it hard-fails on a host-key
+        mismatch.  No-op when the file does not exist yet.
+        """
+        known_hosts = Path.home() / ".config" / "vergil" / "known_hosts"
+        if not known_hosts.exists():
+            return
+        subprocess.run(  # noqa: S603
+            ["ssh-keygen", "-R", host, "-f", str(known_hosts)],  # noqa: S607
+            check=False,
+        )
 
 
 # ---------------------------------------------------------------------------

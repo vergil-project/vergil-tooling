@@ -1687,14 +1687,56 @@ class TestUpdateAll:
         assert mock_update.call_count == 2
         # The IAP transport must address the box by its gcloud instance name
         # (vrg-<hash>), not the readable state key, or the tunnel 404s (#1866).
+        # The provider is passed so GCP → IapTransport, Azure → SshTransport.
         mock_transport.assert_called_once_with(
-            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp")
+            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"), "gcp"
         )
         assert fake_transport in [c.args[0] for c in mock_update.call_args_list]
         out = capsys.readouterr().out
         assert "off-platform box 'lmf/cloud [lmf]'" in out
         assert "2 updated" in out
         assert "NOT updated" not in out
+
+    @patch("vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport")
+    @patch("vergil_tooling.bin.vrg_vm.get_tooling_version", return_value=None)
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_update_all_azure_box_uses_ssh_transport_not_rebuild(
+        self,
+        mock_list: MagicMock,
+        mock_update: MagicMock,
+        _ver: MagicMock,
+        mock_transport: MagicMock,
+        _no_off_platform: MagicMock,
+        config_file: Path,
+    ) -> None:
+        # #1815: --all updates an Azure box IN PLACE over SshTransport — not a
+        # rebuild.  The key assertion is that off_platform_transport is called with
+        # provider='azure', so the factory returns SshTransport (not IapTransport).
+        from vergil_tooling.bin.vrg_vm import OffPlatformVm
+
+        fake_transport = MagicMock()
+        mock_transport.return_value = fake_transport
+        mock_list.return_value = []
+        _no_off_platform.return_value = [
+            OffPlatformVm(
+                name="vergil-azure-cloud",
+                provider="azure",
+                state_dir=Path("/x/azure"),
+                identity="lmf",
+                org="lmf",
+                repo="cloud",
+                status="RUNNING",
+            )
+        ]
+        result = main(["update", "--all", "--config", str(config_file)])
+        assert result == 0
+        # off_platform_transport called with provider='azure' → SshTransport path
+        mock_transport.assert_called_once_with(
+            vm_cloud.cloud_resource_name("vergil-azure-cloud"), Path("/x/azure"), "azure"
+        )
+        # update was called with the returned transport — in-place, not rebuild
+        assert fake_transport in [c.args[0] for c in mock_update.call_args_list]
 
     @patch("vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport")
     @patch("vergil_tooling.bin.vrg_vm.update_tooling")
@@ -4363,7 +4405,9 @@ class TestCloudList:
             rows = _off_platform_active_sessions(vm)
         # The IAP session query addresses the box by its gcloud instance name
         # (vrg-<hash>), not the readable state key (#1866).
-        mk.assert_called_once_with(vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"))
+        mk.assert_called_once_with(
+            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"), "gcp"
+        )
         transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
         # Only the active row is retained, keyed by session id.
         assert set(rows) == {"c1"}
@@ -5347,6 +5391,81 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     assert rc == 0
     assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
     assert destroyed == [(Path("/x/gcp"), "gcp"), (Path("/x/azure"), "azure")]
+
+
+def test_destroy_azure_prunes_known_hosts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """_destroy_recorded prunes the vergil known_hosts entry for Azure boxes."""
+    from vergil_tooling.bin import vrg_vm
+
+    state_dir = tmp_path / "azure-state"
+    state_dir.mkdir()
+    (state_dir / "host").write_text("203.0.113.5")
+
+    rs = vrg_vm.RecordedState(
+        lima_instance=None,
+        tofu_dirs=[("azure", state_dir)],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: None)
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+
+    pruned: list[str] = []
+    from unittest.mock import MagicMock
+
+    mock_strategy = MagicMock()
+    mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
+    monkeypatch.setattr("vergil_tooling.lib.vm_provider.strategy_for", lambda p: mock_strategy)
+
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    assert pruned == ["203.0.113.5"]
+
+
+def test_destroy_gcp_does_not_prune_known_hosts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """GCP destroy does not call prune_known_hosts (host file absent, IAP pin-free)."""
+    from vergil_tooling.bin import vrg_vm
+
+    state_dir = tmp_path / "gcp-state"
+    state_dir.mkdir()
+    # No host file — GCP never writes one.
+
+    rs = vrg_vm.RecordedState(
+        lima_instance=None,
+        tofu_dirs=[("gcp", state_dir)],
+    )
+    monkeypatch.setattr(vrg_vm, "_recorded_state_for_handle", lambda *a: rs)
+    monkeypatch.setattr(
+        vrg_vm, "_resolve", lambda args: ("vergil-user", _FakeIdentity(), _FakeConfig())
+    )
+    monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
+    monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
+    monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: None)
+    monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
+    monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
+
+    pruned: list[str] = []
+    from unittest.mock import MagicMock
+
+    mock_strategy = MagicMock()
+    mock_strategy.prune_known_hosts.side_effect = lambda host: pruned.append(host)
+    monkeypatch.setattr("vergil_tooling.lib.vm_provider.strategy_for", lambda p: mock_strategy)
+
+    args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
+    rc = vrg_vm._cmd_destroy(args)
+    assert rc == 0
+    # No host file → RuntimeError → no prune call
+    assert pruned == []
 
 
 def test_destroy_nothing_recorded_returns_one(

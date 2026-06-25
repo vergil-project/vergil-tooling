@@ -671,10 +671,19 @@ def apply_vm(
             },
         )
     except subprocess.CalledProcessError:
-        # Best-effort rollback: tear down the partial state (the orphan firewall) so the
-        # retry starts clean. A rollback failure must never mask the real apply error, so
-        # swallow it and re-raise the original — the operator still sees why the create
-        # failed, and a stubborn orphan can be cleared with `vrg-vm destroy`.
+        # Best-effort rollback: tear down the partial state (the orphaned NIC/VM on
+        # Azure, or the orphan firewall on GCP) so the retry starts clean.  The
+        # rollback is state-driven — ``tofu destroy`` against vm.tfstate — so it
+        # covers the Azure ephemeral set (public IP + NIC + VM) automatically,
+        # provided those resources are in the vm module state (not the volume state).
+        # KNOWN RESIDUAL: the session-time NSG *source* rule added by ``nsg_refresh``
+        # (Task 3) is NOT in tofu state, so a rollback after a failed Azure apply
+        # will NOT clear that rule.  The rule is scoped to the operator's /32 so it
+        # is not a security gap, but it is a stale firewall entry until the next
+        # ``nsg_refresh`` overwrites it.  Track cleanup in the nsg_refresh teardown.
+        # A rollback failure must never mask the real apply error — swallow it and
+        # re-raise the original so the operator still sees why the create failed; a
+        # stubborn orphan can be cleared with `vrg-vm destroy`.
         print("VM apply failed — rolling back the partial state...", file=sys.stderr)
         with contextlib.suppress(subprocess.CalledProcessError):
             _run_tofu(module_dir, state, "destroy", {})
@@ -1155,17 +1164,23 @@ def _azure_resource_group_from_volume_id(volume_id: str) -> str:
     return parts[4]
 
 
-def off_platform_transport(name: str, state_dir: Path) -> IapTransport:
-    """Build an IAP transport for an already-applied off-platform box from local state.
+def off_platform_transport(name: str, state_dir: Path, provider: str = "gcp") -> Transport:
+    """Build the right transport for an already-applied off-platform box from local state.
 
-    Mirrors :meth:`OffPlatformBackend.transport` but sourced purely from the
-    persisted tofu state (the resource ``name`` plus the apply ``zone`` file), so a
-    fan-out enumerator can reach a running box without composing its full spec.
-    Raises ``RuntimeError`` (via :func:`read_zone`) when no zone has been persisted
-    — i.e. the volume was never applied and there is nothing to reach.
+    Delegates to the provider strategy so the caller never branches on *provider*:
+    GCP returns an :class:`IapTransport` (sourced from the persisted ``zone`` file);
+    Azure returns an :class:`SshTransport` (sourced from the persisted ``host`` /
+    ``volume_id`` files, after refreshing the NSG rule for the operator's current IP).
+
+    ``provider`` defaults to ``"gcp"`` so existing call sites that were written
+    before Azure support are unaffected by the signature change.
+
+    Raises ``RuntimeError`` when the required state files are absent (e.g. the
+    volume was never applied and there is nothing to reach).
     """
-    zone = read_zone(state_dir)
-    return IapTransport(name, zone, _resolve_project(), _effective_ssh_user())
+    from vergil_tooling.lib.vm_provider import strategy_for
+
+    return strategy_for(provider).transport(name, state_dir, _effective_ssh_user())
 
 
 class OffPlatformBackend:

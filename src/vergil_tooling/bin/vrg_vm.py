@@ -1238,7 +1238,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             continue
         try:
             fallback = _off_platform_fallback(config, vm)
-            transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
+            transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
             _update_over_transport(transport, box, tag, fallback)
             updated.append(vm.label)
         except subprocess.CalledProcessError as exc:
@@ -1288,6 +1288,20 @@ def _destroy_recorded(
             for provider, state_dir in rs.tofu_dirs:
                 print(f"Destroying cloud VM under {provider} (volume preserved): {state_dir}")
                 vm_cloud.destroy_vm(modules_root, state_dir, provider=provider)
+                # Azure boxes keep their public IP across rebuilds but regenerate their
+                # host key, so prune the vergil-managed known_hosts entry now so the
+                # next connect doesn't hard-fail on a host-key mismatch.
+                # GCP uses IAP tunnels — no host key is pinned by IP (no-op there).
+                from vergil_tooling.lib.vm_provider import strategy_for
+
+                strategy = strategy_for(provider)
+                try:
+                    host = vm_cloud.read_host(state_dir)
+                    strategy.prune_known_hosts(host)
+                except RuntimeError:
+                    # No persisted host file (GCP boxes never write one, Azure box
+                    # never completed apply) — nothing to prune.
+                    pass
         finally:
             shutil.rmtree(modules_root.parent, ignore_errors=True)
     print("Destroyed (persistent volumes preserved — use destroy-volume to remove them).")
@@ -2182,7 +2196,7 @@ def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, obje
     transport instead of limactl. The box owns its own roster, so it is the only
     source for a live session's name — exactly as for a Lima box.
     """
-    transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
+    transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
     result = transport.run("vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows if row.get("state") == "active"}

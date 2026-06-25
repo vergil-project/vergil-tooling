@@ -166,9 +166,24 @@ class TestGcpStrategyDelegation:
 class TestAzureStrategyMethods:
     """Coverage tests for AzureStrategy protocol methods not covered by the new classes."""
 
-    def test_transport_raises_not_implemented(self, tmp_path: Path) -> None:
-        with pytest.raises(NotImplementedError):
-            AzureStrategy().transport("vm", tmp_path, "azureuser")
+    def test_transport_builds_ssh_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """AzureStrategy.transport returns an SshTransport after refreshing the NSG."""
+        (tmp_path / "host").write_text("203.0.113.7")
+        (tmp_path / "volume_id").write_text(
+            "/subscriptions/sub-x/resourceGroups/rg-z/providers/Microsoft.Compute/disks/d"
+        )
+        (tmp_path / "id_ed25519").write_text("PRIV")
+        (tmp_path / "id_ed25519.pub").write_text("ssh-ed25519 AAAA key")
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.nsg_refresh", lambda *a, **k: None)
+        from vergil_tooling.lib.vm_transport import SshTransport
+
+        transport = AzureStrategy().transport("my-azure-vm", tmp_path, "azureuser")
+        assert isinstance(transport, SshTransport)
+        assert transport.host == "203.0.113.7"
+        assert transport.ssh_user == "azureuser"
+        assert transport.key_path == str(tmp_path / "id_ed25519")
 
     def test_volume_disk_type(self) -> None:
         assert AzureStrategy().volume_disk_type() == "azurerm_managed_disk"
@@ -401,4 +416,49 @@ class TestAzureLadder:
         # Dsv4 https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/general-purpose/dsv4-series
         # Fsv2 https://learn.microsoft.com/en-us/azure/virtual-machines/sizes/compute-optimized/fsv2-series
         assert AzureStrategy.NESTED_VIRT_FAMILIES == ("Dsv5", "Dsv4", "Fsv2")
+
+
+class TestPruneKnownHosts:
+    """AzureStrategy.prune_known_hosts and GcpStrategy.prune_known_hosts."""
+
+    def test_removes_managed_entry(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """prune_known_hosts runs ssh-keygen -R <host> -f <known_hosts> when file exists."""
+        # Set up a fake vergil known_hosts file.
+        known_hosts = tmp_path / ".config" / "vergil" / "known_hosts"
+        known_hosts.parent.mkdir(parents=True)
+        known_hosts.write_text("203.0.113.5 ssh-ed25519 AAAA\n")
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        called: list[list[str]] = []
+        sub = MagicMock(
+            side_effect=lambda cmd, **_kw: called.append(list(cmd)) or MagicMock(returncode=0),
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+
+        AzureStrategy().prune_known_hosts("203.0.113.5")
+
+        assert len(called) == 1
+        argv = called[0]
+        assert argv == ["ssh-keygen", "-R", "203.0.113.5", "-f", str(known_hosts)]
+
+    def test_missing_known_hosts_is_noop(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When the vergil known_hosts file is absent no ssh-keygen is called."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sub = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+
+        # Should not raise, and subprocess.run must not be called.
+        AzureStrategy().prune_known_hosts("203.0.113.5")
+        sub.assert_not_called()
+
+    def test_gcp_prune_is_noop(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """GcpStrategy.prune_known_hosts is a no-op — IAP pins no host key by IP."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        sub = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+
+        GcpStrategy().prune_known_hosts("10.0.0.1")
+        sub.assert_not_called()
         assert AzureStrategy.FALLBACK_SHAPES == frozenset({"8", "16"})  # noqa: SIM300

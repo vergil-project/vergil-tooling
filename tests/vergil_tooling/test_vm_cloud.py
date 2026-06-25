@@ -903,6 +903,51 @@ class TestRunTofu:
             )
         assert excinfo.value is apply_err
 
+    def test_apply_vm_rollback_covers_azure_vm_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A forced Azure apply failure must trigger a rollback ``tofu destroy``
+        # against the AZURE vm module dir/state (modules/azure/vm) — confirming
+        # the rollback is provider-correct, not GCP-hardcoded.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-x")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        apply_err = subprocess.CalledProcessError(
+            1, ("tofu", "apply"), stderr="Error: SkuNotAvailable"
+        )
+
+        def _run(cmd: list[str], **_kwargs: object) -> int:
+            if "apply" in cmd:
+                raise apply_err
+            return 0
+
+        run = MagicMock(side_effect=_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            apply_vm(
+                modules,
+                state_dir,
+                name="vrg-azure-box",
+                zone="1",
+                instance_type="Standard_D8s_v5",
+                nested=True,
+                volume_id="/subscriptions/sub-x/resourceGroups/rg-y/providers/d",
+                ssh_user="ubuntu",
+                provision_env="VERGIL_USER=ubuntu",
+                labels={},
+                provider="azure",
+            )
+        # The original azure apply error surfaces
+        assert excinfo.value is apply_err
+        # The rollback destroy ran against the azure vm module dir/state
+        destroy_calls = [c for c in run.call_args_list if "destroy" in c.args[0]]
+        assert len(destroy_calls) == 1
+        destroy_args = destroy_calls[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'vm'}" in destroy_args
+        assert f"-state={state_dir / 'vm.tfstate'}" in destroy_args
+
     def test_destroy_vm_reuses_stored_tfvars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1357,6 +1402,38 @@ class TestOffPlatformTransport:
         assert transport.zone == "us-central1-b"
         assert transport.project == "proj-env"
         assert transport.ssh_user == "ubuntu"
+
+    def test_gcp_still_builds_iap(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit provider='gcp' still returns IapTransport — GCP regression guard."""
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "zone").write_text("us-central1-c")
+        transport = off_platform_transport("vrg-abc123", state_dir, provider="gcp")
+        assert isinstance(transport, IapTransport)
+        assert transport.host == "vrg-abc123"
+        assert transport.zone == "us-central1-c"
+        assert transport.project == "proj-env"
+
+    def test_builds_ssh_transport_for_azure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """provider='azure' returns an SshTransport keyed to the persisted IP + keypair."""
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "host").write_text("203.0.113.5")
+        (state_dir / "volume_id").write_text(
+            "/subscriptions/sub-x/resourceGroups/rg-y/providers/Microsoft.Compute/disks/d"
+        )
+        (state_dir / "id_ed25519").write_text("PRIV")
+        (state_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA key")
+        # Stub nsg_refresh so we don't need a real az CLI.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.nsg_refresh", lambda *a, **k: None)
+        transport = off_platform_transport("vrg-azure-box", state_dir, provider="azure")
+        assert isinstance(transport, SshTransport)
+        assert transport.host == "203.0.113.5"
+        assert transport.ssh_user == "ubuntu"
+        assert transport.key_path == str(state_dir / "id_ed25519")
 
     def test_raises_when_zone_not_persisted(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="no persisted zone"):
