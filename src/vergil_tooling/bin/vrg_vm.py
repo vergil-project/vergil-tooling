@@ -1236,7 +1236,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             continue
         try:
             fallback = _off_platform_fallback(config, vm)
-            transport = vm_cloud.off_platform_transport(vm.name, vm.state_dir)
+            transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
             _update_over_transport(transport, box, tag, fallback)
             updated.append(vm.label)
         except subprocess.CalledProcessError as exc:
@@ -1620,17 +1620,23 @@ def _list_rows(
     return rows
 
 
-def _cloud_instance_info(state_dir: Path, state_key: str) -> tuple[str, str]:
+def _cloud_instance_info(state_dir: Path, instance_name: str) -> tuple[str, str]:
     """Best-effort ``(status, external_ip)`` for one tofu state dir, never raising.
 
-    The state_key (the state dir name) cannot be reversed to a spec, so this
-    queries gcloud directly with the persisted zone rather than going through
-    ``OffPlatformBackend.status``. A single ``describe`` pulls both the run status
-    and the ephemeral external IP (``natIP``) — separator-joined so one round-trip
-    serves both columns. Any failure — no zone, no creds, no instance — yields
-    ``("", "")`` so the caller can show a degraded placeholder; it never errors the
-    whole ``list``. The external IP is ``""`` for an internal-only box (no
-    ``access_config``) or one that isn't running (#1855).
+    ``instance_name`` is the gcloud instance name (``cloud_resource_name(slug)``,
+    i.e. ``vrg-<hash>``) — NOT the readable state key, which names no GCP resource
+    and would 404 (#1866). Queries gcloud directly with the persisted zone rather
+    than going through ``OffPlatformBackend.status``. A single ``describe`` pulls
+    both the run status and the ephemeral external IP (``natIP``) — separator-joined
+    so one round-trip serves both columns. The external IP is ``""`` for an
+    internal-only box (no ``access_config``) or one that isn't running (#1855).
+
+    Failures degrade rather than raising, so ``list`` never errors on one box:
+    ``("MISSING", "")`` when the provider reports the instance absent (drift — torn
+    down out of band), and ``("", "")`` for any other failure (no zone, no creds,
+    gcloud absent) so the caller shows the credential-less placeholder. The two are
+    kept distinct so a real ``no creds`` is never confused with a vanished VM
+    (#1866).
     """
     try:
         zone = vm_cloud.read_zone(state_dir)
@@ -1643,7 +1649,7 @@ def _cloud_instance_info(state_dir: Path, state_key: str) -> tuple[str, str]:
                 "compute",
                 "instances",
                 "describe",
-                state_key,
+                instance_name,
                 f"--zone={zone}",
                 "--format=value[separator='|'](status,networkInterfaces[0].accessConfigs[0].natIP)",
             ],
@@ -1651,7 +1657,12 @@ def _cloud_instance_info(state_dir: Path, state_key: str) -> tuple[str, str]:
             text=True,
             check=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
+    except FileNotFoundError:
+        return "", ""
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").lower()
+        if "not found" in stderr or "was not found" in stderr:
+            return "MISSING", ""
         return "", ""
     status, _, external_ip = result.stdout.strip().partition("|")
     return status, external_ip
@@ -1666,9 +1677,11 @@ class OffPlatformVm:
     best-effort cloud status (``"RUNNING"`` for a live box; ``""`` when the provider
     cannot be reached). ``external_ip`` is the box's ephemeral public IP (``natIP``),
     or ``""`` for an internal-only box or when the provider cannot be reached.
-    ``state_dir`` is the ``<state_key>/<provider>`` tofu directory; ``name`` is both
-    the state key and the deterministic cloud resource name (the gcloud instance
-    name).
+    ``state_dir`` is the ``<state_key>/<provider>`` tofu directory; ``name`` is the
+    readable state-key slug — it keys the local state path / labels and the display
+    fallback, but it is **not** what GCP calls the VM. The gcloud instance name is
+    the deterministic hash of the slug — use ``cloud_name`` for every gcloud / IAP
+    call, never ``name`` (#1866).
     """
 
     name: str
@@ -1682,6 +1695,20 @@ class OffPlatformVm:
     volume_size: str | None = None
     vm_present: bool = True
     external_ip: str = ""
+
+    @property
+    def cloud_name(self) -> str:
+        """The gcloud instance name for this box — ``cloud_resource_name(slug)``.
+
+        The four-segment state-key slug overflows GCP's 63-char name limit, so the
+        backend names the live resource ``vrg-<hash>`` at create time
+        (``vm_cloud.cloud_resource_name``); identity/org/repo ride in labels, never
+        in the name. ``name`` keys local state and display, so every call that
+        addresses the box in GCP — ``describe`` for ``list`` status, the IAP
+        transport for ``update`` / session listing — must use this, not ``name``,
+        or it queries an instance that does not exist (#1866).
+        """
+        return vm_cloud.cloud_resource_name(self.name)
 
     @property
     def is_running(self) -> bool:
@@ -1782,8 +1809,12 @@ def _off_platform_vms() -> list[OffPlatformVm]:
         labels = parsed.labels if parsed else {}
         size = f"{parsed.size_gib}GiB" if parsed and parsed.size_gib else None
         vm_present = (provider_dir / "vm.tfstate").exists()
+        # GCP names the instance vrg-<hash>, not the readable state key, so the live
+        # describe must target the deterministic cloud resource name (#1866).
         status, external_ip = (
-            _cloud_instance_info(provider_dir, state_key) if vm_present else ("", "")
+            _cloud_instance_info(provider_dir, vm_cloud.cloud_resource_name(state_key))
+            if vm_present
+            else ("", "")
         )
         vms.append(
             OffPlatformVm(
@@ -1897,27 +1928,43 @@ def _cmd_list(args: argparse.Namespace) -> int:
     }
     probes = _probe_running(config.identities, discovered, status)
 
+    local_rows = [
+        (id_name, r)
+        for id_name, identity in config.identities.items()
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes)
+    ]
+    cloud_rows = _cloud_list_rows(config)
+
+    # SCOPE and STATUS carry the only variable-length values — long org/repo handles
+    # and the wide 'unknown (no gcp creds)' placeholder — so size each to its widest
+    # value with the prior fixed widths as floors. A value that overruns a fixed
+    # field shoves every later column out of alignment, which is exactly what a long
+    # handle did to SCOPE (#1866).
+    scopes = [str(r["scope"]) for _id, r in local_rows] + [str(r["scope"]) for r in cloud_rows]
+    statuses = [str(r["status"]) for _id, r in local_rows] + [str(r["status"]) for r in cloud_rows]
+    scope_w = max(40, *(len(s) for s in scopes)) if scopes else 40
+    status_w = max(11, *(len(s) for s in statuses)) if statuses else 11
+
     header = (
-        f"{'IDENTITY':<14} {'SCOPE':<40} {'INSTANCE':<11} {'BACKEND':<13} {'STATUS':<11} "
-        f"{'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} "
-        f"{'SPEC':<22}"
+        f"{'IDENTITY':<14} {'SCOPE':<{scope_w}} {'INSTANCE':<11} {'BACKEND':<13} "
+        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} "
+        f"{'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
 
-    for id_name, identity in config.identities.items():
-        for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
-            print(
-                f"{id_name:<14} {r['scope']!s:<40} {r.get('instance', '—')!s:<11} "
-                f"{r['backend']!s:<13} {r['status']!s:<11} {'—':<15} "
-                f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
-                f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
-            )
-
-    for r in _cloud_list_rows(config):
+    for id_name, r in local_rows:
         print(
-            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
-            f"{r['backend']!s:<13} {r['status']!s:<11} {r['external_ip']!s:<15} "
+            f"{id_name:<14} {r['scope']!s:<{scope_w}} {r.get('instance', '—')!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {'—':<15} "
+            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+            f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
+        )
+
+    for r in cloud_rows:
+        print(
+            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['instance']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {r['external_ip']!s:<15} "
             f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 
@@ -2078,7 +2125,7 @@ def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, obje
     transport instead of limactl. The box owns its own roster, so it is the only
     source for a live session's name — exactly as for a Lima box.
     """
-    transport = vm_cloud.off_platform_transport(vm.name, vm.state_dir)
+    transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
     result = transport.run("vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows if row.get("state") == "active"}

@@ -37,6 +37,14 @@ class TestIsRetryable:
             "Bad credentials",
             "request timed out",
             "connection reset by peer",
+            # net/http transport-layer transients
+            'Post "https://api.github.com/graphql": net/http: TLS handshake timeout',
+            'Get "https://api.github.com/...": net/http: TLS handshake timeout',
+            "dial tcp: i/o timeout",
+            "dial tcp 140.82.112.5:443: connect: connection refused",
+            "lookup api.github.com on 127.0.0.53:53: no such host",
+            "lookup api.github.com: server misbehaving",
+            "unexpected EOF",
         ],
     )
     def test_retryable_errors(self, stderr: str) -> None:
@@ -45,8 +53,18 @@ class TestIsRetryable:
     def test_retryable_error_in_stdout(self) -> None:
         assert retry.is_retryable(_api_error(stdout="HTTP 504")) is True
 
-    def test_non_retryable_error(self) -> None:
-        assert retry.is_retryable(_api_error(stderr="HTTP 404 Not Found")) is False
+    @pytest.mark.parametrize(
+        "stderr",
+        [
+            "HTTP 404 Not Found",
+            "HTTP 422 Unprocessable Entity",
+            "GraphQL: Pull request is not mergeable (mergePullRequest)",
+            "could not resolve to a Repository with the name 'x/y'",
+            "HTTP 403: Resource not accessible by integration",
+        ],
+    )
+    def test_non_retryable_error(self, stderr: str) -> None:
+        assert retry.is_retryable(_api_error(stderr=stderr)) is False
 
     def test_empty_output(self) -> None:
         assert retry.is_retryable(_api_error()) is False

@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.69] - 2026-06-25
+
+### Bug fixes
+
+- correct off-platform list display — instance name and column widths (#1873)
+- retry net/http transport failures (TLS handshake, DNS, EOF) (#1874)
+
+### Documentation
+
+- cloud↔Mac PR handoff via GitHub relay design (#1865)
+- document cloud/Mac PR-development boundary (Deliverable A) (#1871)
+
 ## [2.1.68] - 2026-06-24
 
 ### Documentation

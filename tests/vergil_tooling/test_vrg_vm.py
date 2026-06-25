@@ -1685,7 +1685,11 @@ class TestUpdateAll:
         assert result == 0
         # Both boxes updated in place: Lima over limactl, off-platform over IAP.
         assert mock_update.call_count == 2
-        mock_transport.assert_called_once_with("vergil-lmf-cloud", Path("/x/gcp"))
+        # The IAP transport must address the box by its gcloud instance name
+        # (vrg-<hash>), not the readable state key, or the tunnel 404s (#1866).
+        mock_transport.assert_called_once_with(
+            vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp")
+        )
         assert fake_transport in [c.args[0] for c in mock_update.call_args_list]
         out = capsys.readouterr().out
         assert "off-platform box 'lmf/cloud [lmf]'" in out
@@ -4053,6 +4057,27 @@ class TestCloudList:
         assert len(rows) == 1
         assert rows[0]["external_ip"] == "34.42.0.7"
 
+    def test_cloud_list_rows_surfaces_missing_distinct_from_no_creds(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_list_rows
+
+        # A torn-down box reports MISSING (real drift), kept distinct from the
+        # credential-less "" placeholder so neither is mistaken for the other (#1866).
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+        config = IdentityConfig(identities={}, default_identity=None)
+        with patch(
+            "vergil_tooling.bin.vrg_vm._cloud_instance_info",
+            return_value=("MISSING", ""),
+        ):
+            rows = _cloud_list_rows(config)
+        assert rows[0]["status"] == "MISSING"
+
     def test_cloud_list_rows_external_ip_degrades_when_absent(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4135,6 +4160,56 @@ class TestCloudList:
         ):
             assert _cloud_instance_info(state_dir, "key") == ("", "")
 
+    def test_cloud_instance_info_no_gcloud_is_empty(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_instance_info
+
+        # No gcloud on PATH is a credential-less environment, not drift -> the empty
+        # placeholder, kept distinct from MISSING (#1866).
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"),
+            patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=FileNotFoundError),
+        ):
+            assert _cloud_instance_info(state_dir, "vrg-abc") == ("", "")
+
+    def test_cloud_instance_info_not_found_is_missing(self, tmp_path: Path) -> None:
+        from vergil_tooling.bin.vrg_vm import _cloud_instance_info
+
+        # A describe that 404s means the instance is gone (drift), NOT a creds
+        # failure — surface it as MISSING so the two stay distinct (#1866).
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        not_found = subprocess.CalledProcessError(
+            1, "gcloud", stderr="ERROR: The resource 'vrg-deadbeef' was not found"
+        )
+        with (
+            patch("vergil_tooling.bin.vrg_vm.vm_cloud.read_zone", return_value="us-central1-a"),
+            patch("vergil_tooling.bin.vrg_vm.subprocess.run", side_effect=not_found),
+        ):
+            assert _cloud_instance_info(state_dir, "vrg-deadbeef") == ("MISSING", "")
+
+    def test_off_platform_vms_describes_by_cloud_resource_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from vergil_tooling.bin.vrg_vm import _off_platform_vms
+
+        # The live describe must target the gcloud instance name (vrg-<hash>), not
+        # the readable state key — querying by the state key 404s and degrades the
+        # whole row to a misleading "no gcp creds" (#1866).
+        fake_home = tmp_path / "home"
+        tofu = fake_home / ".config" / "vergil" / "tofu" / "vergil-lmf-cloud" / "gcp"
+        tofu.mkdir(parents=True)
+        (tofu / "volume.tfstate").write_text("{}")
+        (tofu / "vm.tfstate").write_text("{}")
+        monkeypatch.setattr(Path, "home", classmethod(lambda _cls: fake_home))
+        with patch(
+            "vergil_tooling.bin.vrg_vm._cloud_instance_info",
+            return_value=("RUNNING", "34.42.0.7"),
+        ) as info:
+            _off_platform_vms()
+        info.assert_called_once_with(tofu, vm_cloud.cloud_resource_name("vergil-lmf-cloud"))
+
     def test_cloud_list_rows_empty_when_no_tofu_dir(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -4181,6 +4256,10 @@ class TestCloudList:
         assert len(vms) == 1
         vm = vms[0]
         assert vm.name == "vergil-lmf-cloud"
+        # name is the readable slug; the gcloud instance name is its deterministic
+        # hash, which is what every cloud/IAP call must address (#1866).
+        assert vm.cloud_name == vm_cloud.cloud_resource_name("vergil-lmf-cloud")
+        assert vm.cloud_name.startswith("vrg-")
         assert vm.provider == "gcp"
         assert (vm.identity, vm.org, vm.repo) == ("lmf", "lmf", "cloud")
         assert vm.scope == "lmf/cloud"
@@ -4270,7 +4349,9 @@ class TestCloudList:
             "vergil_tooling.bin.vrg_vm.vm_cloud.off_platform_transport", return_value=transport
         ) as mk:
             rows = _off_platform_active_sessions(vm)
-        mk.assert_called_once_with("vergil-lmf-cloud", Path("/x/gcp"))
+        # The IAP session query addresses the box by its gcloud instance name
+        # (vrg-<hash>), not the readable state key (#1866).
+        mk.assert_called_once_with(vm_cloud.cloud_resource_name("vergil-lmf-cloud"), Path("/x/gcp"))
         transport.run.assert_called_once_with("vrg-vm-resolve-session", "--list-json")
         # Only the active row is retained, keyed by session id.
         assert set(rows) == {"c1"}
@@ -4314,6 +4395,48 @@ def test_list_shows_instance_column_and_no_vm_row(
     assert "native-ha" in out
     assert "no-vm" in out
     assert "200GiB" in out
+
+
+def test_list_widens_scope_and_status_to_keep_columns_aligned(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # A long org/repo handle (49 chars) overruns the old fixed 40-wide SCOPE, and the
+    # 22-char 'unknown (no gcp creds)' overruns the 11-wide STATUS — both shoved every
+    # later column out of alignment. The columns now size to their content (#1866).
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin import vrg_vm
+
+    long_scope = "logical-minds-foundry/mq-resiliency-lab-for-linux"
+    row = {
+        "identity": "vergil-user",
+        "scope": long_scope,
+        "instance": "cloud",
+        "backend": "gcp",
+        "status": "unknown (no gcp creds)",
+        "external_ip": "—",
+        "disk": "—",
+        "spec": "ok",
+    }
+    monkeypatch.setattr(vrg_vm, "list_vms", lambda: [])
+    monkeypatch.setattr(vrg_vm, "_cloud_list_rows", lambda _config: [row])
+    monkeypatch.setattr(
+        vrg_vm, "load_config", lambda p: IdentityConfig(identities={}, default_identity=None)
+    )
+    args = argparse.Namespace(config=None, sessions=False)
+    assert vrg_vm._cmd_list(args) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    header = lines[0]
+    data = next(line for line in lines if long_scope in line)
+    # The full handle and full status both render, and because each column was sized
+    # to its widest value, the field after each — INSTANCE after SCOPE, EXTERNAL IP
+    # after STATUS — starts at the same column in the header and the data row.
+    assert long_scope in data
+    assert "unknown (no gcp creds)" in data
+    inst_col = header.index("INSTANCE")
+    assert data[inst_col:].startswith("cloud")
+    ip_col = header.index("EXTERNAL IP")
+    assert data[ip_col:].startswith("—")
 
 
 # ---------------------------------------------------------------------------
