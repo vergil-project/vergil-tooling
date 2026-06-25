@@ -5240,10 +5240,15 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     monkeypatch.setattr(vrg_vm, "_read_repo_vm", lambda *a: None)
     monkeypatch.setattr(vrg_vm, "resolve_borrow", lambda *a: None)
     deleted: list[str] = []
-    destroyed: list[Path] = []
+    destroyed: list[tuple[Path, str]] = []
+
+    def _capture_destroy(root: Path, d: Path, **kw: object) -> None:
+        provider = cast("str", kw.get("provider", ""))
+        destroyed.append((d, provider))
+
     monkeypatch.setattr(vrg_vm, "delete_vm", lambda i: deleted.append(i))
     monkeypatch.setattr(vrg_vm.vm_cloud, "fetch_modules", lambda tag: Path("/m/modules"))
-    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", lambda root, d, **kw: destroyed.append(d))
+    monkeypatch.setattr(vrg_vm.vm_cloud, "destroy_vm", _capture_destroy)
     monkeypatch.setattr(vrg_vm.shutil, "rmtree", lambda *a, **k: None)
     monkeypatch.setattr(vrg_vm, "resolve_vm_tag", lambda c, i: "v1")
     args = _destroy_args(workspace="lmf/mq", name="cloud-x86", yes=True)
@@ -5251,7 +5256,7 @@ def test_destroy_yes_tears_down_lima_and_all_providers(
     rc = vrg_vm._cmd_destroy(args)
     assert rc == 0
     assert deleted == ["vergil-user.lmf.mq.cloud-x86"]
-    assert destroyed == [Path("/x/gcp"), Path("/x/azure")]
+    assert destroyed == [(Path("/x/gcp"), "gcp"), (Path("/x/azure"), "azure")]
 
 
 def test_destroy_nothing_recorded_returns_one(
