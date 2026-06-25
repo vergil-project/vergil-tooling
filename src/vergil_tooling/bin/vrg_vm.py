@@ -1928,27 +1928,43 @@ def _cmd_list(args: argparse.Namespace) -> int:
     }
     probes = _probe_running(config.identities, discovered, status)
 
+    local_rows = [
+        (id_name, r)
+        for id_name, identity in config.identities.items()
+        for r in _list_rows(id_name, identity, discovered[id_name], status, probes)
+    ]
+    cloud_rows = _cloud_list_rows(config)
+
+    # SCOPE and STATUS carry the only variable-length values — long org/repo handles
+    # and the wide 'unknown (no gcp creds)' placeholder — so size each to its widest
+    # value with the prior fixed widths as floors. A value that overruns a fixed
+    # field shoves every later column out of alignment, which is exactly what a long
+    # handle did to SCOPE (#1866).
+    scopes = [str(r["scope"]) for _id, r in local_rows] + [str(r["scope"]) for r in cloud_rows]
+    statuses = [str(r["status"]) for _id, r in local_rows] + [str(r["status"]) for r in cloud_rows]
+    scope_w = max(40, *(len(s) for s in scopes)) if scopes else 40
+    status_w = max(11, *(len(s) for s in statuses)) if statuses else 11
+
     header = (
-        f"{'IDENTITY':<14} {'SCOPE':<40} {'INSTANCE':<11} {'BACKEND':<13} {'STATUS':<11} "
-        f"{'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} {'AGENTS':<7} {'HUMANS':<7} "
-        f"{'SPEC':<22}"
+        f"{'IDENTITY':<14} {'SCOPE':<{scope_w}} {'INSTANCE':<11} {'BACKEND':<13} "
+        f"{'STATUS':<{status_w}} {'EXTERNAL IP':<15} {'CPUS':<5} {'MEM':<7} {'DISK':<7} "
+        f"{'AGENTS':<7} {'HUMANS':<7} {'SPEC':<22}"
     )
     print(header)
     print("─" * len(header))
 
-    for id_name, identity in config.identities.items():
-        for r in _list_rows(id_name, identity, discovered[id_name], status, probes):
-            print(
-                f"{id_name:<14} {r['scope']!s:<40} {r.get('instance', '—')!s:<11} "
-                f"{r['backend']!s:<13} {r['status']!s:<11} {'—':<15} "
-                f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
-                f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
-            )
-
-    for r in _cloud_list_rows(config):
+    for id_name, r in local_rows:
         print(
-            f"{r['identity']!s:<14} {r['scope']!s:<40} {r['instance']!s:<11} "
-            f"{r['backend']!s:<13} {r['status']!s:<11} {r['external_ip']!s:<15} "
+            f"{id_name:<14} {r['scope']!s:<{scope_w}} {r.get('instance', '—')!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {'—':<15} "
+            f"{r['cpus']!s:<5} {r['memory']!s:<7} {r['disk']!s:<7} "
+            f"{r['agents']!s:<7} {r['humans']!s:<7} {r['spec']!s:<22}"
+        )
+
+    for r in cloud_rows:
+        print(
+            f"{r['identity']!s:<14} {r['scope']!s:<{scope_w}} {r['instance']!s:<11} "
+            f"{r['backend']!s:<13} {r['status']!s:<{status_w}} {r['external_ip']!s:<15} "
             f"{'—':<5} {'—':<7} {r['disk']!s:<7} {'—':<7} {'—':<7} {r['spec']!s:<22}"
         )
 

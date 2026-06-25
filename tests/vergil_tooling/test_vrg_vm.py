@@ -4397,6 +4397,48 @@ def test_list_shows_instance_column_and_no_vm_row(
     assert "200GiB" in out
 
 
+def test_list_widens_scope_and_status_to_keep_columns_aligned(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # A long org/repo handle (49 chars) overruns the old fixed 40-wide SCOPE, and the
+    # 22-char 'unknown (no gcp creds)' overruns the 11-wide STATUS — both shoved every
+    # later column out of alignment. The columns now size to their content (#1866).
+    monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+    from vergil_tooling.bin import vrg_vm
+
+    long_scope = "logical-minds-foundry/mq-resiliency-lab-for-linux"
+    row = {
+        "identity": "vergil-user",
+        "scope": long_scope,
+        "instance": "cloud",
+        "backend": "gcp",
+        "status": "unknown (no gcp creds)",
+        "external_ip": "—",
+        "disk": "—",
+        "spec": "ok",
+    }
+    monkeypatch.setattr(vrg_vm, "list_vms", lambda: [])
+    monkeypatch.setattr(vrg_vm, "_cloud_list_rows", lambda _config: [row])
+    monkeypatch.setattr(
+        vrg_vm, "load_config", lambda p: IdentityConfig(identities={}, default_identity=None)
+    )
+    args = argparse.Namespace(config=None, sessions=False)
+    assert vrg_vm._cmd_list(args) == 0
+
+    lines = capsys.readouterr().out.splitlines()
+    header = lines[0]
+    data = next(line for line in lines if long_scope in line)
+    # The full handle and full status both render, and because each column was sized
+    # to its widest value, the field after each — INSTANCE after SCOPE, EXTERNAL IP
+    # after STATUS — starts at the same column in the header and the data row.
+    assert long_scope in data
+    assert "unknown (no gcp creds)" in data
+    inst_col = header.index("INSTANCE")
+    assert data[inst_col:].startswith("cloud")
+    ip_col = header.index("EXTERNAL IP")
+    assert data[ip_col:].startswith("—")
+
+
 # ---------------------------------------------------------------------------
 # Helpers for _classify_off_platform tests
 # ---------------------------------------------------------------------------
