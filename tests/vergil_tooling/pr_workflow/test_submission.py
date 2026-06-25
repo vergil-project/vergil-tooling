@@ -21,10 +21,8 @@ def _write_state(root: Path, *, with_metadata: bool) -> None:
         issue="1534",
         branch="feature/1534-x",
         base="develop",
-        mode="solo",
         head_sha="h0",
         base_sha="b0",
-        user_token="u-1",
         now=_NOW,
     )
     if with_metadata:

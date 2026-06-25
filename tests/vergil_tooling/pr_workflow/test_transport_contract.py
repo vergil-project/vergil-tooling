@@ -30,18 +30,16 @@ _FACTORIES: list[Callable[[Path], Transport]] = [
 ]
 
 
-def _state(owner: str):
+def _state(status: str = "implementing"):
     state = engine.init_state(
         issue="1534",
         branch="b",
         base="origin/develop",
-        mode="paired",
         head_sha="h0",
         base_sha="b0",
-        user_token="u-1",
         now=_NOW,
     )
-    state.owner = owner
+    state.status = status
     return state
 
 
@@ -55,36 +53,38 @@ def test_read_is_none_before_any_write(transport: Transport) -> None:
 
 
 def test_write_read_roundtrip(transport: Transport) -> None:
-    transport.write(_state("user"))
+    transport.write(_state("ready"))
     restored = transport.read()
     assert restored is not None
-    assert restored.owner == "user"
+    assert restored.status == "ready"
     assert restored.issue == "1534"
 
 
 def test_wait_until_owner_returns_immediately_when_matching(transport: Transport) -> None:
-    transport.write(_state("audit"))
+    transport.write(_state("ready"))
     # No sleep should be needed; patch it so a bug would surface as a call.
     with patch("vergil_tooling.lib.pr_workflow.local_transport.time.sleep") as slept:
-        state = transport.wait_until_owner("audit", timeout=5.0)
-    assert state.owner == "audit"
+        state = transport.wait_until_owner("ready", timeout=5.0)
+    assert state.status == "ready"
     slept.assert_not_called()
 
 
 def test_wait_until_present_returns_existing(transport: Transport) -> None:
-    transport.write(_state("user"))
+    transport.write(_state("implementing"))
     with patch("vergil_tooling.lib.pr_workflow.local_transport.time.sleep") as slept:
         state = transport.wait_until_present(timeout=5.0)
     assert state.issue == "1534"
     slept.assert_not_called()
 
 
-def test_wait_until_owner_raises_on_error_state(transport: Transport) -> None:
-    state = _state("audit")
-    state.error = {"by": "audit", "at": _NOW, "reason": "boom"}
-    transport.write(state)
+def test_wait_until_owner_times_out_when_status_never_matches(transport: Transport) -> None:
+    transport.write(_state("implementing"))
     with (
+        patch(
+            "vergil_tooling.lib.pr_workflow.local_transport.time.monotonic",
+            side_effect=[0.0, 0.0, 100.0],
+        ),
         patch("vergil_tooling.lib.pr_workflow.local_transport.time.sleep"),
-        pytest.raises(WorkflowError, match="counterpart reported an error"),
+        pytest.raises(WorkflowError, match="timed out"),
     ):
-        transport.wait_until_owner("user", timeout=5.0)
+        transport.wait_until_owner("ready", timeout=5.0)

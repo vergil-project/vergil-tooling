@@ -83,22 +83,24 @@ class LocalFileTransport(Transport):
             time.sleep(self.poll_interval)
 
     def wait_until_owner(
-        self, role: str, *, timeout: float, waiting_for: str | None = None
+        self, status: str, *, timeout: float, waiting_for: str | None = None
     ) -> WorkflowState:
+        """Wait until the state file reaches a given status value.
+
+        Named ``wait_until_owner`` for historical compatibility; the ``status``
+        parameter replaced the ``role`` parameter when the dual-agent ownership
+        model was removed (#1872). Scheduled for rename in a later cleanup task.
+        """
         start = time.monotonic()
         deadline = start + timeout
         last_beat = start
         while True:
             state = self.read()
-            if state is not None:
-                if state.error is not None:
-                    reason = state.error.get("reason", "unknown")
-                    raise WorkflowError(f"counterpart reported an error: {reason}")
-                if state.owner == role:
-                    return state
+            if state is not None and state.status == status:
+                return state
             now = time.monotonic()
             if now >= deadline:
-                raise WorkflowError(f"timed out after {timeout}s waiting for owner={role!r}")
+                raise WorkflowError(f"timed out after {timeout}s waiting for status={status!r}")
             if waiting_for and now - last_beat >= _HEARTBEAT_INTERVAL:
                 _heartbeat(waiting_for, now - start)
                 last_beat = now

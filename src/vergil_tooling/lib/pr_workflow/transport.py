@@ -38,11 +38,14 @@ class Transport(ABC):
 
     @abstractmethod
     def wait_until_owner(
-        self, role: str, *, timeout: float, waiting_for: str | None = None
+        self, status: str, *, timeout: float, waiting_for: str | None = None
     ) -> WorkflowState:
-        """Block until ``owner == role``. Raise WorkflowError on timeout, or if
-        the counterpart recorded a terminal error. ``waiting_for`` drives a
-        heartbeat for long waits (see ``wait_until_present``)."""
+        """Block until ``state.status == status``. Raise WorkflowError on timeout.
+        ``waiting_for`` drives a heartbeat for long waits (see ``wait_until_present``).
+
+        Named ``wait_until_owner`` for historical compatibility; the parameter
+        was renamed from ``role`` to ``status`` when the dual-agent ownership
+        model was removed (#1872)."""
 
     @abstractmethod
     def head_sha(self) -> str:
