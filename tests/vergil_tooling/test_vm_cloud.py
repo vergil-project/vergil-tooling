@@ -4,7 +4,9 @@ import dataclasses
 import json
 import re
 import subprocess
+import urllib.error
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +16,7 @@ from vergil_tooling.lib.vm_cloud import (
     FALLBACK_SHAPES,
     NESTED_VIRT_FAMILIES,
     OffPlatformBackend,
+    _azure_resource_group_from_volume_id,
     apply_vm,
     apply_vm_with_zone_fallback,
     apply_volume,
@@ -23,15 +26,19 @@ from vergil_tooling.lib.vm_cloud import (
     cloud_resource_name,
     destroy_vm,
     destroy_volume,
+    ensure_keypair,
     fetch_modules,
     instance_fallback_candidates,
     is_zone_capacity_error,
     link_cloud_claude_dirs,
+    nsg_refresh,
     off_platform_transport,
     parse_vm_machine_type,
     parse_volume_state,
     preflight,
     provision_params,
+    read_host,
+    read_volume_id,
     read_zone,
     region_zones,
     render_provision_env,
@@ -39,7 +46,7 @@ from vergil_tooling.lib.vm_cloud import (
     zone_to_region,
 )
 from vergil_tooling.lib.vm_spec import ComposedSpec, spec_fingerprint, state_slug
-from vergil_tooling.lib.vm_transport import IapTransport
+from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
@@ -1887,3 +1894,283 @@ class TestParseVmMachineType:
         f = tmp_path / "vm.tfstate"
         f.write_text(self._state(""))  # falsy machine_type -> continue -> None
         assert parse_vm_machine_type(f) is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ensure_keypair / _operator_public_ip / nsg_refresh
+# ---------------------------------------------------------------------------
+
+
+def _ok() -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, "", "")
+
+
+class TestRunKeygen:
+    def test_invokes_ssh_keygen(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_run_keygen calls ssh-keygen with the expected arguments."""
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        priv = tmp_path / "id_ed25519"
+        vm_cloud._run_keygen(priv)
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert argv[0] == "ssh-keygen"
+        assert "-t" in argv
+        assert "ed25519" in argv
+        assert str(priv) in argv
+
+
+class TestFetchPublicIp:
+    def test_reads_response_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_fetch_public_ip returns the decoded response body."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"  1.2.3.4  "
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.urllib.request.urlopen",
+            lambda req, timeout: mock_resp,
+        )
+        result = vm_cloud._fetch_public_ip("https://example.com/ip")
+        assert result == "1.2.3.4"
+
+
+class TestReadHostAndVolumeId:
+    def test_read_host_raises_when_absent(self, tmp_path: Path) -> None:
+        """read_host raises RuntimeError when the host file does not exist."""
+        with pytest.raises(RuntimeError, match="no persisted host"):
+            read_host(tmp_path)
+
+    def test_read_volume_id_raises_when_absent(self, tmp_path: Path) -> None:
+        """read_volume_id raises RuntimeError when the volume_id file does not exist."""
+        with pytest.raises(RuntimeError, match="no persisted volume_id"):
+            read_volume_id(tmp_path)
+
+
+class TestAzureResourceGroupParse:
+    def test_raises_on_short_volume_id(self) -> None:
+        """_azure_resource_group_from_volume_id raises ValueError on malformed ARM IDs."""
+        with pytest.raises(ValueError, match="Cannot parse resource group"):
+            _azure_resource_group_from_volume_id("/subscriptions/only")
+
+
+class TestEnsureKeypair:
+    def test_generates_keypair_on_first_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ensure_keypair calls _run_keygen when the key does not yet exist."""
+        generated: list[Path] = []
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIVATE_KEY")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA fake-key")
+            generated.append(priv)
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        key_path, pub = ensure_keypair(tmp_path)
+        assert key_path == tmp_path / "id_ed25519"
+        assert pub == "ssh-ed25519 AAAA fake-key"
+        assert len(generated) == 1
+
+    def test_is_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Second call reuses the existing key without calling _run_keygen again."""
+        call_count: list[int] = [0]
+
+        def fake_keygen(priv: Path) -> None:
+            call_count[0] += 1
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA idempotent-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        p1, pub1 = ensure_keypair(tmp_path)
+        p2, pub2 = ensure_keypair(tmp_path)  # second call must NOT regenerate
+        assert p1 == p2
+        assert pub1 == pub2 == "ssh-ed25519 AAAA idempotent-key"
+        assert call_count[0] == 1, "keygen must only run once"
+
+    def test_returns_stripped_public_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Public key content is stripped of surrounding whitespace."""
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("  ssh-ed25519 AAAA key  \n")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        _, pub = ensure_keypair(tmp_path)
+        assert pub == "ssh-ed25519 AAAA key"
+
+
+class TestOperatorPublicIp:
+    def test_returns_ip_on_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_operator_public_ip returns the IP string from the echo endpoint."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "203.0.113.5")
+        assert vm_cloud._operator_public_ip() == "203.0.113.5"
+
+    def test_fail_closed_on_empty_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: empty response raises, never produces a wildcard rule."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "")
+        with pytest.raises((SystemExit, RuntimeError, ValueError)):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_non_ip_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: non-IP response raises — no silent fallback to a wildcard."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "not-an-ip")
+        # Must raise; the implementation is forbidden from returning a wildcard.
+        with pytest.raises((SystemExit, RuntimeError, ValueError)):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_endpoint_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: network error raises, no wide-open fallback is ever used."""
+
+        def fail(_url: str) -> str:
+            raise urllib.error.URLError("connection refused")
+
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", fail)
+        # The implementation catches the URLError and converts it to SystemExit.
+        with pytest.raises((SystemExit, RuntimeError, ValueError, urllib.error.URLError)):
+            vm_cloud._operator_public_ip()
+
+    def test_env_override_changes_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VRG_PUBLIC_IP_ENDPOINT overrides the default echo URL."""
+        seen_urls: list[str] = []
+        monkeypatch.setenv("VRG_PUBLIC_IP_ENDPOINT", "https://custom.example.com/ip")
+        monkeypatch.setattr(
+            vm_cloud, "_fetch_public_ip", lambda url: seen_urls.append(url) or "1.2.3.4"
+        )
+        vm_cloud._operator_public_ip()
+        assert seen_urls == ["https://custom.example.com/ip"]
+
+
+class TestNsgRefresh:
+    def test_sets_current_ip_via_az_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """nsg_refresh calls az network nsg rule update with the operator's /32."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "203.0.113.5")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("n-rg", "n-nsg", "ssh-operator")
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert argv[0] == "az"
+        assert "--source-address-prefixes" in argv
+        assert "203.0.113.5/32" in argv
+
+    def test_argv_contains_required_subcommands(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The full az network nsg rule update subcommand chain is present."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "10.0.0.1")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("my-rg", "my-nsg", "ssh-rule")
+        argv = cast("list[str]", seen["argv"])
+        assert isinstance(argv, list)
+        joined = " ".join(argv)
+        assert "network" in joined
+        assert "nsg" in joined
+        assert "rule" in joined
+        assert "update" in joined
+        assert "my-rg" in joined
+        assert "my-nsg" in joined
+        assert "ssh-rule" in joined
+
+    def test_never_uses_wildcard_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Even if _operator_public_ip returns a real IP, no wildcard is in the argv."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "198.51.100.7")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("rg", "nsg", "rule")
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert "0.0.0.0/0" not in argv
+        assert "*" not in argv
+
+
+class TestVmVarsSshPublicKey:
+    def test_gcp_vm_vars_has_empty_ssh_public_key(self) -> None:
+        """GCP vm_vars must always include ssh_public_key="" (GCP regression guard)."""
+        b = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "ssh_public_key" in vars_
+        assert vars_["ssh_public_key"] == ""
+
+    def test_azure_vm_vars_has_public_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure vm_vars must include ssh_public_key from ensure_keypair."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA azure-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        vars_ = b.vm_vars(
+            zone="eastus-1",
+            volume_id="/subscriptions/sub/resourceGroups/rg/providers/x",
+        )
+        assert "ssh_public_key" in vars_
+        assert vars_["ssh_public_key"] == "ssh-ed25519 AAAA azure-key"
+
+
+class TestAzureTransport:
+    def test_azure_transport_returns_ssh_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.transport() returns SshTransport for azure spec."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Mock _operator_public_ip and subprocess.run for nsg_refresh
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "203.0.113.99")
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda *a, **k: _ok(),
+        )
+
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        # Persist the host and volume_id that apply_vm/apply_volume would write
+        (state_dir / "host").write_text("20.1.2.3")
+        _azure_vol_id = (
+            "/subscriptions/sub-1/resourceGroups/vrg-abc-rg/providers/Microsoft.Compute/disks/d"
+        )
+        (state_dir / "volume_id").write_text(_azure_vol_id)
+        # Write the private key so ensure_keypair finds it
+        key = state_dir / "id_ed25519"
+        key.write_text("PRIV")
+        (state_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA key")
+
+        transport = b.transport()
+        assert isinstance(transport, SshTransport)
+        assert transport.host == "20.1.2.3"
+        assert transport.ssh_user == b.ssh_user
+        assert transport.key_path == str(state_dir / "id_ed25519")
+
+    def test_gcp_transport_still_returns_iap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.transport() still returns IapTransport for gcp spec."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "zone").write_text("us-central1-b")
+
+        transport = b.transport()
+        assert isinstance(transport, IapTransport)

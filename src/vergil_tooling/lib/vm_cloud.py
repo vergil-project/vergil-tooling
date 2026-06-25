@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import progress
 from vergil_tooling.lib.vm_spec import spec_fingerprint, state_slug
-from vergil_tooling.lib.vm_transport import IapTransport
+from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -637,6 +637,7 @@ def apply_volume(
     )
     out = _tofu_output(module_dir, state)
     (state_dir / "zone").write_text(out["zone"], encoding="utf-8")
+    (state_dir / "volume_id").write_text(out["volume_id"], encoding="utf-8")
     return out["volume_id"], out["zone"]
 
 
@@ -693,7 +694,9 @@ def apply_vm(
         with contextlib.suppress(subprocess.CalledProcessError):
             _run_tofu(module_dir, state, "destroy", {})
         raise
-    return _tofu_output(module_dir, state)
+    out = _tofu_output(module_dir, state)
+    (state_dir / "host").write_text(out.get("host", ""), encoding="utf-8")
+    return out
 
 
 def destroy_vm(modules_root: Path, state_dir: Path, *, provider: str = "gcp") -> None:
@@ -727,6 +730,24 @@ def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp"
     _run_tofu(modules_root / provider / "volume", state_dir / "volume.tfstate", "destroy", {})
     shutil.rmtree(state_dir)
     return had_disk
+
+
+def read_host(state_dir: Path) -> str:
+    """Read the public IP persisted by ``apply_vm`` for Azure; raise if absent."""
+    host_file = state_dir / "host"
+    if not host_file.exists():
+        msg = f"no persisted host at {host_file} — apply the VM first"
+        raise RuntimeError(msg)
+    return host_file.read_text(encoding="utf-8").strip()
+
+
+def read_volume_id(state_dir: Path) -> str:
+    """Read the volume ID persisted by ``apply_volume``; raise if absent."""
+    vid_file = state_dir / "volume_id"
+    if not vid_file.exists():
+        msg = f"no persisted volume_id at {vid_file} — apply the volume first"
+        raise RuntimeError(msg)
+    return vid_file.read_text(encoding="utf-8").strip()
 
 
 def read_zone(state_dir: Path) -> str:
@@ -1032,6 +1053,133 @@ def _effective_ssh_user() -> str:
     return os.environ.get("VRG_OFF_PLATFORM_SSH_USER", _DEFAULT_SSH_USER)
 
 
+# --- Azure keypair helpers ---------------------------------------------------
+
+_DEFAULT_PUBLIC_IP_ENDPOINT = "https://api.ipify.org"
+
+
+def _run_keygen(priv: Path) -> None:
+    """Generate an ed25519 keypair at *priv* and *priv*.pub via ssh-keygen.
+
+    Factored into a seam so tests can monkeypatch it without spawning a real process.
+    """
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "ssh-keygen",
+            "-t",
+            "ed25519",
+            "-N",
+            "",
+            "-f",
+            str(priv),
+        ],
+        check=True,
+        capture_output=True,
+    )
+
+
+def ensure_keypair(state_dir: Path) -> tuple[Path, str]:
+    """Return ``(private_key_path, public_key_openssh)`` for *state_dir*, generating once.
+
+    If ``<state_dir>/id_ed25519`` already exists the keypair is reused unchanged
+    (idempotent). The public key string is stripped of surrounding whitespace.
+    """
+    priv = state_dir / "id_ed25519"
+    pub = priv.with_suffix(".pub")
+    if not priv.exists():
+        _run_keygen(priv)
+    return priv, pub.read_text(encoding="utf-8").strip()
+
+
+def _fetch_public_ip(url: str) -> str:
+    """Fetch the operator's current public IP from *url* and return it as a string.
+
+    Factored into a seam so tests can monkeypatch it without making a real HTTP call.
+    Raises ``urllib.error.URLError`` on network failure.
+    """
+    req = urllib.request.Request(url, headers={"User-Agent": "vergil-tooling"})  # noqa: S310
+    with urllib.request.urlopen(req, timeout=10) as resp:  # noqa: S310
+        raw: bytes = resp.read()
+        return raw.decode("ascii").strip()
+
+
+_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
+
+
+def _operator_public_ip() -> str:
+    """Return the operator's current public IP address (fail-closed).
+
+    Queries the echo endpoint (default ``https://api.ipify.org``, overridable via
+    ``VRG_PUBLIC_IP_ENDPOINT``). Aborts with ``SystemExit`` if the response is empty,
+    non-IP, or unreachable — never falls back to ``0.0.0.0/0`` or any wildcard.
+    This is a security property: the NSG rule must only ever admit the operator's /32.
+    """
+    url = os.environ.get("VRG_PUBLIC_IP_ENDPOINT", _DEFAULT_PUBLIC_IP_ENDPOINT)
+    try:
+        ip = _fetch_public_ip(url)
+    except Exception as exc:  # noqa: BLE001
+        print(
+            f"ERROR: failed to discover operator public IP from {url}: {exc}\n"
+            "Refusing to proceed — the NSG would be left unreachable or wide-open.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    if not ip or not _IP_RE.fullmatch(ip):
+        print(
+            f"ERROR: public IP endpoint {url!r} returned an unexpected value: {ip!r}\n"
+            "Refusing to proceed — cannot safely restrict the NSG source.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    return ip
+
+
+def nsg_refresh(resource_group: str, nsg_name: str, rule: str) -> None:
+    """Rewrite the NSG inbound rule's source to the operator's current /32.
+
+    Calls ``az network nsg rule update -g <rg> --nsg-name <nsg> -n <rule>
+    --source-address-prefixes <ip>/32`` so the firewall locks port 22 to the
+    operator's roaming IP rather than a placeholder that blocks all traffic.
+    Fails loudly if the operator's IP cannot be discovered (see
+    :func:`_operator_public_ip`).
+    """
+    ip = _operator_public_ip()
+    subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "az",
+            "network",
+            "nsg",
+            "rule",
+            "update",
+            "-g",
+            resource_group,
+            "--nsg-name",
+            nsg_name,
+            "-n",
+            rule,
+            "--source-address-prefixes",
+            f"{ip}/32",
+        ],
+        check=True,
+    )
+
+
+def _azure_resource_group_from_volume_id(volume_id: str) -> str:
+    """Extract the resource group name from an Azure ARM resource ID.
+
+    Azure ARM IDs follow the pattern:
+        /subscriptions/<sub>/resourceGroups/<rg>/providers/...
+    The resource group is at index 4 of the ``/``-split parts.
+    """
+    parts = volume_id.split("/")
+    # parts[0] is "" (leading slash), [1] "subscriptions", [2] <sub>,
+    # [3] "resourceGroups", [4] <rg>
+    if len(parts) < 5:  # noqa: PLR2004
+        msg = f"Cannot parse resource group from volume_id: {volume_id!r}"
+        raise ValueError(msg)
+    return parts[4]
+
+
 def off_platform_transport(name: str, state_dir: Path) -> IapTransport:
     """Build an IAP transport for an already-applied off-platform box from local state.
 
@@ -1082,9 +1230,28 @@ class OffPlatformBackend:
     def state_dir(self) -> Path:
         return tofu_state_dir(self.state_key, self.spec.provider)
 
-    def transport(self, instance: str | None = None) -> IapTransport:  # noqa: ARG002
+    def transport(self, instance: str | None = None) -> IapTransport | SshTransport:  # noqa: ARG002
+        if self.spec.provider == "azure":
+            return self._azure_transport()
         zone = read_zone(self.state_dir())
         return IapTransport(self.name, zone, self._project(), self.ssh_user)
+
+    def _azure_transport(self) -> SshTransport:
+        """Build an :class:`SshTransport` for an Azure box, refreshing the NSG rule first.
+
+        Reads the persisted public IP (``host``) and volume ID, derives the resource group
+        from the ARM volume ID, refreshes the NSG inbound-22 rule to the operator's
+        current /32, then returns an ``SshTransport`` keyed to the persisted keypair.
+        """
+        state_dir = self.state_dir()
+        host = read_host(state_dir)
+        volume_id = read_volume_id(state_dir)
+        resource_group = _azure_resource_group_from_volume_id(volume_id)
+        # NSG name follows the convention from the tofu volume module: <vm-name>-nsg.
+        nsg_name = f"{self.name}-nsg"
+        nsg_refresh(resource_group, nsg_name, "ssh-operator")
+        key_path, _pub = ensure_keypair(state_dir)
+        return SshTransport(host=host, ssh_user=self.ssh_user, key_path=str(key_path))
 
     def status(self, instance: str | None = None) -> str:  # noqa: ARG002
         try:
@@ -1140,6 +1307,13 @@ class OffPlatformBackend:
             vergil_user=self.ssh_user,
             home=f"/home/{self.ssh_user}",
         )
+        # Azure: generate/persist an ed25519 keypair and pass the public key to the
+        # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
+        # (OS Login / metadata keys managed by gcloud) so it needs no injected key.
+        if self.spec.provider == "azure":
+            _key_path, ssh_public_key = ensure_keypair(self.state_dir())
+        else:
+            ssh_public_key = ""
         return {
             "name": self.name,
             "zone": zone,
@@ -1152,4 +1326,5 @@ class OffPlatformBackend:
             "ssh_user": self.ssh_user,
             "provision_env": provision_env,
             "labels": self.labels,
+            "ssh_public_key": ssh_public_key,
         }
