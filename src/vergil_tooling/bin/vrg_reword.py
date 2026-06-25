@@ -2,11 +2,12 @@
 
 The agent tool surface otherwise cannot fix a commit message:
 ``vrg-git commit`` is denied, ``vrg-commit`` only creates new commits,
-and interactive rebase is unavailable. Yet ``commit-message-fidelity``
-is a judgment gate, so a USER agent needs a way to act on it. This tool
-rewords *any of the current branch's own commits* via a scripted,
-non-interactive rebase, re-stamping the new message through the same
-standards/identity path ``vrg-commit`` uses.
+and interactive rebase is unavailable. When a branch-local commit
+message needs correcting — a typo, a wrong type or scope, a stale
+subject — an agent (or human) needs a safe, scripted way to do it.
+This tool rewords *any of the current branch's own commits* via a
+scripted, non-interactive rebase, re-stamping the new message through
+the same standards/identity path ``vrg-commit`` uses.
 
 It is a deliberate relaxation of a tight restriction, so it is bounded:
 
