@@ -266,6 +266,24 @@ class TestAzureStatus:
         (tmp_path / "volume_id").write_text("not-an-arm-id")
         assert AzureStrategy().status("vrg-x", tmp_path) == ""
 
+    def test_empty_name_is_empty_no_subprocess(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Empty VM name returns '' without invoking subprocess."""
+        sub = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("", tmp_path) == ""
+        sub.assert_not_called()
+
+    def test_placeholder_name_is_empty_no_subprocess(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Placeholder ('—') VM name returns '' without invoking subprocess."""
+        sub = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
+        assert AzureStrategy().status("—", tmp_path) == ""
+        sub.assert_not_called()
+
     def test_resource_group_passed_to_az(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:

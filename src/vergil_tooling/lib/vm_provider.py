@@ -409,6 +409,9 @@ class AzureStrategy:
         PowerState code values verified against Azure docs (2026-06-25):
         https://learn.microsoft.com/en-us/azure/virtual-machines/states-billing
         """
+        if not name or name == "—":
+            return ""
+
         from vergil_tooling.lib.vm_cloud import read_volume_id
 
         try:
