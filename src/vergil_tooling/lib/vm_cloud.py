@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -733,12 +734,17 @@ def destroy_volume(modules_root: Path, state_dir: Path, *, provider: str = "gcp"
 
 
 def read_host(state_dir: Path) -> str:
-    """Read the public IP persisted by ``apply_vm`` for Azure; raise if absent."""
+    """Read the public IP persisted by ``apply_vm`` for Azure; raise if absent or empty."""
     host_file = state_dir / "host"
     if not host_file.exists():
         msg = f"no persisted host at {host_file} — apply the VM first"
         raise RuntimeError(msg)
-    return host_file.read_text(encoding="utf-8").strip()
+    host = host_file.read_text(encoding="utf-8").strip()
+    if not host:
+        raise RuntimeError(
+            f"persisted host at {host_file} is empty — re-apply the VM to recover the public IP"
+        )
+    return host
 
 
 def read_volume_id(state_dir: Path) -> str:
@@ -1103,15 +1109,13 @@ def _fetch_public_ip(url: str) -> str:
         return raw.decode("ascii").strip()
 
 
-_IP_RE = re.compile(r"^\d{1,3}(\.\d{1,3}){3}$")
-
-
 def _operator_public_ip() -> str:
     """Return the operator's current public IP address (fail-closed).
 
     Queries the echo endpoint (default ``https://api.ipify.org``, overridable via
     ``VRG_PUBLIC_IP_ENDPOINT``). Aborts with ``SystemExit`` if the response is empty,
-    non-IP, or unreachable — never falls back to ``0.0.0.0/0`` or any wildcard.
+    not a valid IP address (including out-of-range octets), or unreachable — never
+    falls back to ``0.0.0.0/0`` or any wildcard.
     This is a security property: the NSG rule must only ever admit the operator's /32.
     """
     url = os.environ.get("VRG_PUBLIC_IP_ENDPOINT", _DEFAULT_PUBLIC_IP_ENDPOINT)
@@ -1124,7 +1128,16 @@ def _operator_public_ip() -> str:
             file=sys.stderr,
         )
         sys.exit(1)
-    if not ip or not _IP_RE.fullmatch(ip):
+    if not ip:
+        print(
+            f"ERROR: public IP endpoint {url!r} returned an empty response\n"
+            "Refusing to proceed — cannot safely restrict the NSG source.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
         print(
             f"ERROR: public IP endpoint {url!r} returned an unexpected value: {ip!r}\n"
             "Refusing to proceed — cannot safely restrict the NSG source.",
@@ -1176,6 +1189,12 @@ def _azure_resource_group_from_volume_id(volume_id: str) -> str:
     # [3] "resourceGroups", [4] <rg>
     if len(parts) < 5:  # noqa: PLR2004
         msg = f"Cannot parse resource group from volume_id: {volume_id!r}"
+        raise ValueError(msg)
+    if parts[1].lower() != "subscriptions" or parts[3].lower() != "resourcegroups":
+        msg = (
+            f"volume_id does not match ARM ID structure "
+            f"(/subscriptions/<sub>/resourceGroups/<rg>/...): {volume_id!r}"
+        )
         raise ValueError(msg)
     return parts[4]
 

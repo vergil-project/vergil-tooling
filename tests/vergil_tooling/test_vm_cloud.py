@@ -1944,6 +1944,17 @@ class TestReadHostAndVolumeId:
         with pytest.raises(RuntimeError, match="no persisted host"):
             read_host(tmp_path)
 
+    def test_read_host_raises_when_empty(self, tmp_path: Path) -> None:
+        """read_host raises RuntimeError when the host file exists but is empty."""
+        (tmp_path / "host").write_text("   \n", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="empty"):
+            read_host(tmp_path)
+
+    def test_read_host_returns_content_when_present(self, tmp_path: Path) -> None:
+        """read_host returns stripped content when the file contains a valid host."""
+        (tmp_path / "host").write_text("  20.1.2.3\n", encoding="utf-8")
+        assert read_host(tmp_path) == "20.1.2.3"
+
     def test_read_volume_id_raises_when_absent(self, tmp_path: Path) -> None:
         """read_volume_id raises RuntimeError when the volume_id file does not exist."""
         with pytest.raises(RuntimeError, match="no persisted volume_id"):
@@ -1955,6 +1966,23 @@ class TestAzureResourceGroupParse:
         """_azure_resource_group_from_volume_id raises ValueError on malformed ARM IDs."""
         with pytest.raises(ValueError, match="Cannot parse resource group"):
             _azure_resource_group_from_volume_id("/subscriptions/only")
+
+    def test_returns_resource_group_for_valid_arm_id(self) -> None:
+        """Well-formed ARM ID returns the correct resource group name."""
+        arm_id = "/subscriptions/sub-123/resourceGroups/my-rg/providers/Microsoft.Compute/disks/d"
+        assert _azure_resource_group_from_volume_id(arm_id) == "my-rg"
+
+    def test_raises_on_wrong_structural_tokens(self) -> None:
+        """Right length but wrong token names (e.g. 'subscriptionz') raises ValueError."""
+        bad_id = "/subscriptionz/sub-123/resourceGroups/my-rg/providers/Microsoft.Compute/disks/d"
+        with pytest.raises(ValueError, match="ARM ID structure"):
+            _azure_resource_group_from_volume_id(bad_id)
+
+    def test_raises_on_wrong_second_structural_token(self) -> None:
+        """Right length but 'resourceGroupz' at position 3 raises ValueError."""
+        bad_id = "/subscriptions/sub-123/resourceGroupz/my-rg/providers/Microsoft.Compute/disks/d"
+        with pytest.raises(ValueError, match="ARM ID structure"):
+            _azure_resource_group_from_volume_id(bad_id)
 
 
 class TestEnsureKeypair:
@@ -2025,14 +2053,22 @@ class TestOperatorPublicIp:
             vm_cloud._operator_public_ip()
 
     def test_fail_closed_on_endpoint_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Fail closed: network error raises, no wide-open fallback is ever used."""
+        """Fail closed: network error converts to SystemExit — never re-raised as URLError."""
 
         def fail(_url: str) -> str:
             raise urllib.error.URLError("connection refused")
 
         monkeypatch.setattr(vm_cloud, "_fetch_public_ip", fail)
-        # The implementation catches the URLError and converts it to SystemExit.
-        with pytest.raises((SystemExit, RuntimeError, ValueError, urllib.error.URLError)):
+        # The implementation must catch URLError and convert it to SystemExit (sys.exit).
+        # Accepting URLError here would pass even if the error slipped through uncaught,
+        # so we narrow the assertion to SystemExit only.
+        with pytest.raises(SystemExit):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_out_of_range_octet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: '999.1.1.1' is syntactically IP-like but invalid — must abort."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "999.1.1.1")
+        with pytest.raises(SystemExit):
             vm_cloud._operator_public_ip()
 
     def test_env_override_changes_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2095,6 +2131,27 @@ class TestNsgRefresh:
         assert isinstance(argv, list)
         assert "0.0.0.0/0" not in argv
         assert "*" not in argv
+
+    def test_az_never_invoked_when_ip_discovery_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wildcard-absent invariant: if IP discovery fails, az is NEVER invoked.
+
+        Patches _fetch_public_ip to raise (simulating a network failure) then
+        drives the path through _operator_public_ip as called by nsg_refresh.
+        Asserts subprocess.run is not called — i.e. no `az` invocation, so no
+        NSG rule (wildcard or otherwise) is ever written before the abort.
+        """
+        mock_subprocess_run = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", mock_subprocess_run)
+        monkeypatch.setattr(
+            vm_cloud,
+            "_fetch_public_ip",
+            lambda url: (_ for _ in ()).throw(urllib.error.URLError("network down")),
+        )
+        with pytest.raises(SystemExit):
+            nsg_refresh("rg", "nsg", "rule")
+        mock_subprocess_run.assert_not_called()
 
 
 class TestVmVarsSshPublicKey:
