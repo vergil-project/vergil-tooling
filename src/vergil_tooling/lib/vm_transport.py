@@ -205,9 +205,10 @@ class SshTransport:
         self.ssh_user = ssh_user
         self.key_path = key_path
 
-    def _base(self) -> list[str]:
+    def _base(self, *, pty: bool = False) -> list[str]:
         return [
             "ssh",
+            *(["-t"] if pty else []),
             "-i",
             self.key_path,
             # accept-new: trust the key on first contact (the box is freshly created and
@@ -260,6 +261,6 @@ class SshTransport:
         )
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
-        remote = f"cd {workdir} && {inner}"
-        cmd = [*self._base(), "-t", remote]
+        remote = f"cd {shlex.quote(workdir)} && {inner}"
+        cmd = [*self._base(pty=True), remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607

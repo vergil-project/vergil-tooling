@@ -273,7 +273,9 @@ class TestSshTransport:
         assert any("cd /work && cat > f" in a for a in argv)
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
-    def test_pipe_prints_stderr_on_error(self, mock_run: MagicMock) -> None:
+    def test_pipe_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         err = subprocess.CalledProcessError(1, "ssh")
         err.stderr = "boom"
         mock_run.side_effect = err
@@ -285,6 +287,7 @@ class TestSshTransport:
             pass
         else:  # pragma: no cover
             raise AssertionError("expected CalledProcessError")
+        assert "boom" in capsys.readouterr().err
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_pipe_error_without_stderr_is_silent(self, mock_run: MagicMock) -> None:
@@ -301,7 +304,9 @@ class TestSshTransport:
             raise AssertionError("expected CalledProcessError")
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
-    def test_run_prints_stderr_on_error(self, mock_run: MagicMock) -> None:
+    def test_run_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
         err = subprocess.CalledProcessError(1, "ssh")
         err.stderr = "boom"
         mock_run.side_effect = err
@@ -311,6 +316,7 @@ class TestSshTransport:
             pass
         else:  # pragma: no cover
             raise AssertionError("expected CalledProcessError")
+        assert "boom" in capsys.readouterr().err
 
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_run_quiet_suppresses_stderr_on_error(
@@ -348,4 +354,7 @@ class TestSshTransport:
         cmd = mock_execvp.call_args[0][1]
         assert cmd[0] == "ssh"
         assert "-t" in cmd
+        # -t must come BEFORE user@host so ssh treats it as an option, not as
+        # the remote command (the bug: -t after user@host → no PTY allocated).
+        assert cmd.index("-t") < cmd.index("ubuntu@1.2.3.4")
         assert any("cd /work && exec bash" in a for a in cmd)
