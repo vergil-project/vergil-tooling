@@ -1,5 +1,10 @@
 # PR Workflow Oracle — design
 
+> **Superseded (2026-06-25, #1872):** the interactive dual-agent USER/AUDIT
+> loop described here was removed. See
+> `docs/specs/2026-06-25-remove-audit-loop-design.md`. The audit *identity*
+> infrastructure is retained as dormant; only the loop is gone.
+
 - **Date:** 2026-06-08
 - **Issue:** [#1534](https://github.com/vergil-project/vergil-tooling/issues/1534)
 - **Status:** Draft (design approved in brainstorming; refined under pushback review;
