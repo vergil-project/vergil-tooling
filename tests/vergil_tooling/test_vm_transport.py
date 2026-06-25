@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib.vm_transport import IapTransport, LimaTransport
+from vergil_tooling.lib.vm_transport import IapTransport, LimaTransport, SshTransport
 
 
 class TestLimaTransport:
@@ -230,3 +230,131 @@ class TestIapTransport:
         assert args[-1] == "--command=cd /work && sudo tail -f /var/log/cloud-init-output.log"
         assert mock_popen.call_args[1]["stdout"] == subprocess.PIPE
         assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
+
+
+class TestSshTransport:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_base_command_structure(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="ok", stderr="")
+        t = SshTransport(host="20.1.2.3", ssh_user="ubuntu", key_path="/k/id_ed25519")
+        result = t.run("echo", "hi", workdir="/vergil")
+        assert result.stdout == "ok"
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == "ssh"
+        assert "ubuntu@20.1.2.3" in argv
+        assert "/k/id_ed25519" in argv  # -i <key>
+        assert any("cd /vergil && echo hi" in a for a in argv)
+        assert "StrictHostKeyChecking=accept-new" in " ".join(argv)
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_default_workdir_is_tmp(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("ls")
+        argv = mock_run.call_args[0][0]
+        assert any("cd /tmp" in a for a in argv)  # noqa: S108
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_key_passed_with_dash_i(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        t = SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/keys/my_key")
+        t.run("true")
+        argv = mock_run.call_args[0][0]
+        i_idx = argv.index("-i")
+        assert argv[i_idx + 1] == "/keys/my_key"
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_sends_input(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").pipe(
+            "cat > f", "payload", workdir="/work"
+        )
+        assert mock_run.call_args[1]["input"] == "payload"
+        argv = mock_run.call_args[0][0]
+        assert any("cd /work && cat > f" in a for a in argv)
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, "ssh")
+        err.stderr = "boom"
+        mock_run.side_effect = err
+        try:
+            SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").pipe(
+                "cat > f", "data"
+            )
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+        assert "boom" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_error_without_stderr_is_silent(self, mock_run: MagicMock) -> None:
+        err = subprocess.CalledProcessError(1, "ssh")
+        err.stderr = ""
+        mock_run.side_effect = err
+        try:
+            SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").pipe(
+                "cat > f", "data"
+            )
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_prints_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(1, "ssh")
+        err.stderr = "boom"
+        mock_run.side_effect = err
+        try:
+            SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("false")
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+        assert "boom" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_quiet_suppresses_stderr_on_error(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(255, "ssh")
+        err.stderr = "ssh: connect to host 1.2.3.4 port 22: Connection refused"
+        mock_run.side_effect = err
+        try:
+            SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run(
+                "true", quiet=True
+            )
+        except subprocess.CalledProcessError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError("expected CalledProcessError")
+        assert capsys.readouterr().err == ""
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.Popen")
+    def test_popen_streams_via_ssh(self, mock_popen: MagicMock) -> None:
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").popen(
+            "tail", "-f", "/log", workdir="/work"
+        )
+        argv = mock_popen.call_args[0][0]
+        assert argv[0] == "ssh"
+        assert any("cd /work && tail -f /log" in a for a in argv)
+        assert mock_popen.call_args[1]["stdout"] == subprocess.PIPE
+        assert mock_popen.call_args[1]["stderr"] == subprocess.STDOUT
+
+    @patch("vergil_tooling.lib.vm_transport.os.execvp")
+    def test_exec_session_execs_ssh_with_pty(self, mock_execvp: MagicMock) -> None:
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").exec_session(
+            "/work", "exec bash"
+        )
+        cmd = mock_execvp.call_args[0][1]
+        assert cmd[0] == "ssh"
+        assert "-t" in cmd
+        # -t must come BEFORE user@host so ssh treats it as an option, not as
+        # the remote command (the bug: -t after user@host → no PTY allocated).
+        assert cmd.index("-t") < cmd.index("ubuntu@1.2.3.4")
+        assert any("cd /work && exec bash" in a for a in cmd)

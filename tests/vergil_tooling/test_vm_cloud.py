@@ -4,7 +4,9 @@ import dataclasses
 import json
 import re
 import subprocess
+import urllib.error
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,6 +16,7 @@ from vergil_tooling.lib.vm_cloud import (
     FALLBACK_SHAPES,
     NESTED_VIRT_FAMILIES,
     OffPlatformBackend,
+    _azure_resource_group_from_volume_id,
     apply_vm,
     apply_vm_with_zone_fallback,
     apply_volume,
@@ -23,15 +26,19 @@ from vergil_tooling.lib.vm_cloud import (
     cloud_resource_name,
     destroy_vm,
     destroy_volume,
+    ensure_keypair,
     fetch_modules,
     instance_fallback_candidates,
     is_zone_capacity_error,
     link_cloud_claude_dirs,
+    nsg_refresh,
     off_platform_transport,
     parse_vm_machine_type,
     parse_volume_state,
     preflight,
     provision_params,
+    read_host,
+    read_volume_id,
     read_zone,
     region_zones,
     render_provision_env,
@@ -39,7 +46,7 @@ from vergil_tooling.lib.vm_cloud import (
     zone_to_region,
 )
 from vergil_tooling.lib.vm_spec import ComposedSpec, spec_fingerprint, state_slug
-from vergil_tooling.lib.vm_transport import IapTransport
+from vergil_tooling.lib.vm_transport import IapTransport, SshTransport
 
 _RFC1035 = re.compile(r"^[a-z]([-a-z0-9]*[a-z0-9])?$")
 
@@ -706,6 +713,18 @@ class TestTofuStateDirs:
         assert path == tmp_path / ".config" / "vergil" / "tofu" / "vergil-user-o-r" / "gcp"
         assert path.is_dir()
 
+    def test_tofu_env_with_explicit_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """_tofu_env(strategy) delegates to strategy.tofu_env() (non-None branch)."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        from vergil_tooling.lib.vm_cloud import _tofu_env
+        from vergil_tooling.lib.vm_provider import AzureStrategy
+
+        env = _tofu_env(AzureStrategy())
+        assert env["ARM_SUBSCRIPTION_ID"] == "sub-test"
+
 
 class TestRunTofu:
     def _setup_volume(
@@ -884,6 +903,51 @@ class TestRunTofu:
             )
         assert excinfo.value is apply_err
 
+    def test_apply_vm_rollback_covers_azure_vm_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A forced Azure apply failure must trigger a rollback ``tofu destroy``
+        # against the AZURE vm module dir/state (modules/azure/vm) — confirming
+        # the rollback is provider-correct, not GCP-hardcoded.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-x")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        apply_err = subprocess.CalledProcessError(
+            1, ("tofu", "apply"), stderr="Error: SkuNotAvailable"
+        )
+
+        def _run(cmd: list[str], **_kwargs: object) -> int:
+            if "apply" in cmd:
+                raise apply_err
+            return 0
+
+        run = MagicMock(side_effect=_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+
+        with pytest.raises(subprocess.CalledProcessError) as excinfo:
+            apply_vm(
+                modules,
+                state_dir,
+                name="vrg-azure-box",
+                zone="1",
+                instance_type="Standard_D8s_v5",
+                nested=True,
+                volume_id="/subscriptions/sub-x/resourceGroups/rg-y/providers/d",
+                ssh_user="ubuntu",
+                provision_env="VERGIL_USER=ubuntu",
+                labels={},
+                provider="azure",
+            )
+        # The original azure apply error surfaces
+        assert excinfo.value is apply_err
+        # The rollback destroy ran against the azure vm module dir/state
+        destroy_calls = [c for c in run.call_args_list if "destroy" in c.args[0]]
+        assert len(destroy_calls) == 1
+        destroy_args = destroy_calls[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'vm'}" in destroy_args
+        assert f"-state={state_dir / 'vm.tfstate'}" in destroy_args
+
     def test_destroy_vm_reuses_stored_tfvars(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1010,6 +1074,303 @@ class TestRunTofu:
         assert destroy_volume(modules, state_dir) is True
         assert not state_dir.exists()
 
+    def test_azure_apply_volume_uses_azure_module_dir(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """apply_volume with provider="azure" must pass -chdir=.../azure/volume to tofu."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-1", "zone": "eastus"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            modules,
+            state_dir,
+            name="n",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'volume'}" in init_args
+        assert f"-chdir={modules / 'gcp' / 'volume'}" not in init_args
+
+
+class TestModulePathProvider:
+    """apply_*/destroy_* must resolve the module dir under the spec's provider, not "gcp"."""
+
+    def test_apply_volume_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-1", "zone": "eastus-1"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+        # init chdir must point at <modules>/azure/volume
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'azure' / 'volume'}" in init_args
+
+    def test_apply_vm_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "azure")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"host": "vm-1", "ssh_user": "azureuser"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_vm(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            zone="eastus-1",
+            instance_type="Standard_D8s_v3",
+            nested=False,
+            volume_id="disk-1",
+            ssh_user="azureuser",
+            provision_env="VERGIL_USER=azureuser",
+            labels={},
+            provider="azure",
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'azure' / 'vm'}" in init_args
+
+    def test_destroy_vm_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        (state_dir / "vm.tfstate").write_text("{}")
+        (state_dir / "vm.tfstate.tfvars.json").write_text('{"name": "n"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_vm(modules, state_dir, provider="azure")
+        destroy_args = run.call_args_list[1].args[0]
+        assert f"-chdir={modules / 'azure' / 'vm'}" in destroy_args
+
+    def test_destroy_volume_uses_provider_kwarg(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "sub-test")
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+        (state_dir / "volume.tfstate.tfvars.json").write_text('{"name": "n"}')
+        run = MagicMock(return_value=0)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        destroy_volume(modules, state_dir, provider="azure")
+        # init ran against azure/volume
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={modules / 'azure' / 'volume'}" in init_args
+
+    def test_gcp_default_is_unchanged(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Default (no provider kwarg) still resolves gcp/ — GCP regression guard."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "gcp")
+        run = MagicMock(return_value=0)
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "vol-1", "zone": "us-central1-a"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        apply_volume(
+            tmp_path / "modules",
+            state_dir,
+            name="n",
+            region="us-central1",
+            size_gib=300,
+            labels={},
+        )
+        init_args = run.call_args_list[0].args[0]
+        assert f"-chdir={tmp_path / 'modules' / 'gcp' / 'volume'}" in init_args
+
+
+class TestTofuStrategyEnv:
+    """apply_volume/apply_vm must inject the correct provider credentials into tofu.
+
+    Before this fix the four lifecycle functions called _run_tofu/_tofu_output without
+    a strategy, so an Azure apply ran azurerm with GOOGLE_CLOUD_PROJECT set and no
+    ARM_SUBSCRIPTION_ID — Azure was silently non-functional. The tests below assert
+    the correct env for both providers and serve as a regression guard.
+
+    NOTE: AzureStrategy.tofu_env() spreads ``os.environ`` before overriding with
+    ARM_SUBSCRIPTION_ID.  If a test fixture has GOOGLE_CLOUD_PROJECT in the process
+    environment the Azure env will inherit it.  We monkeypatch it away here to make
+    the assertion meaningful.  In production an operator's shell normally won't have
+    GOOGLE_CLOUD_PROJECT set while running an Azure workflow, but the code itself
+    does not explicitly remove it — that is a known (low-risk) leak worth a follow-up.
+    """
+
+    def test_azure_apply_volume_passes_arm_subscription_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An Azure apply_volume must set ARM_SUBSCRIPTION_ID and NOT set GOOGLE_CLOUD_PROJECT."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "azure-sub-123")
+        # Remove GOOGLE_CLOUD_PROJECT so the assertion that it is absent is meaningful;
+        # the autouse _default_gcp_project fixture sets it, and AzureStrategy.tofu_env
+        # spreads os.environ, so without this delenv the Azure env would silently carry it.
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "disk-x", "zone": "eastus"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_volume(
+            modules,
+            state_dir,
+            name="vrg-azure-box",
+            region="eastus",
+            size_gib=64,
+            labels={},
+            provider="azure",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("ARM_SUBSCRIPTION_ID") == "azure-sub-123", (
+                f"ARM_SUBSCRIPTION_ID missing or wrong in tofu env: {env}"
+            )
+            assert "GOOGLE_CLOUD_PROJECT" not in env, (
+                f"GOOGLE_CLOUD_PROJECT must not be present in Azure tofu env: {env}"
+            )
+
+    def test_azure_apply_vm_passes_arm_subscription_id(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An Azure apply_vm must set ARM_SUBSCRIPTION_ID and NOT set GOOGLE_CLOUD_PROJECT."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "azure-sub-456")
+        monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "azure")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"host": "20.1.2.3", "ssh_user": "ubuntu"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_vm(
+            modules,
+            state_dir,
+            name="vrg-azure-box",
+            zone="1",
+            instance_type="Standard_D8s_v5",
+            nested=False,
+            volume_id="/subscriptions/sub/resourceGroups/rg/providers/d",
+            ssh_user="ubuntu",
+            provision_env="VERGIL_USER=ubuntu",
+            labels={},
+            provider="azure",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("ARM_SUBSCRIPTION_ID") == "azure-sub-456", (
+                f"ARM_SUBSCRIPTION_ID missing or wrong in tofu env: {env}"
+            )
+            assert "GOOGLE_CLOUD_PROJECT" not in env, (
+                f"GOOGLE_CLOUD_PROJECT must not be present in Azure tofu env: {env}"
+            )
+
+    def test_gcp_apply_volume_still_has_google_cloud_project(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """GCP apply_volume still injects GOOGLE_CLOUD_PROJECT — regression guard."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        # _default_gcp_project autouse fixture already sets GOOGLE_CLOUD_PROJECT=test-project
+        modules = tmp_path / "modules"
+        state_dir = tofu_state_dir("k", "gcp")
+
+        captured_envs: list[dict[str, str]] = []
+
+        def _capture_run(cmd: list[str], env: dict[str, str] | None = None, **kw: object) -> int:
+            if env is not None:
+                captured_envs.append(dict(env))
+            return 0
+
+        sub = MagicMock(
+            return_value=subprocess.CompletedProcess(
+                [], 0, stdout=_tofu_output_json({"volume_id": "vol-1", "zone": "us-central1-a"})
+            )
+        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", _capture_run)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+
+        apply_volume(
+            modules,
+            state_dir,
+            name="vrg-gcp-box",
+            region="us-central1",
+            size_gib=300,
+            labels={},
+            provider="gcp",
+        )
+
+        assert captured_envs, "no progress.run calls captured"
+        for env in captured_envs:
+            assert env.get("GOOGLE_CLOUD_PROJECT") == "test-project", (
+                f"GOOGLE_CLOUD_PROJECT must be present in GCP tofu env: {env}"
+            )
+
 
 class TestReadZone:
     def test_reads_persisted_zone(self, tmp_path: Path) -> None:
@@ -1043,7 +1404,8 @@ class TestZoneCapacity:
                 [], 0, stdout="us-central1-c\nus-central1-a\nus-central1-b\n"
             )
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        # GcpStrategy.region_zones uses vm_provider.subprocess.run (not vm_cloud's).
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert region_zones("us-central1") == [
             "us-central1-a",
             "us-central1-b",
@@ -1059,6 +1421,11 @@ class TestZoneFallback:
         backend.volume_vars.return_value = {}
         backend.spec.region = "us-central1"
         backend.spec.instance = "n2-standard-16"
+        # Route capacity checks through the real GCP strategy so non-capacity
+        # errors are not silently swallowed.
+        from vergil_tooling.lib.vm_provider import GcpStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = GcpStrategy().is_zone_capacity_error
         return backend
 
     def test_first_zone_succeeds(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1192,6 +1559,38 @@ class TestOffPlatformTransport:
         assert transport.project == "proj-env"
         assert transport.ssh_user == "ubuntu"
 
+    def test_gcp_still_builds_iap(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Explicit provider='gcp' still returns IapTransport — GCP regression guard."""
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "zone").write_text("us-central1-c")
+        transport = off_platform_transport("vrg-abc123", state_dir, provider="gcp")
+        assert isinstance(transport, IapTransport)
+        assert transport.host == "vrg-abc123"
+        assert transport.zone == "us-central1-c"
+        assert transport.project == "proj-env"
+
+    def test_builds_ssh_transport_for_azure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """provider='azure' returns an SshTransport keyed to the persisted IP + keypair."""
+        state_dir = tmp_path / "state"
+        state_dir.mkdir()
+        (state_dir / "host").write_text("203.0.113.5")
+        (state_dir / "volume_id").write_text(
+            "/subscriptions/sub-x/resourceGroups/rg-y/providers/Microsoft.Compute/disks/d"
+        )
+        (state_dir / "id_ed25519").write_text("PRIV")
+        (state_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA key")
+        # Stub nsg_refresh so we don't need a real az CLI.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.nsg_refresh", lambda *a, **k: None)
+        transport = off_platform_transport("vrg-azure-box", state_dir, provider="azure")
+        assert isinstance(transport, SshTransport)
+        assert transport.host == "203.0.113.5"
+        assert transport.ssh_user == "ubuntu"
+        assert transport.key_path == str(state_dir / "id_ed25519")
+
     def test_raises_when_zone_not_persisted(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="no persisted zone"):
             off_platform_transport("vergil-lmf-cloud", tmp_path / "absent")
@@ -1286,7 +1685,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="RUNNING\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == "Running"
 
     def test_status_terminated_is_stopped(
@@ -1299,7 +1698,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="TERMINATED\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == "Stopped"
 
     def test_status_unknown_state_is_empty(
@@ -1312,7 +1711,7 @@ class TestOffPlatformBackend:
         sub = MagicMock(
             return_value=subprocess.CompletedProcess([], 0, stdout="PROVISIONING\n", stderr="")
         )
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == ""
 
     def test_status_no_creds_is_empty(
@@ -1323,8 +1722,20 @@ class TestOffPlatformBackend:
         b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
         (b.state_dir() / "zone").write_text("us-central1-b")
         sub = MagicMock(side_effect=subprocess.CalledProcessError(1, "gcloud"))
-        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", sub)
+        monkeypatch.setattr("vergil_tooling.lib.vm_provider.subprocess.run", sub)
         assert b.status() == ""
+
+    def test_status_delegates_to_azure_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.status delegates to AzureStrategy.status for azure provider."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        mock_status = MagicMock(return_value="Running")
+        monkeypatch.setattr(b.strategy, "status", mock_status)
+        result = b.status()
+        assert result == "Running"
+        mock_status.assert_called_once_with(b.name, b.state_dir())
 
     def test_status_no_state_is_empty(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1366,6 +1777,31 @@ class TestOffPlatformBackend:
         from vergil_tooling.lib.vm_spec import spec_fingerprint
 
         assert f"SPEC_FINGERPRINT={spec_fingerprint(_off_spec(nested=True))}" in env
+
+    def test_vm_vars_includes_ssh_public_key_for_azure_and_absent_for_gcp(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure vm_vars includes ssh_public_key; GCP vm_vars must NOT include it."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA test-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+
+        # Azure: key must be present
+        b_azure = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b_azure.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        azure_vars = b_azure.vm_vars(zone="eastus", volume_id="vol-1")
+        assert "ssh_public_key" in azure_vars
+        assert azure_vars["ssh_public_key"] == "ssh-ed25519 AAAA test-key"
+
+        # GCP: key must be absent
+        b_gcp = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        gcp_vars = b_gcp.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "ssh_public_key" not in gcp_vars
 
 
 def _volume_tfstate(
@@ -1540,6 +1976,108 @@ class TestParseVolumeState:
         )
         assert parse_volume_state(state) is None
 
+    # ------------------------------------------------------------------
+    # GCP regression — default path must be byte-identical to before
+    # ------------------------------------------------------------------
+
+    def test_gcp_still_parses_google_disk(self, tmp_path: Path) -> None:
+        """GCP parse_volume_state (provider='gcp') is byte-identical to pre-Task-6 behavior."""
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_volume_tfstate())
+        parsed = parse_volume_state(state, provider="gcp")
+        assert parsed is not None
+        assert parsed.name == "vergil-lmf-cloud-data"
+        assert parsed.size_gib == 300
+        assert parsed.zone == "us-central1-a"
+        assert parsed.labels == {
+            "vergil-identity": "vergil",
+            "vergil-org": "lmf",
+            "vergil-repo": "cloud",
+        }
+
+    # ------------------------------------------------------------------
+    # Azure — azurerm_managed_disk with disk_size_gb / tags
+    # ------------------------------------------------------------------
+
+    def test_parses_azure_managed_disk(self, tmp_path: Path) -> None:
+        """Azure parse_volume_state reads disk_size_gb and tags from azurerm_managed_disk.
+
+        Attribute names verified against the azurerm Terraform provider schema (2026-06-25):
+        https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/managed_disk
+        """
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate())
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.name == "vrg-abc-data"
+        assert parsed.size_gib == 300
+        assert parsed.zone == "1"
+        assert parsed.labels == {
+            "vergil-identity": "vergil",
+            "vergil-org": "lmf",
+            "vergil-repo": "cloud",
+        }
+
+    def test_azure_disk_wrong_provider_returns_none(self, tmp_path: Path) -> None:
+        """An azurerm_managed_disk state returns None when provider='gcp' (type mismatch)."""
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate())
+        assert parse_volume_state(state, provider="gcp") is None
+
+    def test_azure_non_numeric_disk_size_is_none(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate(disk_size_gb="big"))
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.size_gib is None
+
+    def test_azure_absent_tags_yield_empty_dict(self, tmp_path: Path) -> None:
+        state = tmp_path / "volume.tfstate"
+        state.write_text(_azure_volume_tfstate(tags={}))
+        parsed = parse_volume_state(state, provider="azure")
+        assert parsed is not None
+        assert parsed.labels == {}
+
+
+def _azure_volume_tfstate(
+    *,
+    name: str = "vrg-abc-data",
+    disk_size_gb: object = 300,
+    zone: str = "1",
+    tags: dict[str, str] | None = None,
+) -> str:
+    """A minimal but realistic volume.tfstate carrying one azurerm_managed_disk.
+
+    Azure zones are bare AZ integers ("1", "2", "3"), not GCP-style region+zone
+    strings.  Azure uses ``disk_size_gb`` (not ``size``) and ``tags`` (not
+    ``labels``) — verified against the azurerm provider schema (2026-06-25).
+    """
+    if tags is None:
+        tags = {"vergil-identity": "vergil", "vergil-org": "lmf", "vergil-repo": "cloud"}
+    return json.dumps(
+        {
+            "version": 4,
+            "terraform_version": "1.8.0",
+            "resources": [
+                {
+                    "mode": "managed",
+                    "type": "azurerm_managed_disk",
+                    "name": "data",
+                    "instances": [
+                        {
+                            "attributes": {
+                                "name": name,
+                                "disk_size_gb": disk_size_gb,
+                                "zone": zone,
+                                "tags": tags,
+                            }
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
 
 def test_cloud_resource_name_is_hashed_and_deterministic() -> None:
     slug = "vergil-user--logical-minds-foundry--mq-cluster-tooling--cloud-x86"
@@ -1624,6 +2162,11 @@ class TestFamilyFallback:
         backend.vm_vars.return_value = {}
         backend.spec.region = "us-central1"
         backend.spec.instance = "n2-standard-8"
+        # Route capacity checks through the real GCP strategy so non-capacity
+        # errors (e.g. "bad config") are not silently swallowed.
+        from vergil_tooling.lib.vm_provider import GcpStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = GcpStrategy().is_zone_capacity_error
         return backend
 
     def test_swaps_family_in_same_zone_without_touching_volume(
@@ -1707,6 +2250,43 @@ class TestFamilyFallback:
                 fallback_instances=[],
             )
 
+    def test_azure_family_sweep_drives_via_strategy(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure backend: capacity check routes through strategy; data disk is never destroyed."""
+        azure_capacity_exc = subprocess.CalledProcessError(
+            1, ["tofu", "apply"], stderr="SkuNotAvailable in zone 1"
+        )
+        av = MagicMock(side_effect=[azure_capacity_exc, {"host": "h"}])
+        dv = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.apply_vm", av)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.destroy_volume", dv)
+
+        backend = MagicMock()
+        backend.vm_vars.return_value = {}
+        backend.spec.region = "eastus"
+        backend.spec.instance = "Standard_D8s_v5"
+        from vergil_tooling.lib.vm_provider import AzureStrategy
+
+        backend.strategy.is_zone_capacity_error.side_effect = AzureStrategy().is_zone_capacity_error
+
+        result = apply_vm_with_zone_fallback(
+            tmp_path / "m",
+            tmp_path / "s",
+            backend,
+            zone="1",
+            volume_id="vol-azure-1",
+            fallback_zones=[],
+            fallback_instances=["Standard_D8s_v4"],
+        )
+
+        assert result == ("vol-azure-1", "1", {"host": "h"})
+        assert av.call_count == 2
+        dv.assert_not_called()  # the data disk is never destroyed on a family sweep
+        backend.vm_vars.assert_any_call(
+            zone="1", volume_id="vol-azure-1", instance_override="Standard_D8s_v4"
+        )
+
 
 class TestParseVmMachineType:
     def _state(self, machine_type: str) -> str:
@@ -1775,3 +2355,339 @@ class TestParseVmMachineType:
         f = tmp_path / "vm.tfstate"
         f.write_text(self._state(""))  # falsy machine_type -> continue -> None
         assert parse_vm_machine_type(f) is None
+
+
+# ---------------------------------------------------------------------------
+# Task 3: ensure_keypair / _operator_public_ip / nsg_refresh
+# ---------------------------------------------------------------------------
+
+
+def _ok() -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess([], 0, "", "")
+
+
+class TestRunKeygen:
+    def test_invokes_ssh_keygen(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_run_keygen calls ssh-keygen with the expected arguments."""
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        priv = tmp_path / "id_ed25519"
+        vm_cloud._run_keygen(priv)
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert argv[0] == "ssh-keygen"
+        assert "-t" in argv
+        assert "ed25519" in argv
+        assert str(priv) in argv
+
+
+class TestFetchPublicIp:
+    def test_reads_response_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_fetch_public_ip returns the decoded response body."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"  1.2.3.4  "
+        mock_resp.__enter__ = lambda s: s
+        mock_resp.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.urllib.request.urlopen",
+            lambda req, timeout: mock_resp,
+        )
+        result = vm_cloud._fetch_public_ip("https://example.com/ip")
+        assert result == "1.2.3.4"
+
+
+class TestReadHostAndVolumeId:
+    def test_read_host_raises_when_absent(self, tmp_path: Path) -> None:
+        """read_host raises RuntimeError when the host file does not exist."""
+        with pytest.raises(RuntimeError, match="no persisted host"):
+            read_host(tmp_path)
+
+    def test_read_host_raises_when_empty(self, tmp_path: Path) -> None:
+        """read_host raises RuntimeError when the host file exists but is empty."""
+        (tmp_path / "host").write_text("   \n", encoding="utf-8")
+        with pytest.raises(RuntimeError, match="empty"):
+            read_host(tmp_path)
+
+    def test_read_host_returns_content_when_present(self, tmp_path: Path) -> None:
+        """read_host returns stripped content when the file contains a valid host."""
+        (tmp_path / "host").write_text("  20.1.2.3\n", encoding="utf-8")
+        assert read_host(tmp_path) == "20.1.2.3"
+
+    def test_read_volume_id_raises_when_absent(self, tmp_path: Path) -> None:
+        """read_volume_id raises RuntimeError when the volume_id file does not exist."""
+        with pytest.raises(RuntimeError, match="no persisted volume_id"):
+            read_volume_id(tmp_path)
+
+
+class TestAzureResourceGroupParse:
+    def test_raises_on_short_volume_id(self) -> None:
+        """_azure_resource_group_from_volume_id raises ValueError on malformed ARM IDs."""
+        with pytest.raises(ValueError, match="Cannot parse resource group"):
+            _azure_resource_group_from_volume_id("/subscriptions/only")
+
+    def test_returns_resource_group_for_valid_arm_id(self) -> None:
+        """Well-formed ARM ID returns the correct resource group name."""
+        arm_id = "/subscriptions/sub-123/resourceGroups/my-rg/providers/Microsoft.Compute/disks/d"
+        assert _azure_resource_group_from_volume_id(arm_id) == "my-rg"
+
+    def test_raises_on_wrong_structural_tokens(self) -> None:
+        """Right length but wrong token names (e.g. 'subscriptionz') raises ValueError."""
+        bad_id = "/subscriptionz/sub-123/resourceGroups/my-rg/providers/Microsoft.Compute/disks/d"
+        with pytest.raises(ValueError, match="ARM ID structure"):
+            _azure_resource_group_from_volume_id(bad_id)
+
+    def test_raises_on_wrong_second_structural_token(self) -> None:
+        """Right length but 'resourceGroupz' at position 3 raises ValueError."""
+        bad_id = "/subscriptions/sub-123/resourceGroupz/my-rg/providers/Microsoft.Compute/disks/d"
+        with pytest.raises(ValueError, match="ARM ID structure"):
+            _azure_resource_group_from_volume_id(bad_id)
+
+
+class TestEnsureKeypair:
+    def test_generates_keypair_on_first_call(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """ensure_keypair calls _run_keygen when the key does not yet exist."""
+        generated: list[Path] = []
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIVATE_KEY")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA fake-key")
+            generated.append(priv)
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        key_path, pub = ensure_keypair(tmp_path)
+        assert key_path == tmp_path / "id_ed25519"
+        assert pub == "ssh-ed25519 AAAA fake-key"
+        assert len(generated) == 1
+
+    def test_is_idempotent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Second call reuses the existing key without calling _run_keygen again."""
+        call_count: list[int] = [0]
+
+        def fake_keygen(priv: Path) -> None:
+            call_count[0] += 1
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA idempotent-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        p1, pub1 = ensure_keypair(tmp_path)
+        p2, pub2 = ensure_keypair(tmp_path)  # second call must NOT regenerate
+        assert p1 == p2
+        assert pub1 == pub2 == "ssh-ed25519 AAAA idempotent-key"
+        assert call_count[0] == 1, "keygen must only run once"
+
+    def test_returns_stripped_public_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Public key content is stripped of surrounding whitespace."""
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("  ssh-ed25519 AAAA key  \n")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        _, pub = ensure_keypair(tmp_path)
+        assert pub == "ssh-ed25519 AAAA key"
+
+
+class TestOperatorPublicIp:
+    def test_returns_ip_on_success(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """_operator_public_ip returns the IP string from the echo endpoint."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "203.0.113.5")
+        assert vm_cloud._operator_public_ip() == "203.0.113.5"
+
+    def test_fail_closed_on_empty_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: empty response raises, never produces a wildcard rule."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "")
+        with pytest.raises((SystemExit, RuntimeError, ValueError)):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_non_ip_response(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: non-IP response raises — no silent fallback to a wildcard."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "not-an-ip")
+        # Must raise; the implementation is forbidden from returning a wildcard.
+        with pytest.raises((SystemExit, RuntimeError, ValueError)):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_endpoint_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: network error converts to SystemExit — never re-raised as URLError."""
+
+        def fail(_url: str) -> str:
+            raise urllib.error.URLError("connection refused")
+
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", fail)
+        # The implementation must catch URLError and convert it to SystemExit (sys.exit).
+        # Accepting URLError here would pass even if the error slipped through uncaught,
+        # so we narrow the assertion to SystemExit only.
+        with pytest.raises(SystemExit):
+            vm_cloud._operator_public_ip()
+
+    def test_fail_closed_on_out_of_range_octet(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fail closed: '999.1.1.1' is syntactically IP-like but invalid — must abort."""
+        monkeypatch.setattr(vm_cloud, "_fetch_public_ip", lambda url: "999.1.1.1")
+        with pytest.raises(SystemExit):
+            vm_cloud._operator_public_ip()
+
+    def test_env_override_changes_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """VRG_PUBLIC_IP_ENDPOINT overrides the default echo URL."""
+        seen_urls: list[str] = []
+        monkeypatch.setenv("VRG_PUBLIC_IP_ENDPOINT", "https://custom.example.com/ip")
+        monkeypatch.setattr(
+            vm_cloud, "_fetch_public_ip", lambda url: seen_urls.append(url) or "1.2.3.4"
+        )
+        vm_cloud._operator_public_ip()
+        assert seen_urls == ["https://custom.example.com/ip"]
+
+
+class TestNsgRefresh:
+    def test_sets_current_ip_via_az_cli(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """nsg_refresh calls az network nsg rule update with the operator's /32."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "203.0.113.5")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("n-rg", "n-nsg", "ssh-operator")
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert argv[0] == "az"
+        assert "--source-address-prefixes" in argv
+        assert "203.0.113.5/32" in argv
+
+    def test_argv_contains_required_subcommands(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The full az network nsg rule update subcommand chain is present."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "10.0.0.1")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("my-rg", "my-nsg", "ssh-rule")
+        argv = cast("list[str]", seen["argv"])
+        assert isinstance(argv, list)
+        joined = " ".join(argv)
+        assert "network" in joined
+        assert "nsg" in joined
+        assert "rule" in joined
+        assert "update" in joined
+        assert "my-rg" in joined
+        assert "my-nsg" in joined
+        assert "ssh-rule" in joined
+
+    def test_never_uses_wildcard_source(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Even if _operator_public_ip returns a real IP, no wildcard is in the argv."""
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "198.51.100.7")
+        seen: dict[str, object] = {}
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda argv, **k: seen.setdefault("argv", argv) or _ok(),
+        )
+        nsg_refresh("rg", "nsg", "rule")
+        argv = seen["argv"]
+        assert isinstance(argv, list)
+        assert "0.0.0.0/0" not in argv
+        assert "*" not in argv
+
+    def test_az_never_invoked_when_ip_discovery_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Wildcard-absent invariant: if IP discovery fails, az is NEVER invoked.
+
+        Patches _fetch_public_ip to raise (simulating a network failure) then
+        drives the path through _operator_public_ip as called by nsg_refresh.
+        Asserts subprocess.run is not called — i.e. no `az` invocation, so no
+        NSG rule (wildcard or otherwise) is ever written before the abort.
+        """
+        mock_subprocess_run = MagicMock()
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.subprocess.run", mock_subprocess_run)
+        monkeypatch.setattr(
+            vm_cloud,
+            "_fetch_public_ip",
+            lambda url: (_ for _ in ()).throw(urllib.error.URLError("network down")),
+        )
+        with pytest.raises(SystemExit):
+            nsg_refresh("rg", "nsg", "rule")
+        mock_subprocess_run.assert_not_called()
+
+
+class TestVmVarsSshPublicKey:
+    def test_gcp_vm_vars_omits_ssh_public_key(self) -> None:
+        """GCP vm_vars must NOT include ssh_public_key — GCP uses IAP, not injected keys."""
+        b = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "ssh_public_key" not in vars_
+
+    def test_azure_vm_vars_has_public_key(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Azure vm_vars must include ssh_public_key from ensure_keypair."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        def fake_keygen(priv: Path) -> None:
+            priv.write_text("PRIV")
+            priv.with_suffix(".pub").write_text("ssh-ed25519 AAAA azure-key")
+
+        monkeypatch.setattr(vm_cloud, "_run_keygen", fake_keygen)
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        vars_ = b.vm_vars(
+            zone="eastus-1",
+            volume_id="/subscriptions/sub/resourceGroups/rg/providers/x",
+        )
+        assert "ssh_public_key" in vars_
+        assert vars_["ssh_public_key"] == "ssh-ed25519 AAAA azure-key"
+
+
+class TestAzureTransport:
+    def test_azure_transport_returns_ssh_transport(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.transport() returns SshTransport for azure spec."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+
+        # Mock _operator_public_ip and subprocess.run for nsg_refresh
+        monkeypatch.setattr(vm_cloud, "_operator_public_ip", lambda: "203.0.113.99")
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            lambda *a, **k: _ok(),
+        )
+
+        b = OffPlatformBackend(_off_spec(provider="azure"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        # Persist the host and volume_id that apply_vm/apply_volume would write
+        (state_dir / "host").write_text("20.1.2.3")
+        _azure_vol_id = (
+            "/subscriptions/sub-1/resourceGroups/vrg-abc-rg/providers/Microsoft.Compute/disks/d"
+        )
+        (state_dir / "volume_id").write_text(_azure_vol_id)
+        # Write the private key so ensure_keypair finds it
+        key = state_dir / "id_ed25519"
+        key.write_text("PRIV")
+        (state_dir / "id_ed25519.pub").write_text("ssh-ed25519 AAAA key")
+
+        transport = b.transport()
+        assert isinstance(transport, SshTransport)
+        assert transport.host == "20.1.2.3"
+        assert transport.ssh_user == b.ssh_user
+        assert transport.key_path == str(state_dir / "id_ed25519")
+
+    def test_gcp_transport_still_returns_iap(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OffPlatformBackend.transport() still returns IapTransport for gcp spec."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "proj-env")
+        b = OffPlatformBackend(_off_spec(provider="gcp"), "vergil-user", "o", "r")
+        state_dir = b.state_dir()
+        state_dir.mkdir(parents=True, exist_ok=True)
+        (state_dir / "zone").write_text("us-central1-b")
+
+        transport = b.transport()
+        assert isinstance(transport, IapTransport)

@@ -73,6 +73,7 @@ from vergil_tooling.lib.vm_guest import (
     vm_probe,
     vm_spec_status,
 )
+from vergil_tooling.lib.vm_provider import strategy_for
 from vergil_tooling.lib.vm_spec import (
     ComposedSpec,
     SpecError,
@@ -744,7 +745,7 @@ def _candidate_zones(backend: OffPlatformBackend) -> list[str]:
     """Zone order to try for a fresh create: an explicit ``zone`` first (operator
     preference), otherwise the region's zones shuffled to spread load. (#1813)
     """
-    zones = vm_cloud.region_zones(backend.spec.region)
+    zones = backend.strategy.region_zones(backend.spec.region)
     configured = backend.spec.zone
     if configured:
         return [configured, *(z for z in zones if z != configured)]
@@ -770,10 +771,12 @@ def _cs_tofu_volume(state: _CloudState) -> None:
     else:
         # Reattach: the zonal disk pins the zone, so recovery is a machine-family
         # sweep in that zone rather than a zone sweep. (#1836)
-        state.fallback_instances = vm_cloud.instance_fallback_candidates(
+        state.fallback_instances = state.backend.strategy.instance_fallback_candidates(
             state.backend.spec.instance
         )[1:]
-    volume_id, zone = vm_cloud.apply_volume(modules_root, state.state_dir, **volume_vars)
+    volume_id, zone = vm_cloud.apply_volume(
+        modules_root, state.state_dir, **volume_vars, provider=state.backend.provider_label
+    )
     state.volume_id = volume_id
     state.zone = zone
 
@@ -889,7 +892,7 @@ def _cloud_create(
     """
     name, identity, config = target.identity_name, target.identity, target.config
     backend = _cloud_backend(target)
-    vm_cloud.preflight()
+    vm_cloud.preflight(backend.spec.provider)
 
     # Concurrency guard (create only): refuse to clobber a live box. Rebuild
     # destroys the disposable VM first, so a Running box is expected there.
@@ -907,7 +910,7 @@ def _cloud_create(
         modules_root = vm_cloud.fetch_modules(tag)
         try:
             print(f"Destroying disposable VM '{backend.name}' before rebuild...")
-            vm_cloud.destroy_vm(modules_root, backend.state_dir())
+            vm_cloud.destroy_vm(modules_root, backend.state_dir(), provider=backend.provider_label)
         finally:
             shutil.rmtree(modules_root.parent, ignore_errors=True)
 
@@ -1236,7 +1239,7 @@ def _cmd_update_all(args: argparse.Namespace) -> int:
             continue
         try:
             fallback = _off_platform_fallback(config, vm)
-            transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
+            transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
             _update_over_transport(transport, box, tag, fallback)
             updated.append(vm.label)
         except subprocess.CalledProcessError as exc:
@@ -1285,7 +1288,19 @@ def _destroy_recorded(
         try:
             for provider, state_dir in rs.tofu_dirs:
                 print(f"Destroying cloud VM under {provider} (volume preserved): {state_dir}")
-                vm_cloud.destroy_vm(modules_root, state_dir)
+                vm_cloud.destroy_vm(modules_root, state_dir, provider=provider)
+                # Azure boxes keep their public IP across rebuilds but regenerate their
+                # host key, so prune the vergil-managed known_hosts entry now so the
+                # next connect doesn't hard-fail on a host-key mismatch.
+                # GCP uses IAP tunnels — no host key is pinned by IP (no-op there).
+                strategy = strategy_for(provider)
+                try:
+                    host = vm_cloud.read_host(state_dir)
+                    strategy.prune_known_hosts(host)
+                except RuntimeError:
+                    # No persisted host file (GCP boxes never write one, Azure box
+                    # never completed apply) — nothing to prune.
+                    pass
         finally:
             shutil.rmtree(modules_root.parent, ignore_errors=True)
     print("Destroyed (persistent volumes preserved — use destroy-volume to remove them).")
@@ -1373,7 +1388,9 @@ def _cmd_destroy_volume(args: argparse.Namespace) -> int:
     modules_root = vm_cloud.fetch_modules(tag)
     try:
         print(f"Destroying the persistent volume for {ref} (state: {backend.state_dir()})...")
-        destroyed = vm_cloud.destroy_volume(modules_root, backend.state_dir())
+        destroyed = vm_cloud.destroy_volume(
+            modules_root, backend.state_dir(), provider=backend.provider_label
+        )
     finally:
         shutil.rmtree(modules_root.parent, ignore_errors=True)
     if destroyed:
@@ -1991,7 +2008,13 @@ def _volume_rows() -> list[dict[str, object]]:
         provider = provider_dir.name
         state_key = provider_dir.parent.name
         vm_type = vm_cloud.parse_vm_machine_type(provider_dir / "vm.tfstate") or "—"
-        parsed = vm_cloud.parse_volume_state(volume_state)
+        parsed = vm_cloud.parse_volume_state(volume_state, provider=provider)
+        # Read the persisted volume ID (ARM resource ID for Azure, disk name for GCP).
+        # Used by _volume_live_status for Azure's ``az disk show --ids`` lookup.
+        try:
+            volume_id = vm_cloud.read_volume_id(provider_dir)
+        except RuntimeError:
+            volume_id = ""
         if parsed is None:
             rows.append(
                 {
@@ -2004,6 +2027,7 @@ def _volume_rows() -> list[dict[str, object]]:
                     "region": "—",
                     "provider": provider,
                     "vm_type": vm_type,
+                    "volume_id": volume_id,
                 }
             )
             continue
@@ -2022,45 +2046,86 @@ def _volume_rows() -> list[dict[str, object]]:
                 "region": region or "—",
                 "provider": provider,
                 "vm_type": vm_type,
+                "volume_id": volume_id,
             }
         )
     return rows
 
 
-def _volume_live_status(name: str, zone: str, provider: str) -> str:
+def _volume_live_status(name: str, zone: str, provider: str, volume_id: str = "") -> str:
     """Best-effort live check of one volume against the cloud, never raising.
 
-    Returns the disk's live status (``READY``/``CREATING``/…) when it exists,
-    ``MISSING`` when the provider reports it absent (drift — deleted out of
-    band), or a degraded ``unknown (…)`` placeholder when the provider cannot be
-    queried (no gcloud, no creds, unknown provider). Only GCP is wired today; any
-    other provider yields the degraded placeholder rather than a false reading.
+    Returns the disk's live status when it exists, ``MISSING`` when the provider
+    reports it absent (drift — deleted out of band), or a degraded
+    ``unknown (…)`` placeholder when the provider cannot be queried (no CLI
+    tool, no creds, unknown provider).
+
+    GCP branch: ``gcloud compute disks describe`` returns GCP disk state strings
+    (``READY``/``CREATING``/…).
+
+    Azure branch: ``az disk show --ids <arm-id> --query diskState -o tsv``
+    returns one of the ``DiskState`` values documented at
+    https://learn.microsoft.com/en-us/javascript/api/@azure/arm-compute/diskstate?view=azure-node-latest
+    Verified values (2026-06-25): ``Unattached``, ``Attached``, ``Reserved``,
+    ``Frozen``, ``ActiveSAS``, ``ReadyToUpload``, ``ActiveUpload``.
+    ``volume_id`` must be the ARM resource ID stored in the state dir's
+    ``volume_id`` file; an empty ``volume_id`` degrades gracefully.
     """
-    if provider != "gcp" or name in {"", "—"} or zone in {"", "—"}:
-        return f"unknown (no {provider} live check)"
-    try:
-        result = subprocess.run(  # noqa: S603
-            [  # noqa: S607
-                "gcloud",
-                "compute",
-                "disks",
-                "describe",
-                name,
-                f"--zone={zone}",
-                "--format=value(status)",
-            ],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-    except FileNotFoundError:
-        return "unknown (no gcloud)"
-    except subprocess.CalledProcessError as exc:
-        stderr = (exc.stderr or "").lower()
-        if "not found" in stderr or "was not found" in stderr:
-            return "MISSING"
-        return f"unknown (no {provider} creds)"
-    return result.stdout.strip() or "MISSING"
+    if provider == "gcp":
+        if name in {"", "—"} or zone in {"", "—"}:
+            return f"unknown (no {provider} live check)"
+        try:
+            result = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "gcloud",
+                    "compute",
+                    "disks",
+                    "describe",
+                    name,
+                    f"--zone={zone}",
+                    "--format=value(status)",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except FileNotFoundError:
+            return "unknown (no gcloud)"
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").lower()
+            if "not found" in stderr or "was not found" in stderr:
+                return "MISSING"
+            return f"unknown (no {provider} creds)"
+        return result.stdout.strip() or "MISSING"
+    if provider == "azure":
+        if not volume_id or volume_id == "—":
+            return "unknown (no azure volume_id)"
+        try:
+            result = subprocess.run(  # noqa: S603
+                [  # noqa: S607
+                    "az",
+                    "disk",
+                    "show",
+                    "--ids",
+                    volume_id,
+                    "--query",
+                    "diskState",
+                    "-o",
+                    "tsv",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except FileNotFoundError:
+            return "unknown (no az)"
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").lower()
+            if "not found" in stderr or "was not found" in stderr or "resourcenotfound" in stderr:
+                return "MISSING"
+            return "unknown (no azure creds)"
+        return result.stdout.strip() or "MISSING"
+    return f"unknown (no {provider} live check)"
 
 
 def _cmd_volumes(args: argparse.Namespace) -> int:
@@ -2077,7 +2142,12 @@ def _cmd_volumes(args: argparse.Namespace) -> int:
     live = getattr(args, "live", False)
     if live:
         for r in rows:
-            r["live"] = _volume_live_status(str(r["name"]), str(r["zone"]), str(r["provider"]))
+            r["live"] = _volume_live_status(
+                str(r["name"]),
+                str(r["zone"]),
+                str(r["provider"]),
+                volume_id=str(r.get("volume_id", "")),
+            )
 
     scope_w = max([24, *(len(str(r["scope"])) for r in rows)])
     name_w = max([20, *(len(str(r["name"])) for r in rows)])
@@ -2125,7 +2195,7 @@ def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, obje
     transport instead of limactl. The box owns its own roster, so it is the only
     source for a live session's name — exactly as for a Lima box.
     """
-    transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir)
+    transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
     result = transport.run("vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
     return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
@@ -2280,7 +2350,7 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     """
     name, identity, config = target.identity_name, target.identity, target.config
     backend = _cloud_backend(target)
-    vm_cloud.preflight()
+    vm_cloud.preflight(backend.spec.provider)
     _warn_cloud_under(target)
 
     transport = backend.transport()
