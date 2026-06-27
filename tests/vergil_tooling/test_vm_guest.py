@@ -18,7 +18,6 @@ from vergil_tooling.lib.vm_guest import (
     install_tooling,
     link_claude_dirs,
     read_fingerprint,
-    try_update_tooling,
     update_plugins,
     update_tooling,
     vm_occupancy,
@@ -500,63 +499,6 @@ class TestLinkClaudeDirs:
         link_claude_dirs(transport, claude_dir)
 
         transport.run.assert_not_called()
-
-
-class TestTryUpdateTooling:
-    @patch("vergil_tooling.lib.vm_guest.update_tooling")
-    def test_returns_true_on_success(self, mock_update: MagicMock) -> None:
-        transport = _transport()
-        result = try_update_tooling(transport, fallback_tag="v2.0")
-        assert result is True
-        mock_update.assert_called_once_with(transport, None, fallback_tag="v2.0")
-
-    @patch("vergil_tooling.lib.vm_guest.get_tooling_version", return_value="v2.0.63")
-    @patch("vergil_tooling.lib.vm_guest.update_tooling")
-    def test_returns_false_on_subprocess_error(
-        self,
-        mock_update: MagicMock,
-        _mock_version: MagicMock,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
-        result = try_update_tooling(_transport(), fallback_tag="v2.0")
-        assert result is False
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
-
-    @patch("vergil_tooling.lib.vm_guest.get_tooling_version", return_value="v2.0.63")
-    @patch("vergil_tooling.lib.vm_guest.update_tooling")
-    def test_returns_false_on_system_exit(
-        self,
-        mock_update: MagicMock,
-        _mock_version: MagicMock,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        mock_update.side_effect = SystemExit(1)
-        result = try_update_tooling(_transport(), fallback_tag="v2.0")
-        assert result is False
-        captured = capsys.readouterr()
-        assert "WARNING" in captured.err
-
-    @patch("vergil_tooling.lib.vm_guest.get_tooling_version", return_value=None)
-    @patch("vergil_tooling.lib.vm_guest.update_tooling")
-    def test_raises_when_no_tooling_remains_after_failure(
-        self,
-        mock_update: MagicMock,
-        _mock_version: MagicMock,
-        capsys: pytest.CaptureFixture[str],
-    ) -> None:
-        mock_update.side_effect = subprocess.CalledProcessError(1, "uv")
-        with pytest.raises(SystemExit):
-            try_update_tooling(_transport(), fallback_tag="v2.0")
-        captured = capsys.readouterr()
-        assert "no working tooling" in captured.err.lower()
-
-    @patch("vergil_tooling.lib.vm_guest.update_tooling")
-    def test_passes_explicit_tag(self, mock_update: MagicMock) -> None:
-        transport = _transport()
-        try_update_tooling(transport, tag="v2.1", fallback_tag="v2.0")
-        mock_update.assert_called_once_with(transport, "v2.1", fallback_tag="v2.0")
 
 
 class TestToolingInstallSelfHeal:

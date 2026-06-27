@@ -67,7 +67,6 @@ from vergil_tooling.lib.vm_guest import (
     inject_credentials,
     install_tooling,
     link_claude_dirs,
-    try_update_tooling,
     update_plugins,
     update_tooling,
     vm_probe,
@@ -525,8 +524,7 @@ def _st_copy_config(state: _LifecycleState) -> None:
 
 def _st_update_tooling(state: _LifecycleState) -> None:
     # Runs as a warn-mode stage: a failed update surfaces as ⚠ in the summary
-    # and the start continues — the same warn-and-continue contract
-    # try_update_tooling provided before the pipeline port.
+    # and the start continues — a warn-and-continue contract.
     fallback = resolve_vergil_version(state.target.config, state.target.identity)
     transport = state.target.backend.transport(state.target.instance)
     update_tooling(transport, fallback_tag=fallback)
@@ -2392,9 +2390,11 @@ def _cmd_session(args: argparse.Namespace) -> int:
             )
             return 1
 
-    fallback = resolve_vergil_version(config, identity)
+    # No per-session tooling reinstall: create/rebuild/start/update already
+    # install or refresh the tooling, so by the time a VM is sessionable its
+    # tooling is current. Reinstalling again here cost ~21s on a cold uv cache
+    # for no benefit (issue #1901). The transport is still needed below.
     transport = target.backend.transport(target.instance)
-    try_update_tooling(transport, fallback_tag=fallback)
 
     claude_dir = Path.home() / ".claude"
     copy_claude_config(transport, claude_dir)

@@ -1939,14 +1939,12 @@ class TestOffPlatformFallback:
 class TestSessionStaleness:
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_rejects_stale_vm(
         self,
         _age: MagicMock,
         _copy: MagicMock,
-        _update: MagicMock,
         _link: MagicMock,
         _exec: MagicMock,
         config_file: Path,
@@ -1959,14 +1957,12 @@ class TestSessionStaleness:
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=9.0)
     def test_session_allows_stale_with_override(
         self,
         _age: MagicMock,
         _copy: MagicMock,
-        _update: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
@@ -1976,14 +1972,12 @@ class TestSessionStaleness:
 
     @patch("vergil_tooling.bin.vrg_vm.os.execvp")
     @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
-    @patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
     @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
     @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
     def test_session_passes_fresh_vm(
         self,
         _age: MagicMock,
         _copy: MagicMock,
-        _update: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
@@ -1995,25 +1989,26 @@ class TestSessionStaleness:
 @patch("vergil_tooling.bin.vrg_vm.os.execvp")
 @patch("vergil_tooling.bin.vrg_vm.link_claude_dirs")
 @patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
-@patch("vergil_tooling.bin.vrg_vm.try_update_tooling")
 @patch("vergil_tooling.bin.vrg_vm.vm_age_days", return_value=1.0)
 class TestSession:
     def _inner(self, mock_exec: MagicMock) -> str:
         cmd = mock_exec.call_args[0][1]
         return cmd[cmd.index("-c") + 1]
 
+    @patch("vergil_tooling.bin.vrg_vm.update_tooling")
     def test_session_basic(
         self,
-        _age: MagicMock,
         mock_update: MagicMock,
+        _age: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
         main(["session", "--config", str(config_file), "."])
-        mock_update.assert_called_once_with(ANY, fallback_tag="v2.0")
-        _assert_transport(mock_update, "vergil-agent")
+        # Session must not reinstall tooling — create/rebuild/start/update
+        # already keep it current (issue #1901).
+        mock_update.assert_not_called()
         mock_exec.assert_called_once()
         args = mock_exec.call_args[0]
         assert args[0] == "limactl"
@@ -2025,7 +2020,6 @@ class TestSession:
     def test_session_sets_terminal_env_forwarding(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         _exec: MagicMock,
@@ -2039,7 +2033,6 @@ class TestSession:
     def test_session_default_launches_resolver(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2056,7 +2049,6 @@ class TestSession:
     def test_session_explicit_claude_uses_resolver(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2069,7 +2061,6 @@ class TestSession:
     def test_session_claude_with_flags_passes_extra(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2093,7 +2084,6 @@ class TestSession:
     def test_session_raw_command_override(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2107,7 +2097,6 @@ class TestSession:
     def test_session_identity_after_workspace(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2126,7 +2115,6 @@ class TestSession:
     def test_session_identity_before_subcommand(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2139,7 +2127,6 @@ class TestSession:
     def test_session_identity_between_subcommand_and_workspace(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2152,7 +2139,6 @@ class TestSession:
     def test_session_passthrough_unknown_flag_after_dashdash(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2178,7 +2164,6 @@ class TestSession:
     def test_session_unknown_flag_without_dashdash_errors(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         _exec: MagicMock,
@@ -2201,7 +2186,6 @@ class TestSession:
     def test_session_slot_passed_to_resolver(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2214,7 +2198,6 @@ class TestSession:
     def test_session_fork_passed_to_resolver(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2238,7 +2221,6 @@ class TestSession:
     def test_session_no_model_no_flag(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2250,7 +2232,6 @@ class TestSession:
     def test_session_cli_model_passed(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2262,7 +2243,6 @@ class TestSession:
     def test_session_config_model_default(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2274,7 +2254,6 @@ class TestSession:
     def test_session_cli_model_overrides_config(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
@@ -2288,7 +2267,6 @@ class TestSession:
     def test_session_top_level_model_default(
         self,
         _age: MagicMock,
-        _update: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
         mock_exec: MagicMock,
