@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.57/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.55/">
+        <link rel="next" href="../v2.1.74/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.56 - VERGIL Tooling</title>
+        <title>2.1.75 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2156-2026-06-23" class="md-skip">
+        <a href="#release-2175-2026-06-27" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.56
+              2.1.75
             
           </span>
         </div>
@@ -1016,10 +1016,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.75/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.75
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1035,6 +1062,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1548,37 +1606,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.56
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.56/" class="md-nav__link">
         
   
   
@@ -1594,37 +1625,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9515,22 +9515,14 @@
 
 
 
-<h1 id="release-2156-2026-06-23">Release 2.1.56 (2026-06-23)<a class="headerlink" href="#release-2156-2026-06-23" title="Permanent link">&para;</a></h1>
+<h1 id="release-2175-2026-06-27">Release 2.1.75 (2026-06-27)<a class="headerlink" href="#release-2175-2026-06-27" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>allow 'git clone' in vrg-git for off-platform volume bootstrap (#1781)</strong>
-The off-platform bootstrap_volume runs 'vrg-git clone <url> <dest>' on the
-cloud box, but vrg-git's allowlist had no 'clone' — it was rejected before git
-ran, failing the create at bootstrap-volume after provisioning, credentials,
-and tooling all succeeded.</li>
+<li><strong>drop redundant per-session tooling reinstall (#1902)</strong>
+vrg-vm session reinstalled vergil-tooling on every Lima session launch before exec claude, costing ~21s on a cold uv cache. This is redundant: create, rebuild, every start, and every update already install or refresh the tooling, so by the time a VM is sessionable its tooling is current.</li>
 </ul>
-<p>Add 'clone' to _ALLOWED_SIMPLE (allow the subcommand) and to _REMOTE_SUBCOMMANDS
-(so main() injects the identity's installation token via _git_auth_env). Auth is
-host-level (http.https://github.com/.extraHeader) and identity-based, so it works
-for a clone run outside any repo. The other gates are already clone-safe: clone
-is not in _FLAG_DENY, and _check_worktree_convention returns early for anything
-outside {checkout, switch}. No new exposure — clone reaches exactly the repos the
-identity's push/pull/fetch token already can.</p>
+<p>Remove the per-session try_update_tooling call from _cmd_session and delete the now-orphaned try_update_tooling helper (its only production caller) from vm_guest, along with its dedicated tests. update_tooling stays; it has other callers.</p>
+<p>The accepted trade-off: a VM left running across a release the sweep missed runs stale tooling until the next start/update/rebuild, handled out of band.</p>
 
 
 
