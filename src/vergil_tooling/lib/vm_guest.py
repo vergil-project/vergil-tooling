@@ -259,39 +259,6 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
         transport.pipe(f"cat > {_TOOLING_TAG_FILE}", f"{tag}\n")
 
 
-def try_update_tooling(
-    transport: Transport,
-    tag: str | None = None,
-    *,
-    fallback_tag: str = "",
-) -> bool:
-    """Update vergil-tooling, returning False on failure instead of aborting.
-
-    A soft failure is only safe when a working install remains: continuing into
-    a session with *no* tooling installed would leave the user with no ``vrg-*``
-    commands. So when the update fails, check what is actually installed — warn
-    and continue only if a version is still present, otherwise abort loudly.
-    """
-    try:
-        update_tooling(transport, tag, fallback_tag=fallback_tag)
-        return True
-    except (subprocess.CalledProcessError, SystemExit):
-        if get_tooling_version(transport) is None:
-            print(
-                "ERROR: vergil-tooling update failed and no working tooling "
-                "remains in the VM (the uv cache is likely corrupt).\n"
-                "Recover by rebuilding the VM, or clear the cache manually:\n"
-                "  uv cache clean (inside the VM)",
-                file=sys.stderr,
-            )
-            raise SystemExit(1) from None
-        print(
-            "WARNING: vergil-tooling update failed — continuing with installed version",
-            file=sys.stderr,
-        )
-        return False
-
-
 # Prepended to every in-guest `claude` invocation. claude itself is on the base
 # PATH (/usr/bin/claude, from apt node + `npm install -g`), but exporting PATH
 # explicitly — exactly as update_tooling does — keeps resolution independent of
