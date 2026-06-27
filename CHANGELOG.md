@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.75] - 2026-06-27
+
+### Bug fixes
+
+- drop redundant per-session tooling reinstall (#1902)
+
 ## [2.1.74] - 2026-06-25
 
 ### Bug fixes
