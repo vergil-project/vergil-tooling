@@ -821,6 +821,51 @@ class TestRunTofu:
         assert data["nested"] is True
         assert data["volume_id"] == "vol-1"
         assert data["provision_env"] == "VERGIL_USER=ubuntu"
+        # boot_disk_gib not supplied -> stays out of the tfvars (module default holds).
+        assert "boot_disk_gib" not in data
+
+    def _run_apply_vm(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boot_disk_gib: int | None
+    ) -> dict[str, object]:
+        """Run apply_vm with stub tofu and return the written vm tfvars dict."""
+        monkeypatch.setenv("HOME", str(tmp_path))
+        state_dir = tofu_state_dir("k", "gcp")
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.run", MagicMock(return_value=0))
+        monkeypatch.setattr(
+            "vergil_tooling.lib.vm_cloud.subprocess.run",
+            MagicMock(
+                return_value=subprocess.CompletedProcess(
+                    [], 0, stdout=_tofu_output_json({"host": "vm-x", "ssh_user": "ubuntu"})
+                )
+            ),
+        )
+        apply_vm(
+            tmp_path / "modules",
+            state_dir,
+            name="vm-x",
+            zone="us-central1-a",
+            instance_type="n2-standard-16",
+            nested=True,
+            volume_id="vol-1",
+            ssh_user="ubuntu",
+            provision_env="VERGIL_USER=ubuntu",
+            labels={},
+            boot_disk_gib=boot_disk_gib,
+        )
+        tfvars = (state_dir / "vm.tfstate.tfvars.json").read_text()
+        return cast("dict[str, object]", json.loads(tfvars))
+
+    def test_apply_vm_threads_boot_disk_gib_into_tfvars(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data = self._run_apply_vm(tmp_path, monkeypatch, boot_disk_gib=100)
+        assert data["boot_disk_gib"] == 100
+
+    def test_apply_vm_omits_boot_disk_gib_when_none(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        data = self._run_apply_vm(tmp_path, monkeypatch, boot_disk_gib=None)
+        assert "boot_disk_gib" not in data
 
     def test_apply_vm_rolls_back_on_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -1777,6 +1822,17 @@ class TestOffPlatformBackend:
         from vergil_tooling.lib.vm_spec import spec_fingerprint
 
         assert f"SPEC_FINGERPRINT={spec_fingerprint(_off_spec(nested=True))}" in env
+
+    def test_vm_vars_omits_boot_disk_gib_when_unset(self) -> None:
+        # Unset boot_disk -> no boot_disk_gib var, so the tofu module default holds.
+        b = OffPlatformBackend(_off_spec(), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert "boot_disk_gib" not in vars_
+
+    def test_vm_vars_threads_boot_disk_gib_when_set(self) -> None:
+        b = OffPlatformBackend(_off_spec(boot_disk="100GiB"), "vergil-user", "o", "r")
+        vars_ = b.vm_vars(zone="us-central1-b", volume_id="vol-1")
+        assert vars_["boot_disk_gib"] == 100
 
     def test_vm_vars_includes_ssh_public_key_for_azure_and_absent_for_gcp(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

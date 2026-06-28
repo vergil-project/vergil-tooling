@@ -358,6 +358,41 @@ class TestOffPlatformCompose:
                 override=None,
             )
 
+    def test_boot_disk_defaults_empty_and_is_not_required(self) -> None:
+        # boot_disk is optional even off-platform: an otherwise-valid profile that
+        # never declares it composes cleanly with boot_disk == "" (module default).
+        spec = compose_vm_spec(
+            identity="vergil-user", base=BASE, stanza=_off_platform_stanza(), override=None
+        )
+        assert spec.boot_disk == ""
+
+    def test_boot_disk_composes_across_tiers(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(boot_disk="120GiB"),
+            override=None,
+        )
+        assert spec.boot_disk == "120GiB"
+
+    def test_boot_disk_host_override_wins(self) -> None:
+        spec = compose_vm_spec(
+            identity="vergil-user",
+            base=BASE,
+            stanza=_off_platform_stanza(boot_disk="120GiB"),
+            override={"boot_disk": "200GiB"},
+        )
+        assert spec.boot_disk == "200GiB"
+
+    def test_bad_boot_disk_format_raises(self) -> None:
+        with pytest.raises(SpecError, match="boot_disk must be '<number>GiB'"):
+            compose_vm_spec(
+                identity="vergil-user",
+                base=BASE,
+                stanza=_off_platform_stanza(boot_disk="100"),
+                override=None,
+            )
+
     def test_audit_role_without_keys_does_not_satisfy_required(self) -> None:
         # backend is all-identity ([vm] tier) but the cloud keys live only in the
         # vergil-user role; vergil-audit therefore composes off-platform WITHOUT them
@@ -703,6 +738,47 @@ class TestFingerprint:
         )
         expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         assert spec_fingerprint(self._op_spec()) == expected
+
+    def test_boot_disk_set_changes_fingerprint(self) -> None:
+        # Declaring a boot_disk on a profile that had none flips the hash (rebuild).
+        assert spec_fingerprint(self._op_spec()) != spec_fingerprint(
+            self._op_spec(boot_disk="100GiB")
+        )
+
+    def test_boot_disk_change_changes_fingerprint(self) -> None:
+        assert spec_fingerprint(self._op_spec(boot_disk="100GiB")) != spec_fingerprint(
+            self._op_spec(boot_disk="200GiB")
+        )
+
+    def test_boot_disk_unset_keeps_legacy_fingerprint(self) -> None:
+        """An unset boot_disk must not flip an existing cloud profile's fingerprint.
+
+        Pins the encoding: ``boot_disk`` enters the off-platform payload only when set,
+        so cloud VMs created before the knob existed never falsely read NEEDS-REBUILD.
+        """
+        payload = "\n".join(
+            (
+                "cpus=12",
+                "memory=64GiB",
+                "stale_days=7",
+                "packages=a,b",
+                "apt_repos=" + "|".join(f"{k}={_REPO[k]}" for k in sorted(_REPO)),
+                "vagrant_plugins=vagrant-libvirt",
+                "backend=off-platform",
+                "provider=gcp",
+                "region=us-central1",
+                "instance=n2-standard-16",
+                "volume=300GiB",
+            )
+        )
+        expected = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        assert spec_fingerprint(self._op_spec(boot_disk="")) == expected
+
+    def test_boot_disk_ignored_on_local_fingerprint(self) -> None:
+        # boot_disk is a cloud-only knob: it must not enter the Lima fingerprint.
+        assert spec_fingerprint(self._spec(boot_disk="100GiB")) == spec_fingerprint(
+            self._spec(boot_disk="200GiB")
+        )
 
 
 # ---------------------------------------------------------------------------
