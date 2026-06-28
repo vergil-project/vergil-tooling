@@ -948,6 +948,8 @@
       
         
       
+        
+      
     
     
     
@@ -1000,6 +1002,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.76/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.76
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -6792,15 +6822,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#off-platform-cloud-backend-backend-provider-region-instance-volume" class="md-nav__link">
+  <a href="#off-platform-cloud-backend-backend-provider-region-instance-volume-boot_disk" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Off-platform (cloud) backend (backend, provider, region, instance, volume)
+        Off-platform (cloud) backend (backend, provider, region, instance, volume, boot_disk)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume)">
+    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume, boot_disk)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -9641,15 +9671,15 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#off-platform-cloud-backend-backend-provider-region-instance-volume" class="md-nav__link">
+  <a href="#off-platform-cloud-backend-backend-provider-region-instance-volume-boot_disk" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Off-platform (cloud) backend (backend, provider, region, instance, volume)
+        Off-platform (cloud) backend (backend, provider, region, instance, volume, boot_disk)
       
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume)">
+    <nav class="md-nav" aria-label="Off-platform (cloud) backend (backend, provider, region, instance, volume, boot_disk)">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -9851,6 +9881,12 @@ any <code>[vm]</code> key marks the spec customized, which gives the repo a dedi
 <td><em>(none)</em></td>
 <td><strong>Persistent</strong> block-volume size when off-platform — created once, reused, outlives the VM. Does <strong>not</strong> fall back to <code>disk</code></td>
 </tr>
+<tr>
+<td><code>boot_disk</code></td>
+<td>string <code>"&lt;N&gt;GiB"</code></td>
+<td><em>(module default, ~30 GiB)</em></td>
+<td><strong>Ephemeral</strong> boot/root-disk size when off-platform. Optional — unset keeps the image default. Sizes the disk that holds scratch data living outside <code>volume</code></td>
+</tr>
 </tbody>
 </table>
 <p>The vergil-vm template owns <em>how</em> declarative installs happen — repos
@@ -9894,7 +9930,7 @@ mounted into every VM, so both checkouts are present).</p>
   which owns the box.</li>
 <li>One hop only — the lender may not itself declare <code>shared_from</code>.</li>
 </ul>
-<h2 id="off-platform-cloud-backend-backend-provider-region-instance-volume">Off-platform (cloud) backend (<code>backend</code>, <code>provider</code>, <code>region</code>, <code>instance</code>, <code>volume</code>)<a class="headerlink" href="#off-platform-cloud-backend-backend-provider-region-instance-volume" title="Permanent link">&para;</a></h2>
+<h2 id="off-platform-cloud-backend-backend-provider-region-instance-volume-boot_disk">Off-platform (cloud) backend (<code>backend</code>, <code>provider</code>, <code>region</code>, <code>instance</code>, <code>volume</code>, <code>boot_disk</code>)<a class="headerlink" href="#off-platform-cloud-backend-backend-provider-region-instance-volume-boot_disk" title="Permanent link">&para;</a></h2>
 <p>By default a repo's VM is a local macOS Lima box (<code>backend = "local"</code>).
 Setting <code>backend = "off-platform"</code> switches it to a <strong>remote
 native-x86 cloud host</strong> driven by OpenTofu — for repos that genuinely
@@ -9904,14 +9940,15 @@ and provisioning live in vergil-vm
 design spec is
 <a href="https://github.com/vergil-project/vergil-vm/blob/main/docs/specs/2026-06-19-off-platform-vm-backend-design.md"><code>vergil-vm docs/specs/2026-06-19-off-platform-vm-backend-design.md</code></a>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[vm.vergil-user]</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">backend</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;off-platform&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">provider</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;gcp&quot;</span><span class="w">              </span><span class="c1"># selects the OpenTofu module</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">region</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;us-central1&quot;</span><span class="w">      </span><span class="c1"># provider-native region</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">instance</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;n2-standard-16&quot;</span><span class="w">   </span><span class="c1"># provider-native, nested-virt-capable</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">volume</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;300GiB&quot;</span><span class="w">           </span><span class="c1"># PERSISTENT volume — outlives the VM</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">nested</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">               </span><span class="c1"># /dev/kvm in the cloud box too</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">cpus</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span><span class="w">                 </span><span class="c1"># request / under-provision intent (see below)</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">memory</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;64GiB&quot;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">backend</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;off-platform&quot;</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">provider</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;gcp&quot;</span><span class="w">              </span><span class="c1"># selects the OpenTofu module</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">region</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;us-central1&quot;</span><span class="w">      </span><span class="c1"># provider-native region</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">instance</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;n2-standard-16&quot;</span><span class="w">   </span><span class="c1"># provider-native, nested-virt-capable</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">volume</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;300GiB&quot;</span><span class="w">           </span><span class="c1"># PERSISTENT volume — outlives the VM</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">boot_disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;100GiB&quot;</span><span class="w">           </span><span class="c1"># EPHEMERAL boot disk — optional; dies with the VM</span>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">nested</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">               </span><span class="c1"># /dev/kvm in the cloud box too</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">cpus</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span><span class="w">                 </span><span class="c1"># request / under-provision intent (see below)</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">memory</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;64GiB&quot;</span>
 </code></pre></div>
 <ul>
 <li>The five keys are <strong>last-wins scalars</strong> that ride the same five-tier
@@ -9926,9 +9963,16 @@ design spec is
   — the tooling does not enumerate them, so adding a provider is a
   vergil-vm module change with no tooling change.</li>
 <li><strong><code>disk</code> is ignored off-platform.</strong> On cloud there are two disks with
-  opposite lifecycles: the ephemeral VM boot disk (a fixed module
-  default) and the persistent <code>volume</code> declared above. Only <code>volume</code> is
-  author-facing.</li>
+  opposite lifecycles: the ephemeral VM boot disk and the persistent
+  <code>volume</code> declared above. The Lima <code>disk</code> knob drives neither — use
+  <code>volume</code> for the persistent disk and <code>boot_disk</code> for the ephemeral one.</li>
+<li><strong><code>boot_disk</code> sizes the ephemeral boot/root disk</strong> (optional). Unset,
+  the boot disk inherits the cloud image's default (~30 GiB); set it
+  (<code>"&lt;N&gt;GiB"</code>) to grow the disk for workloads whose scratch data lives
+  <em>outside</em> the persistent <code>volume</code> — e.g. a nested-virt image pool and
+  qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
+  than the never-wiped <code>volume</code>. Unlike <code>volume</code> it is <strong>not required</strong>
+  off-platform, and it never enters the local (Lima) spec.</li>
 <li><strong><code>instance</code> is authoritative over <code>cpus</code>/<code>memory</code> on cloud.</strong> They
   stay in the spec as human-readable intent; a session-time
   under-provisioning warning (instance smaller than the declared
@@ -10010,7 +10054,10 @@ the payload (it is not a cloud knob). A local profile therefore keeps
 its byte-for-byte fingerprint from before these keys existed — existing
 Lima VMs never falsely read <code>NEEDS-REBUILD</code> — while flipping a repo
 Lima→cloud, or resizing the <code>instance</code>/<code>volume</code>, trips <code>NEEDS-REBUILD</code>
-as expected.</p>
+as expected. <code>boot_disk</code> enters the off-platform payload <strong>only when
+set</strong>, so cloud VMs created before the knob existed keep their
+fingerprints; declaring or resizing it trips <code>NEEDS-REBUILD</code> like
+<code>volume</code>.</p>
 
 
 
