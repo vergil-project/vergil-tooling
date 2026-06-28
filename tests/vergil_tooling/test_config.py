@@ -905,6 +905,39 @@ class TestParseVmStanza:
         with pytest.raises(ConfigError, match="cannot be combined"):
             parse_vm_stanza({"vm": {"shared_from": "lmf/mq", "backend": "off-platform"}})
 
+    # -- boot_disk (ephemeral root-disk size) — vergil-tooling #1907 ----------
+
+    def test_boot_disk_parsed_at_vm_tier(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"boot_disk": "100GiB"}})
+        assert stanza is not None
+        assert stanza.boot_disk == "100GiB"
+
+    def test_boot_disk_parsed_at_role_tier(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"vergil-user": {"boot_disk": "120GiB"}}})
+        assert stanza is not None
+        assert stanza.roles["vergil-user"].boot_disk == "120GiB"
+        assert stanza.boot_disk is None  # only the role tier declared it
+
+    def test_boot_disk_parsed_at_instance_tier(self) -> None:
+        stanza = parse_vm_stanza(
+            {"vm": {"vergil-user": {"instances": {"big": {"boot_disk": "150GiB"}}}}}
+        )
+        assert stanza is not None
+        assert stanza.roles["vergil-user"].instances["big"].boot_disk == "150GiB"
+
+    def test_boot_disk_absent_is_none(self) -> None:
+        stanza = parse_vm_stanza({"vm": {"packages": []}})
+        assert stanza is not None
+        assert stanza.boot_disk is None
+
+    def test_boot_disk_not_flagged_unrecognized(self, capsys: pytest.CaptureFixture[str]) -> None:
+        parse_vm_stanza({"vm": {"vergil-user": {"boot_disk": "100GiB"}}})
+        assert "unrecognized" not in capsys.readouterr().err
+
+    def test_boot_disk_non_string_rejected(self) -> None:
+        with pytest.raises(ConfigError, match="'boot_disk' must be a string"):
+            parse_vm_stanza({"vm": {"boot_disk": 100}})
+
 
 # -- [project] ghas key -------------------------------------------------------
 
