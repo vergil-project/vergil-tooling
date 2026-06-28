@@ -75,6 +75,11 @@ class ComposedSpec:
     region: str = ""
     instance: str = ""
     volume: str = ""
+    # Optional ephemeral boot/root-disk size (vergil-tooling #1907). Unlike `volume`
+    # it is NOT required off-platform: empty -> the vergil-vm module's boot_disk_gib
+    # default (~30 GiB), so unset behaviour is unchanged. Set it (`<N>GiB`) to grow the
+    # ephemeral disk for workloads whose scratch data lives on the boot disk.
+    boot_disk: str = ""
     # Optional explicit zone (vergil-tooling #1797). Empty -> the volume module's
     # ${region}-b default; set it to dodge a per-zone capacity stockout in the region.
     zone: str = ""
@@ -106,6 +111,7 @@ class _Acc:
     region: str
     instance: str
     volume: str
+    boot_disk: str
     zone: str
     # Repo-declared footprint (tiers 3+4 only) — the floor an override is measured
     # against. None means the repo never declared that scalar, so no floor applies.
@@ -161,6 +167,9 @@ def _apply_overlay(acc: _Acc, overlay: VmStanza | RoleOverlay) -> None:
     if overlay.volume is not None:
         acc.volume = overlay.volume
         acc.customized = True
+    if overlay.boot_disk is not None:
+        acc.boot_disk = overlay.boot_disk
+        acc.customized = True
     if overlay.zone is not None:
         acc.zone = overlay.zone
         acc.customized = True
@@ -192,6 +201,7 @@ def compose_vm_spec(
         region="",
         instance="",
         volume="",
+        boot_disk="",
         zone="",
         declared_cpus=None,
         declared_mem=None,
@@ -238,7 +248,7 @@ def compose_vm_spec(
             acc.stale_days = cast("int", override["stale_days"])
         # The off-platform scalars also cascade through the host-override tier
         # (built-in → identity → [vm] → [vm.<identity>] → identities.toml override).
-        for key in ("backend", "provider", "region", "instance", "volume", "zone"):
+        for key in ("backend", "provider", "region", "instance", "volume", "boot_disk", "zone"):
             if key in override:
                 setattr(acc, key, str(override[key]))
 
@@ -261,6 +271,7 @@ def compose_vm_spec(
         region=acc.region,
         instance=acc.instance,
         volume=acc.volume,
+        boot_disk=acc.boot_disk,
         zone=acc.zone,
     )
 
@@ -289,6 +300,15 @@ def _validate_backend(identity: str, acc: _Acc) -> None:
         msg = (
             f"identity {identity!r}: [vm] volume must be '<number>GiB' "
             f'(e.g. "300GiB"), got {acc.volume!r}'
+        )
+        raise SpecError(msg)
+    # boot_disk is optional (unset -> the module's boot_disk_gib default), but when
+    # declared it must carry the same `<N>GiB` format as volume — never silently
+    # accept a malformed size.
+    if acc.boot_disk and not _SIZE_RE.fullmatch(acc.boot_disk):
+        msg = (
+            f"identity {identity!r}: [vm] boot_disk must be '<number>GiB' "
+            f'(e.g. "100GiB"), got {acc.boot_disk!r}'
         )
         raise SpecError(msg)
 
@@ -485,5 +505,10 @@ def spec_fingerprint(spec: ComposedSpec) -> str:
         fields.append(f"region={spec.region}")
         fields.append(f"instance={spec.instance}")
         fields.append(f"volume={spec.volume}")
+        # boot_disk enters only when set, so cloud profiles that never declared it keep
+        # their pre-boot-disk fingerprint (no spurious NEEDS-REBUILD when the knob was
+        # introduced); setting or resizing it flips the hash and triggers a rebuild.
+        if spec.boot_disk:
+            fields.append(f"boot_disk={spec.boot_disk}")
     payload = "\n".join(fields)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()

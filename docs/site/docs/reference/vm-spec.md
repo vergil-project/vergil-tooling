@@ -68,6 +68,7 @@ any `[vm]` key marks the spec customized, which gives the repo a dedicated VM.
 | `region` | string | *(none)* | Provider-native region when off-platform (e.g. `"us-central1"`) |
 | `instance` | string | *(none)* | Provider-native, nested-virt-capable instance type when off-platform (e.g. `"n2-standard-16"`) |
 | `volume` | string `"<N>GiB"` | *(none)* | **Persistent** block-volume size when off-platform — created once, reused, outlives the VM. Does **not** fall back to `disk` |
+| `boot_disk` | string `"<N>GiB"` | *(module default, ~30 GiB)* | **Ephemeral** boot/root-disk size when off-platform. Optional — unset keeps the image default. Sizes the disk that holds scratch data living outside `volume` |
 
 The vergil-vm template owns *how* declarative installs happen — repos
 never supply scripts.
@@ -116,7 +117,7 @@ mounted into every VM, so both checkouts are present).
   which owns the box.
 - One hop only — the lender may not itself declare `shared_from`.
 
-## Off-platform (cloud) backend (`backend`, `provider`, `region`, `instance`, `volume`)
+## Off-platform (cloud) backend (`backend`, `provider`, `region`, `instance`, `volume`, `boot_disk`)
 
 By default a repo's VM is a local macOS Lima box (`backend = "local"`).
 Setting `backend = "off-platform"` switches it to a **remote
@@ -129,14 +130,15 @@ design spec is
 
 ```toml
 [vm.vergil-user]
-backend  = "off-platform"
-provider = "gcp"              # selects the OpenTofu module
-region   = "us-central1"      # provider-native region
-instance = "n2-standard-16"   # provider-native, nested-virt-capable
-volume   = "300GiB"           # PERSISTENT volume — outlives the VM
-nested   = true               # /dev/kvm in the cloud box too
-cpus     = 12                 # request / under-provision intent (see below)
-memory   = "64GiB"
+backend   = "off-platform"
+provider  = "gcp"              # selects the OpenTofu module
+region    = "us-central1"      # provider-native region
+instance  = "n2-standard-16"   # provider-native, nested-virt-capable
+volume    = "300GiB"           # PERSISTENT volume — outlives the VM
+boot_disk = "100GiB"           # EPHEMERAL boot disk — optional; dies with the VM
+nested    = true               # /dev/kvm in the cloud box too
+cpus      = 12                 # request / under-provision intent (see below)
+memory    = "64GiB"
 ```
 
 - The five keys are **last-wins scalars** that ride the same five-tier
@@ -151,9 +153,16 @@ memory   = "64GiB"
   — the tooling does not enumerate them, so adding a provider is a
   vergil-vm module change with no tooling change.
 - **`disk` is ignored off-platform.** On cloud there are two disks with
-  opposite lifecycles: the ephemeral VM boot disk (a fixed module
-  default) and the persistent `volume` declared above. Only `volume` is
-  author-facing.
+  opposite lifecycles: the ephemeral VM boot disk and the persistent
+  `volume` declared above. The Lima `disk` knob drives neither — use
+  `volume` for the persistent disk and `boot_disk` for the ephemeral one.
+- **`boot_disk` sizes the ephemeral boot/root disk** (optional). Unset,
+  the boot disk inherits the cloud image's default (~30 GiB); set it
+  (`"<N>GiB"`) to grow the disk for workloads whose scratch data lives
+  *outside* the persistent `volume` — e.g. a nested-virt image pool and
+  qcow2 overlays, which belong on the wipe-on-rebuild boot disk rather
+  than the never-wiped `volume`. Unlike `volume` it is **not required**
+  off-platform, and it never enters the local (Lima) spec.
 - **`instance` is authoritative over `cpus`/`memory` on cloud.** They
   stay in the spec as human-readable intent; a session-time
   under-provisioning warning (instance smaller than the declared
@@ -242,4 +251,7 @@ the payload (it is not a cloud knob). A local profile therefore keeps
 its byte-for-byte fingerprint from before these keys existed — existing
 Lima VMs never falsely read `NEEDS-REBUILD` — while flipping a repo
 Lima→cloud, or resizing the `instance`/`volume`, trips `NEEDS-REBUILD`
-as expected.
+as expected. `boot_disk` enters the off-platform payload **only when
+set**, so cloud VMs created before the knob existed keep their
+fingerprints; declaring or resizing it trips `NEEDS-REBUILD` like
+`volume`.

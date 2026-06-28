@@ -639,6 +639,7 @@ def apply_vm(
     ssh_user: str,
     provision_env: str,
     labels: dict[str, str],
+    boot_disk_gib: int | None = None,
     provider: str = "gcp",
 ) -> dict[str, str]:
     """Apply the VM module against the existing volume; return its outputs (host, ssh_user).
@@ -656,23 +657,22 @@ def apply_vm(
     strategy = strategy_for(provider)
     module_dir = modules_root / provider / "vm"
     state = state_dir / "vm.tfstate"
+    tofu_vars: dict[str, object] = {
+        "name": name,
+        "zone": zone,
+        "instance_type": instance_type,
+        "nested": nested,
+        "volume_id": volume_id,
+        "ssh_user": ssh_user,
+        "provision_env": provision_env,
+        "labels": labels,
+    }
+    # Only override the module's boot_disk_gib default when an explicit size was
+    # composed — omitting the var keeps the unchanged-default behaviour (#1907).
+    if boot_disk_gib is not None:
+        tofu_vars["boot_disk_gib"] = boot_disk_gib
     try:
-        _run_tofu(
-            module_dir,
-            state,
-            "apply",
-            {
-                "name": name,
-                "zone": zone,
-                "instance_type": instance_type,
-                "nested": nested,
-                "volume_id": volume_id,
-                "ssh_user": ssh_user,
-                "provision_env": provision_env,
-                "labels": labels,
-            },
-            strategy=strategy,
-        )
+        _run_tofu(module_dir, state, "apply", tofu_vars, strategy=strategy)
     except subprocess.CalledProcessError:
         # Best-effort rollback: tear down the partial state (the orphaned NIC/VM on
         # Azure, or the orphan firewall on GCP) so the retry starts clean.  The
@@ -1276,6 +1276,10 @@ class OffPlatformBackend:
             "provision_env": provision_env,
             "labels": self.labels,
         }
+        # boot_disk is optional: thread it as the tofu boot_disk_gib var only when the
+        # spec declares one, so an unset profile rides the module default (#1907).
+        if self.spec.boot_disk:
+            result["boot_disk_gib"] = int(self.spec.boot_disk.removesuffix("GiB"))
         # Azure: generate/persist an ed25519 keypair and pass the public key to the
         # module so it can install it in cloud-init's authorized_keys. GCP uses IAP
         # (OS Login / metadata keys managed by gcloud) so it needs no injected key —
