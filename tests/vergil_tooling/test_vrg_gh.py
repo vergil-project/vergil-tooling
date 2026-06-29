@@ -450,7 +450,6 @@ class TestAgentDenials:
     @pytest.mark.parametrize(
         ("top", "sub"),
         [
-            ("issue", "close"),
             ("issue", "reopen"),
             ("pr", "edit"),
             ("pr", "merge"),
@@ -477,8 +476,26 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "edit"]
 
-    def test_issue_close_says_human_maintainer(self, capsys: pytest.CaptureFixture[str]) -> None:
-        main(["issue", "close", "42"])
+    def test_issue_close_allowed_for_user_agent(self) -> None:
+        # Re-allowed for USER: closing is now automated and documented as
+        # mechanical, so a manual close is safe and useful (issue #1966).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "close", "42"])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args[:3] == ["gh", "issue", "close"]
+
+    def test_issue_reopen_still_says_human_maintainer(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        main(["issue", "reopen", "42"])
         err = capsys.readouterr().err
         assert "human maintainer" in err.lower()
 
@@ -609,6 +626,8 @@ class TestAuditAllowlist:
             ("issue", "list"),
             ("issue", "create"),
             ("issue", "edit"),
+            ("issue", "close"),
+            ("issue", "reopen"),
             ("run", "list"),
             ("repo", "view"),
             ("label", "list"),
