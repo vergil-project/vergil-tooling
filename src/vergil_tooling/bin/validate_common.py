@@ -10,7 +10,8 @@ Runs inside the dev container via ``vrg-container-run``:
   5. hadolint on Dockerfile* files at the repo root
   6. actionlint on ``.github/workflows/``
   7. ansible-lint when the repo carries Ansible content, using the
-     bundled canonical config (issue #1667)
+     bundled canonical config as the rule baseline while honoring the
+     repo's local ``skip_list`` / ``exclude_paths`` (issues #1667, #1952)
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ import subprocess
 import sys
 from importlib.resources import files
 from typing import TYPE_CHECKING
+
+import yaml
 
 from vergil_tooling.bin import vrg_repo_profile
 from vergil_tooling.lib import git
@@ -135,6 +138,58 @@ def _has_ansible_content(repo_root: Path) -> bool:
     return any((repo_root / name).is_dir() for name in _ANSIBLE_DIR_SIGNALS)
 
 
+# Repo-local ansible-lint config filenames, in ansible-lint's own discovery
+# order. We pass the bundled config via ``-c``, which suppresses ansible-lint's
+# config discovery entirely, so we read these ourselves to recover the two
+# repo-side levers the gate must still honor (issue #1952).
+_ANSIBLE_LINT_CONFIG_NAMES = (
+    ".ansible-lint",
+    ".ansible-lint.yml",
+    ".ansible-lint.yaml",
+)
+
+
+def _find_ansible_lint_config(repo_root: Path) -> Path | None:
+    """Return the repo's local ansible-lint config file, if any."""
+    for name in _ANSIBLE_LINT_CONFIG_NAMES:
+        candidate = repo_root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _ansible_lint_overrides(config_path: Path) -> list[str]:
+    """Translate a repo's local ansible-lint ``skip_list`` / ``exclude_paths``
+    into CLI flags layered on top of the bundled ``-c`` baseline.
+
+    Passing ``-c <bundled>`` makes ansible-lint ignore the repo's own config
+    discovery, so a consuming repo otherwise cannot defer rules (``skip_list``)
+    or scope out non-Ansible YAML (``exclude_paths``). We read those two keys
+    ourselves and re-express them as ``-x rule1,rule2`` and ``--exclude <path>``
+    flags, which apply on top of the bundled rule baseline (issue #1952).
+
+    Raises ``yaml.YAMLError`` if the config is not valid YAML; the caller
+    surfaces that as a hard failure rather than silently dropping the repo's
+    intended skips.
+    """
+    raw = yaml.safe_load(config_path.read_text())
+    if not isinstance(raw, dict):
+        return []
+
+    overrides: list[str] = []
+
+    skip_list = raw.get("skip_list")
+    if isinstance(skip_list, list) and skip_list:
+        overrides += ["-x", ",".join(str(rule) for rule in skip_list)]
+
+    exclude_paths = raw.get("exclude_paths")
+    if isinstance(exclude_paths, list):
+        for entry in exclude_paths:
+            overrides += ["--exclude", str(entry)]
+
+    return overrides
+
+
 def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     repo_root = git.repo_root()
 
@@ -197,8 +252,19 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if _has_ansible_content(repo_root):
         print("Running: ansible-lint")
         ansible_config = files("vergil_tooling.configs") / "ansible-lint.yaml"
+        overrides: list[str] = []
+        local_config = _find_ansible_lint_config(repo_root)
+        if local_config is not None:
+            try:
+                overrides = _ansible_lint_overrides(local_config)
+            except yaml.YAMLError as exc:
+                print(
+                    f"error: failed to parse {local_config}: {exc}",
+                    file=sys.stderr,
+                )
+                return 1
         result = subprocess.run(  # noqa: S603
-            ["ansible-lint", "-c", str(ansible_config)],  # noqa: S607
+            ["ansible-lint", "-c", str(ansible_config), *overrides],  # noqa: S607
             check=False,
         )
         if result.returncode != 0:
