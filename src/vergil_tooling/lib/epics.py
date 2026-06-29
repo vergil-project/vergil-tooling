@@ -160,3 +160,32 @@ def all_children_closed(epic: IssueRef) -> bool:
     """True iff *epic* has at least one child and all children are closed."""
     children = child_states(epic)
     return bool(children) and all(child.state == "CLOSED" for child in children)
+
+
+def _labels(ref: IssueRef) -> set[str]:
+    raw: Any = github.read_json(
+        "issue", "view", str(ref.number), "--repo", f"{ref.owner}/{ref.repo}", "--json", "labels"
+    )
+    labels = (raw or {}).get("labels") or [] if isinstance(raw, dict) else []
+    return {str(label.get("name", "")) for label in labels}
+
+
+def is_epic(ref: IssueRef) -> bool:
+    """True if *ref* carries the ``epic`` label (i.e. it is in the model)."""
+    return "epic" in _labels(ref)
+
+
+def rollup(task: IssueRef) -> None:
+    """Close *task*'s parent epic if the epic is finite and all children closed.
+
+    A no-op unless the task has an ``epic``-labeled parent (the transition gate):
+    legacy issues have no epic parent, so finalize never rolls them up. A
+    ``standing`` epic is perpetual and never auto-closes.
+    """
+    parent = parent_of(task)
+    if parent is None or not is_epic(parent):
+        return
+    if "standing" in _labels(parent):
+        return
+    if all_children_closed(parent):
+        github.run("issue", "close", str(parent.number), "--repo", f"{parent.owner}/{parent.repo}")
