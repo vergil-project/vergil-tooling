@@ -59,3 +59,19 @@ def test_delete_list_is_strings() -> None:
     registry = load_labels()
     for name in registry["delete"]:
         assert isinstance(name, str)
+
+
+def test_registry_includes_convention_labels() -> None:
+    # epic/task convention (epic #40): Role (epic, standing), Stage (triage),
+    # Kind (idea), Exception (hotfix). The remaining Kind axis reuses the
+    # existing conventional-commit labels already in the registry.
+    names = {label["name"] for label in load_labels()["labels"]}
+    for required in {"epic", "standing", "triage", "idea", "hotfix"}:
+        assert required in names, f"convention label missing: {required}"
+
+
+def test_label_change_is_additive_only() -> None:
+    # Convention labels are added additively; retiring default cruft is deferred
+    # to the per-repo migration pass (epic #40, Task 9). This task must not
+    # enqueue any new deletions beyond the pre-existing one.
+    assert load_labels()["delete"] == ["enhancement"]
