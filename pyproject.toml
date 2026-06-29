@@ -4,14 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.84"
+version = "2.1.85"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
-dependencies = ["rich>=13.0"]
+dependencies = ["rich>=13.0", "pyyaml>=6.0"]
 
 [project.scripts]
+vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"
 vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
 vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
@@ -61,7 +62,7 @@ vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses", "types-pyyaml"]
 
 [tool.uv]
 # Security floors for TRANSITIVE dependencies. These are not direct dependencies —
