@@ -208,4 +208,5 @@ def rollup(task: IssueRef) -> None:
     if "standing" in _labels(parent):
         return
     if all_children_closed(parent):
+        print(f"Rolling up epic {parent.slug} — all child tasks closed.")
         github.run("issue", "close", str(parent.number), "--repo", f"{parent.owner}/{parent.repo}")
