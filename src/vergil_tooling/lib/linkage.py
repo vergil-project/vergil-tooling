@@ -84,3 +84,20 @@ def extract_tracking_issue(text: str) -> int | None:
         msg = f"multiple tracking issue references found ({len(matches)})"
         raise ValueError(msg)
     return int(matches[0][1])
+
+
+def extract_tracking_ref(text: str) -> str | None:
+    """Return the single ``Ref`` as ``"#N"`` or ``"owner/repo#N"`` (cross-repo).
+
+    Like :func:`extract_tracking_issue` but preserves the optional ``owner/repo``
+    so callers can identify a cross-repo linkage (e.g. a mistaken link to an epic
+    in ``.github``). Raises ``ValueError`` if multiple ``Ref`` lines are found.
+    """
+    matches = LINKAGE_RE.findall(text)
+    if not matches:
+        return None
+    if len(matches) > 1:
+        msg = f"multiple tracking issue references found ({len(matches)})"
+        raise ValueError(msg)
+    repo_part, number = matches[0]
+    return f"{repo_part}#{number}" if repo_part else f"#{number}"

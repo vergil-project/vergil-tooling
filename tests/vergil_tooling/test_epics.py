@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from vergil_tooling.lib import epics
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
@@ -242,3 +244,25 @@ def test_rollup_noop_when_parent_not_epic() -> None:
     ):
         epics.rollup(TASK)
     mock_run.assert_not_called()
+
+
+# -- parse_issue_ref ---------------------------------------------------------
+
+
+def test_parse_issue_ref_bare_uses_default_repo() -> None:
+    assert epics.parse_issue_ref("#42", default_repo="org/repo") == IssueRef("org", "repo", 42)
+
+
+def test_parse_issue_ref_cross_repo() -> None:
+    ref = epics.parse_issue_ref("org/.github#40", default_repo="x/y")
+    assert ref == IssueRef("org", ".github", 40)
+
+
+def test_parse_issue_ref_malformed_raises() -> None:
+    with pytest.raises(ValueError, match="not an issue ref"):
+        epics.parse_issue_ref("not-a-ref", default_repo="org/repo")
+
+
+def test_parse_issue_ref_no_repo_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo"):
+        epics.parse_issue_ref("#42", default_repo="")

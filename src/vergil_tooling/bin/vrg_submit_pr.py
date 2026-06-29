@@ -43,7 +43,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import git, github, identity_mode, worktrees
+from vergil_tooling.lib import epics, git, github, identity_mode, worktrees
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
@@ -230,6 +230,26 @@ def _print_pr_watch(pr_url: str) -> None:
     print(f"    /vergil:pr-watch {pr_url}")
 
 
+def _reject_if_epic_link(issue_ref: str) -> None:
+    """Abort if the linkage points at an epic — PRs link a task, never an epic.
+
+    This lives here, not in the pr-issue-linkage CI gate, because deciding
+    epic-ness needs an authenticated, cross-repo ``gh`` call (e.g. an epic in
+    ``.github``) — which vrg-submit-pr has via the App installation token and the
+    CI gate (a dependency-free body regex) does not. Self-scoping: legacy issues
+    are never epics, so they pass.
+    """
+    try:
+        issue = epics.parse_issue_ref(issue_ref, default_repo=github.current_repo())
+    except ValueError:
+        return
+    if epics.is_epic(issue):
+        raise SystemExit(
+            "vrg-submit-pr: --issue links an epic; link a task, not an epic "
+            "(epics are closed by rollup when their tasks complete)."
+        )
+
+
 def _run_cli_mode(args: argparse.Namespace) -> int:
     # main() only routes here when all three are present; narrow for the
     # type checker without relying on an assert (ruff S101).
@@ -238,6 +258,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
         raise SystemExit(msg)
 
     issue_ref = resolve_issue_ref(args.issue)
+    _reject_if_epic_link(issue_ref)
     branch = git.current_branch()
     target = _target_branch(args.base)
     pr_body = build_pr_body(
@@ -475,6 +496,7 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
     """
     fields = submission.read_pr_fields(worktree_root)
     issue_ref = resolve_issue_ref(fields["issue"])
+    _reject_if_epic_link(issue_ref)
     branch = git.current_branch()
     target = _target_branch(base_override, fields.get("base"))
     try:

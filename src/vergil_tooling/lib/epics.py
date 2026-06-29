@@ -47,6 +47,26 @@ _PARENT_RE = re.compile(
     re.MULTILINE,
 )
 
+_REF_RE = re.compile(r"^(?:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+))?#([0-9]+)$")
+
+
+def parse_issue_ref(ref: str, *, default_repo: str) -> IssueRef:
+    """Parse a linkage ref (``"#42"`` or ``"owner/repo#42"``) into an ``IssueRef``.
+
+    A bare ``#N`` uses *default_repo* (``"owner/name"``). Raises ``ValueError`` if
+    *ref* is malformed or the resolved repo lacks an ``owner/name`` form.
+    """
+    match = _REF_RE.match(ref.strip())
+    if match is None:
+        raise ValueError(f"not an issue ref: {ref!r}")
+    repo_part, number = match.groups()
+    full = repo_part or default_repo
+    if "/" not in full:
+        raise ValueError(f"cannot resolve repo for {ref!r} (default_repo={default_repo!r})")
+    owner, name = full.split("/", 1)
+    return IssueRef(owner=owner, repo=name, number=int(number))
+
+
 _SUBISSUES_QUERY = """
 query($id: ID!) {
   node(id: $id) {

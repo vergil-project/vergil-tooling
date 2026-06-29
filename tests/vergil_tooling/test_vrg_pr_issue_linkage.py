@@ -195,3 +195,12 @@ def test_no_summary_on_success(tmp_path: Path) -> None:
         main()
         mock_err.assert_not_called()
         mock_sum.assert_not_called()
+
+
+# -- single-task enforcement (pure regex; epic-vs-task lives in vrg-submit-pr) --
+
+
+def test_multiple_refs_rejected(tmp_path: Path) -> None:
+    event_path = _write_event(tmp_path, "Ref #1\nRef #2\n")
+    with patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}):
+        assert main() == 1
