@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from vergil_tooling.lib.linkage import extract_tracking_issue, normalize_linkage
+from vergil_tooling.lib.linkage import (
+    extract_tracking_issue,
+    extract_tracking_ref,
+    normalize_linkage,
+)
 
 
 def test_ref_simple() -> None:
@@ -101,3 +105,20 @@ def test_normalize_rejects_empty_string() -> None:
 def test_normalize_rejects_trailing_garbage() -> None:
     with pytest.raises(ValueError, match="bare keyword"):
         normalize_linkage("Ref #1761 extra")
+
+
+def test_extract_tracking_ref_same_repo() -> None:
+    assert extract_tracking_ref("Ref #42") == "#42"
+
+
+def test_extract_tracking_ref_cross_repo() -> None:
+    assert extract_tracking_ref("Ref org/.github#40") == "org/.github#40"
+
+
+def test_extract_tracking_ref_none() -> None:
+    assert extract_tracking_ref("no linkage here") is None
+
+
+def test_extract_tracking_ref_multiple_raises() -> None:
+    with pytest.raises(ValueError, match="multiple"):
+        extract_tracking_ref("Ref #1\nRef #2")

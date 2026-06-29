@@ -13,7 +13,8 @@ import os
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE
+from vergil_tooling.lib import epics
+from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE, extract_tracking_ref
 from vergil_tooling.lib.output import emit_error, write_summary
 
 
@@ -55,6 +56,30 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             "pull request body must include primary issue linkage "
             "(Ref #123). Cross-repo references (Ref owner/repo#123) are "
             "also accepted."
+        )
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
+        return 1
+
+    try:
+        ref = extract_tracking_ref(pr_body)
+    except ValueError:
+        msg = "pull request must link exactly one task (multiple Ref lines found)."
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
+        return 1
+
+    # Reject linking an epic: PRs link a task; epics are umbrellas closed by
+    # rollup. Self-scoping — legacy issues are never epics, so they pass.
+    repo_env = os.environ.get("GITHUB_REPOSITORY", "")
+    try:
+        issue = epics.parse_issue_ref(ref or "", default_repo=repo_env)
+    except ValueError:
+        return 0
+    if epics.is_epic(issue):
+        msg = (
+            "pull request links an epic; PRs link a task, not an epic "
+            "(epics are closed by rollup when their tasks complete)."
         )
         emit_error(msg)
         write_summary(f"## PR Body Compliance Failed\n\n{msg}")
