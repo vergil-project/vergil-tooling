@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.58/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.56/">
+        <link rel="next" href="../v2.1.81/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.57 - VERGIL Tooling</title>
+        <title>2.1.82 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2157-2026-06-23" class="md-skip">
+        <a href="#release-2182-2026-06-29" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.57
+              2.1.82
             
           </span>
         </div>
@@ -1030,10 +1030,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.82/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.82
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1049,6 +1076,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1730,37 +1788,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.57
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.57/" class="md-nav__link">
         
   
   
@@ -1776,37 +1807,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9698,10 +9698,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -9725,18 +9725,12 @@
 
 
 
-<h1 id="release-2157-2026-06-23">Release 2.1.57 (2026-06-23)<a class="headerlink" href="#release-2157-2026-06-23" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2182-2026-06-29">Release 2.1.82 (2026-06-29)<a class="headerlink" href="#release-2182-2026-06-29" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>derive org from clone URL so vrg-git clone mints an installation token (#1786)</strong>
-vrg-git clone (added in #1780) reached GitHub but failed with 'could not read
-Username': no auth token was injected. get_installation_token(), called with no
-org, falls back to _detect_org() which reads the current repo's remote — but
-clone runs outside any repo (cwd /tmp), so the org resolved to None and the
-function returned before minting a token.</li>
+<li><strong>reject epic-linked PRs + enforce single task ref (#1938)</strong></li>
+<li>feat(linkage): reject epic-linked PRs + enforce single task ref</li>
 </ul>
-<p>Derive the org from the clone URL argument and pass it explicitly. push/pull/
-fetch are unchanged (org still comes from the in-repo remote).</p>
 
 
 
