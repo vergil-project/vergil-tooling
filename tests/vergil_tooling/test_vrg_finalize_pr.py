@@ -1904,6 +1904,25 @@ def test_finalize_batch_stops_on_item_failure_no_release() -> None:
     assert rc == 1
 
 
+def test_finalize_batch_closes_each_task_after_validation() -> None:
+    with (
+        patch(_FIN_MOD + ".subprocess.run", return_value=MagicMock(returncode=0)),
+        patch(_FIN_MOD + ".confirm", return_value=True),
+        patch(_FIN_MOD + "._close_managed_task") as mock_close,
+    ):
+        rc = _run_finalize_batch(
+            ["123", "124"],
+            root=Path("/repo"),
+            release=True,
+            install=False,
+            assume_yes=True,
+        )
+    assert rc == 0
+    assert mock_close.call_count == 2
+    mock_close.assert_any_call("123")
+    mock_close.assert_any_call("124")
+
+
 def test_resolve_open_prs_skips_worktrees_without_pr() -> None:
     wts = [
         Worktree(path=Path("/r/.worktrees/issue-2-b"), branch="feature/2-b"),
