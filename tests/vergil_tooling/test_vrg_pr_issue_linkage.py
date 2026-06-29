@@ -11,17 +11,7 @@ import pytest
 from vergil_tooling.bin.vrg_pr_issue_linkage import main
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
-
-
-@pytest.fixture(autouse=True)
-def _default_not_epic() -> Iterator[None]:
-    # The validator now checks whether the linked issue is an epic. Default to
-    # "not an epic" so existing linkage tests don't hit a real gh call; the
-    # epic-reject test overrides this.
-    with patch("vergil_tooling.bin.vrg_pr_issue_linkage.epics.is_epic", return_value=False):
-        yield
 
 
 def _write_event(tmp_path: Path, body: str) -> str:
@@ -207,29 +197,7 @@ def test_no_summary_on_success(tmp_path: Path) -> None:
         mock_sum.assert_not_called()
 
 
-# -- epic-link rejection + single-task enforcement --------------------------
-
-
-def test_epic_linked_pr_rejected(tmp_path: Path) -> None:
-    event_path = _write_event(tmp_path, "Ref vergil-project/.github#40\n")
-    with (
-        patch.dict(
-            "os.environ",
-            {"GITHUB_EVENT_PATH": event_path, "GITHUB_REPOSITORY": "vergil-project/repo"},
-        ),
-        patch(f"{_MOD}.epics.is_epic", return_value=True),
-    ):
-        assert main() == 1
-
-
-def test_task_linkage_passes(tmp_path: Path) -> None:
-    # is_epic defaults to False via the autouse fixture; a same-repo task passes.
-    event_path = _write_event(tmp_path, "Ref #210\n")
-    with patch.dict(
-        "os.environ",
-        {"GITHUB_EVENT_PATH": event_path, "GITHUB_REPOSITORY": "vergil-project/repo"},
-    ):
-        assert main() == 0
+# -- single-task enforcement (pure regex; epic-vs-task lives in vrg-submit-pr) --
 
 
 def test_multiple_refs_rejected(tmp_path: Path) -> None:
