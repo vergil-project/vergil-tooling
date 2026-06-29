@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.40/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.38/">
+        <link rel="next" href="../v2.1.84/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.39 - VERGIL Tooling</title>
+        <title>2.1.85 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2039-2026-05-24" class="md-skip">
+        <a href="#release-2185-2026-06-29" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.39
+              2.1.85
             
           </span>
         </div>
@@ -1036,10 +1036,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.85/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.85
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1055,6 +1082,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4480,37 +4538,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.39
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.39/" class="md-nav__link">
         
   
   
@@ -4526,48 +4557,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9799,21 +9788,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
+        Features
       
     </span>
   </a>
@@ -9837,15 +9815,16 @@
 
 
 
-<h1 id="release-2039-2026-05-24">Release 2.0.39 (2026-05-24)<a class="headerlink" href="#release-2039-2026-05-24" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2185-2026-06-29">Release 2.1.85 (2026-06-29)<a class="headerlink" href="#release-2185-2026-06-29" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>replace --workdir with bash -c cd wrapper in session</strong>
-limactl shell --workdir is incompatible with command passthrough — it causes bash to receive -- as an invalid option. Replace with bash -c 'cd /workspace &amp;&amp; exec cmd' wrapping, which works reliably with all command forms including flags like --model. Ref #1050</li>
+<li><strong>honor repo-local ansible-lint skip_list/exclude_paths (#1954)</strong>
+The ansible-lint stage passes the bundled config via <code>-c</code>, which makes ansible-lint ignore the consuming repo's local <code>.ansible-lint*</code> config entirely. A repo therefore could not defer specific rules (<code>skip_list</code>) or scope out non-Ansible YAML (<code>exclude_paths</code>), even for legitimate first-adoption reasons — the only lever was full compliance or nothing.</li>
 </ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<p>Keep the bundled rules as the baseline but read the repo's local config and re-express its <code>skip_list</code> and <code>exclude_paths</code> as <code>-x rule1,rule2</code> and <code>--exclude &lt;path&gt;</code> flags layered on top of <code>-c</code>. A malformed local config fails the stage loudly rather than silently dropping the intended skips.</p>
+<p>Adds pyyaml as a runtime dependency (and types-pyyaml for the type stubs) to parse the local config robustly.</p>
 <ul>
-<li><strong>bump version to 2.0.39</strong></li>
+<li><strong>vrg-activity-log generator (recently closed work -&gt; ledger) (#1955)</strong></li>
 </ul>
 
 
