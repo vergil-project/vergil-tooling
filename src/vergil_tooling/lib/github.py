@@ -322,6 +322,25 @@ def read_json(*args: str) -> dict[str, object] | list[object]:
     return result
 
 
+def graphql(query: str, **variables: object) -> dict[str, object]:
+    """Run a GraphQL query/mutation via ``gh api graphql`` and return ``data``.
+
+    String variables pass with ``-f`` (kept verbatim — e.g. node IDs); other
+    scalars use ``-F`` (typed, e.g. an ``Int`` issue number). ``gh`` exits
+    non-zero when the GraphQL response carries errors, so those surface as
+    :class:`GitHubAPIError` from :func:`read_output`; the explicit ``errors``
+    check guards the rarer 200-with-errors case.
+    """
+    args = ["api", "graphql", "-f", f"query={query}"]
+    for name, value in variables.items():
+        args += ["-f" if isinstance(value, str) else "-F", f"{name}={value}"]
+    payload = json.loads(read_output(*args))
+    if isinstance(payload, dict) and payload.get("errors"):
+        raise RuntimeError(f"GraphQL errors: {payload['errors']}")
+    data = payload.get("data") if isinstance(payload, dict) else None
+    return data if isinstance(data, dict) else {}
+
+
 def write_json(method: str, endpoint: str, body: dict[str, object]) -> None:
     """Call gh api with a JSON body via stdin."""
     _run_with_retry(
