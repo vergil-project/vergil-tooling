@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 
 from vergil_tooling.lib import github, identity_mode
-from vergil_tooling.lib.git import _git_auth_env
+from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 
 _ALLOWED_SIMPLE: set[str] = {
     # Read-only inspection commands. These only read history, objects, or
@@ -301,6 +301,66 @@ def _check_worktree_convention(subcmd: str, args: list[str]) -> str | None:
     )
 
 
+# `worktree add` options that consume the following token as their value, so
+# the path-positional scan must skip both the flag and its argument. `=`-joined
+# forms (e.g. `--reason=busy`) start with `-` and are skipped as plain flags.
+_WORKTREE_ADD_VALUE_OPTS: set[str] = {"-b", "-B", "--reason"}
+
+
+def _parse_worktree_add_path(args: list[str]) -> str | None:
+    """Return the ``<path>`` positional from ``worktree add`` *args*, or None.
+
+    *args* are the tokens after ``add``. The first token that is neither an
+    option nor an option's consumed value is the path; the optional
+    ``<commit-ish>`` that follows is ignored.
+    """
+    skip_next = False
+    for arg in args:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in _WORKTREE_ADD_VALUE_OPTS:
+            skip_next = True
+            continue
+        if arg.startswith("-"):
+            continue
+        return arg
+    return None
+
+
+def _check_worktree_add(args: list[str]) -> str | None:
+    """Reject a ``worktree add`` that would not land directly under .worktrees/.
+
+    The new worktree's resolved path must be a direct child of
+    ``<main_worktree_root>/.worktrees/``. This one invariant rejects every way
+    the convention gets violated: a relative path resolved from inside another
+    worktree (the nesting bug, #1922), and any absolute or ``../`` path that
+    escapes the canonical container. When the main worktree root cannot be
+    resolved (not in a repo), the guard is skipped so git reports its own
+    error rather than this layer masking it.
+    """
+    path = _parse_worktree_add_path(args)
+    if path is None:
+        return None
+    try:
+        root = main_worktree_root()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    target = Path(path)
+    if not target.is_absolute():
+        target = Path.cwd() / target
+    target = target.resolve()
+    canonical = (root / ".worktrees").resolve()
+    if target.parent == canonical:
+        return None
+    return (
+        f"worktree add target must be a direct child of {canonical} "
+        f"(it resolved to {target}). Run the command from the project root "
+        f"with a relative path like .worktrees/issue-<N>-<slug>; never create "
+        f"a worktree from inside another worktree."
+    )
+
+
 _WORKFLOW_PERMISSION_RE = re.compile(
     r"refusing to allow.*workflow.*without.*workflows.*permission",
     re.IGNORECASE,
@@ -358,6 +418,12 @@ def main(argv: list[str] | None = None) -> int:
         if flag_err:
             print(f"vrg-git: {flag_err}", file=sys.stderr)
             return 1
+
+        if subcmd == "worktree" and argv[1] == "add":
+            add_err = _check_worktree_add(argv[2:])
+            if add_err:
+                print(f"vrg-git: {add_err}", file=sys.stderr)
+                return 1
 
         result = subprocess.run(["git", *argv], check=False)  # noqa: S603, S607
         return result.returncode

@@ -12,6 +12,7 @@ from vergil_tooling.bin.vrg_git import (
     _noninteractive_rebase_env,
     _org_from_clone_url,
     _parse_branch_target,
+    _parse_worktree_add_path,
     _worktree_convention_active,
     main,
 )
@@ -957,6 +958,107 @@ class TestWorktreeConvention:
             mock_run.return_value.returncode = 0
             rc = main(["switch", "feature/123-foo"])
         assert rc == 0
+
+
+# -- worktree add anchoring (#1922) -------------------------------------------
+
+
+class TestParseWorktreeAddPath:
+    """Extract the <path> positional from `worktree add` args (after "add")."""
+
+    def test_simple_path(self) -> None:
+        assert _parse_worktree_add_path([".worktrees/x", "origin/develop"]) == ".worktrees/x"
+
+    def test_new_branch_flag_value_skipped(self) -> None:
+        assert (
+            _parse_worktree_add_path(["-b", "feature/x", ".worktrees/x", "origin/develop"])
+            == ".worktrees/x"
+        )
+
+    def test_boolean_flag_skipped(self) -> None:
+        assert _parse_worktree_add_path(["--force", ".worktrees/x"]) == ".worktrees/x"
+
+    def test_reason_value_skipped(self) -> None:
+        assert (
+            _parse_worktree_add_path(["--lock", "--reason", "busy", ".worktrees/x"])
+            == ".worktrees/x"
+        )
+
+    def test_no_path_returns_none(self) -> None:
+        assert _parse_worktree_add_path([]) is None
+
+    def test_only_flags_returns_none(self) -> None:
+        assert _parse_worktree_add_path(["--force"]) is None
+
+
+class TestWorktreeAddAnchoring:
+    """`worktree add` targets must be direct children of <root>/.worktrees/."""
+
+    @staticmethod
+    def _make_root(tmp_path: Path) -> Path:
+        root = tmp_path / "repo"
+        (root / ".worktrees").mkdir(parents=True)
+        return root
+
+    def test_canonical_path_from_root_allowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._make_root(tmp_path)
+        monkeypatch.chdir(root)
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(
+                ["worktree", "add", "-b", "feature/1-x", ".worktrees/issue-1-x", "origin/develop"]
+            )
+        assert rc == 0
+        assert mock_run.call_args[0][0][:3] == ["git", "worktree", "add"]
+
+    def test_nested_path_from_inside_worktree_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        root = self._make_root(tmp_path)
+        inner = root / ".worktrees" / "issue-389-x"
+        (inner / ".worktrees").mkdir(parents=True)
+        monkeypatch.chdir(inner)
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["worktree", "add", ".worktrees/issue-390-y", "origin/develop"])
+        assert rc != 0
+        mock_run.assert_not_called()
+        assert ".worktrees" in capsys.readouterr().err
+
+    def test_absolute_escape_path_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        root = self._make_root(tmp_path)
+        monkeypatch.chdir(root)
+        outside = tmp_path / "elsewhere" / "wt"
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            rc = main(["worktree", "add", str(outside), "origin/develop"])
+        assert rc != 0
+        mock_run.assert_not_called()
+
+    def test_not_in_repo_skips_guard(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.chdir(tmp_path)
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_git.main_worktree_root",
+                side_effect=subprocess.CalledProcessError(128, ["git"]),
+            ),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(["worktree", "add", "anything", "origin/develop"])
+        assert rc == 0
+        mock_run.assert_called_once()
 
 
 # -- non-interactive rebase (#1742) -------------------------------------------
