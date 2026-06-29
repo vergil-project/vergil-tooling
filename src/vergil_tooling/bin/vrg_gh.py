@@ -42,7 +42,13 @@ _DENIED_AGENT: dict[str, dict[str, str]] = {
         "merge": "PR merge requires a human maintainer.",
     },
     "issue": {
-        "close": "Issue close requires a human maintainer.",
+        # `issue close` is intentionally NOT denied here: closing is now
+        # automated (vrg-finalize-pr closes tasks, rollup closes epics) and
+        # documented as mechanical, so a manual USER close is safe and is the
+        # one genuinely useful case (repo migration). AUDIT stays barred from
+        # closing because `issue` is not in its allowlist at all (least
+        # privilege). `reopen` stays denied for agents — the lib path covers
+        # reopen-on-late-child. See issue #1966.
         "reopen": "Issue reopen requires a human maintainer.",
     },
 }
