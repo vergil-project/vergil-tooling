@@ -77,6 +77,24 @@ def _vm_log_root(tmp_path: Path) -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _stub_guest_transport() -> Iterator[None]:
+    """Stub the guest helpers that drive a VM over the (Lima) transport so unit
+    tests never exec the real ``limactl`` binary (absent off a Lima host). A test
+    that asserts on a specific helper overrides it with its own ``patch``.
+    """
+    mod = "vergil_tooling.bin.vrg_vm."
+    with (
+        patch(mod + "link_claude_dirs"),
+        patch(mod + "copy_claude_config"),
+        patch(mod + "inject_credentials"),
+        patch(mod + "install_tooling"),
+        patch(mod + "update_tooling"),
+        patch(mod + "update_plugins"),
+    ):
+        yield
+
+
 @pytest.fixture()
 def config_file(tmp_path: Path) -> Path:
     p = tmp_path / "identities.toml"
