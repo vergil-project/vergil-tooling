@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.83] - 2026-06-29
+
+### Features
+
+- vrg-epic-link CLI for native sub-issue linking (#1943)
+
 ## [2.1.82] - 2026-06-29
 
 ### Features
