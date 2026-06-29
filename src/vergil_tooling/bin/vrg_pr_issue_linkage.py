@@ -13,7 +13,7 @@ import os
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE
+from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE, extract_tracking_ref
 from vergil_tooling.lib.output import emit_error, write_summary
 
 
@@ -56,6 +56,17 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
             "(Ref #123). Cross-repo references (Ref owner/repo#123) are "
             "also accepted."
         )
+        emit_error(msg)
+        write_summary(f"## PR Body Compliance Failed\n\n{msg}")
+        return 1
+
+    # Enforce a single task ref (pure-regex, no API). The epic-vs-task check
+    # needs authenticated cross-repo gh and lives in vrg-submit-pr; this CI gate
+    # stays dependency-free so it can run without a gh token.
+    try:
+        extract_tracking_ref(pr_body)
+    except ValueError:
+        msg = "pull request must link exactly one task (multiple Ref lines found)."
         emit_error(msg)
         write_summary(f"## PR Body Compliance Failed\n\n{msg}")
         return 1

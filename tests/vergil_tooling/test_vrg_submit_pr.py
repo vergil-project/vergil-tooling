@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _reject_if_epic_link,
     _run_submit_batch,
     _select_batch_worktrees,
     _submit_one,
@@ -18,7 +19,7 @@ from vergil_tooling.bin.vrg_submit_pr import (
     main,
     parse_args,
 )
-from vergil_tooling.lib import worktrees
+from vergil_tooling.lib import epics, worktrees
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.worktrees import Worktree
 
@@ -26,6 +27,16 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 _MOD = "vergil_tooling.bin.vrg_submit_pr"
+
+
+@pytest.fixture(autouse=True)
+def _no_epic_link_check() -> Iterator[None]:
+    """Neutralize the epic-link guard for submit-flow tests (it would hit a real
+    gh call). The dedicated _reject_if_epic_link tests call the imported function
+    directly, so this module-attr patch doesn't shadow them.
+    """
+    with patch(_MOD + "._reject_if_epic_link"):
+        yield
 
 
 def _write_workflow_state(
@@ -1632,3 +1643,30 @@ def test_main_batch_routes_to_run_submit_batch() -> None:
         rc = main(["--all", "--finalize", "--base", "develop"])
     assert rc == 0
     run_batch.assert_called_once()
+
+
+# -- _reject_if_epic_link (PRs link tasks, not epics) ------------------------
+
+
+def test_reject_if_epic_link_raises_for_epic() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        pytest.raises(SystemExit, match="links an epic"),
+    ):
+        _reject_if_epic_link("org/.github#40")
+
+
+def test_reject_if_epic_link_passes_for_task() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.is_epic", return_value=False) as mock_is_epic,
+    ):
+        _reject_if_epic_link("#42")
+    mock_is_epic.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+
+
+def test_reject_if_epic_link_noop_when_repo_unresolvable() -> None:
+    # A bare ref with no resolvable default repo is skipped, not an error.
+    with patch(f"{_MOD}.github.current_repo", return_value=""):
+        _reject_if_epic_link("#42")
