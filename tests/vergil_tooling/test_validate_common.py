@@ -6,7 +6,12 @@ import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
+import pytest
+import yaml
+
 from vergil_tooling.bin.validate_common import (
+    _ansible_lint_overrides,
+    _find_ansible_lint_config,
     _find_dockerfiles,
     _find_markdown_files,
     _find_shell_files,
@@ -787,3 +792,162 @@ def test_main_ansible_lint_fails(tmp_path: Path) -> None:
         ),
     ):
         assert main() == 1
+
+
+# -- _find_ansible_lint_config -----------------------------------------------
+
+
+def test_find_ansible_lint_config_none(tmp_path: Path) -> None:
+    assert _find_ansible_lint_config(tmp_path) is None
+
+
+def test_find_ansible_lint_config_prefers_discovery_order(tmp_path: Path) -> None:
+    (tmp_path / ".ansible-lint.yml").write_text("skip_list: [name]\n")
+    (tmp_path / ".ansible-lint").write_text("skip_list: [yaml]\n")
+    assert _find_ansible_lint_config(tmp_path) == tmp_path / ".ansible-lint"
+
+
+def test_find_ansible_lint_config_yaml_suffix(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yaml"
+    cfg.write_text("skip_list: [name]\n")
+    assert _find_ansible_lint_config(tmp_path) == cfg
+
+
+# -- _ansible_lint_overrides -------------------------------------------------
+
+
+def test_ansible_lint_overrides_skip_list(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("skip_list:\n  - name[casing]\n  - yaml[line-length]\n")
+    assert _ansible_lint_overrides(cfg) == ["-x", "name[casing],yaml[line-length]"]
+
+
+def test_ansible_lint_overrides_exclude_paths(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("exclude_paths:\n  - config/app.yml\n  - vendor/\n")
+    assert _ansible_lint_overrides(cfg) == [
+        "--exclude",
+        "config/app.yml",
+        "--exclude",
+        "vendor/",
+    ]
+
+
+def test_ansible_lint_overrides_both_keys(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("skip_list: [name]\nexclude_paths: [config/app.yml]\n")
+    assert _ansible_lint_overrides(cfg) == [
+        "-x",
+        "name",
+        "--exclude",
+        "config/app.yml",
+    ]
+
+
+def test_ansible_lint_overrides_empty_config(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("")
+    assert _ansible_lint_overrides(cfg) == []
+
+
+def test_ansible_lint_overrides_only_baseline_keys(tmp_path: Path) -> None:
+    # Keys we do not translate are ignored; only skip_list / exclude_paths
+    # become CLI flags.
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("profile: min\nwarn_list:\n  - experimental\n")
+    assert _ansible_lint_overrides(cfg) == []
+
+
+def test_ansible_lint_overrides_empty_lists(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("skip_list: []\nexclude_paths: []\n")
+    assert _ansible_lint_overrides(cfg) == []
+
+
+def test_ansible_lint_overrides_malformed_yaml_raises(tmp_path: Path) -> None:
+    cfg = tmp_path / ".ansible-lint.yml"
+    cfg.write_text("skip_list: [unterminated\n")
+    with pytest.raises(yaml.YAMLError):
+        _ansible_lint_overrides(cfg)
+
+
+# -- main: ansible-lint local-config integration -----------------------------
+
+
+def test_main_ansible_lint_passes_local_overrides(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / ".ansible-lint.yml").write_text(
+        "skip_list:\n  - name[casing]\nexclude_paths:\n  - config/app.yml\n"
+    )
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    call_args = mock_run.call_args[0][0]
+    assert call_args[0] == "ansible-lint"
+    assert call_args[1] == "-c"
+    assert call_args[2].endswith("ansible-lint.yaml")
+    # The bundled baseline is preserved and the repo's levers are layered on.
+    assert call_args[3:] == ["-x", "name[casing]", "--exclude", "config/app.yml"]
+
+
+def test_main_ansible_lint_no_local_config_no_overrides(tmp_path: Path) -> None:
+    # Ansible content present (roles/) but no local ansible-lint config: the
+    # command is exactly the bundled baseline, unchanged.
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / "roles").mkdir()
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 0
+    call_args = mock_run.call_args[0][0]
+    assert call_args[0] == "ansible-lint"
+    assert len(call_args) == 3  # ansible-lint, -c, <bundled config>
+
+
+def test_main_ansible_lint_malformed_local_config_fails(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_MINIMAL_TOML)
+    (tmp_path / ".ansible-lint.yml").write_text("skip_list: [unterminated\n")
+
+    with (
+        patch(
+            "vergil_tooling.bin.validate_common.git.repo_root",
+            return_value=tmp_path,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.vrg_repo_profile.main",
+            return_value=0,
+        ),
+        patch(
+            "vergil_tooling.bin.validate_common.subprocess.run",
+            return_value=subprocess.CompletedProcess(args=[], returncode=0),
+        ) as mock_run,
+    ):
+        assert main() == 1
+    # We fail before invoking ansible-lint rather than silently dropping skips.
+    tool_names = [call[0][0][0] for call in mock_run.call_args_list]
+    assert "ansible-lint" not in tool_names
