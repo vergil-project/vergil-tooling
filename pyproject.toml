@@ -12,6 +12,7 @@ license-files = ["LICENSE"]
 dependencies = ["rich>=13.0", "pyyaml>=6.0"]
 
 [project.scripts]
+vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"
 vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
 vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
