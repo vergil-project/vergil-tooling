@@ -46,8 +46,10 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     config,
+    epics,
     git,
     github,
+    linkage,
     pr_merge,
     pr_provenance,
     progress,
@@ -717,6 +719,36 @@ def _chain_release(root: Path, *, install: bool = False) -> int:
     return result.returncode
 
 
+def _close_managed_task(pr: str) -> None:
+    """Close the PR's tracking task + roll up its epic, gated to the model.
+
+    ``vrg-finalize-pr`` is shared tooling: this runs in every repo on deploy
+    while most issues are still legacy (spec §5). It acts only when the Ref'd
+    issue has an ``epic``-labeled parent; legacy issues (no epic parent) are
+    left open for manual close, with a visible note. The caller invokes this
+    only after the pipeline fully succeeded, so the close follows merge +
+    post-checks.
+    """
+    body = github.read_output("pr", "view", pr, "--json", "body", "--jq", ".body")
+    try:
+        issue_number = linkage.extract_tracking_issue(body)
+    except ValueError:
+        return
+    if issue_number is None:
+        return
+    repo = github.current_repo()
+    owner, name = repo.split("/", 1)
+    task = epics.IssueRef(owner=owner, repo=name, number=issue_number)
+    parent = epics.parent_of(task)
+    if parent is None or not epics.is_epic(parent):
+        print(
+            f"#{issue_number} has no epic parent — left open for manual close (transition policy)."
+        )
+        return
+    github.run("issue", "close", str(issue_number), "--repo", repo)
+    epics.rollup(task)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -780,6 +812,19 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=root,
     )
+
+    # Auto-close the tracking task + roll up its epic once the pipeline fully
+    # succeeded (gated on an epic parent — spec §5 transition gate). Skipped on
+    # dry-run, cleanup-only (no merge), and skip-post-checks (post-checks
+    # deferred, so success is not yet verified).
+    if (
+        rc == 0
+        and args.pr is not None
+        and not args.dry_run
+        and not args.cleanup_only
+        and not args.skip_post_checks
+    ):
+        _close_managed_task(args.pr)
 
     # --release cascade (issue #1634): chain into vrg-release only after a
     # clean finalize. A non-zero pipeline must not trigger a release, and the

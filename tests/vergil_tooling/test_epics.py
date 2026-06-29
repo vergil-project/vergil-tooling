@@ -171,3 +171,74 @@ def test_reflink_skips_results_without_repo() -> None:
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+
+
+# -- is_epic / rollup --------------------------------------------------------
+
+
+def test_is_epic_true_when_labeled() -> None:
+    labels = {"labels": [{"name": "epic"}, {"name": "enhancement"}]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=labels):
+        assert epics.is_epic(EPIC) is True
+
+
+def test_is_epic_false_without_label() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value={"labels": [{"name": "bug"}]}):
+        assert epics.is_epic(TASK) is False
+
+
+def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_called_once()
+    assert mock_run.call_args.args[:2] == ("issue", "close")
+    assert "40" in mock_run.call_args.args
+
+
+def test_rollup_skips_standing_epic() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "standing"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+
+
+def test_rollup_skips_when_children_remain_open() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=False),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+
+
+def test_rollup_noop_for_unmanaged_task() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+
+
+def test_rollup_noop_when_parent_not_epic() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=False),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()

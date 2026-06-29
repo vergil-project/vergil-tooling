@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
     _check_cd_workflow_status,
+    _close_managed_task,
     _parse_pr_list,
     _resolve_open_prs,
     _resolve_strategy,
@@ -29,6 +30,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     main,
     parse_args,
 )
+from vergil_tooling.lib import epics
 from vergil_tooling.lib.pr_merge import MergeAbortError
 from vergil_tooling.lib.pr_provenance import Action, ProvenanceResult, Role
 from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
@@ -37,6 +39,19 @@ _MOD = "vergil_tooling.bin.vrg_finalize_pr"
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+
+@pytest.fixture(autouse=True)
+def _no_managed_close() -> Iterator[None]:
+    """Default: neutralize the post-pipeline task close+rollup.
+
+    main() now calls ``_close_managed_task`` after a successful pipeline; the
+    broad main() tests don't exercise it (and would hit a real ``gh pr view``).
+    The dedicated ``_close_managed_task`` tests call the imported function
+    directly, so this module-attr patch doesn't shadow them.
+    """
+    with patch(_MOD + "._close_managed_task"):
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -1968,3 +1983,70 @@ def test_main_comma_list_routes_to_batch() -> None:
         rc = main(["123,124"])
     assert rc == 0
     run_batch.assert_called_once()
+
+
+# -- _close_managed_task (transition gate, issue/epic auto-close) -------------
+
+
+def test_close_managed_task_skips_legacy_issue(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(_FIN_MOD + ".github.read_output", return_value="Ref #210"),
+        patch(_FIN_MOD + ".linkage.extract_tracking_issue", return_value=210),
+        patch(_FIN_MOD + ".github.current_repo", return_value="org/repo-a"),
+        patch(_FIN_MOD + ".epics.parent_of", return_value=None),
+        patch(_FIN_MOD + ".github.run") as mock_run,
+        patch(_FIN_MOD + ".epics.rollup") as mock_rollup,
+    ):
+        _close_managed_task("210")
+    mock_run.assert_not_called()
+    mock_rollup.assert_not_called()
+    assert "no epic parent" in capsys.readouterr().out
+
+
+def test_close_managed_task_skips_when_parent_not_epic() -> None:
+    with (
+        patch(_FIN_MOD + ".github.read_output", return_value="Ref #210"),
+        patch(_FIN_MOD + ".linkage.extract_tracking_issue", return_value=210),
+        patch(_FIN_MOD + ".github.current_repo", return_value="org/repo-a"),
+        patch(_FIN_MOD + ".epics.parent_of", return_value=epics.IssueRef("org", ".github", 40)),
+        patch(_FIN_MOD + ".epics.is_epic", return_value=False),
+        patch(_FIN_MOD + ".github.run") as mock_run,
+    ):
+        _close_managed_task("210")
+    mock_run.assert_not_called()
+
+
+def test_close_managed_task_closes_and_rolls_up() -> None:
+    with (
+        patch(_FIN_MOD + ".github.read_output", return_value="Ref #101"),
+        patch(_FIN_MOD + ".linkage.extract_tracking_issue", return_value=101),
+        patch(_FIN_MOD + ".github.current_repo", return_value="org/repo-a"),
+        patch(_FIN_MOD + ".epics.parent_of", return_value=epics.IssueRef("org", ".github", 40)),
+        patch(_FIN_MOD + ".epics.is_epic", return_value=True),
+        patch(_FIN_MOD + ".github.run") as mock_run,
+        patch(_FIN_MOD + ".epics.rollup") as mock_rollup,
+    ):
+        _close_managed_task("101")
+    assert mock_run.call_args.args[:2] == ("issue", "close")
+    assert "101" in mock_run.call_args.args
+    mock_rollup.assert_called_once()
+
+
+def test_close_managed_task_noop_without_tracking_issue() -> None:
+    with (
+        patch(_FIN_MOD + ".github.read_output", return_value="no ref"),
+        patch(_FIN_MOD + ".linkage.extract_tracking_issue", return_value=None),
+        patch(_FIN_MOD + ".github.run") as mock_run,
+    ):
+        _close_managed_task("101")
+    mock_run.assert_not_called()
+
+
+def test_close_managed_task_noop_on_multiple_refs() -> None:
+    with (
+        patch(_FIN_MOD + ".github.read_output", return_value="Ref #1\nRef #2"),
+        patch(_FIN_MOD + ".linkage.extract_tracking_issue", side_effect=ValueError("multiple")),
+        patch(_FIN_MOD + ".github.run") as mock_run,
+    ):
+        _close_managed_task("101")
+    mock_run.assert_not_called()
