@@ -124,7 +124,7 @@ def test_main_sync_provisions_all_labels() -> None:
     assert result == 0
     # Should have called once per label + once for the delete
     label_calls = [c for c in mock_run.call_args_list if c.args[1] == "create"]
-    assert len(label_calls) == 10  # 10 labels in the registry
+    assert len(label_calls) == 15  # 10 base + 5 epic/task convention labels
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
