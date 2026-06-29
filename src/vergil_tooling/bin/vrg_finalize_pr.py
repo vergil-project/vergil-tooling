@@ -135,7 +135,18 @@ def _run_finalize_batch(
         if result.returncode != 0:
             raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
 
-    post_steps = [batch.PostStep("validation", _validate)]
+    def _close_tasks() -> None:
+        # Close each merged PR's task after post-checks pass. The single-PR path
+        # closes in main(); the batch defers post-checks (--skip-post-checks per
+        # item, --cleanup-only at the end), so neither sub-invocation hits that
+        # close — do it here, after validation, before release.
+        for pr in prs:
+            _close_managed_task(pr)
+
+    post_steps = [
+        batch.PostStep("validation", _validate),
+        batch.PostStep("close-tasks", _close_tasks),
+    ]
     if release:
         post_steps.append(batch.PostStep("release", _release))
 
@@ -745,6 +756,7 @@ def _close_managed_task(pr: str) -> None:
             f"#{issue_number} has no epic parent — left open for manual close (transition policy)."
         )
         return
+    print(f"Auto-closing task #{issue_number} (finalized).")
     github.run("issue", "close", str(issue_number), "--repo", repo)
     epics.rollup(task)
 
