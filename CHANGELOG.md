@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.89] - 2026-06-30
+
+### Bug fixes
+
+- report the real pull error instead of guessing '(offline?)' (#1985)
+- fail hard on base-pull failure instead of silent stale fallback (#1986)
+
+### Chores
+
+- point plugin marketplace at main (single released channel, #45) (#1983)
+
 ## [2.1.88] - 2026-06-30
 
 ### Bug fixes
