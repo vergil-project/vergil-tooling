@@ -1,11 +1,13 @@
 """Shared derivation of vergil-ecosystem version references.
 
-The source of truth is ``[dependencies].vergil`` in ``vergil.toml``. Every
-derived reference — reusable-workflow pins and the Claude plugin marketplace
-ref — must equal the version computed from it. The marketplace source repo
-(the plugin repo itself, identified by ``.claude-plugin/marketplace.json``) is
-exempt: its marketplace ref is ``develop`` so plugin development dogfoods the
-latest in-progress plugin.
+The source of truth is ``[dependencies].vergil`` in ``vergil.toml``. The
+reusable-workflow pins must equal the version computed from it. The Claude
+plugin marketplace ref is the exception: under the single-channel distribution
+model (epic vergil-project/.github#45) the plugin has exactly one released
+channel on ``main``, so *every* repo — consumers and the plugin source repo
+alike — pins the marketplace at ``main``. The old model (source repo on
+``develop``, consumers on the version tag) is deprecated; a repo still carrying
+one of those refs warns-then-enforces toward ``main`` (#1974).
 
 This module holds the pure derivation and read helpers shared by the
 update_deps writer (``vergil_eco``) and the repo_config auditor, so the two can
@@ -38,6 +40,25 @@ _VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)$")
 #: The marketplace name keyed under ``extraKnownMarketplaces``.
 MARKETPLACE_NAME = "vergil-marketplace"
 
+#: The single released channel every repo pins the marketplace at. Under the
+#: single-channel model (#1974) there is no per-repo or source-repo variation.
+EXPECTED_MARKETPLACE_REF = "main"
+
+#: A pre-single-channel marketplace ref: a bare version (``2.1``, ``2.0.7``) or
+#: a ``vX.Y[.Z]`` tag. ``develop`` is handled separately in
+#: ``is_deprecated_marketplace_ref``.
+_VERSION_REF_RE = re.compile(r"^v?\d+\.\d+(?:\.\d+)?$")
+
+
+def is_deprecated_marketplace_ref(ref: str) -> bool:
+    """True if *ref* is a pre-single-channel marketplace ref.
+
+    The old model pinned the source repo at ``develop`` and consumers at the
+    version tag. Either earns a deprecation warning (not a hard failure) during
+    the bridge period while repos migrate to ``main`` (#1974).
+    """
+    return ref == "develop" or bool(_VERSION_REF_RE.match(ref))
+
 
 def format_version(raw: str) -> str:
     """Normalize a user-supplied version (``2.2`` or ``v2.2``) to ``vX.Y``."""
@@ -64,22 +85,6 @@ def read_source_version(base: Path) -> str:
             message="vergil.toml [dependencies].vergil not found.",
         ) from exc
     return value
-
-
-def is_marketplace_source_repo(base: Path) -> bool:
-    """True if *base* is the plugin/marketplace source repo (exempt → develop)."""
-    return (base / ".claude-plugin" / "marketplace.json").is_file()
-
-
-def expected_claude_ref(base: Path) -> str:
-    """The marketplace ref *base* should carry.
-
-    ``develop`` for the marketplace source repo, else the derived version from
-    ``vergil.toml``.
-    """
-    if is_marketplace_source_repo(base):
-        return "develop"
-    return read_source_version(base)
 
 
 def iter_workflow_refs(base: Path) -> Iterator[tuple[Path, str]]:

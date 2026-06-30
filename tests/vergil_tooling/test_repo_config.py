@@ -4,8 +4,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.repo_config import audit_local_config
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.github_config import ConfigDiff
 
 _MINIMAL_VERGIL_TOML = """\
 [project]
@@ -238,6 +242,8 @@ _MINIMAL_SETTINGS = {
             "source": {
                 "source": "github",
                 "repo": "vergil-project/vergil-claude-plugin",
+                # single-channel model (#1974): a compliant repo pins main
+                "ref": "main",
             }
         }
     },
@@ -245,6 +251,18 @@ _MINIMAL_SETTINGS = {
         "vergil@vergil-marketplace": True,
     },
 }
+
+
+def _template_marketplaces_with_main() -> dict:
+    """The packaged (ref-less) template marketplaces with ``ref: main`` seeded.
+
+    The shipped template carries no ref; repo_init seeds it. A repo is only
+    compliant once the ref is pinned, so compliant-settings tests add it here.
+    """
+    market = json.loads(json.dumps(_SETTINGS_TEMPLATE["extraKnownMarketplaces"]))
+    market["vergil-marketplace"]["source"]["ref"] = "main"
+    return market
+
 
 _SETTINGS_TEMPLATE_PATH = (
     Path(__file__).resolve().parents[2] / "src" / "vergil_tooling" / "data" / "claude_settings.json"
@@ -338,7 +356,7 @@ class TestClaudeSettings:
 
     def test_canonical_template_sections_compliant(self, tmp_path: Path) -> None:
         settings = {
-            "extraKnownMarketplaces": _SETTINGS_TEMPLATE["extraKnownMarketplaces"],
+            "extraKnownMarketplaces": _template_marketplaces_with_main(),
             "enabledPlugins": _SETTINGS_TEMPLATE["enabledPlugins"],
         }
         _write_settings(tmp_path, settings)
@@ -351,7 +369,7 @@ class TestClaudeSettings:
     def test_extra_entries_allowed(self, tmp_path: Path) -> None:
         settings = {
             "extraKnownMarketplaces": {
-                **_SETTINGS_TEMPLATE["extraKnownMarketplaces"],
+                **_template_marketplaces_with_main(),
                 "other-marketplace": {"source": {"source": "github", "repo": "other/repo"}},
             },
             "enabledPlugins": {
@@ -426,8 +444,8 @@ def _write_compliant_repo(root: Path) -> None:
                 "source": {
                     "source": "github",
                     "repo": "vergil-project/vergil-claude-plugin",
-                    # ref must match _MINIMAL_VERGIL_TOML's [dependencies].vergil
-                    "ref": "v2.0.7",
+                    # single-channel model (#1974): every repo pins main
+                    "ref": "main",
                 }
             }
         },
@@ -457,11 +475,10 @@ class TestMarketplaceRef:
         self,
         base: Path,
         *,
-        version: str,
         ref: str | None,
         self_repo: bool = False,
     ) -> None:
-        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version=version))
+        (base / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.1"))
         if self_repo:
             (base / ".claude-plugin").mkdir()
             (base / ".claude-plugin" / "marketplace.json").write_text("{}")
@@ -478,32 +495,66 @@ class TestMarketplaceRef:
         (claude / "hooks").mkdir(parents=True, exist_ok=True)
         (claude / "hooks" / "guard.sh").write_text("#!/bin/sh\n")
 
-    def test_consumer_ref_matches(self, tmp_path: Path) -> None:
-        self._write(tmp_path, version="v2.0", ref="v2.0")
-        diff = audit_local_config(tmp_path)
-        assert not [i for i in diff.items if "marketplace_ref" in i.field]
+    @staticmethod
+    def _ref_items(diff: ConfigDiff) -> list:
+        return [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
 
-    def test_consumer_ref_missing_flagged(self, tmp_path: Path) -> None:
-        self._write(tmp_path, version="v2.0", ref=None)
+    def test_main_is_compliant(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref="main")
         diff = audit_local_config(tmp_path)
-        flagged = [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+        assert not self._ref_items(diff)
+        assert not diff.warnings
+
+    def test_deprecated_develop_warns(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref="develop")
+        diff = audit_local_config(tmp_path)
+        assert not self._ref_items(diff)
+        assert any("develop" in w for w in diff.warnings)
+
+    def test_deprecated_version_warns(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref="v2.0")
+        diff = audit_local_config(tmp_path)
+        assert not self._ref_items(diff)
+        assert any("v2.0" in w for w in diff.warnings)
+
+    def test_deprecated_ref_keeps_repo_compliant(self, tmp_path: Path) -> None:
+        # The whole point of the bridge: an otherwise-compliant repo that has
+        # not yet migrated its marketplace ref still passes (warning only).
+        _write_compliant_repo(tmp_path)
+        settings_path = tmp_path / ".claude" / "settings.json"
+        settings = json.loads(settings_path.read_text())
+        settings["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] = "develop"
+        settings_path.write_text(json.dumps(settings))
+        diff = audit_local_config(tmp_path)
+        assert diff.is_compliant(), [f"{i.field}: {i.actual}" for i in diff.items]
+        assert any("develop" in w for w in diff.warnings)
+
+    def test_missing_ref_flagged(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref=None)
+        diff = audit_local_config(tmp_path)
+        flagged = self._ref_items(diff)
         assert len(flagged) == 1
-        assert "v2.0" in str(flagged[0].expected)
+        assert "main" in str(flagged[0].expected)
+        assert not diff.warnings
 
-    def test_consumer_ref_wrong_flagged(self, tmp_path: Path) -> None:
-        self._write(tmp_path, version="v2.1", ref="v2.0")
+    def test_unknown_ref_flagged(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref="some-feature-branch")
         diff = audit_local_config(tmp_path)
-        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+        assert self._ref_items(diff)
+        assert not diff.warnings
 
-    def test_self_repo_requires_develop(self, tmp_path: Path) -> None:
-        self._write(tmp_path, version="v2.1", ref="develop", self_repo=True)
+    def test_self_repo_main_is_compliant(self, tmp_path: Path) -> None:
+        # No source-repo exemption anymore: the plugin repo also pins main.
+        self._write(tmp_path, ref="main", self_repo=True)
         diff = audit_local_config(tmp_path)
-        assert not [i for i in diff.items if "marketplace_ref" in i.field]
+        assert not self._ref_items(diff)
+        assert not diff.warnings
 
-    def test_self_repo_version_ref_flagged(self, tmp_path: Path) -> None:
-        self._write(tmp_path, version="v2.1", ref="v2.1", self_repo=True)
+    def test_self_repo_develop_warns(self, tmp_path: Path) -> None:
+        self._write(tmp_path, ref="develop", self_repo=True)
         diff = audit_local_config(tmp_path)
-        assert [i for i in diff.items if i.field == "local.claude_settings.marketplace_ref"]
+        assert not self._ref_items(diff)
+        assert any("develop" in w for w in diff.warnings)
 
 
 class TestWorkflowRefs:

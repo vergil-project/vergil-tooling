@@ -171,10 +171,17 @@ def _print_local_diff(diff: ConfigDiff) -> None:
     """Print local config audit results."""
     if diff.is_compliant():
         print("  local: compliant")
-        return
-    print(f"  local: NON-COMPLIANT ({len(diff.items)} issues)")
-    for item in diff.items:
-        print(_format_item(item))
+    else:
+        print(f"  local: NON-COMPLIANT ({len(diff.items)} issues)")
+        for item in diff.items:
+            print(_format_item(item))
+    _print_warnings(diff)
+
+
+def _print_warnings(diff: ConfigDiff) -> None:
+    """Print advisory warnings (non-compliance-affecting) for a diff."""
+    for warning in diff.warnings:
+        print(f"    WARNING: {warning}")
 
 
 def _print_diff(repo: str, diff: ConfigDiff) -> None:
@@ -192,6 +199,7 @@ def _print_diff(repo: str, diff: ConfigDiff) -> None:
             )
         elif field_name.endswith(".bypass_actors"):
             print(f"    {field_name}: skipped (not visible with GitHub App credentials)")
+    _print_warnings(diff)
 
 
 def _apply_repo(repo: str, config: VergilConfig) -> list[str]:

@@ -187,29 +187,31 @@ def _mark_self_repo(base: Path) -> None:
     (base / ".claude-plugin" / "marketplace.json").write_text("{}")
 
 
-def test_apply_normalize_sets_consumer_ref(tmp_path: Path) -> None:
+def test_apply_normalize_sets_marketplace_ref_to_main(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.0"\n')
     _seed_settings(tmp_path, ref=None)
     result = VergilUpdater().apply(_ctx(tmp_path))
     assert result.changed is True
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "v2.0"
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "main"
 
 
-def test_apply_normalize_self_repo_uses_develop(tmp_path: Path) -> None:
+def test_apply_normalize_self_repo_also_uses_main(tmp_path: Path) -> None:
+    # Single-channel model (#1974): no source-repo → develop exemption anymore.
     (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.1"\n')
     _mark_self_repo(tmp_path)
     _seed_settings(tmp_path, ref=None)
     VergilUpdater().apply(_ctx(tmp_path))
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "develop"
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "main"
 
 
-def test_apply_bump_sets_ref_to_bumped_version(tmp_path: Path) -> None:
+def test_apply_bump_keeps_marketplace_ref_at_main(tmp_path: Path) -> None:
+    # Workflow/source refs follow the version; the marketplace ref does not.
     (tmp_path / "vergil.toml").write_text('[dependencies]\nvergil = "v2.0"\n')
     _seed_settings(tmp_path, ref="v2.0")
     ctx = _ctx(tmp_path)
     ctx.vergil_bump = "2.1"
     VergilUpdater().apply(ctx)
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "v2.1"
+    assert data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]["ref"] == "main"

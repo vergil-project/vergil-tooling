@@ -6,10 +6,10 @@ import pytest
 
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.vergil_refs import (
+    EXPECTED_MARKETPLACE_REF,
     MARKETPLACE_NAME,
-    expected_claude_ref,
     format_version,
-    is_marketplace_source_repo,
+    is_deprecated_marketplace_ref,
     iter_workflow_refs,
     read_source_version,
 )
@@ -47,26 +47,22 @@ def test_read_source_version_missing_key(tmp_path: Path) -> None:
         read_source_version(tmp_path)
 
 
-def test_is_marketplace_source_repo_true(tmp_path: Path) -> None:
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "marketplace.json").write_text("{}")
-    assert is_marketplace_source_repo(tmp_path) is True
+def test_expected_marketplace_ref_constant() -> None:
+    assert EXPECTED_MARKETPLACE_REF == "main"
 
 
-def test_is_marketplace_source_repo_false(tmp_path: Path) -> None:
-    assert is_marketplace_source_repo(tmp_path) is False
+def test_is_deprecated_marketplace_ref_develop() -> None:
+    assert is_deprecated_marketplace_ref("develop") is True
 
 
-def test_expected_claude_ref_consumer(tmp_path: Path) -> None:
-    _seed_toml(tmp_path, "v2.0")
-    assert expected_claude_ref(tmp_path) == "v2.0"
+@pytest.mark.parametrize("ref", ["2.1", "v2.1", "2.0.7", "v2.0.7"])
+def test_is_deprecated_marketplace_ref_versions(ref: str) -> None:
+    assert is_deprecated_marketplace_ref(ref) is True
 
 
-def test_expected_claude_ref_self_repo(tmp_path: Path) -> None:
-    _seed_toml(tmp_path, "v2.1")
-    (tmp_path / ".claude-plugin").mkdir()
-    (tmp_path / ".claude-plugin" / "marketplace.json").write_text("{}")
-    assert expected_claude_ref(tmp_path) == "develop"
+@pytest.mark.parametrize("ref", ["main", "feature/x", "", "v2", "latest"])
+def test_is_deprecated_marketplace_ref_other(ref: str) -> None:
+    assert is_deprecated_marketplace_ref(ref) is False
 
 
 def test_iter_workflow_refs(tmp_path: Path) -> None:
