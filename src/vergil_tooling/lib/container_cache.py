@@ -108,11 +108,18 @@ def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
     return [repo_root / n for n in names if (repo_root / n).is_file()]
 
 
-def compute_cache_hash(files: list[Path], *, salt: str = "") -> str:
-    """SHA-256 over sorted file contents plus optional salt, first 8 hex chars."""
+def compute_cache_hash(files: list[Path], *, base_digest: str = "", salt: str = "") -> str:
+    """SHA-256 over sorted file contents, base image digest, and optional salt.
+
+    Folding ``base_digest`` (the content id of the base image the cache is built
+    from) into the key means a republished base tag yields a different hash, so the
+    stale cache is rebuilt instead of reused. Returns the first 8 hex chars.
+    """
     h = hashlib.sha256()
     for f in sorted(files):
         h.update(f.read_bytes())
+    if base_digest:
+        h.update(base_digest.encode())
     if salt:
         h.update(salt.encode())
     return h.hexdigest()[:8]

@@ -551,6 +551,25 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
     assert "uv sync --frozen --group dev" in setup_cmd
 
 
+# -- compute_cache_hash base digest -------------------------------------------
+
+
+def test_compute_cache_hash_changes_with_base_digest(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    files = cache_sensitive_files(tmp_path, "go")
+    h1 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
+    h2 = compute_cache_hash(files, base_digest="sha256:bbb", salt="r")
+    assert h1 != h2
+
+
+def test_compute_cache_hash_stable_for_same_inputs(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    files = cache_sensitive_files(tmp_path, "go")
+    h1 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
+    h2 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
+    assert h1 == h2
+
+
 # -- resolve_base_digest ------------------------------------------------------
 
 
