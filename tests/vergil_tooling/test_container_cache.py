@@ -17,10 +17,15 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    resolve_base_digest,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def _completed(returncode: int = 0, stdout: str = "") -> MagicMock:
+    return MagicMock(returncode=returncode, stdout=stdout)
 
 _VALID_TOML = """\
 [project]
@@ -544,3 +549,57 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
     setup_cmd = create_cmd[-1]
     assert "uv tool install" not in setup_cmd
     assert "uv sync --frozen --group dev" in setup_cmd
+
+
+# -- resolve_base_digest ------------------------------------------------------
+
+
+def test_resolve_base_digest_pull_ok() -> None:
+    pull = _completed(0)
+    inspect = _completed(0, "sha256:abc123\n")
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[pull, inspect],
+    ):
+        digest, verified = resolve_base_digest("img:1", runtime="docker")
+    assert digest == "sha256:abc123"
+    assert verified is True
+
+
+def test_resolve_base_digest_offline_uses_local(capsys: pytest.CaptureFixture[str]) -> None:
+    pull = _completed(1)  # pull failed (offline)
+    inspect = _completed(0, "sha256:local9\n")  # local copy present
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[pull, inspect],
+    ):
+        digest, verified = resolve_base_digest("img:1", runtime="docker")
+    assert digest == "sha256:local9"
+    assert verified is False
+    assert "could not verify base image freshness" in capsys.readouterr().err
+
+
+def test_resolve_base_digest_pull_timeout_uses_local() -> None:
+    import subprocess as _sp
+
+    inspect = _completed(0, "sha256:local9\n")
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
+    ):
+        digest, verified = resolve_base_digest("img:1", runtime="docker")
+    assert digest == "sha256:local9"
+    assert verified is False
+
+
+def test_resolve_base_digest_no_image_raises() -> None:
+    pull = _completed(1)
+    inspect = _completed(1, "")  # no local copy either
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[pull, inspect],
+        ),
+        pytest.raises(RuntimeError),
+    ):
+        resolve_base_digest("img:1", runtime="docker")
