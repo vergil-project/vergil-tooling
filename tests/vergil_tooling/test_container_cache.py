@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.container_cache import (
+    _allow_stale_base,
     _build_cached_image,
     _is_self_repo,
     _sanitize_branch,
@@ -24,8 +25,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _completed(returncode: int = 0, stdout: str = "") -> MagicMock:
-    return MagicMock(returncode=returncode, stdout=stdout)
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 _VALID_TOML = """\
@@ -659,9 +660,62 @@ def test_resolve_base_digest_pull_ok() -> None:
     assert verified is True
 
 
-def test_resolve_base_digest_offline_uses_local(capsys: pytest.CaptureFixture[str]) -> None:
-    pull = _completed(1)  # pull failed (offline)
+def test_resolve_base_digest_pull_failure_is_hard_error() -> None:
+    """By default a failed pull is a hard error, even with a local copy present."""
+    pull = _completed(1, stderr="unauthorized: stale credential")
     inspect = _completed(0, "sha256:local9\n")  # local copy present
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[pull, inspect],
+        ),
+        pytest.raises(RuntimeError) as exc,
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+    message = str(exc.value)
+    # Names the real cause and the stale-cache risk, and points at the opt-in.
+    assert "unauthorized: stale credential" in message
+    assert "possibly-stale local cache" in message
+    assert "VRG_ALLOW_STALE_BASE" in message
+
+
+def test_resolve_base_digest_pull_failure_no_stderr_uses_fallback() -> None:
+    pull = _completed(7, stderr="")
+    inspect = _completed(0, "sha256:local9\n")
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[pull, inspect],
+        ),
+        pytest.raises(RuntimeError, match="unknown error"),
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+
+
+def test_resolve_base_digest_allow_stale_uses_local(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The opt-in degrades to the local base, warning with the real cause."""
+    pull = _completed(1, stderr="connection refused")
+    inspect = _completed(0, "sha256:local9\n")
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[pull, inspect],
+    ):
+        digest, verified = resolve_base_digest("img:1", runtime="docker", allow_stale=True)
+    assert digest == "sha256:local9"
+    assert verified is False
+    err = capsys.readouterr().err
+    assert "could not verify base image freshness" in err
+    assert "connection refused" in err
+
+
+def test_resolve_base_digest_allow_stale_via_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("VRG_ALLOW_STALE_BASE", "1")
+    pull = _completed(1, stderr="offline")
+    inspect = _completed(0, "sha256:local9\n")
     with patch(
         "vergil_tooling.lib.container_cache.subprocess.run",
         side_effect=[pull, inspect],
@@ -669,10 +723,43 @@ def test_resolve_base_digest_offline_uses_local(capsys: pytest.CaptureFixture[st
         digest, verified = resolve_base_digest("img:1", runtime="docker")
     assert digest == "sha256:local9"
     assert verified is False
-    assert "could not verify base image freshness" in capsys.readouterr().err
 
 
-def test_resolve_base_digest_pull_timeout_uses_local() -> None:
+def test_resolve_base_digest_pull_failure_reports_real_error() -> None:
+    """The hard error surfaces the real pull cause, not a guessed '(offline?)'."""
+    pull = _completed(
+        1,
+        stderr="Error response from daemon: error from registry: denied\n",
+    )
+    inspect = _completed(0, "sha256:local9\n")  # local copy present
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[pull, inspect],
+        ),
+        pytest.raises(RuntimeError) as exc,
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+    message = str(exc.value)
+    assert "denied" in message  # the real cause, surfaced
+    assert "(offline?)" not in message  # not a misleading guess
+
+
+def test_resolve_base_digest_pull_timeout_is_hard_error() -> None:
+    import subprocess as _sp
+
+    inspect = _completed(0, "sha256:local9\n")
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
+        ),
+        pytest.raises(RuntimeError, match="timed out after"),
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+
+
+def test_resolve_base_digest_pull_timeout_allow_stale_uses_local() -> None:
     import subprocess as _sp
 
     inspect = _completed(0, "sha256:local9\n")
@@ -680,19 +767,52 @@ def test_resolve_base_digest_pull_timeout_uses_local() -> None:
         "vergil_tooling.lib.container_cache.subprocess.run",
         side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
     ):
-        digest, verified = resolve_base_digest("img:1", runtime="docker")
+        digest, verified = resolve_base_digest("img:1", runtime="docker", allow_stale=True)
     assert digest == "sha256:local9"
     assert verified is False
 
 
-def test_resolve_base_digest_no_image_raises() -> None:
-    pull = _completed(1)
+def test_resolve_base_digest_no_image_raises_names_cause() -> None:
+    pull = _completed(1, stderr="manifest unknown")
     inspect = _completed(1, "")  # no local copy either
     with (
         patch(
             "vergil_tooling.lib.container_cache.subprocess.run",
             side_effect=[pull, inspect],
         ),
-        pytest.raises(RuntimeError),
+        pytest.raises(RuntimeError, match="manifest unknown"),
     ):
         resolve_base_digest("img:1", runtime="docker")
+
+
+def test_resolve_base_digest_no_image_pull_ok_raises() -> None:
+    pull = _completed(0)
+    inspect = _completed(1, "")  # pull "succeeded" but nothing local
+    with (
+        patch(
+            "vergil_tooling.lib.container_cache.subprocess.run",
+            side_effect=[pull, inspect],
+        ),
+        pytest.raises(RuntimeError, match="pull succeeded"),
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+
+
+# -- _allow_stale_base --------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on", " On "])
+def test_allow_stale_base_truthy(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("VRG_ALLOW_STALE_BASE", value)
+    assert _allow_stale_base() is True
+
+
+@pytest.mark.parametrize("value", ["", "0", "false", "no", "off", "nope"])
+def test_allow_stale_base_falsy(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("VRG_ALLOW_STALE_BASE", value)
+    assert _allow_stale_base() is False
+
+
+def test_allow_stale_base_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("VRG_ALLOW_STALE_BASE", raising=False)
+    assert _allow_stale_base() is False

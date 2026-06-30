@@ -2,7 +2,19 @@
 
 - **Issue:** vergil-project/vergil-tooling#1973
 - **Date:** 2026-06-29
-- **Status:** Approved (design)
+- **Status:** Approved (design); offline-fallback default amended by #1982
+
+> **Amendment (vergil-project/vergil-tooling#1982).** The "offline / registry-down
+> → use the local base, warn, continue (`verified=False`)" path described below was
+> the *default*. In practice it let a host validate against a stale local base for
+> an unknown length of time (the exact `ansible-lint` failure that motivated #1973),
+> with only a soft `(offline?)` warning — a silent failure. As of #1982 a failed
+> base pull is a **hard error by default**: `resolve_base_digest` raises with a
+> message that names the real pull error and the stale-cache risk. The local-base
+> degradation is retained as an **explicit opt-in** via `VRG_ALLOW_STALE_BASE=1`
+> (or `resolve_base_digest(..., allow_stale=True)`); only on that opt-in path does
+> it warn and return `verified=False`. The "no local base → raise" and
+> "pull succeeds → `verified=True`" behaviours are unchanged.
 
 ## Problem
 
@@ -99,8 +111,10 @@ returns `(digest, verified)`:
 2. `docker image inspect <base_image> --format '{{.Id}}'` → the digest string.
 3. **Offline / registry-down:** if the pull fails but a local copy of the base
    exists, inspect and use the **local** digest, return `verified=False`, and print
-   a one-line warning:
-   `warning: could not verify base image freshness (offline?); using local image`.
+   a one-line warning that surfaces the pull's actual error (e.g. `denied`,
+   `unauthorized`, a network error, or a timeout) rather than guessing the cause:
+   `warning: could not verify base image freshness for '<image>' (pull failed:
+   <reason>); using local image`.
 4. If the pull fails and there is no local base, raise — nothing could run anyway.
 
 `pull` + `inspect` is chosen over `manifest inspect` because both work on docker and
