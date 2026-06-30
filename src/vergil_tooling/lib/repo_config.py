@@ -14,8 +14,9 @@ from vergil_tooling.lib.config import ConfigError, read_config
 from vergil_tooling.lib.github_config import ConfigDiff, DiffItem
 from vergil_tooling.lib.update_deps.context import UpdateDepsError
 from vergil_tooling.lib.vergil_refs import (
+    EXPECTED_MARKETPLACE_REF,
     MARKETPLACE_NAME,
-    expected_claude_ref,
+    is_deprecated_marketplace_ref,
     iter_workflow_refs,
     read_source_version,
 )
@@ -48,12 +49,13 @@ def _load_settings_template() -> dict[str, Any]:
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
+    warnings: list[str] = []
     _check_vergil_toml(repo_root, items)
     _check_hook_guard_shim(repo_root, items)
     _check_claude_md(repo_root, items)
-    _check_claude_settings(repo_root, items)
+    _check_claude_settings(repo_root, items, warnings)
     _check_workflow_refs(repo_root, items)
-    return ConfigDiff(items=items)
+    return ConfigDiff(items=items, warnings=warnings)
 
 
 def _check_vergil_toml(repo_root: Path, items: list[DiffItem]) -> None:
@@ -202,7 +204,7 @@ def _check_hook_guard_shim(repo_root: Path, items: list[DiffItem]) -> None:
         )
 
 
-def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
+def _check_claude_settings(repo_root: Path, items: list[DiffItem], warnings: list[str]) -> None:
     settings_path = repo_root / ".claude" / "settings.json"
     if not settings_path.is_file():
         items.append(
@@ -237,7 +239,7 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
         return
 
     template = _load_settings_template()
-    _check_marketplace_ref(repo_root, raw, template, items)
+    _check_marketplace_ref(raw, template, items, warnings)
     _check_settings_section(
         raw,
         template,
@@ -248,17 +250,21 @@ def _check_claude_settings(repo_root: Path, items: list[DiffItem]) -> None:
 
 
 def _check_marketplace_ref(
-    repo_root: Path,
     raw: dict[str, Any],
     template: dict[str, Any],
     items: list[DiffItem],
+    warnings: list[str],
 ) -> None:
-    """Assert the marketplace matches the template (except its version-derived
-    ``source.ref``) and carries the expected ref.
+    """Assert the marketplace matches the template (except its ``source.ref``)
+    and carries the expected ref.
 
-    The ref is ``develop`` for the marketplace source repo, else the version
-    from ``vergil.toml``. Everything else under the entry must equal the
-    canonical template, so a wrong repo or source kind is still caught.
+    Under the single-channel model (#1974) the ref is ``main`` for *every*
+    repo. During the bridge period a repo still carrying a deprecated old ref
+    (``develop`` or a version tag) emits a deprecation warning rather than a
+    hard failure, so not-yet-migrated repos keep passing while they are swept
+    one by one. Any other ref — or a missing one — is a hard failure.
+    Everything else under the entry must equal the canonical template, so a
+    wrong repo or source kind is still caught.
     """
     expected_source = (
         template.get("extraKnownMarketplaces", {}).get(MARKETPLACE_NAME, {}).get("source", {})
@@ -294,19 +300,23 @@ def _check_marketplace_ref(
             )
         )
         return
-    try:
-        expected_ref = expected_claude_ref(repo_root)
-    except (UpdateDepsError, OSError, ValueError):
-        return  # vergil.toml problems are reported by _check_vergil_toml
     actual_ref = source.get("ref")
-    if actual_ref != expected_ref:
-        items.append(
-            DiffItem(
-                field="local.claude_settings.marketplace_ref",
-                expected=f"ref = {expected_ref}",
-                actual=f"ref = {actual_ref}",
-            )
+    if actual_ref == EXPECTED_MARKETPLACE_REF:
+        return
+    if isinstance(actual_ref, str) and is_deprecated_marketplace_ref(actual_ref):
+        warnings.append(
+            f"{MARKETPLACE_NAME} source.ref = {actual_ref!r} is deprecated. "
+            f"The plugin now has a single released channel; pin it at "
+            f"{EXPECTED_MARKETPLACE_REF!r} in .claude/settings.json (#1974)."
         )
+        return
+    items.append(
+        DiffItem(
+            field="local.claude_settings.marketplace_ref",
+            expected=f"ref = {EXPECTED_MARKETPLACE_REF}",
+            actual=f"ref = {actual_ref}",
+        )
+    )
 
 
 def _check_workflow_refs(repo_root: Path, items: list[DiffItem]) -> None:

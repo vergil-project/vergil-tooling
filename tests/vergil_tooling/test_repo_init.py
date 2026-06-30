@@ -1244,18 +1244,12 @@ class TestRunWizard:
             run_wizard(ctx)
 
 
-def test_render_claude_settings_injects_ref() -> None:
-    text = render_claude_settings("v2.1")
+def test_render_claude_settings_seeds_main() -> None:
+    text = render_claude_settings()
     data = json.loads(text)
     src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
-    assert src["ref"] == "v2.1"
+    assert src["ref"] == "main"
     assert text.endswith("\n")
-
-
-def test_render_claude_settings_other_version() -> None:
-    data = json.loads(render_claude_settings("v2.0"))
-    src = data["extraKnownMarketplaces"]["vergil-marketplace"]["source"]
-    assert src["ref"] == "v2.0"
 
 
 def test_multi_choice_numbers() -> None:

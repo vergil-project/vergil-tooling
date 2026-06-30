@@ -13,6 +13,7 @@ from typing import Any
 
 from vergil_tooling.lib import git, github, repo_config
 from vergil_tooling.lib.config import _ENUMS
+from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
 
 _CHECKPOINT_RE = re.compile(r"chore\(init\): step (\d+) -")
 
@@ -179,15 +180,16 @@ def _load_data_file(filename: str) -> str:
     return ref.read_text(encoding="utf-8")
 
 
-def render_claude_settings(vergil_version: str) -> str:
+def render_claude_settings() -> str:
     """Return the .claude/settings.json text with the marketplace ref seeded.
 
-    The packaged template is ref-less; a consuming repo pins the marketplace to
-    the same vergil version it declares in vergil.toml.
+    The packaged template is ref-less; under the single-channel model (#1974)
+    every repo pins the marketplace at ``main``, the plugin's one released
+    channel.
     """
     data = json.loads(_load_data_file("claude_settings.json"))
     market = data["extraKnownMarketplaces"]["vergil-marketplace"]
-    market["source"]["ref"] = vergil_version
+    market["source"]["ref"] = EXPECTED_MARKETPLACE_REF
     return json.dumps(data, indent=2) + "\n"
 
 
@@ -783,8 +785,8 @@ def step_scaffold_config_files(ctx: RepoInitContext) -> None:
     # .claude/settings.json
     claude_dir = wd / ".claude"
     claude_dir.mkdir(exist_ok=True)
-    # marketplace ref seeded from the chosen vergil version (consumer repos)
-    (claude_dir / "settings.json").write_text(render_claude_settings(ctx.vergil_version))
+    # marketplace ref seeded at the single released channel (main)
+    (claude_dir / "settings.json").write_text(render_claude_settings())
 
     # .claude/hooks/guard.sh
     hooks_dir = claude_dir / "hooks"

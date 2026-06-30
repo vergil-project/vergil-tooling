@@ -27,6 +27,7 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    resolve_base_digest,
 )
 
 
@@ -64,19 +65,22 @@ def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     base = default_image(lang, fallback=True)
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
+    files = cache_sensitive_files(repo_root, lang)
+
+    def _current_hash() -> str:
+        # Match ensure_cached_image exactly: salt (repo name) + base digest.
+        base_digest, _ = resolve_base_digest(base, runtime=runtime)
+        return compute_cache_hash(files, base_digest=base_digest, salt=repo_root.name)
+
     if existing is None:
         print("No cached image for this branch.")
-        files = cache_sensitive_files(repo_root, lang)
         if files:
-            current_hash = compute_cache_hash(files)
-            expected = cache_image_tag(base, branch, current_hash)
-            print(f"Expected tag: {expected}")
+            print(f"Expected tag: {cache_image_tag(base, branch, _current_hash())}")
         return 0
     print(f"Cached image: {existing[0]}")
     print(f"Hash:         {existing[1]}")
-    files = cache_sensitive_files(repo_root, lang)
     if files:
-        current_hash = compute_cache_hash(files)
+        current_hash = _current_hash()
         if current_hash == existing[1]:
             print("Status:       current")
         else:
