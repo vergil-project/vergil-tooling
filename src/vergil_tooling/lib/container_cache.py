@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -20,6 +21,18 @@ _SELF_PROJECT_NAME = "vergil-tooling"
 _VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
 
 _PULL_TIMEOUT_SECONDS = 120
+
+# Opt-in escape hatch: when set to a truthy value, a failed base-image pull
+# during the staleness check degrades to using the local base instead of
+# failing hard. Off by default — see resolve_base_digest.
+_ALLOW_STALE_BASE_ENV = "VRG_ALLOW_STALE_BASE"
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _allow_stale_base() -> bool:
+    """Return True when the operator has opted in to a possibly-stale base."""
+    return os.environ.get(_ALLOW_STALE_BASE_ENV, "").strip().lower() in _TRUTHY
+
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
@@ -60,16 +73,29 @@ def _summarize_pull_error(stderr: str) -> str:
     return lines[-1] if lines else "unknown error"
 
 
-def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, bool]:
+def resolve_base_digest(
+    base_image: str, *, runtime: str = "", allow_stale: bool | None = None
+) -> tuple[str, bool]:
     """Resolve *base_image*'s content digest, refreshing it from the registry.
 
     Pulls the base (so a moved tag is both detected and available to build from),
-    then inspects the local image id. Returns ``(digest, verified)`` where
-    ``verified`` is False when the pull failed and a previously-pulled local copy
-    was used instead. Raises ``RuntimeError`` when neither a pull nor a local
-    inspect yields a digest.
+    then inspects the local image id. The pull *is* the staleness check: if it
+    fails, we genuinely cannot tell whether the local base is current.
+
+    By default a failed pull is a hard error — running against a possibly-stale
+    local base silently is the worst available outcome (a host can validate
+    against an old image that predates a tool addition and never know). Set
+    ``VRG_ALLOW_STALE_BASE`` (or pass ``allow_stale=True``) to opt in to the
+    degraded "use the local base anyway" path, which warns and continues.
+
+    Returns ``(digest, verified)`` where ``verified`` is False only on the
+    opted-in stale path. Raises ``RuntimeError`` when no digest can be resolved,
+    or when the pull failed and the stale-base opt-in is not set.
     """
     rt = runtime or detect_runtime()
+    if allow_stale is None:
+        allow_stale = _allow_stale_base()
+
     pull_ok = True
     pull_error = ""
     try:
@@ -84,7 +110,7 @@ def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, boo
             pull_error = _summarize_pull_error(pull.stderr)
     except subprocess.TimeoutExpired:
         pull_ok = False
-        pull_error = f"pull timed out after {_PULL_TIMEOUT_SECONDS}s"
+        pull_error = f"timed out after {_PULL_TIMEOUT_SECONDS}s"
 
     digest = _inspect_image_id(base_image, runtime=rt)
     if digest is None:
@@ -94,10 +120,20 @@ def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, boo
             f"{outcome} and no local copy is present."
         )
         raise RuntimeError(msg)
+
     if not pull_ok:
+        if not allow_stale:
+            msg = (
+                f"Could not verify base image freshness for '{base_image}': "
+                f"base pull failed ({pull_error}). Refusing to run against a "
+                f"possibly-stale local cache. Set {_ALLOW_STALE_BASE_ENV}=1 to "
+                "accept the local base anyway."
+            )
+            raise RuntimeError(msg)
         print(
-            f"warning: could not verify base image freshness for '{base_image}' "
-            f"(pull failed: {pull_error}); using local image",
+            f"warning: could not verify base image freshness for '{base_image}': "
+            f"base pull failed ({pull_error}); {_ALLOW_STALE_BASE_ENV} set, "
+            "using local image",
             file=sys.stderr,
         )
     return digest, pull_ok
