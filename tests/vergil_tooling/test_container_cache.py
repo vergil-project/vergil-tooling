@@ -176,11 +176,15 @@ def test_ensure_returns_existing_cache_on_hash_match(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cached_tag = "ghcr.io/r/dev-go:1.26--feature-42--"
     files = cache_sensitive_files(tmp_path, "go")
-    expected_hash = compute_cache_hash(files, salt=tmp_path.name)
+    expected_hash = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name)
     full_tag = cached_tag + expected_hash
 
     with (
         patch("vergil_tooling.lib.git.current_branch") as mock_branch,
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch(
             "vergil_tooling.lib.container_cache.find_cached_image",
             return_value=(full_tag, expected_hash),
@@ -198,6 +202,10 @@ def test_ensure_rebuilds_on_hash_mismatch(tmp_path: Path) -> None:
 
     with (
         patch("vergil_tooling.lib.git.current_branch") as mock_branch,
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch(
             "vergil_tooling.lib.container_cache.find_cached_image",
             return_value=(stale_tag, "oldold00"),
@@ -226,6 +234,10 @@ def test_ensure_builds_on_cache_miss(tmp_path: Path) -> None:
     with (
         patch("vergil_tooling.lib.git.current_branch") as mock_branch,
         patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch(
             "vergil_tooling.lib.container_cache.find_cached_image",
             return_value=None,
         ),
@@ -238,6 +250,40 @@ def test_ensure_builds_on_cache_miss(tmp_path: Path) -> None:
         result = ensure_cached_image(tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker")
     assert result == "new:tag"
     mock_build.assert_called_once()
+
+
+def test_ensure_rebuilds_when_base_digest_changes(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    files = cache_sensitive_files(tmp_path, "go")
+    # The on-disk image was cached before digest-awareness: its hash was computed
+    # WITHOUT any base digest. With the same dep files, the pre-digest code would
+    # recompute that exact hash and reuse it. Once the base digest is keyed in, the
+    # hash differs and the stale image must be rebuilt instead.
+    legacy_hash = compute_cache_hash(files, salt=tmp_path.name)
+    stale_tag = f"ghcr.io/r/dev-go:1.26--feature-42--{legacy_hash}"
+
+    with (
+        patch("vergil_tooling.lib.git.current_branch", return_value="feature/42"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:NEW", True),
+        ),
+        patch(
+            "vergil_tooling.lib.container_cache.find_cached_image",
+            return_value=(stale_tag, legacy_hash),
+        ),
+        patch("vergil_tooling.lib.container_cache.subprocess.run") as mock_run,
+        patch(
+            "vergil_tooling.lib.container_cache._build_cached_image",
+            return_value="rebuilt:tag",
+        ) as mock_build,
+    ):
+        result = ensure_cached_image(tmp_path, "go", "ghcr.io/r/dev-go:1.26", runtime="docker")
+
+    assert result == "rebuilt:tag"
+    mock_build.assert_called_once()
+    # The stale image was removed.
+    assert stale_tag in mock_run.call_args[0][0]
 
 
 # -- clean_branch_images ------------------------------------------------------
@@ -439,6 +485,10 @@ def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
 
     with (
         patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch("vergil_tooling.lib.container_cache.find_cached_image", return_value=None),
         patch(
             "vergil_tooling.lib.container_cache._build_cached_image",
@@ -487,6 +537,10 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
 
     with (
         patch("vergil_tooling.lib.git.current_branch", return_value="develop"),
+        patch(
+            "vergil_tooling.lib.container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch("vergil_tooling.lib.container_cache.find_cached_image", return_value=None),
         patch("vergil_tooling.lib.container_cache._build_cached_image", side_effect=capture_build),
     ):

@@ -257,7 +257,8 @@ def ensure_cached_image(
     from vergil_tooling.lib import git as _git
 
     branch = _git.current_branch()
-    current_hash = compute_cache_hash(files, salt=repo_root.name)
+    base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
+    current_hash = compute_cache_hash(files, base_digest=base_digest, salt=repo_root.name)
     existing = find_cached_image(base_image, branch, runtime=rt)
 
     if existing is not None:
