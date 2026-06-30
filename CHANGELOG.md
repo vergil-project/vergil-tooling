@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.88] - 2026-06-30
+
+### Bug fixes
+
+- key the per-branch cache on the base image digest (#1975)
+
+### Chores
+
+- bridge marketplace-ref audit to single-channel main model (#1976)
+
 ## [2.1.87] - 2026-06-29
 
 ### Features
