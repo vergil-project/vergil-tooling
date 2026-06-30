@@ -99,8 +99,10 @@ returns `(digest, verified)`:
 2. `docker image inspect <base_image> --format '{{.Id}}'` → the digest string.
 3. **Offline / registry-down:** if the pull fails but a local copy of the base
    exists, inspect and use the **local** digest, return `verified=False`, and print
-   a one-line warning:
-   `warning: could not verify base image freshness (offline?); using local image`.
+   a one-line warning that surfaces the pull's actual error (e.g. `denied`,
+   `unauthorized`, a network error, or a timeout) rather than guessing the cause:
+   `warning: could not verify base image freshness for '<image>' (pull failed:
+   <reason>); using local image`.
 4. If the pull fails and there is no local base, raise — nothing could run anyway.
 
 `pull` + `inspect` is chosen over `manifest inspect` because both work on docker and
