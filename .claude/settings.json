@@ -22,7 +22,7 @@
       "source": {
         "source": "github",
         "repo": "vergil-project/vergil-claude-plugin",
-        "ref": "v2.1"
+        "ref": "main"
       }
     }
   },
