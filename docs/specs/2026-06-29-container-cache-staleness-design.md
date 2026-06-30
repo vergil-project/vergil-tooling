@@ -114,9 +114,12 @@ per machine/platform, which is all the cache key requires (caches are local).
 
 Because step 2 already pulled the base, `_build_cached_image`'s
 `docker create <base>` now builds from the fresh local base, closing the
-re-bake-stale-base gap. We additionally pass `--pull=always` (or equivalent) to
-`docker create` as belt-and-suspenders so the build is correct even if invoked
-without a preceding `resolve_base_digest`.
+re-bake-stale-base gap. We additionally pass `--pull=missing` to `docker create`
+as a safety net — pull only if the image is absent locally. We deliberately do
+**not** use `--pull=always`: an offline `create --pull=always` would fail even
+when a usable local copy exists, defeating the offline fallback. With
+`--pull=missing`, a present local base (always the case after `resolve_base_digest`
+ran) is used as-is, and an offline build never breaks on a registry it can't reach.
 
 ### 4. Placement
 
