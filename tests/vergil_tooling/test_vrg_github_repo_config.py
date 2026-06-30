@@ -142,6 +142,24 @@ def test_audit_both_compliant_returns_zero() -> None:
         assert main(["audit", "--repo", "o/r"]) == 0
 
 
+def test_audit_warning_prints_but_stays_compliant(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A deprecated-but-tolerated marketplace ref (#1974) warns without failing.
+    warned = ConfigDiff(items=[], warnings=["vergil-marketplace source.ref deprecated"])
+    with (
+        patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
+        patch(f"{_MODULE}.audit_local_config", return_value=warned),
+        patch(f"{_MODULE}._audit_repo", return_value=_mock_github_compliant()),
+        patch(f"{_MODULE}._resolve_repo", return_value="o/r"),
+        patch(f"{_MODULE}._resolve_config"),
+    ):
+        assert main(["audit", "--repo", "o/r"]) == 0
+    out = capsys.readouterr().out
+    assert "local: compliant" in out
+    assert "WARNING: vergil-marketplace source.ref deprecated" in out
+
+
 def test_audit_local_noncompliant_returns_one() -> None:
     with (
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),

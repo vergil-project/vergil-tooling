@@ -649,8 +649,11 @@ class DiffItem:
 class ConfigDiff:
     items: list[DiffItem] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     def is_compliant(self) -> bool:
+        # Warnings are advisory (e.g. a deprecated-but-tolerated marketplace
+        # ref mid-migration, #1974) and deliberately do not affect compliance.
         return len(self.items) == 0
 
 

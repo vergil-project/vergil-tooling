@@ -1,10 +1,11 @@
 """Vergil ecosystem updater: normalize internal refs, optionally bump the version.
 
 The source of truth is ``[dependencies].vergil`` in ``vergil.toml`` (see
-``vergil_tooling.lib.vergil_refs``). Every secondary reference — workflow
-``uses: vergil-*/...@vX.Y`` and the Claude marketplace ref — must match it.
-``normalize`` rewrites drifting refs to the source-of-truth version; ``bump``
-first rewrites the source of truth, then normalizes.
+``vergil_tooling.lib.vergil_refs``). Workflow pins (``uses: vergil-*/...@vX.Y``)
+must match it. The Claude marketplace ref is decoupled: under the single-channel
+model (#1974) it is always ``main``, the plugin's one released channel, never a
+version. ``normalize`` rewrites drifting refs; ``bump`` first rewrites the
+source of truth, then normalizes.
 """
 
 from __future__ import annotations
@@ -16,9 +17,9 @@ from vergil_tooling.lib.update_deps.updater import UpdateResult
 from vergil_tooling.lib.vergil_refs import (
     _REF_RE,
     _SOURCE_RE,
+    EXPECTED_MARKETPLACE_REF,
     MARKETPLACE_NAME,
     format_version,
-    is_marketplace_source_repo,
     read_source_version,
 )
 
@@ -66,7 +67,7 @@ def normalize_refs(base: Path, target: str) -> list[Path]:
 def normalize_claude_ref(base: Path, target: str) -> Path | None:
     """Set the marketplace ``source.ref`` in ``.claude/settings.json`` to *target*.
 
-    *target* is the derived ``vX.Y`` (or ``develop`` for the source repo). The
+    *target* is the single released channel ``main`` (#1974). The
     file is edited structurally (parsed JSON, re-dumped at indent 2) because the
     ref may need to be *inserted* where none exists — a regex cannot do that
     safely. Returns the path if changed, else ``None``. A missing file or
@@ -102,12 +103,11 @@ class VergilUpdater:
 
     def apply(self, ctx: UpdateDepsContext) -> UpdateResult:
         base = _base(ctx)
-        is_self = is_marketplace_source_repo(base)
         if ctx.vergil_bump is not None:
             target = format_version(ctx.vergil_bump)
             bumped = set_source_version(base, target)
             normalized = normalize_refs(base, target)
-            claude = normalize_claude_ref(base, "develop" if is_self else target)
+            claude = normalize_claude_ref(base, EXPECTED_MARKETPLACE_REF)
             return UpdateResult(
                 updater=self.name,
                 changed=bumped or bool(normalized) or claude is not None,
@@ -116,7 +116,7 @@ class VergilUpdater:
             )
         target = read_source_version(base)
         normalized = normalize_refs(base, target)
-        claude = normalize_claude_ref(base, "develop" if is_self else target)
+        claude = normalize_claude_ref(base, EXPECTED_MARKETPLACE_REF)
         changed = bool(normalized) or claude is not None
         return UpdateResult(
             updater=self.name,
