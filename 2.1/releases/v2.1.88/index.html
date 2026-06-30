@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.6/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.4/">
+        <link rel="next" href="../v2.1.87/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.5 - VERGIL Tooling</title>
+        <title>2.1.88 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-215-2026-06-04" class="md-skip">
+        <a href="#release-2188-2026-06-30" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.5
+              2.1.88
             
           </span>
         </div>
@@ -1042,10 +1042,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.88/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.88
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1061,6 +1088,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3310,19 +3379,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.5/" class="md-nav__link">
         
   
   
@@ -3338,7 +3398,6 @@
   
 
       </a>
-      
     </li>
   
 
@@ -9823,6 +9882,36 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -9838,7 +9927,20 @@
 
 
 
-<h1 id="release-215-2026-06-04">Release 2.1.5 (2026-06-04)<a class="headerlink" href="#release-215-2026-06-04" title="Permanent link">&para;</a></h1>
+<h1 id="release-2188-2026-06-30">Release 2.1.88 (2026-06-30)<a class="headerlink" href="#release-2188-2026-06-30" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>key the per-branch cache on the base image digest (#1975)</strong></li>
+<li>docs(container-cache): add design spec for base-digest-aware cache key</li>
+</ul>
+<p>Design for issue #1973: the per-branch container cache key is blind to the base image digest, so a republished base tag (e.g. ansible-lint added in vergil-containers v2.1.1) leaves long-lived develop caches stale indefinitely. Fold the base image content digest into compute_cache_hash, resolve it by pulling the base each run (graceful offline fallback), and align vrg-container-cache status to the same computation.</p>
+<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>bridge marketplace-ref audit to single-channel main model (#1976)</strong>
+Epic vergil-project/.github#45 collapsed the plugin distribution model so every repo pins the marketplace at the single released channel on main. The repo-config audit still enforced the old convention (source repo on develop, consumers on the version tag), which broke the vergil-claude-plugin release preflight.</li>
+</ul>
+<p>Make main the expected marketplace ref for all repos and drop the source-repo-&gt;develop exemption and the version-pinned consumer ref. During the bridge period a repo still carrying a deprecated old ref (develop or a version tag) emits a deprecation warning instead of a hard failure, so not-yet-migrated repos keep passing while they are swept one by one. main is compliant, unblocking the plugin release immediately. Any other ref, or a missing one, remains a hard failure.</p>
+<p>ConfigDiff gains a warnings list that is printed by the audit driver but deliberately does not affect is_compliant(). The repo_init seed path and the vergil_eco dependency-update writer now write main for the marketplace ref (workflow pins still follow the version). is_marketplace_source_repo and expected_claude_ref are removed in favour of EXPECTED_MARKETPLACE_REF and is_deprecated_marketplace_ref.</p>
 
 
 
