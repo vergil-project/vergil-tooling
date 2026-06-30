@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
@@ -17,6 +18,8 @@ if TYPE_CHECKING:
 _SELF_PROJECT_NAME = "vergil-tooling"
 
 _VRG_GIT_URL = "https://github.com/vergil-project/vergil-tooling"
+
+_PULL_TIMEOUT_SECONDS = 120
 
 _CACHE_FILES: dict[str, list[str]] = {
     "python": ["uv.lock", "vergil.toml"],
@@ -31,6 +34,56 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 def _warmup_command(lang: str) -> str:
     cmds = language_commands(lang, CheckKind.INSTALL)
     return " && ".join(" ".join(cmd) for cmd in cmds) if cmds else ""
+
+
+def _inspect_image_id(image: str, *, runtime: str) -> str | None:
+    """Return the local content id (``.Id``) of *image*, or None if absent."""
+    result = subprocess.run(  # noqa: S603
+        [runtime, "image", "inspect", image, "--format", "{{.Id}}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, bool]:
+    """Resolve *base_image*'s content digest, refreshing it from the registry.
+
+    Pulls the base (so a moved tag is both detected and available to build from),
+    then inspects the local image id. Returns ``(digest, verified)`` where
+    ``verified`` is False when the pull failed and a previously-pulled local copy
+    was used instead. Raises ``RuntimeError`` when neither a pull nor a local
+    inspect yields a digest.
+    """
+    rt = runtime or detect_runtime()
+    pull_ok = True
+    try:
+        pull = subprocess.run(  # noqa: S603
+            [rt, "pull", base_image],  # noqa: S607
+            capture_output=True,
+            text=True,
+            timeout=_PULL_TIMEOUT_SECONDS,
+        )
+        pull_ok = pull.returncode == 0
+    except subprocess.TimeoutExpired:
+        pull_ok = False
+
+    digest = _inspect_image_id(base_image, runtime=rt)
+    if digest is None:
+        msg = (
+            f"Could not resolve base image '{base_image}': pull "
+            f"{'succeeded' if pull_ok else 'failed'} and no local copy is present."
+        )
+        raise RuntimeError(msg)
+    if not pull_ok:
+        print(
+            f"warning: could not verify base image freshness for '{base_image}' "
+            "(offline?); using local image",
+            file=sys.stderr,
+        )
+    return digest, pull_ok
 
 
 def _is_self_repo(repo_root: Path) -> bool:
@@ -55,11 +108,18 @@ def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
     return [repo_root / n for n in names if (repo_root / n).is_file()]
 
 
-def compute_cache_hash(files: list[Path], *, salt: str = "") -> str:
-    """SHA-256 over sorted file contents plus optional salt, first 8 hex chars."""
+def compute_cache_hash(files: list[Path], *, base_digest: str = "", salt: str = "") -> str:
+    """SHA-256 over sorted file contents, base image digest, and optional salt.
+
+    Folding ``base_digest`` (the content id of the base image the cache is built
+    from) into the key means a republished base tag yields a different hash, so the
+    stale cache is rebuilt instead of reused. Returns the first 8 hex chars.
+    """
     h = hashlib.sha256()
     for f in sorted(files):
         h.update(f.read_bytes())
+    if base_digest:
+        h.update(base_digest.encode())
     if salt:
         h.update(salt.encode())
     return h.hexdigest()[:8]
@@ -137,6 +197,10 @@ def _build_cached_image(
             rt,
             "create",
             f"--platform={container_platform()}",
+            # Use the freshly-pulled base (resolve_base_digest pulled it). Only pull
+            # here if it is somehow absent locally; never --pull=always, which would
+            # fail an offline build that has a usable local copy.
+            "--pull=missing",
             "-v",
             f"{repo_root}:/workspace",
             "-w",
@@ -197,7 +261,8 @@ def ensure_cached_image(
     from vergil_tooling.lib import git as _git
 
     branch = _git.current_branch()
-    current_hash = compute_cache_hash(files, salt=repo_root.name)
+    base_digest, _verified = resolve_base_digest(base_image, runtime=rt)
+    current_hash = compute_cache_hash(files, base_digest=base_digest, salt=repo_root.name)
     existing = find_cached_image(base_image, branch, runtime=rt)
 
     if existing is not None:
