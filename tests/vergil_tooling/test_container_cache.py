@@ -24,8 +24,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _completed(returncode: int = 0, stdout: str = "") -> MagicMock:
-    return MagicMock(returncode=returncode, stdout=stdout)
+def _completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> MagicMock:
+    return MagicMock(returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 _VALID_TOML = """\
@@ -670,6 +670,38 @@ def test_resolve_base_digest_offline_uses_local(capsys: pytest.CaptureFixture[st
     assert digest == "sha256:local9"
     assert verified is False
     assert "could not verify base image freshness" in capsys.readouterr().err
+
+
+def test_resolve_base_digest_pull_failure_reports_real_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    pull = _completed(
+        1,
+        stderr="Error response from daemon: error from registry: denied\n",
+    )
+    inspect = _completed(0, "sha256:local9\n")  # local copy present
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[pull, inspect],
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+    err = capsys.readouterr().err
+    assert "denied" in err  # the real cause, surfaced
+    assert "(offline?)" not in err  # not a misleading guess
+
+
+def test_resolve_base_digest_pull_timeout_reports_timeout(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import subprocess as _sp
+
+    inspect = _completed(0, "sha256:local9\n")
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[_sp.TimeoutExpired(cmd="pull", timeout=1), inspect],
+    ):
+        resolve_base_digest("img:1", runtime="docker")
+    assert "timed out" in capsys.readouterr().err
 
 
 def test_resolve_base_digest_pull_timeout_uses_local() -> None:

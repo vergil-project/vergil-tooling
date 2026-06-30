@@ -48,6 +48,18 @@ def _inspect_image_id(image: str, *, runtime: str) -> str | None:
     return result.stdout.strip() or None
 
 
+def _summarize_pull_error(stderr: str) -> str:
+    """Return the most informative line from a failed pull's stderr.
+
+    Container runtimes print the actionable cause — ``denied``, ``unauthorized``,
+    ``manifest unknown``, or a network error — on the last non-empty stderr line.
+    Surfacing it distinguishes an auth failure from a genuine offline host instead
+    of guessing.
+    """
+    lines = [line.strip() for line in stderr.splitlines() if line.strip()]
+    return lines[-1] if lines else "unknown error"
+
+
 def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, bool]:
     """Resolve *base_image*'s content digest, refreshing it from the registry.
 
@@ -59,6 +71,7 @@ def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, boo
     """
     rt = runtime or detect_runtime()
     pull_ok = True
+    pull_error = ""
     try:
         pull = subprocess.run(  # noqa: S603
             [rt, "pull", base_image],  # noqa: S607
@@ -67,20 +80,24 @@ def resolve_base_digest(base_image: str, *, runtime: str = "") -> tuple[str, boo
             timeout=_PULL_TIMEOUT_SECONDS,
         )
         pull_ok = pull.returncode == 0
+        if not pull_ok:
+            pull_error = _summarize_pull_error(pull.stderr)
     except subprocess.TimeoutExpired:
         pull_ok = False
+        pull_error = f"pull timed out after {_PULL_TIMEOUT_SECONDS}s"
 
     digest = _inspect_image_id(base_image, runtime=rt)
     if digest is None:
+        outcome = "succeeded" if pull_ok else f"failed ({pull_error})"
         msg = (
             f"Could not resolve base image '{base_image}': pull "
-            f"{'succeeded' if pull_ok else 'failed'} and no local copy is present."
+            f"{outcome} and no local copy is present."
         )
         raise RuntimeError(msg)
     if not pull_ok:
         print(
             f"warning: could not verify base image freshness for '{base_image}' "
-            "(offline?); using local image",
+            f"(pull failed: {pull_error}); using local image",
             file=sys.stderr,
         )
     return digest, pull_ok
