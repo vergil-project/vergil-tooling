@@ -605,6 +605,27 @@ def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
     assert "uv sync --frozen --group dev" in setup_cmd
 
 
+# -- _build_cached_image pull policy ------------------------------------------
+
+
+def test_build_cached_image_uses_pull_missing(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    create = MagicMock(returncode=0, stdout="cid123\n")
+    start = MagicMock(returncode=0)
+    commit = MagicMock(returncode=0)
+    rm = MagicMock(returncode=0)
+    with patch(
+        "vergil_tooling.lib.container_cache.subprocess.run",
+        side_effect=[create, start, commit, rm],
+    ) as mock_run:
+        _build_cached_image(
+            tmp_path, "go", "ghcr.io/r/dev-go:1.26", "target:tag", runtime="docker"
+        )
+    create_argv = mock_run.call_args_list[0][0][0]
+    assert "create" in create_argv
+    assert "--pull=missing" in create_argv
+
+
 # -- compute_cache_hash base digest -------------------------------------------
 
 

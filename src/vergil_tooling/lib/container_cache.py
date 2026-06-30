@@ -197,6 +197,10 @@ def _build_cached_image(
             rt,
             "create",
             f"--platform={container_platform()}",
+            # Use the freshly-pulled base (resolve_base_digest pulled it). Only pull
+            # here if it is somehow absent locally; never --pull=always, which would
+            # fail an offline build that has a usable local copy.
+            "--pull=missing",
             "-v",
             f"{repo_root}:/workspace",
             "-w",
