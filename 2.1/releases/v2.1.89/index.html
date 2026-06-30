@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.64/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.62/">
+        <link rel="next" href="../v2.1.88/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.63 - VERGIL Tooling</title>
+        <title>2.1.89 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2163-2026-06-23" class="md-skip">
+        <a href="#release-2189-2026-06-30" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.63
+              2.1.89
             
           </span>
         </div>
@@ -1044,10 +1044,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.89/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.89
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1063,6 +1090,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1772,37 +1841,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.63
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.63/" class="md-nav__link">
         
   
   
@@ -1818,37 +1860,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9918,6 +9929,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -9935,17 +9957,24 @@
 
 
 
-<h1 id="release-2163-2026-06-23">Release 2.1.63 (2026-06-23)<a class="headerlink" href="#release-2163-2026-06-23" title="Permanent link">&para;</a></h1>
+<h1 id="release-2189-2026-06-30">Release 2.1.89 (2026-06-30)<a class="headerlink" href="#release-2189-2026-06-30" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>copy host Claude config onto cloud VMs so bypass is reachable (#1826)</strong>
-The Lima path seeds host ~/.claude config into the VM via
-copy_claude_config (carrying the operator's permissions.defaultMode), but
-the cloud path's _cs_link_claude only linked history dirs — so
-off-platform VMs never received the bypassPermissions default and could
-not reach bypass mode. Bring the cloud stage to parity: copy host config,
-then link. Add a direct stage test and stub copy_claude_config in the
-cloud-create test bundle.</li>
+<li>
+<p><strong>report the real pull error instead of guessing '(offline?)' (#1985)</strong>
+When the base-image pull fails during the staleness probe, resolve_base_digest now surfaces the pull's actual cause (the last non-empty stderr line — denied, unauthorized, manifest unknown, a network error — or a timeout) instead of the static '(offline?)' guess. The misleading text sent a real incident toward a stale-cache / publishing theory when the cause was a stale ghcr.io credential. Behavior is unchanged; only the diagnostic improves. Ref #1981.</p>
+</li>
+<li>
+<p><strong>fail hard on base-pull failure instead of silent stale fallback (#1986)</strong>
+When the base-image pull failed during the staleness probe, resolve_base_digest fell back to the local base's digest and continued with only a soft '(offline?)' warning (added in #1973). In practice this let a host validate against a stale local base for an unknown length of time — the exact ansible-lint failure that motivated #1973 — a silent failure that surfaces later as a confusing wrong result.</p>
+</li>
+</ul>
+<p>A failed base pull is now a hard error by default: resolve_base_digest raises a RuntimeError naming the real pull error (stderr / timeout / exit code) and the stale-cache risk. The local-base degradation is retained as an explicit opt-in via VRG_ALLOW_STALE_BASE (or allow_stale=True), which warns and returns verified=False. The no-local-copy and pull-succeeds paths are unchanged.</p>
+<p>The hard-error and no-image messages now report the actual pull failure cause instead of guessing '(offline?)'.</p>
+<p>Amends the #1973 staleness design spec with a superseding note.</p>
+<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>point plugin marketplace at main (single released channel, #45) (#1983)</strong></li>
 </ul>
 
 
