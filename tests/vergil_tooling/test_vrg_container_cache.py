@@ -152,6 +152,10 @@ def test_status_no_cache_with_expected_tag(
             return_value="feature/42",
         ),
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=None),
         patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
         patch(
@@ -169,7 +173,9 @@ def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
     from vergil_tooling.lib.container_cache import cache_sensitive_files, compute_cache_hash
 
     files = cache_sensitive_files(tmp_path, "go")
-    h = compute_cache_hash(files)
+    # status must compute the hash the same way ensure_cached_image does:
+    # salt (repo name) + base digest.
+    h = compute_cache_hash(files, base_digest="sha256:abc", salt=tmp_path.name)
     cached = (f"ghcr.io/r/dev-go:1.26--feature-42--{h}", h)
     with (
         patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
@@ -178,6 +184,10 @@ def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
             return_value="feature/42",
         ),
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
         patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
         patch(
@@ -199,6 +209,42 @@ def test_status_stale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
             return_value="feature/42",
         ),
         patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.resolve_base_digest",
+            return_value=("sha256:abc", True),
+        ),
+        patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.default_image",
+            return_value="ghcr.io/r/dev-go:1.26",
+        ),
+    ):
+        assert main(["status"]) == 0
+    assert "stale" in capsys.readouterr().out
+
+
+def test_status_stale_when_base_digest_changes(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    from vergil_tooling.lib.container_cache import cache_sensitive_files, compute_cache_hash
+
+    files = cache_sensitive_files(tmp_path, "go")
+    # Cache built against an OLD base digest; the live base now has a NEW digest.
+    old_hash = compute_cache_hash(files, base_digest="sha256:OLD", salt=tmp_path.name)
+    cached = (f"ghcr.io/r/dev-go:1.26--feature-42--{old_hash}", old_hash)
+    with (
+        patch("vergil_tooling.bin.vrg_container_cache.git.repo_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.git.current_branch",
+            return_value="feature/42",
+        ),
+        patch("vergil_tooling.bin.vrg_container_cache.detect_runtime", return_value="docker"),
+        patch(
+            "vergil_tooling.bin.vrg_container_cache.resolve_base_digest",
+            return_value=("sha256:NEW", True),
+        ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
         patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
         patch(
