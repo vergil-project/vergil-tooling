@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 def _completed(returncode: int = 0, stdout: str = "") -> MagicMock:
     return MagicMock(returncode=returncode, stdout=stdout)
 
+
 _VALID_TOML = """\
 [project]
 repository-type = "library"
@@ -618,9 +619,7 @@ def test_build_cached_image_uses_pull_missing(tmp_path: Path) -> None:
         "vergil_tooling.lib.container_cache.subprocess.run",
         side_effect=[create, start, commit, rm],
     ) as mock_run:
-        _build_cached_image(
-            tmp_path, "go", "ghcr.io/r/dev-go:1.26", "target:tag", runtime="docker"
-        )
+        _build_cached_image(tmp_path, "go", "ghcr.io/r/dev-go:1.26", "target:tag", runtime="docker")
     create_argv = mock_run.call_args_list[0][0][0]
     assert "create" in create_argv
     assert "--pull=missing" in create_argv
