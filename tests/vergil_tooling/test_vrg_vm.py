@@ -3900,6 +3900,28 @@ class TestCloudSession:
         assert kwargs["workdir"] == "/vergil/projects/lmf/cloud"
         assert "vrg-vm-resolve-session" in kwargs["inner"]
 
+    def test_cloud_session_seeds_claude_config(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # #1999 (Fix A): the cloud session path must seed the operator's ~/.claude
+        # config (settings.json carries permissions.defaultMode=bypassPermissions) and
+        # relink the volume dirs BEFORE the process-replacing exec_session, mirroring
+        # the Lima _cmd_session path. Without this an off-platform box never self-heals
+        # a bad rebuild: it runs with no bypass and writes history off the volume.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            manager = MagicMock()
+            manager.attach_mock(m["copy_claude_config"], "copy")
+            manager.attach_mock(m["link_cloud_claude_dirs"], "link")
+            manager.attach_mock(transport.exec_session, "exec")
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["copy_claude_config"].assert_called_once()
+        assert m["copy_claude_config"].call_args.args[0] is transport
+        m["link_cloud_claude_dirs"].assert_called_once_with(transport)
+        transport.exec_session.assert_called_once()
+        order = [name for name, _, _ in manager.mock_calls]
+        assert order.index("copy") < order.index("exec")
+        assert order.index("link") < order.index("exec")
+
 
 class TestCloudUpdate:
     def test_cloud_update_in_place_over_iap(self, _cloud_repo: Path, tmp_path: Path) -> None:

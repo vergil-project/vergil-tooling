@@ -166,18 +166,35 @@ def _settled_run_jobs(
 
 
 _RELEASE_JOB_NAME = "release / release"
+_RELEASE_JOB_LEAF = "release"
+
+
+def _is_release_job(name: str) -> bool:
+    """True when *name* is the CD release job, identified by its leaf segment.
+
+    Consumer repos call the reusable ``cd-release`` workflow, so their release
+    job surfaces as the reusable leaf ``release / release``. vergil-actions
+    *defines* that reusable workflow and cannot call itself, so its CD runs an
+    inline job it names ``cd / release`` (#2001). Both share the leaf segment
+    ``release`` — match on the leaf (the part after the last `` / ``), not the
+    full name, so vergil-actions' own release verifies while a decoy like
+    ``release-notes / build`` (leaf ``build``) still fails the #1853 guard.
+    Matching the leaf exactly keeps that guard against loose substrings intact.
+    """
+    return name.rsplit(" / ", 1)[-1] == _RELEASE_JOB_LEAF
 
 
 def _verify_release_job(jobs: list[dict[str, Any]]) -> None:
     """Hard gate: the release job must exist and have concluded ``success``.
 
-    Matched EXACTLY (the reusable-workflow leaf ``release / release``), not by
-    the substring ``_find_job`` uses for the deferred sweep — the release job is
-    the single load-bearing assertion, so a future ``release``-prefixed job must
-    not satisfy it. A renamed/absent release job fails closed (#1853).
+    Identified by its leaf segment ``release`` (see ``_is_release_job``), which
+    matches both the reusable leaf ``release / release`` and vergil-actions'
+    inline ``cd / release`` while still rejecting a ``release``-prefixed decoy —
+    the release job is the single load-bearing assertion. A renamed/absent
+    release job fails closed (#1853, #2001).
     """
     for job in jobs:
-        if job.get("name") == _RELEASE_JOB_NAME:
+        if _is_release_job(job.get("name", "")):
             conclusion = job.get("conclusion")
             if conclusion != "success":
                 raise ReleaseError(
@@ -204,7 +221,7 @@ def _collect_deferred_publish(jobs: list[dict[str, Any]]) -> list[str]:
     families: list[str] = []
     for job in jobs:
         name = job.get("name", "")
-        if name == _RELEASE_JOB_NAME:
+        if _is_release_job(name):
             continue
         if job.get("conclusion") in ("success", "skipped"):
             continue
