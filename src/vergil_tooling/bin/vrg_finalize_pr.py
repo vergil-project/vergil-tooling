@@ -46,10 +46,8 @@ from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import (
     config,
-    epics,
     git,
     github,
-    linkage,
     pr_merge,
     pr_provenance,
     progress,
@@ -135,18 +133,7 @@ def _run_finalize_batch(
         if result.returncode != 0:
             raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
 
-    def _close_tasks() -> None:
-        # Close each merged PR's task after post-checks pass. The single-PR path
-        # closes in main(); the batch defers post-checks (--skip-post-checks per
-        # item, --cleanup-only at the end), so neither sub-invocation hits that
-        # close — do it here, after validation, before release.
-        for pr in prs:
-            _close_managed_task(pr)
-
-    post_steps = [
-        batch.PostStep("validation", _validate),
-        batch.PostStep("close-tasks", _close_tasks),
-    ]
+    post_steps = [batch.PostStep("validation", _validate)]
     if release:
         post_steps.append(batch.PostStep("release", _release))
 
@@ -730,37 +717,6 @@ def _chain_release(root: Path, *, install: bool = False) -> int:
     return result.returncode
 
 
-def _close_managed_task(pr: str) -> None:
-    """Close the PR's tracking task + roll up its epic, gated to the model.
-
-    ``vrg-finalize-pr`` is shared tooling: this runs in every repo on deploy
-    while most issues are still legacy (spec §5). It acts only when the Ref'd
-    issue has an ``epic``-labeled parent; legacy issues (no epic parent) are
-    left open for manual close, with a visible note. The caller invokes this
-    only after the pipeline fully succeeded, so the close follows merge +
-    post-checks.
-    """
-    body = github.read_output("pr", "view", pr, "--json", "body", "--jq", ".body")
-    try:
-        issue_number = linkage.extract_tracking_issue(body)
-    except ValueError:
-        return
-    if issue_number is None:
-        return
-    repo = github.current_repo()
-    owner, name = repo.split("/", 1)
-    task = epics.IssueRef(owner=owner, repo=name, number=issue_number)
-    parent = epics.parent_of(task)
-    if parent is None or not epics.is_epic(parent):
-        print(
-            f"#{issue_number} has no epic parent — left open for manual close (transition policy)."
-        )
-        return
-    print(f"Auto-closing task #{issue_number} (finalized).")
-    github.run("issue", "close", str(issue_number), "--repo", repo)
-    epics.rollup(task)
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
 
@@ -825,18 +781,10 @@ def main(argv: list[str] | None = None) -> int:
         repo_root=root,
     )
 
-    # Auto-close the tracking task + roll up its epic once the pipeline fully
-    # succeeded (gated on an epic parent — spec §5 transition gate). Skipped on
-    # dry-run, cleanup-only (no merge), and skip-post-checks (post-checks
-    # deferred, so success is not yet verified).
-    if (
-        rc == 0
-        and args.pr is not None
-        and not args.dry_run
-        and not args.cleanup_only
-        and not args.skip_post_checks
-    ):
-        _close_managed_task(args.pr)
+    # Task closure and epic rollup are event-driven now (epic
+    # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
+    # merge, and the on: issues.closed rollup Action closes the parent epic. The
+    # old post-pipeline `_close_managed_task` call was removed here in T4.
 
     # --release cascade (issue #1634): chain into vrg-release only after a
     # clean finalize. A non-zero pipeline must not trigger a release, and the
