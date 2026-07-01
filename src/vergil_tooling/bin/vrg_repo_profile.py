@@ -8,6 +8,7 @@ Contents heading, no heading-level skips).
 
 from __future__ import annotations
 
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -62,7 +63,26 @@ def _structural_check(file_path: str) -> bool:
     return len(errors) == 0
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-repo-profile",
+        description=(
+            "Validate the current repository's configuration and README "
+            "structure: that vergil.toml is present and valid (required "
+            "fields, enum values, co-author format, dependencies) and that "
+            "README.md follows the structural conventions (exactly one H1, a "
+            "Table of Contents, no heading-level skips)."
+        ),
+        epilog=(
+            "Run from the repository root. Exit codes: 0 ok, 1 validation "
+            "failure, 2 vergil.toml not found."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    _parse_args(argv)
     try:
         read_config(Path.cwd())
     except FileNotFoundError:
