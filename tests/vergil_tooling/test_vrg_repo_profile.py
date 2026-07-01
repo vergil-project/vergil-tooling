@@ -38,40 +38,40 @@ def _write_toml(tmp_path: Path, content: str) -> None:
 def test_valid_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_toml(tmp_path, _VALID_TOML)
-    assert main() == 0
+    assert main([]) == 0
 
 
 def test_missing_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
-    assert main() == 2
+    assert main([]) == 2
 
 
 def test_missing_field(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     toml = _VALID_TOML.replace('release-model = "tagged-release"\n', "")
     _write_toml(tmp_path, toml)
-    assert main() == 1
+    assert main([]) == 1
 
 
 def test_optional_primary_language(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     toml = _VALID_TOML.replace('primary-language = "python"\n', "")
     _write_toml(tmp_path, toml)
-    assert main() == 0
+    assert main([]) == 0
 
 
 def test_invalid_enum(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     toml = _VALID_TOML.replace('"library"', '"banana"')
     _write_toml(tmp_path, toml)
-    assert main() == 1
+    assert main([]) == 1
 
 
 def test_missing_dependencies_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     toml = _VALID_TOML.replace('vergil = "v2.0"', 'other = "v1.0"')
     _write_toml(tmp_path, toml)
-    assert main() == 1
+    assert main([]) == 1
 
 
 # -- _structural_check -------------------------------------------------------
@@ -126,17 +126,17 @@ def test_main_readme_structural_fails(tmp_path: Path, monkeypatch: pytest.Monkey
     monkeypatch.chdir(tmp_path)
     _write_toml(tmp_path, _VALID_TOML)
     (tmp_path / "README.md").write_text("## No H1\n")
-    assert main() == 1
+    assert main([]) == 1
 
 
 def test_main_readme_structural_passes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_toml(tmp_path, _VALID_TOML)
     (tmp_path / "README.md").write_text("# Title\n\n## Table of Contents\n\n## Section\n")
-    assert main() == 0
+    assert main([]) == 0
 
 
 def test_main_no_readme(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_toml(tmp_path, _VALID_TOML)
-    assert main() == 0
+    assert main([]) == 0

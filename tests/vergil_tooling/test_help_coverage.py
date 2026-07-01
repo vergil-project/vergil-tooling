@@ -36,11 +36,8 @@ EXEMPT = frozenset({"vrg-hook-guard"})
 KNOWN_GAPS = frozenset(
     {
         "vrg-container-docs",
-        "vrg-container-test",
         "vrg-gh",
         "vrg-git",
-        "vrg-pr-issue-linkage",
-        "vrg-repo-profile",
     }
 )
 

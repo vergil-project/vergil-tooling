@@ -11,6 +11,7 @@ this gate is a dependency-free syntax/uniqueness check.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -20,7 +21,26 @@ from vergil_tooling.lib.linkage import AUTOCLOSE_RE, LINKAGE_RE, extract_trackin
 from vergil_tooling.lib.output import emit_error, write_summary
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-pr-issue-linkage",
+        description=(
+            "Validate that a pull request body includes primary issue linkage "
+            "(Ref #N or Closes #N) and exactly one task reference. A "
+            "dependency-free CI gate: pure regex over the PR body, no GitHub "
+            "API calls."
+        ),
+        epilog=(
+            "Reads the pull request from the GitHub event payload at "
+            "$GITHUB_EVENT_PATH. Exit codes: 0 ok, 1 compliance failure, "
+            "2 configuration error (event path unset or missing)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    _parse_args(argv)
     event_path = os.environ.get("GITHUB_EVENT_PATH", "")
 
     if not event_path:

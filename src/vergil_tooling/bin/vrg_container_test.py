@@ -7,6 +7,7 @@ via environment variables.
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
@@ -83,7 +84,25 @@ def _runtime_is_available(runtime: str) -> bool:
 _docker_is_available = _runtime_is_available
 
 
-def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="vrg-container-test",
+        description=(
+            "Run the current repository's test suite inside a dev container. "
+            "The project language is auto-detected from its package-manager "
+            "files to choose a default image and test command."
+        ),
+        epilog=(
+            "Environment overrides: DOCKER_DEV_IMAGE (image), DOCKER_TEST_CMD "
+            "(command), DOCKER_NETWORK (network to join). Requires a running "
+            "container runtime (docker or nerdctl)."
+        ),
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    _parse_args(argv)
     runtime = detect_runtime()
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
