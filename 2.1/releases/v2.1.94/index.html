@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.34/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.32/">
+        <link rel="next" href="../v2.1.93/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.33 - VERGIL Tooling</title>
+        <title>2.1.94 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2133-2026-06-12" class="md-skip">
+        <a href="#release-2194-2026-07-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.33
+              2.1.94
             
           </span>
         </div>
@@ -1054,10 +1054,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.94/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.94
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1073,6 +1100,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2762,37 +2820,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.33
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.33/" class="md-nav__link">
         
   
   
@@ -2808,37 +2839,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10058,10 +10058,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -10085,38 +10085,20 @@
 
 
 
-<h1 id="release-2133-2026-06-12">Release 2.1.33 (2026-06-12)<a class="headerlink" href="#release-2133-2026-06-12" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-2194-2026-07-01">Release 2.1.94 (2026-07-01)<a class="headerlink" href="#release-2194-2026-07-01" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>rebuild creates the VM when it doesn't exist instead of aborting (#1631) (#1632)</strong>
-vrg-vm rebuild aborted with 'VM does not exist — run vrg-vm create first' when the target VM was absent, forcing the user to notice the error and re-run a different command. Rebuild is now idempotent: when vm_status is empty it prints a note and delegates to _cmd_create(args).</li>
+<li>
+<p><strong>omit trailing space on language: for no-language repos (#2031)</strong>
+render_ci_workflow emitted 'language: {value}' unconditionally, leaving a trailing space when a repo has no primary language. That fails vrg-validate (yamllint trailing-spaces) and was hit bootstrapping vergil-project/docs. Emit a bare 'language:' when there is no primary language. Ref #1993.</p>
+</li>
+<li>
+<p><strong>register marketplaces referenced by enabled plugins even when undeclared (#2032)</strong>
+Follow-up hardening to #2021/#2023. Fix C v2 registered only the marketplaces listed in settings.json extraKnownMarketplaces. But an enabled plugin can reference a marketplace not declared there — notably the built-in claude-plugins-official, which is not always listed (superpowers@claude-plugins-official). On such a box its catalog is never cloned and install fails again.</p>
+</li>
 </ul>
-<p>An absent VM has nothing to destroy, so the create lifecycle — not a destroy-skipped rebuild — is the correct pipeline. _cmd_create re-confirms absence, runs the create stages, and labels the run as a create. rebuild on an existing VM still runs the destroy-first rebuild pipeline.</p>
-<p>Replaced test_rebuild_fails_if_not_created with test_rebuild_creates_if_not_created (asserts create_vm runs, delete_vm does not); test_rebuild_destroys_and_creates still covers the existing-VM path. Ref #1631.</p>
-<ul>
-<li><strong>resumable releases via vrg-release --resume (#1633)</strong></li>
-<li>docs(release): design for resumable releases via tracking-issue state</li>
-</ul>
-<p>Design spec for #1612: vrg-release --resume adopts an open release: X.Y.Z tracking issue and continues from the first incomplete stage. The issue body holds a generated stage checklist (the resume cursor), comments hold the log, and the issue is the lock. Stages tick their box at the end and probe reality where cheap; the issue is created before any other durable artifact so post-creation failures are resumable. Ref #1612.</p>
-<ul>
-<li>docs(release): apply pushback revisions to resumable-release spec</li>
-</ul>
-<p>Five design fixes from the spec pushback review: (1) skip = hydrate ctx from reality, not no-op; (2) close-finalize closes the issue only when no fail-defer stage has a pending error; (3) prepare is sub-step idempotent; (4) version-skew guard gets an actionable off-ramp; (5) issue creation lands after read-only validation, before the first durable artifact (splitting preflight). Ref #1612.</p>
-<ul>
-<li>docs(release): implementation plan for resumable releases (phase 1)</li>
-</ul>
-<p>Phased implementation plan for #1612 with file structure and a 3-phase roadmap. Phase 1 (the checklist module: render/parse/upsert/first_unchecked/tick + version-skew guard) is specified in full bite-sized TDD detail; Phases 2 (idempotency/hydrate) and 3 (resume orchestration/CLI) are roadmapped and get their own plans authored against then-current code. Ref #1612.</p>
-<ul>
-<li>docs(release): apply alignment fixes to resumable-release spec and plan</li>
-</ul>
-<p>Two alignment-review fixes: soften the version-skew guard in the spec to drop a reference to a recovery doc that does not exist, and add an explicit refactor task to the Phase 1 plan (extract the shared names/checked helper used by first_unchecked and tick). The phased plan structure (Phase 1 tasked, Phases 2-3 roadmapped) is accepted as-is. Ref #1612.</p>
-<ul>
-<li>feat(release): add checklist module skeleton</li>
-</ul>
-<p>Markers and ChecklistError for the resumable-release progress block. Ref #1612.</p>
-<ul>
-<li>feat(release): render checklist block</li>
-</ul>
+<p>Refactor the settings read into _read_guest_settings + _enabled_plugin_ids + _marketplace_sources (single read). _marketplace_sources now also derives a source for any enabled plugin whose marketplace is undeclared where it can — claude-plugins-official -&gt; anthropics/claude-plugins-official; an undecidable third-party marketplace has no derivable source and is left for the install to surface, never invented.</p>
+<p>Part of epic vergil-project/.github#69.</p>
 
 
 
