@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.90] - 2026-07-01
+
+### Features
+
+- render epics as a table with a Done column and stacked repos (#1995)
+
 ## [2.1.89] - 2026-06-30
 
 ### Bug fixes
