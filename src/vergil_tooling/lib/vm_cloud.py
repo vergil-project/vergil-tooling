@@ -470,17 +470,22 @@ def await_readiness(transport: Transport, fingerprint: str, *, verbose: bool = F
         raise RuntimeError("spec fingerprint mismatch on the cloud box — rebuild the VM")
 
 
-_CLOUD_CLAUDE_LINK_DIRS = ("projects", "todos")
+_CLOUD_CLAUDE_LINK_DIRS = ("projects", "todos", "plugins")
 _CLOUD_CLAUDE_VOLUME = "/vergil/claude"
 
 
 def link_cloud_claude_dirs(transport: Transport) -> None:
-    """Link only the ~/.claude history subdirs onto the persistent volume.
+    """Link the durable ~/.claude subdirs onto the persistent volume.
 
     ``projects`` and ``todos`` are symlinked onto ``/vergil/claude`` so session
-    history survives teardown, while injected credentials (``.credentials.json``,
-    ``.claude.json``) stay on the ephemeral boot disk and die with the VM
-    (acceptance: no injected credential on the detachable volume).
+    history survives teardown. ``plugins`` is linked too (#2008, Fix B): the
+    marketplace clones and installed plugins otherwise sit on the ephemeral boot
+    disk and are wiped on every rebuild, forcing a full reinstall on each cold
+    boot. It is safe on the ext4 volume — the EXDEV atomic-rename problem that
+    keeps Lima plugins VM-local does not arise on a real block device. Injected
+    credentials (``.credentials.json``, ``.claude.json``) stay on the ephemeral
+    boot disk and die with the VM (acceptance: no injected credential on the
+    detachable volume).
 
     Idempotent and merge-safe (#1999, Fix A'): a re-seed (e.g. from the cloud
     session path) may find ``~/.claude/<sub>`` already an equivalent symlink, or
