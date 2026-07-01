@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.96] - 2026-07-01
+
+### Features
+
+- add --help, auto-detect org, --window-days, read-only banner (#2048)
+
 ## [2.1.95] - 2026-07-01
 
 ### Testing
