@@ -67,6 +67,31 @@ def test_create_pr_returns_url() -> None:
     assert url == "https://github.com/pr/1"
 
 
+def test_create_issue_returns_url_and_builds_command() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_output",
+        return_value="https://github.com/org/repo/issues/123",
+    ) as mock_read:
+        url = github.create_issue(
+            repo="org/repo", title="T", body_file="body.md", labels=["bug", "epic"]
+        )
+    assert url == "https://github.com/org/repo/issues/123"
+    args = mock_read.call_args.args
+    assert args[:2] == ("issue", "create")
+    assert "--repo" in args and "org/repo" in args
+    assert "--title" in args and "T" in args
+    assert "--body-file" in args and "body.md" in args
+    assert args.count("--label") == 2
+
+
+def test_create_issue_uses_inline_body_when_no_file() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="url") as mock_read:
+        github.create_issue(repo="org/repo", title="T", body="hello")
+    args = mock_read.call_args.args
+    assert "--body" in args and "hello" in args
+    assert "--body-file" not in args
+
+
 def test_edit_pr_body_passes_body_via_file() -> None:
     """edit_pr_body writes the body to a temp file and passes it to gh."""
     captured: dict[str, str] = {}

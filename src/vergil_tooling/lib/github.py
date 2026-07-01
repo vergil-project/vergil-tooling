@@ -380,6 +380,28 @@ def create_pr(*, base: str, title: str, body_file: str) -> str:
     return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
 
 
+def create_issue(
+    *,
+    repo: str,
+    title: str,
+    body: str = "",
+    body_file: str | None = None,
+    labels: list[str] | None = None,
+    assignees: list[str] | None = None,
+) -> str:
+    """Create an issue and return its URL. Prefers *body_file* over inline *body*."""
+    args = ["issue", "create", "--repo", repo, "--title", title]
+    if body_file is not None:
+        args += ["--body-file", body_file]
+    else:
+        args += ["--body", body]
+    for label in labels or []:
+        args += ["--label", label]
+    for assignee in assignees or []:
+        args += ["--assignee", assignee]
+    return read_output(*args)
+
+
 def edit_pr_body(pr: str, *, body: str) -> None:
     """Replace a PR's body, passing the text via a temp file."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
