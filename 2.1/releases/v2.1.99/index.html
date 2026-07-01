@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.10/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.8/">
+        <link rel="next" href="../v2.1.98/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.9 - VERGIL Tooling</title>
+        <title>2.1.99 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-209-2026-05-14" class="md-skip">
+        <a href="#release-2199-2026-07-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.9
+              2.1.99
             
           </span>
         </div>
@@ -1064,10 +1064,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.99/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.99
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1083,6 +1110,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5740,37 +5798,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.9
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.9/" class="md-nav__link">
         
   
   
@@ -5786,48 +5817,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10249,21 +10238,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
+        Bug fixes
       
     </span>
   </a>
@@ -10287,17 +10265,32 @@
 
 
 
-<h1 id="release-209-2026-05-14">Release 2.0.9 (2026-05-14)<a class="headerlink" href="#release-209-2026-05-14" title="Permanent link">&para;</a></h1>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<h1 id="release-2199-2026-07-01">Release 2.1.99 (2026-07-01)<a class="headerlink" href="#release-2199-2026-07-01" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 2.0.9</strong></li>
+<li>
+<p><strong>reject an epic issue in report-ready (guard parity with vrg-submit-pr) (#2071)</strong>
+vrg-pr-workflow report-ready now refuses --issue pointing at an epic, so the error surfaces where the value is entered instead of only later at vrg-submit-pr. Factors the epic detection into a shared epics.is_epic_linkage() (single source of truth) that vrg-submit-pr now also uses. The report-ready guard is best-effort: if epic-ness can't be determined (no remote / no gh auth, e.g. an offline run) it defers to vrg-submit-pr's authoritative check rather than blocking. Ref vergil-project/vergil-tooling#2026.</p>
+</li>
+<li>
+<p><strong>restore epic and triage issue creation (regression from #2017) (#2075)</strong></p>
+</li>
 </ul>
+<h1 id="2017-denied-all-raw-gh-issue-create-and-routed-creation-through-vrg-issue-create-which-requires-epic-leaving-top-level-epics-and-unlinked-triage-issues-with-no-sanctioned-path-adds-two-shape-specific-tools-option-a-vrg-epic-create-top-level-issue-in-github-forced-epic-label-org-auto-detected-via-githubdetect_org-and-vrg-triage-create-unlinked-issue-forced-triage-label-current-repo-or-repo-each-forces-its-shapes-label-so-2017s-no-arbitrary-bypass-guarantee-holds-updates-the-vrg-gh-issue-create-denial-to-name-all-three-sanctioned-tools-both-new-tools-use-argparse-so-the-help-coverage-gate-verifies-their-help-automatically-design-docsspecs2026-07-01-issue-creation-shapes-designmd-plugin-skills-epic-createmigrate-repotriage-capture-switch-to-these-in-the-vergil-claude-plugin-companion-issue-ref-vergil-projectvergil-tooling2069">2017 denied all raw gh issue create and routed creation through vrg-issue-create, which requires --epic — leaving top-level epics and unlinked triage issues with no sanctioned path. Adds two shape-specific tools (Option A): vrg-epic-create (top-level issue in <org>/.github, forced 'epic' label, org auto-detected via github.detect_org) and vrg-triage-create (unlinked issue, forced 'triage' label, current repo or --repo). Each forces its shape's label, so #2017's no-arbitrary-bypass guarantee holds. Updates the vrg-gh issue-create denial to name all three sanctioned tools. Both new tools use argparse, so the help-coverage gate verifies their --help automatically. Design: docs/specs/2026-07-01-issue-creation-shapes-design.md. Plugin skills (epic-create/migrate-repo/triage-capture) switch to these in the vergil-claude-plugin companion issue. Ref vergil-project/vergil-tooling#2069.<a class="headerlink" href="#2017-denied-all-raw-gh-issue-create-and-routed-creation-through-vrg-issue-create-which-requires-epic-leaving-top-level-epics-and-unlinked-triage-issues-with-no-sanctioned-path-adds-two-shape-specific-tools-option-a-vrg-epic-create-top-level-issue-in-github-forced-epic-label-org-auto-detected-via-githubdetect_org-and-vrg-triage-create-unlinked-issue-forced-triage-label-current-repo-or-repo-each-forces-its-shapes-label-so-2017s-no-arbitrary-bypass-guarantee-holds-updates-the-vrg-gh-issue-create-denial-to-name-all-three-sanctioned-tools-both-new-tools-use-argparse-so-the-help-coverage-gate-verifies-their-help-automatically-design-docsspecs2026-07-01-issue-creation-shapes-designmd-plugin-skills-epic-createmigrate-repotriage-capture-switch-to-these-in-the-vergil-claude-plugin-companion-issue-ref-vergil-projectvergil-tooling2069" title="Permanent link">&para;</a></h1>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add Claude Code permission model design spec (#754)</strong></li>
-<li><strong>apply pushback review fixes to permission model design spec</strong></li>
-<li><strong>add permission model implementation plan (#754)</strong></li>
-<li><strong>apply alignment review fixes to permission model implementation plan</strong></li>
+<li><strong>document Closes-based task closure and event-driven rollup (#2073)</strong>
+Replace the old 'Ref-only, auto-close banned' language across the current docs with the event-driven model (epic vergil-project/.github#75): vrg-submit-pr auto-selects Closes for managed tasks (auto-close on merge), legacy issues keep Ref, Fixes/Resolves stay banned, and the parent epic rolls up via the on: issues.closed Action. Records the rationale — a task is one PR, so in develop = done and any later change is a new follow-up issue, never a reopening. Updates CLAUDE.md, docs/repository-standards.md, and the site guides/reference; dated docs/specs/* are left as historical snapshots.</li>
+</ul>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>scaffold the epic-rollup caller in every new repo (#2074)</strong>
+vrg-github-repo-init now provisions .github/workflows/epic-rollup.yml — the thin on: issues.closed caller that hands off to the reusable ops-epic-rollup workflow — for every managed repo, unconditionally (like ci.yml). Adds render_epic_rollup_workflow and writes it in step_ci_cd_workflows. The caller is static across repos and orgs: all repos reference vergil-project/vergil-actions, and the reusable workflow resolves the epic repo (.github) within the caller's own org. This makes event-driven closure (epic vergil-project/.github#75) the default for new repos and the basis for the Phase 3 rollout to existing repos.</li>
+</ul>
+<h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>remove the command-triggered task close path (#2072)</strong>
+Task closure and epic rollup are event-driven now (epic vergil-project/.github#75): the PR's Closes linkage closes the task on merge (T3) and the on: issues.closed rollup Action closes the parent epic (caller #2052 + reusable ops-epic-rollup). Remove _close_managed_task and its two call sites — the single-PR post-pipeline close in main() and the finalize-batch close-tasks post-step — plus the now-unused epics/linkage imports. This also closes the vrg-submit-pr --all hole that started the epic: closure no longer lives in any command, so no path can forget it.</li>
 </ul>
 
 

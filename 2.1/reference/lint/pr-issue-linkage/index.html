@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1048,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.99/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.99
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -10309,24 +10339,25 @@
 
 <h1 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h1>
 <p><strong>Installed as:</strong> <code>vrg-pr-issue-linkage</code> (Python console script)</p>
-<p>Validates that a pull request body uses <code>Ref</code> for issue linkage
-and rejects auto-close keywords. Runs in CI using the GitHub event
-payload.</p>
+<p>Validates that a pull request body links exactly one task with
+<code>Ref</code> or <code>Closes</code>, and rejects the <code>Fixes</code>/<code>Resolves</code> auto-close
+keywords. Runs in CI using the GitHub event payload.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <p>This script is called by CI workflows, not invoked directly. It
 reads the PR body from <code>$GITHUB_EVENT_PATH</code>.</p>
 <h2 id="validation-rules">Validation Rules<a class="headerlink" href="#validation-rules" title="Permanent link">&para;</a></h2>
-<p>The PR body must contain at least one line matching:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Ref #123
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Ref owner/repo#123
+<p>The PR body must contain exactly one line matching:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>Ref #123          Closes #123
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>Ref owner/repo#123 Closes owner/repo#123
 </code></pre></div>
 <p>The pattern allows optional leading whitespace, list markers
 (<code>-</code> or <code>*</code>), and an optional colon after the keyword.</p>
-<p>Auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code> and all
-variants like <code>Fix</code>, <code>Fixed</code>, <code>Close</code>, <code>Closed</code>, <code>Resolve</code>,
-<code>Resolved</code>) are rejected. Issues must remain open until
-post-merge workflows succeed; premature closure loses tracking
-for multi-PR and multi-repo work.</p>
+<p><code>Closes</code> is the sanctioned auto-close keyword: a task is exactly
+one PR, so it closes on merge (<code>vrg-submit-pr</code> selects <code>Closes</code>
+for managed tasks; legacy issues keep <code>Ref</code>). <code>Fixes</code>/<code>Resolves</code>
+and their variants remain rejected so there is one close keyword.
+This gate is a dependency-free syntax/uniqueness check; the
+epic-vs-task policy lives in <code>vrg-submit-pr</code>.</p>
 <h2 id="environment">Environment<a class="headerlink" href="#environment" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -10355,11 +10386,11 @@ for multi-PR and multi-repo work.</p>
 <tbody>
 <tr>
 <td>0</td>
-<td>Valid <code>Ref</code> linkage found</td>
+<td>Valid <code>Ref</code> or <code>Closes</code> linkage found</td>
 </tr>
 <tr>
 <td>1</td>
-<td>Auto-close keyword used, no linkage, or empty PR body</td>
+<td>Banned keyword (<code>Fixes</code>/<code>Resolves</code>), multiple/no linkage, or empty PR body</td>
 </tr>
 <tr>
 <td>2</td>

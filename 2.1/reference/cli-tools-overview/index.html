@@ -994,6 +994,8 @@
       
         
       
+        
+      
     
     
     
@@ -1046,6 +1048,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.99/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.99
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11383,9 +11413,9 @@ placeholder values.</p>
 </table>
 <h2 id="ci-only-tools">CI-only tools<a class="headerlink" href="#ci-only-tools" title="Permanent link">&para;</a></h2>
 <h3 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h3>
-<p>Check that a pull request body uses <code>Ref</code> for issue linkage and
-does not contain auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>
-and variants). Reads the GitHub event payload from
+<p>Check that a pull request body links exactly one task with <code>Ref</code>
+or <code>Closes</code>, and does not contain the banned <code>Fixes</code>/<code>Resolves</code>
+auto-close keywords. Reads the GitHub event payload from
 <code>GITHUB_EVENT_PATH</code>.</p>
 <table>
 <thead>
@@ -11409,7 +11439,7 @@ and variants). Reads the GitHub event payload from
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Exit 2 for missing env var or file; exit 1 for auto-close keyword or missing linkage</td>
+<td>Exit 2 for missing env var or file; exit 1 for a banned keyword (<code>Fixes</code>/<code>Resolves</code>), multiple, or missing linkage</td>
 </tr>
 <tr>
 <td>Exit codes</td>
