@@ -779,3 +779,113 @@ class TestUpdatePlugins:
         assert any(
             "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
         )
+
+    def test_registers_declared_marketplaces_before_install(self) -> None:
+        # #2021 (Fix C v2): headless `marketplace update`/`list` do NOT register the
+        # marketplaces declared in settings.json extraKnownMarketplaces — only
+        # `marketplace add <source>` does. Without it, install fails "not found in
+        # marketplace, local copy out of date" on a fresh box.
+        settings = json.dumps(
+            {
+                "extraKnownMarketplaces": {
+                    "vergil-marketplace": {
+                        "source": {
+                            "source": "github",
+                            "repo": "vergil-project/vergil-claude-plugin",
+                        }
+                    },
+                    "paad": {"source": {"source": "github", "repo": "Ovid/paad"}},
+                },
+                "enabledPlugins": {"vergil@vergil-marketplace": True},
+            }
+        )
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+
+        def find(sub: str) -> int:
+            return next((i for i, c in enumerate(cmds) if sub in c), -1)
+
+        # Each declared marketplace is registered by source...
+        assert find("marketplace add vergil-project/vergil-claude-plugin") >= 0
+        assert find("marketplace add Ovid/paad") >= 0
+        # ...before the enabled plugin is installed.
+        assert find("plugin install vergil@vergil-marketplace") >= 0
+        assert find("marketplace add vergil-project/vergil-claude-plugin") < find(
+            "plugin install vergil@vergil-marketplace"
+        )
+
+    def test_marketplace_sources_handles_url_and_path_and_skips_sourceless(self) -> None:
+        # #2021: non-github sources (url, path) are registered; entries with no
+        # usable source are skipped, not crashed on.
+        settings = json.dumps(
+            {
+                "extraKnownMarketplaces": {
+                    "u": {"source": {"source": "git", "url": "https://example.com/y.git"}},
+                    "p": {"source": {"path": "./local-mp"}},
+                    "empty": {"source": {}},
+                    "nosrc": {},
+                },
+                "enabledPlugins": {},
+            }
+        )
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)  # no raise (nothing enabled)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert any("marketplace add https://example.com/y.git" in c for c in cmds)
+        assert any("marketplace add ./local-mp" in c for c in cmds)
+        # sourceless entries produced no add command
+        assert sum("marketplace add" in c for c in cmds) == 2
+
+    def test_marketplace_add_failure_is_surfaced(self) -> None:
+        # #2021: a marketplace that fails to register is collected and surfaced,
+        # never silently skipped.
+        settings = json.dumps(
+            {
+                "extraKnownMarketplaces": {
+                    "bad": {"source": {"source": "github", "repo": "x/bad"}}
+                },
+                "enabledPlugins": {},
+            }
+        )
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "marketplace add x/bad" in cmd:
+                raise subprocess.CalledProcessError(1, "claude plugin marketplace add")
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        with pytest.raises(RuntimeError, match="marketplace:x/bad"):
+            update_plugins(transport)
