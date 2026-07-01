@@ -625,6 +625,11 @@ def current_repo() -> str:
     return read_output("repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner")
 
 
+def current_org() -> str:
+    """Return the OWNER of the current directory's git remote."""
+    return current_repo().split("/", 1)[0]
+
+
 def head_sha(pr: str) -> str:
     """Return the HEAD commit SHA for a PR."""
     return read_output("pr", "view", pr, "--json", "headRefOid", "--jq", ".headRefOid")

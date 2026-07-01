@@ -56,6 +56,11 @@ def test_read_output_returns_stripped_stdout() -> None:
     )
 
 
+def test_current_org_returns_remote_owner() -> None:
+    with patch("vergil_tooling.lib.github.current_repo", return_value="logical-minds-foundry/docs"):
+        assert github.current_org() == "logical-minds-foundry"
+
+
 def test_create_pr_returns_url() -> None:
     with patch("vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/1"):
         url = github.create_pr(base="main", title="title", body_file="body.md")
