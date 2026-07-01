@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.21/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.19/">
+        <link rel="next" href="../v2.1.89/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.20 - VERGIL Tooling</title>
+        <title>2.1.90 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2120-2026-06-09" class="md-skip">
+        <a href="#release-2190-2026-07-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.20
+              2.1.90
             
           </span>
         </div>
@@ -1046,10 +1046,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.90/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.90
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1065,6 +1092,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2950,37 +3008,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.20
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.20/" class="md-nav__link">
         
   
   
@@ -2996,37 +3027,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9938,10 +9938,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -9965,31 +9965,16 @@
 
 
 
-<h1 id="release-2120-2026-06-09">Release 2.1.20 (2026-06-09)<a class="headerlink" href="#release-2120-2026-06-09" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-2190-2026-07-01">Release 2.1.90 (2026-07-01)<a class="headerlink" href="#release-2190-2026-07-01" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>size sessions WORKSPACE column to longest path (#1542)</strong>
-vrg-vm list --sessions rendered the WORKSPACE column at a hardcoded width of 36, so a workspace path longer than that (e.g. logical-minds-foundry/mq-cluster-tooling, 40 chars) overflowed its cell and pushed STATE and LAST ACTIVE out of alignment. Size the column to the longest path present, keeping 36 as a floor, so every row stays aligned regardless of path length.</p>
-</li>
-<li>
-<p><strong>accept --identity/--config in any argument position (#1546)</strong>
-vrg-vm only accepted --identity/--config between the subcommand and the workspace positional; the two natural orderings each failed confusingly. Placed after the workspace, session's REMAINDER cmd swallowed them and ran a raw 'exec --identity ...' in the guest (cryptic 'exec: --: invalid option'); placed before the subcommand, they were unknown and argparse misread the next token as the subcommand. Define --identity/--config on the top-level parser (owning the real defaults) so they work before the subcommand, keep the per-subcommand copies with SUPPRESS defaults so a value given before the subcommand is not clobbered, and switch session's cmd from REMAINDER to nargs=* so trailing options parse correctly while '--' still passes arbitrary flags through to the inner command.</p>
-</li>
-<li>
-<p><strong>re-assert -n on session resume so Claude restores the prompt-box title (#1548)</strong>
-Claude derives the prompt-box session title from the last naming event in
-the transcript. Sessions last named by a transitional Claude version end
-on a legacy <code>agent-name</code> event that current Claude no longer recognizes,
-so a resumed session showed a blank title even though vergil's own roster
-and pane label (which read either event type) stayed correct.</p>
-</li>
+<li><strong>render epics as a table with a Done column and stacked repos (#1995)</strong>
+Replace the bullet-list roadmap rows with a markdown table per milestone:
+columns Epic (link + title) | Done (closed/total) | Repos | Created. Repos
+are stacked in-cell with <br> using short names instead of a comma-joined
+run, and the created date now has its own visible column. Epic titles are
+pipe-escaped so a '|' in a title can't break the table.</li>
 </ul>
-<p>The resolver's Resume and stale-prompt resume paths now pass <code>-n &lt;name&gt;</code>,
-exactly as Fork already does. This sets the live title directly on every
-reconnect, independent of transcript history. Verified manually that
-<code>claude --resume &lt;id&gt; -n &lt;name&gt;</code> (without --fork-session) restores the
-displayed label.</p>
 
 
 
