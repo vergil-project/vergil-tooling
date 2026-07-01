@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
@@ -72,6 +73,87 @@ def test_report_ready_initializes_and_records(
     assert state["issue"] == "42"
     assert state["status"] == "ready"
     assert state["pr_metadata"]["title"] == "t"
+
+
+def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    # Guard parity with vrg-submit-pr: report-ready refuses an epic linkage at
+    # the point the value is entered, instead of only failing later at submit.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=True),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "72",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 1
+    assert "epic" in capsys.readouterr().err.lower()
+
+
+def test_report_ready_allows_non_epic_task(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The guard resolves the repo and finds a task (not an epic): proceeds.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+
+
+def test_report_ready_defers_when_epicness_unresolvable(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # If GitHub is unreachable, the guard defers (does not block report-ready);
+    # vrg-submit-pr's authoritative check still catches a real epic later.
+    with patch(
+        "vergil_tooling.bin.vrg_pr_workflow.github.current_repo",
+        side_effect=subprocess.CalledProcessError(1, "gh"),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
 
 
 def test_report_ready_rerun_overwrites(
