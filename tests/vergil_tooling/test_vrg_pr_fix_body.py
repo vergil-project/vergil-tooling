@@ -59,9 +59,14 @@ def test_parse_args_defaults() -> None:
     assert args.no_retrigger is False
 
 
-def test_parse_args_rejects_autoclose_linkage() -> None:
+def test_parse_args_accepts_closes_linkage() -> None:
+    args = parse_args([*_ARGS, "--linkage", "Closes"])
+    assert args.linkage == "Closes"
+
+
+def test_parse_args_rejects_banned_autoclose_linkage() -> None:
     with pytest.raises(SystemExit):
-        parse_args([*_ARGS, "--linkage", "Closes"])
+        parse_args([*_ARGS, "--linkage", "Fixes"])
 
 
 # -- identity gating ----------------------------------------------------------
