@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.100] - 2026-07-01
+
+### Bug fixes
+
+- scope App token to the target owner, not the cwd org (#2070) (#2079)
+
 ## [2.1.99] - 2026-07-01
 
 ### Bug fixes
