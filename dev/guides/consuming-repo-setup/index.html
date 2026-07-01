@@ -10768,9 +10768,8 @@ plugin's commit-block hook activates against the presence of
 <p>What the composite action runs inside the <code>dev-base</code> container:</p>
 <ul>
 <li><code>vrg-repo-profile</code> — validates <code>docs/repository-standards.md</code></li>
-<li><code>vrg-pr-issue-linkage</code> — validates PR body uses <code>Ref</code> for issue
-  linkage and rejects auto-close keywords (<code>Fixes</code>, <code>Closes</code>,
-  <code>Resolves</code>)</li>
+<li><code>vrg-pr-issue-linkage</code> — validates the PR body links one task with
+  <code>Ref</code> or <code>Closes</code>, and rejects <code>Fixes</code>/<code>Resolves</code></li>
 </ul>
 <p>The <code>dev-base</code> container already has vergil-tooling on PATH, so
 no further setup is needed in the workflow.</p>

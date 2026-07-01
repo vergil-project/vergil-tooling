@@ -10893,9 +10893,10 @@ full flag list.</p>
 <p><code>vrg-submit-pr</code>:</p>
 <ul>
 <li>Pushes the current branch to <code>origin</code>.</li>
-<li>Constructs a standards-compliant PR body with issue linkage
-  (<code>Ref #42</code>). Auto-close keywords (<code>Fixes</code>, <code>Closes</code>,
-  <code>Resolves</code>) are not accepted.</li>
+<li>Constructs a standards-compliant PR body with issue linkage,
+  auto-selecting <code>Closes #42</code> for a managed task (so it closes on
+  merge) or <code>Ref #42</code> for a legacy issue. <code>Fixes</code>/<code>Resolves</code> are
+  not accepted.</li>
 <li>Creates the PR via <code>gh pr create</code> under the hood.</li>
 </ul>
 <div class="admonition note">

@@ -10501,10 +10501,10 @@ See the <a href="../../reference/lint/markdown-standards/">Markdown Validation</
 reference for config details and file scope.</p>
 <h3 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h3>
 <p><strong>Trigger:</strong> PR opened or updated</p>
-<p>Validates the PR body uses <code>Ref #N</code> for issue linkage.
-Rejects auto-close keywords (<code>Fixes</code>, <code>Closes</code>, <code>Resolves</code>
-and variants) to keep issues open until post-merge workflows
-succeed.</p>
+<p>Validates the PR body links exactly one task with <code>Ref #N</code> or
+<code>Closes #N</code>. <code>Closes</code> auto-closes a task on merge (a task is one
+PR); <code>Fixes</code>/<code>Resolves</code> and variants are rejected so there is
+one sanctioned close keyword.</p>
 <h2 id="exit-code-reference">Exit Code Reference<a class="headerlink" href="#exit-code-reference" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
