@@ -1,9 +1,10 @@
 """Audit for epic/task drift — work that slipped through auto-close.
 
-A read-only safety net (agents cannot close issues). ``task_drift`` finds merged
-PRs whose ``Ref``'d task is still open; ``epic_drift`` finds open, non-standing
-epics whose children are all closed (should have rolled up). ``render`` formats
-both sections for a human to act on.
+``task_drift`` finds merged PRs whose ``Ref``'d task is still open;
+``epic_drift`` finds open, non-standing epics whose children are all closed
+(should have rolled up). ``render`` formats both sections for review;
+``close_drift`` closes them with an explanatory comment — a human action, gated
+by the caller.
 """
 
 from __future__ import annotations
@@ -81,8 +82,8 @@ def render(
     """
     banner = (
         f"_Read-only audit of the **{org}** org (merged PRs from the last "
-        f"{window_days} days) — this report changes nothing; a human closes "
-        "anything it lists._"
+        f"{window_days} days) — this report changes nothing; run `--close` (as "
+        "a human) to close what it lists._"
     )
     header = ["# Epic/task drift audit", "", banner, ""]
     if not tasks and not epics:
@@ -103,5 +104,64 @@ def render(
             )
     else:
         lines.append("- _none_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+_TASK_CLOSE_COMMENT = (
+    "Closed by `vrg-epic-audit`: PR #{pr} merged but the tracking task's auto-close did not fire."
+)
+_EPIC_CLOSE_COMMENT = (
+    "Closed by `vrg-epic-audit`: all {total} child tasks are closed; the epic rolled up."
+)
+
+
+def close_drift(
+    tasks: list[TaskDrift],
+    epics: list[roadmap.EpicSummary],
+    *,
+    org: str,
+) -> list[str]:
+    """Close each drifted task and rolled-up epic, leaving a comment on each.
+
+    Epics live in ``{org}/.github``. Returns the ``owner/repo#n`` slugs closed,
+    in the order acted on. This performs outward-effecting GitHub writes; the
+    caller is responsible for gating it to a human.
+    """
+    closed: list[str] = []
+    for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
+        github.run(
+            "issue",
+            "close",
+            str(task.task),
+            "--repo",
+            task.repo,
+            "--comment",
+            _TASK_CLOSE_COMMENT.format(pr=task.pr_number),
+        )
+        closed.append(f"{task.repo}#{task.task}")
+    epic_repo = f"{org}/.github"
+    for epic in sorted(epics, key=lambda e: e.number):
+        github.run(
+            "issue",
+            "close",
+            str(epic.number),
+            "--repo",
+            epic_repo,
+            "--comment",
+            _EPIC_CLOSE_COMMENT.format(total=epic.total),
+        )
+        closed.append(f"{epic_repo}#{epic.number}")
+    return closed
+
+
+def render_closed(closed: list[str], *, org: str, window_days: int) -> str:
+    """Summarize a ``--close`` run: what was actually closed."""
+    banner = f"_Closed drift on the **{org}** org (merged PRs from the last {window_days} days)._"
+    header = ["# Epic/task drift audit — closed", "", banner, ""]
+    if not closed:
+        return "\n".join([*header, "_No drift — nothing to close._", ""])
+    lines = [*header, "## Closed", ""]
+    lines += [f"- {slug}" for slug in closed]
     lines.append("")
     return "\n".join(lines)

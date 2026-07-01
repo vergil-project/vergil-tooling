@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from vergil_tooling.lib import epic_audit, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
@@ -92,3 +92,47 @@ def test_render_epic_drift_only() -> None:
     assert "[#40](u40) Convention — 9/9 done" in out
     assert "## Task drift" in out
     assert out.count("_none_") == 1  # task section is empty
+
+
+def test_close_drift_closes_tasks_in_repo_and_epics_in_dot_github() -> None:
+    tasks = [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
+    epics = [roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40")]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        closed = epic_audit.close_drift(tasks, epics, org="vergil-project")
+    assert closed == ["vergil-project/vergil-tooling#1947", "vergil-project/.github#40"]
+    task_call = run.call_args_list[0]
+    assert task_call.args[:5] == (
+        "issue",
+        "close",
+        "1947",
+        "--repo",
+        "vergil-project/vergil-tooling",
+    )
+    assert "PR #1948 merged" in task_call.args[-1]
+    epic_call = run.call_args_list[1]
+    assert epic_call.args[:5] == ("issue", "close", "40", "--repo", "vergil-project/.github")
+    assert "all 9 child tasks" in epic_call.args[-1]
+
+
+def test_close_drift_empty_is_noop() -> None:
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        assert epic_audit.close_drift([], [], org="vergil-project") == []
+    run.assert_not_called()
+
+
+def test_render_closed_lists_what_closed() -> None:
+    out = epic_audit.render_closed(
+        ["vergil-project/vergil-tooling#1947", "vergil-project/.github#40"],
+        org="vergil-project",
+        window_days=30,
+    )
+    assert "— closed" in out
+    assert "vergil-project/vergil-tooling#1947" in out
+    assert "vergil-project/.github#40" in out
+
+
+def test_render_closed_empty_says_nothing_to_close() -> None:
+    out = epic_audit.render_closed([], org="vergil-project", window_days=30)
+    assert "nothing to close" in out
