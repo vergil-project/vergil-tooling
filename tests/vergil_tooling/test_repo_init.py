@@ -340,6 +340,17 @@ class TestRenderCiWorkflow:
         assert content.count("container-suffix: base") == 3
         assert content.count("container-tag: 'latest'") == 3
 
+    def test_no_language_omits_trailing_space(self) -> None:
+        """A no-primary-language repo must not scaffold `language: ` with a
+        trailing space — yamllint trailing-spaces rejects it (issue #1993)."""
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        assert "language: \n" not in content
+        trailing = [line for line in content.splitlines() if line != line.rstrip()]
+        assert not trailing, f"lines with trailing whitespace: {trailing!r}"
+
     def test_no_language_no_release_minimal_jobs(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.ci_versions = ["latest"]
