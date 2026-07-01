@@ -17,6 +17,29 @@ def _repo_node(login: str, name: str) -> dict[str, object]:
     return {"name": name, "owner": {"login": login}}
 
 
+# -- single_target_org (issue #2070) -----------------------------------------
+
+
+def test_single_target_org_returns_common_owner() -> None:
+    owner = epics.single_target_org(
+        IssueRef("org", ".github", 40),
+        IssueRef("org", "repo-a", 101),
+    )
+    assert owner == "org"
+
+
+def test_single_target_org_single_ref() -> None:
+    assert epics.single_target_org(IssueRef("org", "repo-a", 101)) == "org"
+
+
+def test_single_target_org_rejects_cross_org() -> None:
+    with pytest.raises(ValueError, match="cross-org"):
+        epics.single_target_org(
+            IssueRef("org-a", ".github", 40),
+            IssueRef("org-b", "repo", 101),
+        )
+
+
 # -- child_states ------------------------------------------------------------
 
 

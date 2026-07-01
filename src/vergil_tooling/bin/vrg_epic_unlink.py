@@ -28,11 +28,18 @@ def main(argv: list[str] | None = None) -> int:
         print(f"vrg-epic-unlink: {exc}", file=sys.stderr)
         return 1
 
-    current = epics.parent_of(task)
-    if current is None:
-        print(f"{task.slug} is not linked to any epic; nothing to do.")
-        return 0
-    epics.remove_child(current, task)
+    # Scope the App token to the task's owner so the parent lookup and unlink
+    # hit the right installation, not the cwd org's (#2070).
+    try:
+        with github.target_org(task.owner):
+            current = epics.parent_of(task)
+            if current is None:
+                print(f"{task.slug} is not linked to any epic; nothing to do.")
+                return 0
+            epics.remove_child(current, task)
+    except github.NoInstallationError as exc:
+        print(f"vrg-epic-unlink: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     print(f"Unlinked {task.slug} from epic {current.slug}.")
     return 0
 

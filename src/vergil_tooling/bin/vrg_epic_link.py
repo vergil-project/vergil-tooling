@@ -34,10 +34,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         epic = epics.parse_issue_ref(args.epic, default_repo=default_repo)
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
+        owner = epics.single_target_org(epic, task)
     except ValueError as exc:
         print(f"vrg-epic-link: {exc}", file=sys.stderr)
         return 1
-    epics.add_child(epic, task)
+    try:
+        with github.target_org(owner):
+            epics.add_child(epic, task)
+    except github.NoInstallationError as exc:
+        print(f"vrg-epic-link: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     print(f"Linked {task.slug} under epic {epic.slug}.")
     return 0
 

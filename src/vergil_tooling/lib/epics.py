@@ -67,6 +67,24 @@ def parse_issue_ref(ref: str, *, default_repo: str) -> IssueRef:
     return IssueRef(owner=owner, repo=name, number=int(number))
 
 
+def single_target_org(*refs: IssueRef) -> str:
+    """Return the single owner shared by *refs*, or raise on a cross-org span.
+
+    Commands that mint a GitHub App token for an explicit target select the
+    installation by owner, and one token cannot reach two owners. When an
+    operation names refs under different owners (e.g. an epic and a task in
+    different orgs) that is out of scope: fail clearly here rather than mint a
+    token for one owner and hit a cryptic ``403`` on the other (issue #2070).
+    """
+    owners = {ref.owner for ref in refs}
+    if len(owners) != 1:
+        joined = ", ".join(sorted(owners))
+        raise ValueError(
+            f"cross-org operation is out of scope: refs span multiple owners ({joined})"
+        )
+    return next(iter(owners))
+
+
 _SUBISSUES_QUERY = """
 query($id: ID!) {
   node(id: $id) {

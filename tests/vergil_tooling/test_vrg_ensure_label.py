@@ -7,6 +7,9 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.bin.vrg_ensure_label import main, parse_args
+from vergil_tooling.lib import github
+
+_MOD = "vergil_tooling.bin.vrg_ensure_label"
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -173,3 +176,39 @@ def test_main_project_mode_discovers_and_syncs() -> None:
         result = main(["--owner", "myorg", "--project", "3", "--sync"])
     assert result == 0
     mock_discover.assert_called_once_with("myorg", "3")
+
+
+# ---------------------------------------------------------------------------
+# Token scoping (issue #2070)
+# ---------------------------------------------------------------------------
+
+
+def test_main_single_label_scopes_token_to_repo_owner() -> None:
+    """Labelling a repo outside the cwd org mints for the --repo owner (#2070)."""
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.github.run"),
+    ):
+        result = main(["--repo", "other-org/repo", "--label", "bug"])
+    assert result == 0
+    mock_scope.assert_called_once_with("other-org")
+
+
+def test_main_project_mode_scopes_token_to_owner() -> None:
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.list_project_repos", return_value=[]),
+        patch(f"{_MOD}.github.run"),
+    ):
+        result = main(["--owner", "myorg", "--project", "3", "--sync"])
+    assert result == 0
+    mock_scope.assert_called_once_with("myorg")
+
+
+def test_main_reports_missing_installation() -> None:
+    with patch(
+        f"{_MOD}.github.run",
+        side_effect=github.NoInstallationError("other-org", []),
+    ):
+        result = main(["--repo", "other-org/repo", "--label", "bug"])
+    assert result == 1

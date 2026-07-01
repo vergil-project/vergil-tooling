@@ -24,7 +24,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     org = args.org or github.current_org()
     since = (datetime.now(UTC) - timedelta(days=_WINDOW_DAYS)).date().isoformat()
-    print(activity_log.render(activity_log.gather(since, org=org)))
+    # Scope the App token to the org being listed so a cross-org --org selects
+    # that org's installation, not the cwd repo's (#2070).
+    try:
+        with github.target_org(org):
+            print(activity_log.render(activity_log.gather(since, org=org)))
+    except github.NoInstallationError as exc:
+        print(f"vrg-activity-log: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     return 0
 
 

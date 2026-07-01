@@ -38,7 +38,14 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(f"vrg-epic-rollup: {exc}", file=sys.stderr)
         return 1
-    epics.rollup(task)
+    # Scope the App token to the task's owner so the rollup's parent/children
+    # queries and epic close hit the right installation, not the cwd org (#2070).
+    try:
+        with github.target_org(task.owner):
+            epics.rollup(task)
+    except github.NoInstallationError as exc:
+        print(f"vrg-epic-rollup: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     print(f"Epic rollup check complete for {task.slug}.")
     return 0
 
