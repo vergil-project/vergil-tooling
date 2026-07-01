@@ -1,0 +1,64 @@
+"""Tests for vergil_tooling.bin.vrg_issue_create."""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+import pytest
+
+from vergil_tooling.bin.vrg_issue_create import main, parse_args
+from vergil_tooling.lib import epics
+
+_MOD = "vergil_tooling.bin.vrg_issue_create"
+
+EPIC = epics.IssueRef("org", "repo", 710)
+_URL = "https://github.com/org/repo/issues/123"
+
+
+def test_parse_args_requires_epic() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--title", "T"])  # missing --epic
+
+
+def test_parse_args_requires_title() -> None:
+    with pytest.raises(SystemExit):
+        parse_args(["--epic", "standing"])  # missing --title
+
+
+def test_main_creates_issue_and_links_under_epic() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "standing", "--title", "T", "--body", "B", "--label", "bug"])
+    assert rc == 0
+    mock_resolve.assert_called_once_with("standing", repo="org/repo")
+    assert mock_create.call_args.kwargs["title"] == "T"
+    assert mock_create.call_args.kwargs["labels"] == ["bug"]
+    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+
+
+def test_main_epic_resolution_failure_creates_nothing() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", side_effect=ValueError("no standing epic found")),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(["--epic", "standing", "--title", "T"])
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
+def test_main_link_failure_reports_created_issue(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+        patch(f"{_MOD}.epics.add_child", side_effect=RuntimeError("link failed")),
+    ):
+        rc = main(["--epic", "standing", "--title", "T"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "123" in err  # orphan-safe: the created issue is surfaced
