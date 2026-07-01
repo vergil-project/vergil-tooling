@@ -37,7 +37,6 @@ KNOWN_GAPS = frozenset(
     {
         "vrg-container-docs",
         "vrg-container-test",
-        "vrg-epic-audit",
         "vrg-gh",
         "vrg-git",
         "vrg-pr-issue-linkage",
