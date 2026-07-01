@@ -13,8 +13,6 @@ from typing import Any
 
 from vergil_tooling.lib import epics, github
 
-_ORG_GITHUB = "vergil-project/.github"
-
 
 @dataclass(frozen=True)
 class EpicSummary:
@@ -30,12 +28,12 @@ class EpicSummary:
     url: str
 
 
-def _open_epics() -> list[Any]:
+def _open_epics(org: str) -> list[Any]:
     raw: Any = github.read_json(
         "issue",
         "list",
         "--repo",
-        _ORG_GITHUB,
+        f"{org}/.github",
         "--label",
         "epic",
         "--state",
@@ -52,14 +50,20 @@ def _is_standing(epic: Any) -> bool:
     return any((label or {}).get("name") == "standing" for label in (epic.get("labels") or []))
 
 
-def gather() -> list[EpicSummary]:
-    """Summarize every open finite (non-standing) epic in the org ``.github``."""
+def gather(org: str | None = None) -> list[EpicSummary]:
+    """Summarize every open finite (non-standing) epic in *org*'s ``.github``.
+
+    *org* defaults to the owner of the current repo's git remote, so the same
+    command reports each org's own roadmap.
+    """
+    if org is None:
+        org = github.current_org()
     summaries: list[EpicSummary] = []
-    for epic in _open_epics():
+    for epic in _open_epics(org):
         if _is_standing(epic):
             continue
         number = int(epic["number"])
-        children = epics.child_states(epics.IssueRef("vergil-project", ".github", number))
+        children = epics.child_states(epics.IssueRef(org, ".github", number))
         repos = tuple(sorted({f"{c.ref.owner}/{c.ref.repo}" for c in children}))
         closed = sum(1 for c in children if c.state == "CLOSED")
         milestone = epic.get("milestone")
@@ -88,17 +92,18 @@ def _row(epic: EpicSummary) -> str:
     )
 
 
-def render(summaries: list[EpicSummary]) -> str:
+def render(summaries: list[EpicSummary], org: str | None = None) -> str:
     """Render the roadmap markdown as a table per milestone."""
     if not summaries:
         return "# Roadmap\n\n_No active epics._\n"
+    source = f"{org}/.github" if org else "the org .github repo"
     by_milestone: dict[str, list[EpicSummary]] = {}
     for epic in summaries:
         by_milestone.setdefault(epic.milestone or "No milestone", []).append(epic)
     lines = [
         "# Roadmap",
         "",
-        "_Generated from open epics in vergil-project/.github. Do not edit by hand._",
+        f"_Generated from open epics in {source}. Do not edit by hand._",
         "",
     ]
     for milestone in sorted(by_milestone):
