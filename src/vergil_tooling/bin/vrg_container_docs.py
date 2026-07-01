@@ -46,6 +46,10 @@ def main(argv: list[str] | None = None) -> int:
     config = os.environ.get("MKDOCS_CONFIG", "docs/site/mkdocs.yml")
     port = os.environ.get("DOCS_PORT", "8000")
 
+    if {"-h", "--help"} & set(args):
+        _usage(port)
+        return 0
+
     prefix = "prod"
     if "--prefix" in args:
         pi = args.index("--prefix")

@@ -3,13 +3,23 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_container_docs import main
 
+if TYPE_CHECKING:
+    import pytest
+
 
 def test_no_args() -> None:
     assert main([]) == 1
+
+
+def test_help_prints_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    for flag in ("-h", "--help"):
+        assert main([flag]) == 0
+        assert "Usage: vrg-container-docs" in capsys.readouterr().out
 
 
 def test_unknown_command() -> None:
