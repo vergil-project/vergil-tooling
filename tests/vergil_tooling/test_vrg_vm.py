@@ -28,6 +28,7 @@ from vergil_tooling.bin.vrg_vm import (
     _cs_tofu_volume,
     _list_rows,
     _log_root,
+    _off_host_reason,
     _preflight_target,
     _probe_running,
     _read_repo_vm,
@@ -41,6 +42,7 @@ from vergil_tooling.bin.vrg_vm import (
     main,
     recover_handle,
     resolve_borrow,
+    warn_if_off_host,
 )
 from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.identity import Identity, IdentityConfig
@@ -5771,3 +5773,39 @@ def test_restart_named_off_platform_still_rejected(
     assert vrg_vm._cmd_restart(args) == 1
     assert stopped == []
     assert "ephemeral" in capsys.readouterr().err.lower()
+
+
+class TestHostGuard:
+    # #2009 (Fix D): vrg-vm is a macOS host tool; run off-host it reads the wrong
+    # ~/.claude. Warn (never block), mirroring the nested_virt pure-core pattern.
+    def test_off_host_reason_flags_non_darwin(self) -> None:
+        assert _off_host_reason("Darwin") is None
+        reason = _off_host_reason("Linux")
+        assert reason is not None
+        assert "macOS host" in reason
+        assert "Linux" in reason
+
+    def test_off_host_reason_names_unknown_system(self) -> None:
+        assert "unknown" in (_off_host_reason("") or "")
+
+    def test_warn_if_off_host_emits_on_linux(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.platform.system", lambda: "Linux")
+        warn_if_off_host()
+        assert "vrg-vm is a macOS host tool" in capsys.readouterr().err
+
+    def test_warn_if_off_host_silent_on_darwin(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.platform.system", lambda: "Darwin")
+        warn_if_off_host()
+        assert capsys.readouterr().err == ""
+
+    def test_main_warns_when_off_host(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("vergil_tooling.bin.vrg_vm.platform.system", lambda: "Linux")
+        # No subcommand: main prints help and returns 1 — the warning still fires.
+        assert main([]) == 1
+        assert "vrg-vm is a macOS host tool" in capsys.readouterr().err
