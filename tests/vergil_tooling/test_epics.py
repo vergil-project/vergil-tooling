@@ -266,3 +266,66 @@ def test_parse_issue_ref_malformed_raises() -> None:
 def test_parse_issue_ref_no_repo_raises() -> None:
     with pytest.raises(ValueError, match="cannot resolve repo"):
         epics.parse_issue_ref("#42", default_repo="")
+
+
+# -- remove_child ------------------------------------------------------------
+
+
+def test_remove_child_issues_removesubissue_mutation() -> None:
+    with (
+        patch("vergil_tooling.lib.epics._node_id", side_effect=["EPIC_ID", "TASK_ID"]),
+        patch("vergil_tooling.lib.github.graphql") as mock_graphql,
+    ):
+        epics.remove_child(EPIC, TASK)
+    mock_graphql.assert_called_once()
+    assert "removeSubIssue" in mock_graphql.call_args.args[0]
+    assert mock_graphql.call_args.kwargs == {"parent": "EPIC_ID", "child": "TASK_ID"}
+
+
+# -- resolve_epic_ref --------------------------------------------------------
+
+
+def test_resolve_epic_ref_standing_discovers_single_epic() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1972}]) as mock_list:
+        assert epics.resolve_epic_ref("standing", repo="org/tooling") == IssueRef(
+            "org", "tooling", 1972
+        )
+    # discovery filters open issues carrying both the epic and standing labels
+    args = mock_list.call_args.args
+    assert "epic" in args and "standing" in args
+
+
+def test_resolve_epic_ref_standing_zero_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        pytest.raises(ValueError, match="no standing epic"),
+    ):
+        epics.resolve_epic_ref("standing", repo="org/tooling")
+
+
+def test_resolve_epic_ref_standing_multiple_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1}, {"number": 2}]),
+        pytest.raises(ValueError, match="multiple standing epics"),
+    ):
+        epics.resolve_epic_ref("standing", repo="org/tooling")
+
+
+def test_resolve_epic_ref_explicit_validates_epic() -> None:
+    with patch("vergil_tooling.lib.epics.is_epic", return_value=True):
+        assert epics.resolve_epic_ref("org/.github#40", repo="org/repo") == IssueRef(
+            "org", ".github", 40
+        )
+
+
+def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.is_epic", return_value=False),
+        pytest.raises(ValueError, match="not an epic"),
+    ):
+        epics.resolve_epic_ref("#123", repo="org/repo")
+
+
+def test_resolve_epic_ref_standing_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo"):
+        epics.resolve_epic_ref("standing", repo="tooling")
