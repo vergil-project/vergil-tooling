@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.94] - 2026-07-01
+
+### Bug fixes
+
+- omit trailing space on language: for no-language repos (#2031)
+- register marketplaces referenced by enabled plugins even when undeclared (#2032)
+
 ## [2.1.93] - 2026-07-01
 
 ### Bug fixes
