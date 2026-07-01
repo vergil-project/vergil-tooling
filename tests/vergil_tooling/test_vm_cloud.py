@@ -713,6 +713,17 @@ class TestCloudClaudeLayout:
         assert "rm -rf" in joined  # remove the real dir before linking
         assert "ln -s" in joined
 
+    def test_symlinks_plugins_dir_to_volume(self) -> None:
+        # #2008 (Fix B): the plugin cache/install sits on the ephemeral boot disk and
+        # is wiped on every rebuild, so a cold boot reinstalls the whole set. Persist
+        # it on the volume by adding it to the share set. Credentials stay ephemeral.
+        transport = MagicMock()
+        transport.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        link_cloud_claude_dirs(transport)
+        joined = " ".join(c for call in transport.run.call_args_list for c in call.args)
+        assert "/vergil/claude/plugins" in joined
+        assert ".credentials.json" not in joined
+
 
 def _tofu_output_json(values: dict[str, str]) -> str:
     return json.dumps({k: {"value": v} for k, v in values.items()})

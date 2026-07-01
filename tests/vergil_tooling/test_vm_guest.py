@@ -713,3 +713,69 @@ class TestUpdatePlugins:
         # Best-effort: the other enabled plugin is still attempted before raising.
         cmds = [c.args[-1] for c in transport.run.call_args_list]
         assert any("claude plugin update vergil@vergil-marketplace" in c for c in cmds)
+
+    def test_installs_enabled_plugins_not_yet_installed(self) -> None:
+        # #2006 (Fix C): a plugin enabled in the guest settings.json but absent from
+        # `claude plugin list` (never installed) must be INSTALLED, not skipped.
+        # Post-v2.1.195 `enabledPlugins` no longer auto-installs, so an update-only
+        # pass leaves a fresh box with zero plugins.
+        settings = json.dumps({"enabledPlugins": {"superpowers@official": True, "paad@paad": True}})
+        # superpowers is enabled-but-not-installed; paad is already installed.
+        listing = json.dumps([{"id": "paad@paad", "scope": "user", "enabled": True}])
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = listing
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        # The enabled-but-uninstalled plugin is installed...
+        assert any("claude plugin install superpowers@official --scope user" in c for c in cmds)
+        # ...and the already-installed enabled plugin is updated, not reinstalled.
+        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
+        assert not any("claude plugin install paad@paad" in c for c in cmds)
+
+    def test_unreadable_settings_still_refreshes_installed(self) -> None:
+        # #2006: if the guest settings.json cannot be read (cat fails), the desired
+        # set is empty but anything already installed-and-enabled is still refreshed.
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                raise subprocess.CalledProcessError(1, "cat")
+            out = self._LISTING if "plugin list --json" in cmd else ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)  # no raise
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert any("claude plugin update paad@paad --scope user" in c for c in cmds)
+
+    def test_malformed_settings_is_tolerated(self) -> None:
+        # #2006: garbage in settings.json must not crash the reconcile; the
+        # installed-enabled set is still refreshed.
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = "{not valid json"
+            elif "plugin list --json" in cmd:
+                out = self._LISTING
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)  # no raise
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert any(
+            "claude plugin update vergil@vergil-marketplace --scope project" in c for c in cmds
+        )

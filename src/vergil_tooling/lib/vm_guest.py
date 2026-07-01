@@ -269,24 +269,55 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
 _PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
 
 
+def _desired_enabled_plugins(transport: Transport) -> set[str]:
+    """Return the plugin ids the guest settings.json marks enabled.
+
+    The desired set is declarative: ``enabledPlugins`` in the guest
+    ``~/.claude/settings.json`` (seeded from the host). Since Claude Code
+    v2.1.195 an enabled entry no longer auto-installs, so this is the
+    authoritative list of what *should* be present, independent of what is
+    installed. Absent or unreadable settings yield an empty set — the caller
+    still refreshes anything already installed-and-enabled.
+    """
+    try:
+        result = transport.run(
+            "bash",
+            "-c",
+            f"{_PLUGIN_PATH_EXPORT} && cat ~/.claude/settings.json",
+        )
+    except subprocess.CalledProcessError:
+        return set()
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return set()
+    enabled = data.get("enabledPlugins", {})
+    return {pid for pid, on in enabled.items() if on}
+
+
 def update_plugins(transport: Transport) -> None:
-    """Refresh enabled Claude Code plugins inside the guest.
+    """Reconcile enabled Claude Code plugins inside the guest.
 
     Plugins are installed guest-locally from their GitHub marketplaces (declared
-    in the copied settings.json); they are deliberately not shared from the
-    host (see docs/site/docs/guides/agent-vm-claude-share-set.md). This
-    refreshes marketplace metadata and then advances each enabled plugin to its
-    latest version, mirroring how update_tooling advances vergil-tooling.
+    in the copied settings.json); they are deliberately not shared from the host
+    (see docs/site/docs/guides/agent-vm-claude-share-set.md).
 
-    Transport-generic (#1812): the same refresh runs over a local Lima instance
-    or a remote off-platform box, so an in-place off-platform ``update`` reaches
-    the plugins over IAP without a rebuild.
+    Reconcile, not just refresh (#2006): the enabled set is declared by
+    ``enabledPlugins`` in the guest settings.json, but since Claude Code
+    v2.1.195 declaring a plugin there no longer auto-installs it — an
+    update-only pass leaves a fresh box with zero plugins. So install any
+    enabled-but-missing plugin, then advance every enabled plugin to its latest
+    version, mirroring how update_tooling advances vergil-tooling.
 
-    `claude plugin update` has no bulk form: it requires a specific plugin id
-    and honours the plugin's scope (user vs project), which differ across the
-    set. So enumerate the installed plugins with `claude plugin list --json`
-    and update each enabled one with its own scope. Updates apply on the next
-    Claude restart, which every new session triggers.
+    Transport-generic (#1812): the same reconcile runs over a local Lima
+    instance or a remote off-platform box, so an in-place off-platform
+    ``update`` reaches the plugins over IAP without a rebuild.
+
+    `claude plugin install`/`update` have no bulk form: each takes a specific
+    id and honours a scope. Enabled-but-uninstalled ids are installed at user
+    scope (they come from the user settings.json); already-installed ids are
+    updated at their existing scope (from `claude plugin list --json`). Updates
+    apply on the next Claude restart, which every new session triggers.
 
     Best-effort across the set: one plugin failing does not block the others;
     failures are collected and surfaced by raising afterwards (never swallowed).
@@ -297,22 +328,29 @@ def update_plugins(transport: Transport) -> None:
         "-c",
         f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace update",
     )
+    desired = _desired_enabled_plugins(transport)
     listing = transport.run(
         "bash",
         "-c",
         f"{_PLUGIN_PATH_EXPORT} && claude plugin list --json",
     )
-    plugins = json.loads(listing.stdout)
+    installed = {plugin["id"]: plugin for plugin in json.loads(listing.stdout)}
+
+    # Reconcile the declared-enabled set with what is installed, while still
+    # refreshing anything already installed-and-enabled (the pre-#2006 behaviour).
+    targets = desired | {pid for pid, plugin in installed.items() if plugin.get("enabled")}
 
     failures: list[str] = []
-    for plugin in plugins:
-        if not plugin.get("enabled"):
-            continue
-        pid = plugin["id"]
-        scope = plugin.get("scope", "user")
-        print(f"    updating {pid} ({scope})...")
+    for pid in sorted(targets):
+        if pid in installed:
+            action = "update"
+            scope = installed[pid].get("scope", "user")
+        else:
+            action = "install"
+            scope = "user"
+        print(f"    {action} {pid} ({scope})...")
         cmd = (
-            f"{_PLUGIN_PATH_EXPORT} && claude plugin update "
+            f"{_PLUGIN_PATH_EXPORT} && claude plugin {action} "
             f"{shlex.quote(pid)} --scope {shlex.quote(scope)}"
         )
         try:
@@ -322,7 +360,7 @@ def update_plugins(transport: Transport) -> None:
 
     if failures:
         joined = ", ".join(failures)
-        msg = f"failed to update plugin(s): {joined}"
+        msg = f"failed to reconcile plugin(s): {joined}"
         print(f"ERROR: {msg}", file=sys.stderr)
         raise RuntimeError(msg)
 

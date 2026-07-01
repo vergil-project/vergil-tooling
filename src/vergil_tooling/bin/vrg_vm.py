@@ -6,6 +6,7 @@ import argparse
 import datetime
 import json
 import os
+import platform
 import random
 import shlex
 import shutil
@@ -2490,6 +2491,33 @@ def _add_name_arg(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _off_host_reason(system: str) -> str | None:
+    """Pure-logic core of warn_if_off_host (testable without a host).
+
+    vrg-vm is the macOS-host tool that creates and manages Vergil VMs; it reads
+    the operator's ~/.claude and drives Lima / cloud from the laptop. Returns why
+    this is the wrong place to run it, or None on macOS.
+    """
+    if system != "Darwin":
+        return (
+            "vrg-vm is a macOS host tool for creating and managing Vergil VMs; "
+            f"host OS is {system or 'unknown'}. Run it from the macOS host — not "
+            "from inside a VM or container, where it reads the wrong ~/.claude."
+        )
+    return None
+
+
+def warn_if_off_host() -> None:
+    """Warn (never block) when vrg-vm runs off its macOS host (#2009, Fix D).
+
+    A warning rather than a refusal: read-only edge cases still work, and the
+    operator gets a clear signal instead of silently mis-seeded config.
+    """
+    reason = _off_host_reason(platform.system())
+    if reason:
+        print(f"WARNING: {reason}", file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="vrg-vm",
@@ -2716,6 +2744,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     args = parser.parse_args(argv)
+    warn_if_off_host()
     if args.command is None:
         parser.print_help()
         return 1
