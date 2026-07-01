@@ -360,6 +360,39 @@ def test_verify_release_job_is_exact_not_substring() -> None:
         _verify_release_job([_job("release-notes / build")])
 
 
+def test_verify_release_job_accepts_inline_release_job() -> None:
+    from vergil_tooling.lib.release.confirm import _verify_release_job
+
+    # vergil-actions defines the reusable cd-release workflow and cannot call
+    # itself, so its CD runs an inline job surfaced as "cd / release" rather
+    # than the reusable leaf "release / release" (#2001). The leaf segment is
+    # still "release", so the hard gate must accept it.
+    _verify_release_job([_job("cd / release")])  # no raise
+
+
+def test_is_release_job_matches_leaf_not_caller() -> None:
+    from vergil_tooling.lib.release.confirm import _is_release_job
+
+    # Both the reusable leaf and vergil-actions' inline job share the leaf.
+    assert _is_release_job("release / release")
+    assert _is_release_job("cd / release")
+    # Decoys whose leaf is not exactly "release" must NOT match (#1853 guard).
+    assert not _is_release_job("release-notes / build")
+    assert not _is_release_job("docs / docs")
+    assert not _is_release_job("docker-publish / publish: prod-base:latest")
+
+
+def test_collect_deferred_publish_excludes_inline_release_job() -> None:
+    from vergil_tooling.lib.release.confirm import _collect_deferred_publish
+
+    # The "cd / release" release job must not be collected as a publish family.
+    jobs = [
+        _job("cd / release"),
+        _job("docs / docs", conclusion="failure"),
+    ]
+    assert _collect_deferred_publish(jobs) == ["docs"]
+
+
 def test_collect_deferred_publish_collapses_families() -> None:
     from vergil_tooling.lib.release.confirm import _collect_deferred_publish
 
