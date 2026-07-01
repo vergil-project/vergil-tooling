@@ -97,6 +97,14 @@ mutation($parent: ID!, $child: ID!) {
 }
 """
 
+_REMOVE_SUBISSUE = """
+mutation($parent: ID!, $child: ID!) {
+  removeSubIssue(input: {issueId: $parent, subIssueId: $child}) {
+    subIssue { number }
+  }
+}
+"""
+
 
 def _issue_endpoint(ref: IssueRef) -> str:
     return f"repos/{ref.owner}/{ref.repo}/issues/{ref.number}"
@@ -176,6 +184,11 @@ def add_child(epic: IssueRef, task: IssueRef) -> None:
     github.graphql(_ADD_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
 
 
+def remove_child(epic: IssueRef, task: IssueRef) -> None:
+    """Unlink *task* from *epic* (remove the native sub-issue relationship)."""
+    github.graphql(_REMOVE_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
+
+
 def all_children_closed(epic: IssueRef) -> bool:
     """True iff *epic* has at least one child and all children are closed."""
     children = child_states(epic)
@@ -193,6 +206,43 @@ def _labels(ref: IssueRef) -> set[str]:
 def is_epic(ref: IssueRef) -> bool:
     """True if *ref* carries the ``epic`` label (i.e. it is in the model)."""
     return "epic" in _labels(ref)
+
+
+def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
+    """Resolve an epic ref, accepting the ``"standing"`` sentinel.
+
+    ``"standing"`` discovers the open issue in *repo* labeled both ``epic`` and
+    ``standing`` — exactly one is expected; zero or several is an error that
+    names an explicit ref instead of guessing. Any other ref is parsed with
+    :func:`parse_issue_ref` and validated to carry the ``epic`` label.
+    """
+    if ref == "standing":
+        return _resolve_standing_epic(repo)
+    epic = parse_issue_ref(ref, default_repo=repo)
+    if not is_epic(epic):
+        raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
+    return epic
+
+
+def _resolve_standing_epic(repo: str) -> IssueRef:
+    if "/" not in repo:
+        raise ValueError(f"cannot resolve repo for standing epic (repo={repo!r})")
+    owner, name = repo.split("/", 1)
+    raw: Any = github.read_json(
+        "issue", "list", "--repo", repo,
+        "--label", "epic", "--label", "standing",
+        "--state", "open", "--json", "number",
+    )
+    rows = [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    if not rows:
+        raise ValueError(
+            f"no standing epic found in {repo} "
+            "(label one epic+standing, or pass an explicit --epic)"
+        )
+    if len(rows) > 1:
+        nums = ", ".join(f"#{r['number']}" for r in rows)
+        raise ValueError(f"multiple standing epics in {repo} ({nums}) — pass an explicit --epic")
+    return IssueRef(owner=owner, repo=name, number=int(rows[0]["number"]))
 
 
 def rollup(task: IssueRef) -> None:
