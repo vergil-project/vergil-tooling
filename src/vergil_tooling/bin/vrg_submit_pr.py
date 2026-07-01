@@ -239,11 +239,7 @@ def _reject_if_epic_link(issue_ref: str) -> None:
     CI gate (a dependency-free body regex) does not. Self-scoping: legacy issues
     are never epics, so they pass.
     """
-    try:
-        issue = epics.parse_issue_ref(issue_ref, default_repo=github.current_repo())
-    except ValueError:
-        return
-    if epics.is_epic(issue):
+    if epics.is_epic_linkage(issue_ref, default_repo=github.current_repo()):
         raise SystemExit(
             "vrg-submit-pr: --issue links an epic; link a task, not an epic "
             "(epics are closed by rollup when their tasks complete)."
