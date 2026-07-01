@@ -139,9 +139,10 @@ vrg-submit-pr \
 `vrg-submit-pr`:
 
 - Pushes the current branch to `origin`.
-- Constructs a standards-compliant PR body with issue linkage
-  (`Ref #42`). Auto-close keywords (`Fixes`, `Closes`,
-  `Resolves`) are not accepted.
+- Constructs a standards-compliant PR body with issue linkage,
+  auto-selecting `Closes #42` for a managed task (so it closes on
+  merge) or `Ref #42` for a legacy issue. `Fixes`/`Resolves` are
+  not accepted.
 - Creates the PR via `gh pr create` under the hood.
 
 !!! note "Auto-merge is disabled"

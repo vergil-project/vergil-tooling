@@ -294,9 +294,8 @@ jobs:
 What the composite action runs inside the `dev-base` container:
 
 - `vrg-repo-profile` — validates `docs/repository-standards.md`
-- `vrg-pr-issue-linkage` — validates PR body uses `Ref` for issue
-  linkage and rejects auto-close keywords (`Fixes`, `Closes`,
-  `Resolves`)
+- `vrg-pr-issue-linkage` — validates the PR body links one task with
+  `Ref` or `Closes`, and rejects `Fixes`/`Resolves`
 
 The `dev-base` container already has vergil-tooling on PATH, so
 no further setup is needed in the workflow.
