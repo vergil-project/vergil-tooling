@@ -6,6 +6,9 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_roadmap import main
+from vergil_tooling.lib import github
+
+_MOD = "vergil_tooling.bin.vrg_roadmap"
 
 if TYPE_CHECKING:
     import pytest
@@ -27,3 +30,23 @@ def test_main_defaults_org_to_current_repo() -> None:
     assert rc == 0
     mock_org.assert_called_once()
     assert mock_gather.call_args.args[0] == "acme"
+
+
+def test_main_scopes_token_to_org() -> None:
+    """Reading a cross-org roadmap mints for that org's installation (#2070)."""
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.roadmap.gather", return_value=[]),
+    ):
+        rc = main(["--org", "other-org"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("other-org")
+
+
+def test_main_reports_missing_installation() -> None:
+    with patch(
+        f"{_MOD}.roadmap.gather",
+        side_effect=github.NoInstallationError("other-org", []),
+    ):
+        rc = main(["--org", "other-org"])
+    assert rc == 1

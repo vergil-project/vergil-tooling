@@ -857,6 +857,102 @@ class TestGhEnvNew:
             assert github._gh_env() is None
 
 
+# --- target_org token scoping (issue #2070) ---
+
+
+class TestTargetOrgScoping:
+    def test_gh_env_mints_for_target_org_ignoring_cwd(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Inside target_org, the token is minted for the named owner, and
+        the cwd git remote (detect_org) is never consulted — the acceptance
+        criterion "minting for an explicit target owner ignores the cwd org"."""
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        detect = MagicMock(return_value="cwd-org")
+        with (
+            patch("vergil_tooling.lib.github.detect_org", detect),
+            patch(
+                "vergil_tooling.lib.github.get_installation_token",
+                return_value="ghs_token",
+            ) as mint,
+            github.target_org("target-org"),
+        ):
+            env = github._gh_env()
+        assert env is not None
+        assert env["GH_TOKEN"] == "ghs_token"  # noqa: S105
+        mint.assert_called_once_with(org="target-org", require_installation=True)
+        detect.assert_not_called()
+
+    def test_gh_env_falls_back_to_cwd_when_no_target(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Outside any target_org, behavior is unchanged: no explicit org and
+        no required installation, so cwd detection still drives minting."""
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with patch(
+            "vergil_tooling.lib.github.get_installation_token",
+            return_value="ghs_token",
+        ) as mint:
+            github._gh_env()
+        mint.assert_called_once_with(org=None, require_installation=False)
+
+    def test_gh_env_propagates_no_installation_error(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A targeted owner with no App installation fails loudly rather than
+        silently falling back to a cwd-scoped (wrong) token."""
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with (
+            patch(
+                "vergil_tooling.lib.github.get_installation_token",
+                side_effect=github.NoInstallationError("target-org", ["cwd-org"]),
+            ),
+            pytest.raises(github.NoInstallationError),
+            github.target_org("target-org"),
+        ):
+            github._gh_env()
+
+    def test_target_org_none_is_a_noop(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Passing None (an unset owner) is a no-op: callers can pass a
+        possibly-unset owner uniformly and get the cwd-detection default."""
+        monkeypatch.setattr("vergil_tooling.lib.github._gh_env", _real_gh_env)
+        with (
+            patch(
+                "vergil_tooling.lib.github.get_installation_token",
+                return_value="ghs_token",
+            ) as mint,
+            github.target_org(None),
+        ):
+            github._gh_env()
+        mint.assert_called_once_with(org=None, require_installation=False)
+
+    def test_target_org_restores_previous_on_exit(self) -> None:
+        """The context is scoped: nesting restores the outer target on exit."""
+        assert github._target_org.get() is None
+        with github.target_org("outer"):
+            assert github._target_org.get() == "outer"
+            with github.target_org("inner"):
+                assert github._target_org.get() == "inner"
+            assert github._target_org.get() == "outer"
+        assert github._target_org.get() is None
+
+    def test_no_installation_message_lists_known(self) -> None:
+        exc = github.NoInstallationError("target-org", ["a-org", "b-org"])
+        msg = github.no_installation_message(exc)
+        assert "target-org" in msg
+        assert "a-org, b-org" in msg
+
+    def test_no_installation_message_handles_empty(self) -> None:
+        exc = github.NoInstallationError("target-org", [])
+        assert "none" in github.no_installation_message(exc)
+
+
 # --- App token exchange ---
 
 

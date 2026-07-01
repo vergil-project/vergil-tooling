@@ -8,6 +8,8 @@ refused, DNS lookup failures, and EOF) with exponential backoff.
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import json
 import logging
 import os
@@ -23,12 +25,22 @@ from typing import TYPE_CHECKING, Any, cast
 from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
 log = logging.getLogger(__name__)
 
 _token_cache: dict[str, tuple[str, float]] = {}
 _installation_cache: dict[str, str] | None = None
+
+# The owner whose App installation should mint tokens for lib calls made in
+# the current context. Set by commands that act on an EXPLICIT cross-org
+# target (a --repo/--owner/--org/--epic/--task argument) via target_org();
+# read by _gh_env() at call time so it propagates through any call depth
+# (epics, roadmap, …) without re-plumbing each function. Unset (None) keeps
+# the historical behavior: resolve the org from the cwd git remote. See #2070.
+_target_org: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "vrg_target_org", default=None
+)
 
 
 class NoInstallationError(Exception):
@@ -254,9 +266,50 @@ def is_app_mode() -> bool:
     return token.startswith("ghs_")
 
 
+@contextlib.contextmanager
+def target_org(org: str | None) -> Iterator[None]:
+    """Scope App-token minting to an explicit target *org* for the block.
+
+    Within the context, every lib call that mints an App installation token
+    (everything through :func:`_gh_env` / :func:`_run_with_retry`) selects the
+    installation for *org* instead of resolving the org from the cwd git
+    remote — the fix for cross-org commands minting a cwd-scoped token and
+    getting a cryptic ``403`` (#2070). A missing installation fails loudly
+    with :class:`NoInstallationError` rather than silently falling back to a
+    wrong-org token, exactly as ``vrg-gh`` already does (#1413).
+
+    A *None* org is a no-op (cwd detection, the pre-existing behavior), so a
+    caller can pass a possibly-unset owner uniformly. The context is restored
+    on exit, so nesting and reuse are safe.
+    """
+    handle = _target_org.set(org)
+    try:
+        yield
+    finally:
+        _target_org.reset(handle)
+
+
+def no_installation_message(exc: NoInstallationError) -> str:
+    """A consistent, actionable message for a missing App installation.
+
+    Shared by every command that scopes work to an explicit target owner so
+    the "no installation for owner X" failure reads the same everywhere.
+    """
+    known = ", ".join(exc.known) if exc.known else "none"
+    return (
+        f"the GitHub App has no installation for owner '{exc.org}'. Known installations: {known}."
+    )
+
+
 def _gh_env() -> dict[str, str] | None:
-    """Return env dict with App installation token, or ``None`` for ambient auth."""
-    token = get_installation_token()
+    """Return env dict with App installation token, or ``None`` for ambient auth.
+
+    When a :func:`target_org` context is active, the token is minted for that
+    owner and a missing installation raises :class:`NoInstallationError`;
+    otherwise the org is resolved from the cwd git remote (the default).
+    """
+    org = _target_org.get()
+    token = get_installation_token(org=org, require_installation=org is not None)
     if token is None:
         return None
     return {**os.environ, "GH_TOKEN": token}
