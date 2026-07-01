@@ -39,32 +39,55 @@ def _issue_number_from_url(url: str) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo = args.repo or github.current_repo()
-    try:
-        epic = epics.resolve_epic_ref(args.epic, repo=repo)
-    except ValueError as exc:
-        print(f"vrg-issue-create: {exc}", file=sys.stderr)
-        return 1
-
-    url = github.create_issue(
-        repo=repo,
-        title=args.title,
-        body=args.body,
-        body_file=args.body_file,
-        labels=args.label,
-        assignees=args.assignee,
-    )
     owner, name = repo.split("/", 1)
-    task = epics.IssueRef(owner=owner, repo=name, number=_issue_number_from_url(url))
+    # Pre-network cross-org guard: the issue and its epic must share an owner so
+    # one App-installation token reaches both (#2070). 'standing' resolves
+    # within *repo*, so only an explicit epic ref can diverge.
+    if args.epic != "standing":
+        try:
+            epic_owner = epics.parse_issue_ref(args.epic, default_repo=repo).owner
+        except ValueError as exc:
+            print(f"vrg-issue-create: {exc}", file=sys.stderr)
+            return 1
+        if epic_owner != owner:
+            print(
+                "vrg-issue-create: cross-org operation is out of scope: issue owner "
+                f"{owner!r} != epic owner {epic_owner!r}",
+                file=sys.stderr,
+            )
+            return 1
 
+    # Scope every App-token call below to the issue's owner, not the cwd org.
     try:
-        epics.add_child(epic, task)
-    except Exception as exc:  # noqa: BLE001 - orphan-safe: never lose the created issue
-        print(
-            f"vrg-issue-create: created {url} but failed to link it under epic "
-            f"{epic.slug}: {exc}. Link it with: vrg-epic-move --task #{task.number} "
-            f"--epic {epic.slug}",
-            file=sys.stderr,
-        )
+        with github.target_org(owner):
+            try:
+                epic = epics.resolve_epic_ref(args.epic, repo=repo)
+            except ValueError as exc:
+                print(f"vrg-issue-create: {exc}", file=sys.stderr)
+                return 1
+
+            url = github.create_issue(
+                repo=repo,
+                title=args.title,
+                body=args.body,
+                body_file=args.body_file,
+                labels=args.label,
+                assignees=args.assignee,
+            )
+            task = epics.IssueRef(owner=owner, repo=name, number=_issue_number_from_url(url))
+
+            try:
+                epics.add_child(epic, task)
+            except Exception as exc:  # noqa: BLE001 - orphan-safe: never lose the created issue
+                print(
+                    f"vrg-issue-create: created {url} but failed to link it under epic "
+                    f"{epic.slug}: {exc}. Link it with: vrg-epic-move --task #{task.number} "
+                    f"--epic {epic.slug}",
+                    file=sys.stderr,
+                )
+                return 1
+    except github.NoInstallationError as exc:
+        print(f"vrg-issue-create: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1
 
     print(f"Created {url}, linked under epic {epic.slug}.")

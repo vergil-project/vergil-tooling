@@ -29,18 +29,38 @@ def main(argv: list[str] | None = None) -> int:
     default_repo = github.current_repo()
     try:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
-        epic = epics.resolve_epic_ref(args.epic, repo=default_repo)
+        # Scope the App token to the task's owner (#2070). The epic must live in
+        # the same org — 'standing' resolves within the task's repo, so only an
+        # explicit ref can diverge; guard that before any network call so a
+        # cross-org mistake is a clear message, not a cwd-scoped 403.
+        if args.epic != "standing":
+            epic_owner = epics.parse_issue_ref(args.epic, default_repo=default_repo).owner
+            if epic_owner != task.owner:
+                raise ValueError(
+                    "cross-org operation is out of scope: task owner "
+                    f"{task.owner!r} != epic owner {epic_owner!r}"
+                )
     except ValueError as exc:
         print(f"vrg-epic-move: {exc}", file=sys.stderr)
         return 1
 
-    current = epics.parent_of(task)
-    if current == epic:
-        print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
-        return 0
-    if current is not None:
-        epics.remove_child(current, task)
-    epics.add_child(epic, task)
+    try:
+        with github.target_org(task.owner):
+            try:
+                epic = epics.resolve_epic_ref(args.epic, repo=default_repo)
+            except ValueError as exc:
+                print(f"vrg-epic-move: {exc}", file=sys.stderr)
+                return 1
+            current = epics.parent_of(task)
+            if current == epic:
+                print(f"{task.slug} is already under epic {epic.slug}; nothing to do.")
+                return 0
+            if current is not None:
+                epics.remove_child(current, task)
+            epics.add_child(epic, task)
+    except github.NoInstallationError as exc:
+        print(f"vrg-epic-move: {github.no_installation_message(exc)}", file=sys.stderr)
+        return 1
     print(f"Moved {task.slug} under epic {epic.slug}.")
     return 0
 
