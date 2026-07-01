@@ -699,6 +699,20 @@ class TestCloudClaudeLayout:
         assert "/vergil/claude/.credentials.json" not in joined
         assert ".credentials.json" not in joined
 
+    def test_relinks_existing_real_dir_by_merging(self) -> None:
+        # #1999 (Fix A'): when ~/.claude/<sub> already exists as a real directory
+        # (Claude created it on a box that was never linked), its contents are merged
+        # onto the volume and the dir is replaced by a symlink — not left as a nested
+        # broken `ln -sfn` target, and not clobbered.
+        transport = MagicMock()
+        transport.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        link_cloud_claude_dirs(transport)
+        joined = " ".join(c for call in transport.run.call_args_list for c in call.args)
+        assert "-L" in joined  # branch on symlink vs real dir
+        assert "cp -a" in joined  # merge real-dir contents onto the volume
+        assert "rm -rf" in joined  # remove the real dir before linking
+        assert "ln -s" in joined
+
 
 def _tofu_output_json(values: dict[str, str]) -> str:
     return json.dumps({k: {"value": v} for k, v in values.items()})

@@ -2352,6 +2352,14 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     _warn_cloud_under(target)
 
     transport = backend.transport()
+    # #1999 (Fix A): seed the operator's ~/.claude config (settings.json carries
+    # permissions.defaultMode=bypassPermissions) and relink the volume history dirs
+    # before the process-replacing exec_session, mirroring the Lima _cmd_session path.
+    # Idempotent, so a box left unseeded by a bad rebuild self-heals on the next session
+    # instead of running with no bypass and writing history off the persistent volume.
+    claude_dir = Path.home() / ".claude"
+    copy_claude_config(transport, claude_dir)
+    vm_cloud.link_cloud_claude_dirs(transport)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
     inner = _session_inner(
