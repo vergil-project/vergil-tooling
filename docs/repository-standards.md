@@ -62,8 +62,10 @@ vrg-submit-pr \
 
 - `--issue` (required): GitHub issue number (just the number)
 - `--summary` (required): one-line PR summary
-- `--linkage` (optional, default: `Ref`): `Ref` (only `Ref` is accepted;
-  auto-close keywords are rejected)
+- `--linkage` (optional, default: `Ref`): `Ref` or `Closes`. `vrg-submit-pr`
+  auto-selects `Closes` for a managed task (an issue with an `epic`-labeled
+  parent) so it auto-closes on merge; legacy issues keep `Ref`. `Fixes`/
+  `Resolves` are rejected — `Closes` is the one sanctioned close keyword
 - `--title` (optional): PR title (default: most recent commit subject)
 - `--notes` (optional): additional notes
 - `--dry-run` (optional): print generated PR without executing
