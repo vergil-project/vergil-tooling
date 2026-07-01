@@ -93,24 +93,39 @@ def test_ref_indented(tmp_path: Path) -> None:
     "body",
     [
         "Fixes #42",
-        "Closes #99",
         "Resolves #7",
-        "closes #42",
         "FIXES #42",
         "Fixed #42",
-        "Close #42",
         "Resolved #42",
         "- Fixes #42",
-        "* Closes #42",
         "  Resolves #42",
         "Fixes: #42",
         "Fixes owner/repo#123",
     ],
 )
-def test_rejects_autoclose_keywords(tmp_path: Path, body: str) -> None:
+def test_rejects_banned_autoclose_keywords(tmp_path: Path, body: str) -> None:
     event_path = _write_event(tmp_path, body)
     with patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}):
         assert main() == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Closes #99",
+        "closes #42",
+        "Close #42",
+        "Closed #42",
+        "* Closes #42",
+        "Closes: #42",
+        "Closes owner/repo#123",
+    ],
+)
+def test_accepts_closes_keyword(tmp_path: Path, body: str) -> None:
+    """Closes is the sanctioned auto-close keyword (epic .github#75)."""
+    event_path = _write_event(tmp_path, body)
+    with patch.dict("os.environ", {"GITHUB_EVENT_PATH": event_path}):
+        assert main() == 0
 
 
 def test_no_pull_request_key(tmp_path: Path) -> None:
