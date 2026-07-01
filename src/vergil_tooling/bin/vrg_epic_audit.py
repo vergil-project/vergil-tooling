@@ -10,7 +10,7 @@ import argparse
 import sys
 from datetime import UTC, datetime, timedelta
 
-from vergil_tooling.lib import epic_audit, github
+from vergil_tooling.lib import epic_audit, github, identity_mode
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -29,8 +29,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         description=(
             "Report epic/task drift for the current repo's GitHub org: merged "
             "PRs whose Ref'd task issue is still open, and open non-standing "
-            "epics whose children are all closed. Read-only — it changes "
-            "nothing; a human acts on whatever it lists."
+            "epics whose children are all closed. Read-only by default; pass "
+            "--close (as a human) to actually close what it finds."
         ),
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
@@ -45,11 +45,30 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         metavar="N",
         help=(f"How many days back to scan for merged PRs (default: {_DEFAULT_WINDOW_DAYS})."),
     )
+    parser.add_argument(
+        "--close",
+        action="store_true",
+        help=(
+            "Close the drifted task issues and rolled-up epics (with an "
+            "explanatory comment on each) instead of only reporting them. A "
+            "human action — refused in agent sessions. Default: read-only."
+        ),
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Gate the write path before any network work so a rejected agent run is
+    # cheap and unambiguous.
+    if args.close and not identity_mode.is_human():
+        print(
+            "vrg-epic-audit: --close is a human action and was refused in an "
+            "agent session; run without --close to preview the drift, or run as "
+            "a human to apply the closes.",
+            file=sys.stderr,
+        )
+        return 1
     org = github.detect_org()
     if org is None:
         print(
@@ -60,14 +79,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
-    print(
-        epic_audit.render(
-            epic_audit.task_drift(since, org=org),
-            epic_audit.epic_drift(),
-            org=org,
-            window_days=args.window_days,
-        )
-    )
+    tasks = epic_audit.task_drift(since, org=org)
+    epics = epic_audit.epic_drift()
+    if args.close:
+        closed = epic_audit.close_drift(tasks, epics, org=org)
+        print(epic_audit.render_closed(closed, org=org, window_days=args.window_days))
+        return 0
+    print(epic_audit.render(tasks, epics, org=org, window_days=args.window_days))
     return 0
 
 

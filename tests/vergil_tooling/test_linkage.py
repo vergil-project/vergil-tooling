@@ -58,8 +58,25 @@ def test_multiple_refs_raises_value_error() -> None:
         extract_tracking_issue(body)
 
 
-def test_autoclose_keyword_not_matched() -> None:
+def test_banned_autoclose_keyword_not_matched() -> None:
     assert extract_tracking_issue("Fixes #42") is None
+    assert extract_tracking_issue("Resolves #42") is None
+
+
+def test_closes_keyword_matched() -> None:
+    assert extract_tracking_issue("Closes #42") == 42
+    assert extract_tracking_issue("Close #7") == 7
+    assert extract_tracking_issue("Closed #9") == 9
+    assert extract_tracking_issue("closes #5") == 5
+
+
+def test_closes_cross_repo() -> None:
+    assert extract_tracking_issue("Closes org/repo#42") == 42
+
+
+def test_extract_tracking_ref_closes() -> None:
+    assert extract_tracking_ref("Closes org/.github#40") == "org/.github#40"
+    assert extract_tracking_ref("Closes #42") == "#42"
 
 
 def test_normalize_bare_keyword_no_warning() -> None:
@@ -92,7 +109,9 @@ def test_normalize_rejects_wrong_keyword_with_number() -> None:
     assert "Ref" in str(exc.value)
 
 
-def test_normalize_rejects_autoclose_keyword() -> None:
+def test_normalize_rejects_non_ref_keyword() -> None:
+    # ALLOWED_LINKAGES stays Ref-only as a submit-field value until T3 adds
+    # Closes with the auto-selection logic; the body regex recognizes Closes.
     with pytest.raises(ValueError, match="bare keyword"):
         normalize_linkage("Closes")
 
