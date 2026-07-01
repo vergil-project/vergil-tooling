@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.13/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.11/">
+        <link rel="next" href="../v2.1.92/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.12 - VERGIL Tooling</title>
+        <title>2.1.93 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2112-2026-06-06" class="md-skip">
+        <a href="#release-2193-2026-07-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.12
+              2.1.93
             
           </span>
         </div>
@@ -1052,10 +1052,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.93/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.93
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1071,6 +1098,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3264,37 +3333,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.12
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.12/" class="md-nav__link">
         
   
   
@@ -3310,37 +3352,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10038,6 +10049,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10055,35 +10077,27 @@
 
 
 
-<h1 id="release-2112-2026-06-06">Release 2.1.12 (2026-06-06)<a class="headerlink" href="#release-2112-2026-06-06" title="Permanent link">&para;</a></h1>
+<h1 id="release-2193-2026-07-01">Release 2.1.93 (2026-07-01)<a class="headerlink" href="#release-2193-2026-07-01" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>grant actions: read to the security job (#1473)</strong>
-ci-security.yml@v2.1.3 requests actions: read from its caller
-(codeql-action/upload-sarif needs it on private repositories). GitHub
-validates the request against the calling job's permissions at startup,
-so the security job must grant it before v2.1 is re-promoted to v2.1.3.
-The grant is backward-compatible with v2.1.2.</p>
-</li>
-<li>
-<p><strong>stream vrg-finalize-pr output through the progress session (#1471)</strong></p>
-</li>
-<li>fix(release): stream vrg-finalize-pr output through the progress session</li>
+<li><strong>register marketplaces before install, not bare update (#2023)</strong>
+Fix C (#2006) installed enabled plugins but still failed on a freshly-rebuilt box: every install errored 'Plugin X not found in marketplace Y — local copy out of date'. Reproduced on a Lima box: headless 'claude plugin marketplace update'/'list' do NOT register the marketplaces declared in settings.json extraKnownMarketplaces (they print 'No marketplaces configured' and clone nothing) — only 'claude plugin marketplace add <source>' registers+clones them headlessly. The interactive TUI does it on login, which is why it looked fine after logging in.</li>
 </ul>
-<p>The close-finalize stage ran vrg-finalize-pr --cleanup-only with
-inherited stdout, a design that predates the progress framework. Under
-the RichRenderer, every raw line the child writes to the TTY advances
-the cursor beneath the rich.Live display, stranding stale copies of the
-completed-stage list on screen (the staircase of duplicated stage lines
-observed in the vergil-actions 2.1.3 release). The raw output also
-bypassed the run log entirely.</p>
-<p>Route the child through progress.run so its output streams into the
-live display's rolling window and the run log. progress.run gains a
-stdin passthrough so the call site can keep the subprocess.DEVNULL
-guarantee from issue #1448 (the child can never block on a terminal
-read). Failure handling is preserved: CalledProcessError carries the
-captured stderr into ReleaseError.detail.</p>
+<p>update_plugins now reads extraKnownMarketplaces from the guest settings.json and runs 'claude plugin marketplace add <source>' (github repo / url / path) for each before the install/update reconcile. Idempotent and best-effort; add failures are collected and surfaced (not swallowed). Backend-agnostic.</p>
+<p>Part of epic vergil-project/.github#69.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>make vrg-roadmap/vrg-activity-log org-aware (#2022)</strong>
+Both reporting CLIs hardcoded the org (roadmap _ORG_GITHUB=vergil-project/.github,
+activity_log _ORG=vergil-project), so run in another org's docs repo they would
+publish vergil-project's roadmap. That blocks the portable <org>/docs recipe:
+the same nightly cd-docs-refresh workflow must generate each org's own pages.</li>
+</ul>
+<p>Add github.current_org() (owner of the current repo's git remote) and thread
+org through roadmap.gather/render and activity_log.gather; drop the hardcoded
+constants. Both bins resolve the org as --org when given, else current_org(),
+so the workflow needs zero config and a person can target any org locally.
+Verified: 'vrg-roadmap --org logical-minds-foundry' renders the LMF epics.</p>
 
 
 
