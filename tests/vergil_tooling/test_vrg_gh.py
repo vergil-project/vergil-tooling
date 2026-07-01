@@ -25,6 +25,14 @@ def test_no_args_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage" in capsys.readouterr().err.lower()
 
 
+def test_help_prints_wrapper_help(capsys: pytest.CaptureFixture[str]) -> None:
+    for flag in ("-h", "--help"):
+        assert main([flag]) == 0
+        out = capsys.readouterr().out
+        assert "gh wrapper" in out.lower()
+        assert "denied outright" in out.lower()
+
+
 def test_none_argv_reads_sys_argv(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.bin.vrg_gh.sys.argv", ["vrg-gh"]):
         assert main(None) != 0

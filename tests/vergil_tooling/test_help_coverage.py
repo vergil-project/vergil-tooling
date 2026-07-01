@@ -33,13 +33,7 @@ EXEMPT = frozenset({"vrg-hook-guard"})
 # vergil-project/.github#72; removing a tool from this set is part of its fix.
 # When the set is empty the gate is fully enforcing. Do NOT add a new tool here
 # to silence the gate — give the tool a --help instead.
-KNOWN_GAPS = frozenset(
-    {
-        "vrg-container-docs",
-        "vrg-gh",
-        "vrg-git",
-    }
-)
+KNOWN_GAPS: frozenset[str] = frozenset()
 
 
 def _scripts() -> dict[str, str]:
