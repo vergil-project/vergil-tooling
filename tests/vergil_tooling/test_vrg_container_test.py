@@ -150,7 +150,7 @@ def test_main_no_language_no_env(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_container_test.detect_runtime", return_value="docker"),
         patch.dict("os.environ", {}, clear=True),
     ):
-        assert main() == 1
+        assert main([]) == 1
 
 
 def test_main_runtime_not_available(tmp_path: Path) -> None:
@@ -162,7 +162,7 @@ def test_main_runtime_not_available(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        result = main()
+        result = main([])
     assert result == 1
     mock_exec.assert_not_called()
 
@@ -176,7 +176,7 @@ def test_main_calls_execvp(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        main()
+        main([])
     mock_exec.assert_called_once()
     call_args = mock_exec.call_args
     assert call_args[0][0] == "docker"
@@ -192,7 +192,7 @@ def test_main_calls_execvp_nerdctl(tmp_path: Path) -> None:
         patch("vergil_tooling.bin.vrg_container_test.os.execvp") as mock_exec,
         patch.dict("os.environ", {}, clear=True),
     ):
-        main()
+        main([])
     mock_exec.assert_called_once()
     assert mock_exec.call_args[0][0] == "nerdctl"
 

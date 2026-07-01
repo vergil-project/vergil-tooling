@@ -109,11 +109,15 @@ def test_normalize_rejects_wrong_keyword_with_number() -> None:
     assert "Ref" in str(exc.value)
 
 
-def test_normalize_rejects_non_ref_keyword() -> None:
-    # ALLOWED_LINKAGES stays Ref-only as a submit-field value until T3 adds
-    # Closes with the auto-selection logic; the body regex recognizes Closes.
+def test_normalize_accepts_closes() -> None:
+    # T3 added Closes to ALLOWED_LINKAGES; vrg-submit-pr auto-selects it for
+    # managed tasks so it closes the task on merge.
+    assert normalize_linkage("Closes") == ("Closes", None)
+
+
+def test_normalize_rejects_banned_autoclose_keyword() -> None:
     with pytest.raises(ValueError, match="bare keyword"):
-        normalize_linkage("Closes")
+        normalize_linkage("Fixes")
 
 
 def test_normalize_rejects_empty_string() -> None:

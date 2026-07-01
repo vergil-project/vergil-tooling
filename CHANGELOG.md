@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.98] - 2026-07-01
+
+### CI
+
+- add on: issues.closed caller for event-driven epic rollup (#2060)
+
+### Features
+
+- descriptive --help for container-test, pr-issue-linkage, repo-profile (#2062)
+- emit Closes for managed tasks so they auto-close on merge (#2063)
+- add vrg-issue-create + vrg-epic-move/unlink; block raw issue create (#2064)
+- wrapper-specific --help for vrg-git/vrg-gh + vrg-container-docs help (#2065)
+
 ## [2.1.97] - 2026-07-01
 
 ### Features

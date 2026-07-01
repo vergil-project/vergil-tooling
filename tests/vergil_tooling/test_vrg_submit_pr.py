@@ -12,10 +12,12 @@ import pytest
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
     _reject_if_epic_link,
+    _resolve_linkage,
     _run_submit_batch,
     _select_batch_worktrees,
     _submit_one,
     _target_branch,
+    _task_linkage,
     main,
     parse_args,
 )
@@ -31,11 +33,16 @@ _MOD = "vergil_tooling.bin.vrg_submit_pr"
 
 @pytest.fixture(autouse=True)
 def _no_epic_link_check() -> Iterator[None]:
-    """Neutralize the epic-link guard for submit-flow tests (it would hit a real
-    gh call). The dedicated _reject_if_epic_link tests call the imported function
-    directly, so this module-attr patch doesn't shadow them.
+    """Neutralize the epic-link guard and the task-linkage lookup for submit-flow
+    tests (both would hit a real gh call). ``_task_linkage`` defaults to the
+    requested linkage with no ``Closes`` upgrade. The dedicated tests for these
+    functions call the imported functions directly, so these module-attr patches
+    don't shadow them.
     """
-    with patch(_MOD + "._reject_if_epic_link"):
+    with (
+        patch(_MOD + "._reject_if_epic_link"),
+        patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
+    ):
         yield
 
 
@@ -609,7 +616,7 @@ class TestTemplateMode:
     def test_template_rejects_forbidden_linkage(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        _write_workflow_state(tmp_path, title="fix", summary="Fix", linkage="Closes")
+        _write_workflow_state(tmp_path, title="fix", summary="Fix", linkage="Fixes")
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -624,7 +631,7 @@ class TestTemplateMode:
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
         """Even if the fields carry a bad linkage, template mode rejects it."""
-        fields = {"issue": "42", "title": "fix", "summary": "Fix", "linkage": "Closes"}
+        fields = {"issue": "42", "title": "fix", "summary": "Fix", "linkage": "Fixes"}
         with (
             patch(_MOD + ".git.repo_root", return_value=tmp_path),
             patch(_MOD + ".git.current_branch", return_value="feature/x"),
@@ -1515,7 +1522,7 @@ def test_select_batch_interactive_uses_multi_select() -> None:
 
 
 def test_submit_one_bad_linkage_exits() -> None:
-    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Closes"}
+    fields = {"issue": "1", "title": "T", "summary": "s", "notes": "", "linkage": "Fixes"}
     with (
         patch(_MOD + ".submission.read_pr_fields", return_value=fields),
         patch(_MOD + ".resolve_issue_ref", return_value="#1"),
@@ -1664,6 +1671,58 @@ def test_reject_if_epic_link_passes_for_task() -> None:
     ):
         _reject_if_epic_link("#42")
     mock_is_epic.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+
+
+# -- _task_linkage (managed tasks auto-close via Closes) ----------------------
+
+
+def test_task_linkage_upgrades_managed_task_to_closes() -> None:
+    parent = epics.IssueRef("org", ".github", 75)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.parent_of", return_value=parent),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+    ):
+        linkage, note = _task_linkage("#42", "Ref")
+    assert linkage == "Closes"
+    assert note is not None
+    assert "Closes" in note
+
+
+def test_task_linkage_keeps_ref_for_legacy_issue() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+    ):
+        assert _task_linkage("#42", "Ref") == ("Ref", None)
+
+
+def test_task_linkage_keeps_ref_when_parent_not_epic() -> None:
+    parent = epics.IssueRef("org", "repo", 5)
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.parent_of", return_value=parent),
+        patch(f"{_MOD}.epics.is_epic", return_value=False),
+    ):
+        assert _task_linkage("#42", "Ref") == ("Ref", None)
+
+
+def test_task_linkage_noop_when_ref_unresolvable() -> None:
+    with patch(f"{_MOD}.github.current_repo", return_value=""):
+        assert _task_linkage("#42", "Ref") == ("Ref", None)
+
+
+def test_resolve_linkage_announces_closes_upgrade(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with patch(f"{_MOD}._task_linkage", return_value=("Closes", "note: upgraded")):
+        assert _resolve_linkage("#42", "Ref") == "Closes"
+    assert "note: upgraded" in capsys.readouterr().out
+
+
+def test_resolve_linkage_returns_requested_without_note() -> None:
+    with patch(f"{_MOD}._task_linkage", return_value=("Ref", None)):
+        assert _resolve_linkage("#42", "Ref") == "Ref"
 
 
 def test_reject_if_epic_link_noop_when_repo_unresolvable() -> None:

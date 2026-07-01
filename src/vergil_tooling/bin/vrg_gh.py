@@ -13,7 +13,7 @@ import sys
 from vergil_tooling.lib import github, identity_mode, retry
 
 _ALLOWED: dict[str, set[str]] = {
-    "issue": {"view", "create", "close", "reopen", "edit", "list", "comment"},
+    "issue": {"view", "close", "reopen", "edit", "list", "comment"},
     "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},
@@ -25,6 +25,12 @@ _ALLOWED_AUDIT: dict[str, set[str]] = {
 }
 
 _DENIED_ALWAYS: dict[str, dict[str, str]] = {
+    "issue": {
+        # Issue creation must go through vrg-issue-create so every issue is
+        # born linked to an epic (native sub-issue). Denied for every identity
+        # so there is no bypass around linkage. See issue #2017.
+        "create": "Use vrg-issue-create instead of gh issue create.",
+    },
     "pr": {
         "close": "gh pr close is denied by vrg-gh.",
     },
@@ -200,6 +206,31 @@ def _exec_gh(argv: list[str]) -> int:
     return 0
 
 
+def _print_help() -> None:
+    """Print vrg-gh's own help — what the wrapper enforces before forwarding."""
+    allowed = ", ".join(
+        f"{top} ({'/'.join(sorted(subs))})" for top, subs in sorted(_ALLOWED.items())
+    )
+    print(
+        "usage: vrg-gh <subcommand> <action> [args...]\n"
+        "\n"
+        "A safe, identity-aware gh wrapper for agent sessions: it forwards to gh\n"
+        "only after enforcing policy, injecting the GitHub App installation token\n"
+        "for the target owner.\n"
+        "\n"
+        "What it enforces:\n"
+        f"  - Allowed (human/user): {allowed}.\n"
+        "    The audit identity is narrower (read-only pr actions); agents are\n"
+        "    barred from pr create/edit/merge and issue reopen.\n"
+        "  - Denied outright: gh auth, pr close, repo edit/create/delete.\n"
+        "  - gh api is gated by identity: human full, audit read-only GET, user\n"
+        "    denied.\n"
+        "\n"
+        "Identity mode is resolved via vrg-whoami. Per-subcommand gh help still\n"
+        "forwards, e.g. 'vrg-gh pr view --help'."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -207,6 +238,10 @@ def main(argv: list[str] | None = None) -> int:
     if not argv:
         print("usage: vrg-gh <subcommand> <action> [args...]", file=sys.stderr)
         return 2
+
+    if argv[0] in ("-h", "--help"):
+        _print_help()
+        return 0
 
     top = argv[0]
 
@@ -294,3 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     return _exec_gh(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

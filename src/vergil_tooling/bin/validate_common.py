@@ -194,7 +194,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     repo_root = git.repo_root()
 
     print("Running: repo-profile")
-    rc = vrg_repo_profile.main()
+    rc = vrg_repo_profile.main([])
     if rc != 0:
         return rc
 

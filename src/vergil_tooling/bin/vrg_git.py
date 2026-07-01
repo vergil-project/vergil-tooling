@@ -378,6 +378,32 @@ def _print_workflow_push_guidance() -> None:
     )
 
 
+def _print_help() -> None:
+    """Print vrg-git's own help — what the wrapper enforces before forwarding."""
+    denied = ", ".join(sorted(_DENIED))
+    print(
+        "usage: vrg-git <subcommand> [args...]\n"
+        "\n"
+        "A safe git wrapper for agent sessions: it forwards to git only after\n"
+        "enforcing policy, so it is not a drop-in replacement for git.\n"
+        "\n"
+        "What it enforces:\n"
+        "  - Subcommand allowlist: read-only inspection commands plus a vetted\n"
+        "    set of mutating ones (add, push, fetch, pull, clone, checkout,\n"
+        "    switch, stash, merge, cherry-pick, rebase, worktree add/list/remove).\n"
+        f"  - Denied subcommands: {denied} (use vrg-commit for commits).\n"
+        "  - Flag deny-list: push -f/--force, branch -D/--force, rebase -i,\n"
+        "    checkout -- . ; --force-with-lease is blocked on protected branches\n"
+        "    (develop, main, release/*).\n"
+        "  - Worktree convention: branch switches in the main worktree and\n"
+        "    'worktree add' targets outside .worktrees/ are refused.\n"
+        "  - Identity: remote ops run with the GitHub App installation token for\n"
+        "    the resolved identity mode (see vrg-whoami).\n"
+        "\n"
+        "Per-subcommand git help still forwards, e.g. 'vrg-git log --help'."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     if argv is None:
         argv = sys.argv[1:]
@@ -385,6 +411,10 @@ def main(argv: list[str] | None = None) -> int:
     if not argv:
         print("usage: vrg-git <subcommand> [args...]", file=sys.stderr)
         return 2
+
+    if argv[0] in ("-h", "--help"):
+        _print_help()
+        return 0
 
     subcmd = argv[0]
 
@@ -477,3 +507,7 @@ def main(argv: list[str] | None = None) -> int:
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

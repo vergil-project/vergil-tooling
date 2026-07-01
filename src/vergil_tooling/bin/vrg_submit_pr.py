@@ -250,6 +250,47 @@ def _reject_if_epic_link(issue_ref: str) -> None:
         )
 
 
+def _task_linkage(issue_ref: str, requested: str) -> tuple[str, str | None]:
+    """Choose the PR-body linkage keyword for *issue_ref*.
+
+    A managed task — an issue with an ``epic``-labeled parent — is closed by its
+    single PR, so it links with ``Closes`` to auto-close on merge to the default
+    branch (epic vergil-project/.github#75). Legacy issues (no epic parent) keep
+    *requested* (default ``Ref``) and stay open for manual close. Assumes the
+    epic-target case was already rejected by :func:`_reject_if_epic_link`.
+
+    Deciding task-ness needs the same authenticated cross-repo ``gh`` call as the
+    epic rejection — a parent epic may live in ``.github``. Returns
+    ``(linkage, note)`` where *note* explains the automatic upgrade to ``Closes``
+    (for the caller to surface), or ``None``.
+    """
+    try:
+        task = epics.parse_issue_ref(issue_ref, default_repo=github.current_repo())
+    except ValueError:
+        return requested, None
+    parent = epics.parent_of(task)
+    if parent is not None and epics.is_epic(parent):
+        note = (
+            f"{task.slug} is a task under epic {parent.slug}; "
+            "linking with 'Closes' to auto-close it on merge."
+        )
+        return "Closes", note
+    return requested, None
+
+
+def _resolve_linkage(issue_ref: str, requested: str) -> str:
+    """Effective PR-body linkage for *issue_ref*, announcing a ``Closes`` upgrade.
+
+    Thin wrapper over :func:`_task_linkage` used at every PR-body build site: it
+    prints the upgrade note (when a managed task is auto-linked with ``Closes``)
+    and returns the linkage keyword.
+    """
+    linkage, note = _task_linkage(issue_ref, requested)
+    if note:
+        print(f"vrg-submit-pr: {note}")
+    return linkage
+
+
 def _run_cli_mode(args: argparse.Namespace) -> int:
     # main() only routes here when all three are present; narrow for the
     # type checker without relying on an assert (ruff S101).
@@ -259,11 +300,12 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
 
     issue_ref = resolve_issue_ref(args.issue)
     _reject_if_epic_link(issue_ref)
+    linkage = _resolve_linkage(issue_ref, args.linkage)
     branch = git.current_branch()
     target = _target_branch(args.base)
     pr_body = build_pr_body(
         summary=args.summary,
-        linkage=args.linkage,
+        linkage=linkage,
         issue_ref=issue_ref,
         notes=args.notes,
     )
@@ -505,6 +547,7 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
         raise SystemExit(f"vrg-submit-pr: {exc}") from exc
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
+    linkage = _resolve_linkage(issue_ref, linkage)
     pr_body = build_pr_body(
         summary=fields["summary"],
         linkage=linkage,
@@ -587,6 +630,7 @@ def _run_template_mode(args: argparse.Namespace) -> int:
         return 1
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
+    linkage = _resolve_linkage(issue_ref, linkage)
     pr_body = build_pr_body(
         summary=fields["summary"],
         linkage=linkage,

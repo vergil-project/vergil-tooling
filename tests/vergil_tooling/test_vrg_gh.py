@@ -25,6 +25,14 @@ def test_no_args_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> None:
     assert "usage" in capsys.readouterr().err.lower()
 
 
+def test_help_prints_wrapper_help(capsys: pytest.CaptureFixture[str]) -> None:
+    for flag in ("-h", "--help"):
+        assert main([flag]) == 0
+        out = capsys.readouterr().out
+        assert "gh wrapper" in out.lower()
+        assert "denied outright" in out.lower()
+
+
 def test_none_argv_reads_sys_argv(capsys: pytest.CaptureFixture[str]) -> None:
     with patch("vergil_tooling.bin.vrg_gh.sys.argv", ["vrg-gh"]):
         assert main(None) != 0
@@ -39,7 +47,6 @@ def test_top_level_only_exits_nonzero(capsys: pytest.CaptureFixture[str]) -> Non
 
 _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("issue", "view"),
-    ("issue", "create"),
     ("issue", "close"),
     ("issue", "reopen"),
     ("issue", "edit"),
@@ -113,6 +120,15 @@ def test_denied_pair(top: str, sub: str, capsys: pytest.CaptureFixture[str]) -> 
 def test_pr_close_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["pr", "close"]) != 0
     assert "denied" in capsys.readouterr().err.lower()
+
+
+def test_issue_create_denied_redirects_to_vrg_issue_create(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert main(["issue", "create"]) != 0
+    err = capsys.readouterr().err.lower()
+    assert "denied" in err
+    assert "vrg-issue-create" in err
 
 
 # -- top-level denials -------------------------------------------------------
