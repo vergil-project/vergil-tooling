@@ -365,6 +365,10 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     from vergil_tooling.lib.languages import CheckKind, language_commands
 
     lang_yaml = ctx.primary_language or ""
+    # A no-primary-language repo must emit a bare `language:` — writing
+    # `language: {empty}` leaves a trailing space that fails yamllint
+    # trailing-spaces (issue #1993).
+    lang_line = f"      language: {lang_yaml}\n" if lang_yaml else "      language:\n"
     suffix = _container_suffix(ctx.primary_language)
     tag = _container_tag(ctx.primary_language, ctx.ci_versions)
     versions_json = json.dumps(ctx.ci_versions)
@@ -404,7 +408,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "  audit:\n",
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-audit.yml@v2.1\n",
                 "    with:\n",
-                f"      language: {lang_yaml}\n",
+                lang_line,
                 f"      versions: '{versions_json}'\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
@@ -417,7 +421,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "  quality:\n",
             "    uses: vergil-project/vergil-actions/.github/workflows/ci-quality.yml@v2.1\n",
             "    with:\n",
-            f"      language: {lang_yaml}\n",
+            lang_line,
             f"      versions: '{versions_json}'\n",
             f"      container-tag: '{tag}'\n",
             f"      container-suffix: {suffix}\n",
@@ -431,7 +435,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
             "      # needs it on private repos. See vergil-project/vergil-actions#698.\n",
             "      actions: read\n",
             "    with:\n",
-            f"      language: {lang_yaml}\n",
+            lang_line,
             "      run-standards: ${{ inputs.run-release != 'false' }}\n",
             "      run-security: ${{ inputs.run-security != 'false' }}\n",
         ]
@@ -465,7 +469,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "  test:\n",
                 "    uses: vergil-project/vergil-actions/.github/workflows/ci-test.yml@v2.1\n",
                 "    with:\n",
-                f"      language: {lang_yaml}\n",
+                lang_line,
                 f"      versions: '{versions_json}'\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
@@ -480,7 +484,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
                 "    uses: vergil-project/vergil-actions/"
                 ".github/workflows/ci-version-bump.yml@v2.1\n",
                 "    with:\n",
-                f"      language: {lang_yaml}\n",
+                lang_line,
                 "      run-release: ${{ inputs.run-release != 'false' }}\n",
                 f"      container-tag: '{tag}'\n",
                 f"      container-suffix: {suffix}\n",
