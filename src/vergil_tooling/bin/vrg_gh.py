@@ -13,7 +13,7 @@ import sys
 from vergil_tooling.lib import github, identity_mode, retry
 
 _ALLOWED: dict[str, set[str]] = {
-    "issue": {"view", "create", "close", "reopen", "edit", "list", "comment"},
+    "issue": {"view", "close", "reopen", "edit", "list", "comment"},
     "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},
@@ -25,6 +25,12 @@ _ALLOWED_AUDIT: dict[str, set[str]] = {
 }
 
 _DENIED_ALWAYS: dict[str, dict[str, str]] = {
+    "issue": {
+        # Issue creation must go through vrg-issue-create so every issue is
+        # born linked to an epic (native sub-issue). Denied for every identity
+        # so there is no bypass around linkage. See issue #2017.
+        "create": "Use vrg-issue-create instead of gh issue create.",
+    },
     "pr": {
         "close": "gh pr close is denied by vrg-gh.",
     },
