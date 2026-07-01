@@ -84,14 +84,27 @@ def test_render_empty() -> None:
 def test_render_groups_by_milestone() -> None:
     summaries = [
         EpicSummary(
-            40, "Convention", "2026-06-28", "v2.2", ("vergil-project/vergil-tooling",), 2, 1, "u40"
+            40,
+            "Convention | edge",
+            "2026-06-28",
+            "v2.2",
+            ("vergil-project/.github", "vergil-project/vergil-tooling"),
+            2,
+            1,
+            "u40",
         ),
         EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7"),
     ]
     out = roadmap.render(summaries)
     assert "## v2.2" in out
     assert "## No milestone" in out
-    assert "[#40](u40) Convention" in out
-    assert "1/2 done" in out
-    assert "repos: vergil-project/vergil-tooling" in out
-    assert "repos: —" in out
+    # Table scaffolding, one header per milestone section.
+    assert "| Epic | Done | Repos | Created |" in out
+    assert out.count("| --- | --- | --- | --- |") == 2
+    # Epic row: link + title (pipe escaped), Done as X/Y, repos stacked short
+    # names via <br>, and the created date now has its own visible column.
+    assert (
+        "| [#40](u40) Convention \\| edge | 1/2 | .github<br>vergil-tooling | 2026-06-28 |" in out
+    )
+    # No repos renders an em dash in the cell.
+    assert "| [#7](u7) Orphan | 0/0 | — | 2026-02-02 |" in out
