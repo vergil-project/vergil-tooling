@@ -229,9 +229,18 @@ def _resolve_standing_epic(repo: str) -> IssueRef:
         raise ValueError(f"cannot resolve repo for standing epic (repo={repo!r})")
     owner, name = repo.split("/", 1)
     raw: Any = github.read_json(
-        "issue", "list", "--repo", repo,
-        "--label", "epic", "--label", "standing",
-        "--state", "open", "--json", "number",
+        "issue",
+        "list",
+        "--repo",
+        repo,
+        "--label",
+        "epic",
+        "--label",
+        "standing",
+        "--state",
+        "open",
+        "--json",
+        "number",
     )
     rows = [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
     if not rows:

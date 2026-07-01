@@ -324,3 +324,8 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
         pytest.raises(ValueError, match="not an epic"),
     ):
         epics.resolve_epic_ref("#123", repo="org/repo")
+
+
+def test_resolve_epic_ref_standing_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo"):
+        epics.resolve_epic_ref("standing", repo="tooling")

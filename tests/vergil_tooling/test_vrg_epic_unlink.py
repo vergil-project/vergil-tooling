@@ -40,3 +40,13 @@ def test_main_noop_when_no_parent() -> None:
         rc = main(["--task", "#42"])
     assert rc == 0
     mock_remove.assert_not_called()
+
+
+def test_main_rejects_bad_ref() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.remove_child") as mock_remove,
+    ):
+        rc = main(["--task", "not-a-ref"])
+    assert rc == 1
+    mock_remove.assert_not_called()

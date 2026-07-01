@@ -92,6 +92,14 @@ def test_create_issue_uses_inline_body_when_no_file() -> None:
     assert "--body-file" not in args
 
 
+def test_create_issue_includes_assignees() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="url") as mock_read:
+        github.create_issue(repo="org/repo", title="T", assignees=["alice", "bob"])
+    args = mock_read.call_args.args
+    assert args.count("--assignee") == 2
+    assert "alice" in args and "bob" in args
+
+
 def test_edit_pr_body_passes_body_via_file() -> None:
     """edit_pr_body writes the body to a temp file and passes it to gh."""
     captured: dict[str, str] = {}
