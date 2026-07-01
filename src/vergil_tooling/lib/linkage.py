@@ -8,19 +8,33 @@ from __future__ import annotations
 
 import re
 
-# The only linkage keywords allowed in PR bodies and templates.
-# Auto-close keywords (Closes/Fixes/Resolves) are banned repo-wide —
-# issues stay open until post-merge workflows succeed.
+# ``ALLOWED_LINKAGES`` is the keyword set accepted as a PR *submission-field*
+# value (the ``--linkage`` choices for vrg-submit-pr / vrg-pr-fix-body). It stays
+# Ref-only until vrg-submit-pr learns to emit ``Closes`` for managed tasks (epic
+# vergil-project/.github#75, task T3), where ``Closes`` is added alongside the
+# auto-selection logic and its tests.
+#
+# The *body* patterns below already recognize ``Closes`` as sanctioned linkage,
+# so the CI gate and the extract_* helpers accept a task PR that closes its issue
+# by keyword. ``Fixes``/``Resolves`` stay banned so there is one close keyword.
 ALLOWED_LINKAGES = ("Ref",)
 
+# Primary linkage in a PR body: ``Ref`` or the close family (canonical
+# ``Closes``; ``Close``/``Closed`` accepted as equivalents). The keyword is
+# non-capturing, so the two capture groups stay (repo, number) and the
+# extract_* helpers recognize a task linked by either keyword.
 LINKAGE_RE = re.compile(
-    r"^\s*[-*]?\s*Ref:?\s+"
+    r"^\s*[-*]?\s*(?:Ref|Close[sd]?):?\s+"
     r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#([0-9]+)",
-    re.MULTILINE,
+    re.MULTILINE | re.IGNORECASE,
 )
 
+# Auto-close keywords that remain BANNED in PR bodies (``Fixes``/``Resolves`` and
+# variants); ``Closes`` is sanctioned above as the one close keyword. Used only
+# by the PR-body gate — commit-message auto-close banning has its own regex in
+# ``commit_message.py``.
 AUTOCLOSE_RE = re.compile(
-    r"^\s*[-*]?\s*(close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
+    r"^\s*[-*]?\s*(fix(?:e[sd])?|resolve[sd]?):?\s+"
     r"([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
     re.MULTILINE | re.IGNORECASE,
 )
@@ -73,9 +87,10 @@ def normalize_linkage(value: str) -> tuple[str, str | None]:
 
 
 def extract_tracking_issue(text: str) -> int | None:
-    """Return the tracking issue number from a ``Ref #N`` match.
+    """Return the tracking issue number from a ``Ref #N`` / ``Closes #N`` match.
 
-    Raises ``ValueError`` if multiple ``Ref`` lines are found.
+    Recognizes a task linked by either sanctioned keyword. Raises ``ValueError``
+    if multiple linkage lines are found.
     """
     matches = LINKAGE_RE.findall(text)
     if not matches:
@@ -87,11 +102,12 @@ def extract_tracking_issue(text: str) -> int | None:
 
 
 def extract_tracking_ref(text: str) -> str | None:
-    """Return the single ``Ref`` as ``"#N"`` or ``"owner/repo#N"`` (cross-repo).
+    """Return the single linkage as ``"#N"`` or ``"owner/repo#N"`` (cross-repo).
 
     Like :func:`extract_tracking_issue` but preserves the optional ``owner/repo``
     so callers can identify a cross-repo linkage (e.g. a mistaken link to an epic
-    in ``.github``). Raises ``ValueError`` if multiple ``Ref`` lines are found.
+    in ``.github``). Matches ``Ref`` or ``Closes``. Raises ``ValueError`` if
+    multiple linkage lines are found.
     """
     matches = LINKAGE_RE.findall(text)
     if not matches:

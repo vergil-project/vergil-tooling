@@ -1,9 +1,12 @@
 """Check that a pull request body includes primary issue linkage.
 
 Reads the GitHub event payload from ``GITHUB_EVENT_PATH`` and validates
-that the PR body contains ``Ref`` followed by an issue reference.
-Auto-close keywords (Fixes, Closes, Resolves and variants) are
-rejected — issues must remain open until post-merge workflows succeed.
+that the PR body contains ``Ref`` or ``Closes`` followed by an issue
+reference. ``Closes`` is the sanctioned auto-close keyword (a task is one
+PR, so "in develop = done"); ``Fixes``/``Resolves`` and variants remain
+rejected so there is exactly one close keyword. The epic-vs-task policy
+(which keyword is correct for a given issue) lives in ``vrg-submit-pr``;
+this gate is a dependency-free syntax/uniqueness check.
 """
 
 from __future__ import annotations
@@ -42,9 +45,9 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     if AUTOCLOSE_RE.search(pr_body):
         msg = (
-            "pull request body contains a GitHub auto-close keyword "
-            "(close/fix/resolve). Use 'Ref #N' instead. "
-            "Issues must remain open until post-merge workflows succeed."
+            "pull request body contains a banned GitHub auto-close keyword "
+            "(fix/resolve). Use 'Ref #N' to reference, or 'Closes #N' to "
+            "close the task on merge."
         )
         emit_error(msg)
         write_summary(f"## PR Body Compliance Failed\n\n{msg}")
@@ -53,8 +56,8 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     if not LINKAGE_RE.search(pr_body):
         msg = (
             "pull request body must include primary issue linkage "
-            "(Ref #123). Cross-repo references (Ref owner/repo#123) are "
-            "also accepted."
+            "(Ref #123 or Closes #123). Cross-repo references "
+            "(Ref owner/repo#123) are also accepted."
         )
         emit_error(msg)
         write_summary(f"## PR Body Compliance Failed\n\n{msg}")
