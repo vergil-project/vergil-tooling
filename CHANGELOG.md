@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.93] - 2026-07-01
+
+### Bug fixes
+
+- register marketplaces before install, not bare update (#2023)
+
+### Features
+
+- make vrg-roadmap/vrg-activity-log org-aware (#2022)
+
 ## [2.1.92] - 2026-07-01
 
 ### Bug fixes
