@@ -1048,29 +1048,29 @@ class TestDetectOrg:
             mock_run.return_value = _completed(
                 stdout="git@github.com:vergil-project/vergil-tooling.git\n"
             )
-            assert github._detect_org() == "vergil-project"
+            assert github.detect_org() == "vergil-project"
 
     def test_parses_https_remote(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
             mock_run.return_value = _completed(
                 stdout="https://github.com/vergil-project/vergil-tooling.git\n"
             )
-            assert github._detect_org() == "vergil-project"
+            assert github.detect_org() == "vergil-project"
 
     def test_returns_none_on_git_failure(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
             mock_run.side_effect = subprocess.CalledProcessError(1, "git")
-            assert github._detect_org() is None
+            assert github.detect_org() is None
 
     def test_returns_none_for_unrecognized_url(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
             mock_run.return_value = _completed(stdout="https://gitlab.com/org/repo.git\n")
-            assert github._detect_org() is None
+            assert github.detect_org() is None
 
     def test_returns_none_for_empty_org(self) -> None:
         with patch("vergil_tooling.lib.github.subprocess.run") as mock_run:
             mock_run.return_value = _completed(stdout="git@github.com:/repo.git\n")
-            assert github._detect_org() is None
+            assert github.detect_org() is None
 
 
 _URLOPEN = "vergil_tooling.lib.github.urllib.request.urlopen"
@@ -1170,7 +1170,7 @@ class TestGetInstallationToken:
         monkeypatch.setenv("HOME", str(tmp_path))
         monkeypatch.delenv("VRG_APP_ID", raising=False)
         monkeypatch.delenv("VRG_PRIVATE_KEY_PATH", raising=False)
-        with patch("vergil_tooling.lib.github._detect_org", return_value=None):
+        with patch("vergil_tooling.lib.github.detect_org", return_value=None):
             assert github.get_installation_token() is None
 
     def test_exchanges_jwt_for_installation_token(

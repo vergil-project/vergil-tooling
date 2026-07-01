@@ -44,13 +44,13 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
         patch("vergil_tooling.lib.github.read_json", return_value=prs),
         patch("vergil_tooling.lib.github.read_output", side_effect=fake_state),
     ):
-        result = epic_audit.task_drift("2026-06-01")
+        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
     assert result == [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
 
 
 def test_task_drift_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
-        assert epic_audit.task_drift("2026-06-01") == []
+        assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
 
 
 def test_epic_drift_flags_all_done_open_epics() -> None:
@@ -65,11 +65,22 @@ def test_epic_drift_flags_all_done_open_epics() -> None:
 
 
 def test_render_clean() -> None:
-    assert "No drift" in epic_audit.render([], [])
+    out = epic_audit.render([], [], org="vergil-project", window_days=30)
+    assert "No drift" in out
+
+
+def test_render_banner_states_scope_and_read_only() -> None:
+    out = epic_audit.render([], [], org="acme-co", window_days=14)
+    assert "Read-only audit" in out
+    assert "**acme-co**" in out
+    assert "last 14 days" in out
+    assert "changes nothing" in out
 
 
 def test_render_task_drift_only() -> None:
-    out = epic_audit.render([TaskDrift("o/r", 1947, 1948, "u1948")], [])
+    out = epic_audit.render(
+        [TaskDrift("o/r", 1947, 1948, "u1948")], [], org="vergil-project", window_days=30
+    )
     assert "o/r#1947 — open; PR [#1948](u1948) merged" in out
     assert "## Epic drift" in out
     assert out.count("_none_") == 1  # epic section is empty
@@ -77,7 +88,7 @@ def test_render_task_drift_only() -> None:
 
 def test_render_epic_drift_only() -> None:
     epic = roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40")
-    out = epic_audit.render([], [epic])
+    out = epic_audit.render([], [epic], org="vergil-project", window_days=30)
     assert "[#40](u40) Convention — 9/9 done" in out
     assert "## Task drift" in out
     assert out.count("_none_") == 1  # task section is empty
