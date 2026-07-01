@@ -13,8 +13,6 @@ from typing import Any
 
 from vergil_tooling.lib import github
 
-_ORG = "vergil-project"
-
 
 @dataclass(frozen=True)
 class ActivityItem:
@@ -27,8 +25,13 @@ class ActivityItem:
     closed_date: str  # YYYY-MM-DD
 
 
-def gather(since: str, *, org: str = _ORG) -> list[ActivityItem]:
-    """Closed issues across *org* with ``closedAt`` on or after *since* (YYYY-MM-DD)."""
+def gather(since: str, *, org: str | None = None) -> list[ActivityItem]:
+    """Closed issues across *org* with ``closedAt`` on or after *since* (YYYY-MM-DD).
+
+    *org* defaults to the owner of the current repo's git remote.
+    """
+    if org is None:
+        org = github.current_org()
     raw: Any = github.read_json(
         "search",
         "issues",

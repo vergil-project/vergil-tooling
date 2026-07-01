@@ -15,9 +15,25 @@ def test_main_prints_ledger(capsys: pytest.CaptureFixture[str]) -> None:
     with patch(
         "vergil_tooling.bin.vrg_activity_log.activity_log.gather", return_value=[]
     ) as mock_gather:
-        rc = main()
+        rc = main(["--org", "vergil-project"])
     assert rc == 0
     assert "Activity log" in capsys.readouterr().out
     # the CLI computes and passes a YYYY-MM-DD cutoff
     since = mock_gather.call_args.args[0]
     assert len(since) == 10 and since.count("-") == 2
+    assert mock_gather.call_args.kwargs["org"] == "vergil-project"
+
+
+def test_main_defaults_org_to_current_repo() -> None:
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_activity_log.github.current_org", return_value="acme"
+        ) as mock_org,
+        patch(
+            "vergil_tooling.bin.vrg_activity_log.activity_log.gather", return_value=[]
+        ) as mock_gather,
+    ):
+        rc = main([])
+    assert rc == 0
+    mock_org.assert_called_once()
+    assert mock_gather.call_args.kwargs["org"] == "acme"

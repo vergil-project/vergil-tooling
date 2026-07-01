@@ -26,7 +26,7 @@ def test_gather_parses_and_skips_incomplete() -> None:
         },
     ]
     with patch("vergil_tooling.lib.github.read_json", return_value=results) as mock_search:
-        items = activity_log.gather("2026-06-01")
+        items = activity_log.gather("2026-06-01", org="vergil-project")
     assert items == [
         ActivityItem("vergil-project/vergil-tooling", 1912, "labels", "u1912", "2026-06-29")
     ]
@@ -38,7 +38,17 @@ def test_gather_parses_and_skips_incomplete() -> None:
 
 def test_gather_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
+        assert activity_log.gather("2026-06-01", org="vergil-project") == []
+
+
+def test_gather_defaults_org_to_current_repo_owner() -> None:
+    with (
+        patch("vergil_tooling.lib.github.current_org", return_value="acme") as mock_org,
+        patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_search,
+    ):
         assert activity_log.gather("2026-06-01") == []
+    mock_org.assert_called_once()
+    assert "acme" in mock_search.call_args.args
 
 
 def test_render_empty() -> None:

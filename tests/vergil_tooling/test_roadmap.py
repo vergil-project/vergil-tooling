@@ -39,7 +39,7 @@ def test_gather_summarizes_open_epics_and_skips_standing() -> None:
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
     ):
-        result = roadmap.gather()
+        result = roadmap.gather("vergil-project")
     assert len(result) == 1
     summary = result[0]
     assert summary.number == 40
@@ -67,14 +67,14 @@ def test_gather_handles_no_milestone_and_no_children() -> None:
         patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
         patch("vergil_tooling.lib.epics.child_states", return_value=[]),
     ):
-        result = roadmap.gather()
+        result = roadmap.gather("vergil-project")
     assert result[0].milestone is None
     assert result[0].repos == ()
 
 
 def test_gather_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
-        assert roadmap.gather() == []
+        assert roadmap.gather("vergil-project") == []
 
 
 def test_render_empty() -> None:
@@ -95,9 +95,11 @@ def test_render_groups_by_milestone() -> None:
         ),
         EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7"),
     ]
-    out = roadmap.render(summaries)
+    out = roadmap.render(summaries, "vergil-project")
     assert "## v2.2" in out
     assert "## No milestone" in out
+    # Caption names the org the epics were read from.
+    assert "open epics in vergil-project/.github" in out
     # Table scaffolding, one header per milestone section.
     assert "| Epic | Done | Repos | Created |" in out
     assert out.count("| --- | --- | --- | --- |") == 2
@@ -108,3 +110,32 @@ def test_render_groups_by_milestone() -> None:
     )
     # No repos renders an em dash in the cell.
     assert "| [#7](u7) Orphan | 0/0 | — | 2026-02-02 |" in out
+
+
+def test_render_without_org_uses_generic_source() -> None:
+    summaries = [EpicSummary(7, "Orphan", "2026-02-02", None, (), 0, 0, "u7")]
+    out = roadmap.render(summaries)
+    assert "open epics in the org .github repo" in out
+
+
+def test_gather_defaults_org_to_current_repo_owner() -> None:
+    epic_list = [
+        {
+            "number": 9,
+            "title": "Y",
+            "createdAt": "2026-03-03T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u9",
+        }
+    ]
+    with (
+        patch("vergil_tooling.lib.github.current_org", return_value="logical-minds-foundry"),
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list) as mock_read,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
+    ):
+        result = roadmap.gather()
+    assert result[0].number == 9
+    # The derived org drives both the epic query and the child rollup.
+    assert "logical-minds-foundry/.github" in mock_read.call_args.args
+    assert mock_children.call_args.args[0].owner == "logical-minds-foundry"
