@@ -96,6 +96,7 @@ nav:
           - Environment and Tooling: standards/development/environment-and-tooling.md
           - Runtime Version Support: standards/development/runtime-version-support-policy.md
           - Deprecation Warnings: standards/development/deprecation-warnings.md
+          - CLI Help Convention: standards/development/cli-help-convention.md
           - Python:
               - Overview: standards/development/python/overview.md
               - Naming Conventions: standards/development/python/naming-conventions.md
