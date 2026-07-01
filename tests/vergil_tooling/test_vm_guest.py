@@ -889,3 +889,97 @@ class TestUpdatePlugins:
         transport.run.side_effect = side_effect
         with pytest.raises(RuntimeError, match="marketplace:x/bad"):
             update_plugins(transport)
+
+    def test_derives_official_marketplace_when_undeclared(self) -> None:
+        # #2029: an enabled plugin can reference a marketplace not in
+        # extraKnownMarketplaces — notably claude-plugins-official, which isn't
+        # always declared. Derive its source so add+install still work.
+        settings = json.dumps(
+            {
+                "extraKnownMarketplaces": {},
+                "enabledPlugins": {"superpowers@claude-plugins-official": True},
+            }
+        )
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert any("marketplace add anthropics/claude-plugins-official" in c for c in cmds)
+        assert any(
+            "plugin install superpowers@claude-plugins-official --scope user" in c for c in cmds
+        )
+
+    def test_undecidable_undeclared_marketplace_is_not_added(self) -> None:
+        # #2029: a plugin against an unknown third-party marketplace has no
+        # derivable source — we do not invent one; the install surfaces the error.
+        settings = json.dumps(
+            {
+                "extraKnownMarketplaces": {},
+                "enabledPlugins": {"thing@some-third-party": True},
+            }
+        )
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert not any("marketplace add" in c for c in cmds)
+
+    def test_non_object_settings_is_tolerated(self) -> None:
+        # #2029: settings.json that isn't a JSON object (e.g. an array) is treated
+        # as empty, not crashed on.
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd or "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)  # no raise
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert not any("marketplace add" in c for c in cmds)
+
+    def test_enabled_id_without_marketplace_suffix_is_skipped(self) -> None:
+        # #2029: an enabled id with no @marketplace can't map to a marketplace, so
+        # it yields no add command (its install surfaces any problem).
+        settings = json.dumps({"extraKnownMarketplaces": {}, "enabledPlugins": {"bare-id": True}})
+
+        def side_effect(*args: str, **_kw: object) -> MagicMock:
+            cmd = args[-1]
+            if "cat ~/.claude/settings.json" in cmd:
+                out = settings
+            elif "plugin list --json" in cmd:
+                out = "[]"
+            else:
+                out = ""
+            return MagicMock(stdout=out, returncode=0)
+
+        transport = MagicMock()
+        transport.run.side_effect = side_effect
+        update_plugins(transport)
+        cmds = [c.args[-1] for c in transport.run.call_args_list]
+        assert not any("marketplace add" in c for c in cmds)
