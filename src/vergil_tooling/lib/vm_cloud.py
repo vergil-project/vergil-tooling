@@ -481,15 +481,25 @@ def link_cloud_claude_dirs(transport: Transport) -> None:
     history survives teardown, while injected credentials (``.credentials.json``,
     ``.claude.json``) stay on the ephemeral boot disk and die with the VM
     (acceptance: no injected credential on the detachable volume).
+
+    Idempotent and merge-safe (#1999, Fix A'): a re-seed (e.g. from the cloud
+    session path) may find ``~/.claude/<sub>`` already an equivalent symlink, or
+    a *real* directory that Claude created on a box that was never linked. A real
+    directory is merged onto the volume and then replaced by the symlink, rather
+    than clobbered or left as a nested ``ln -sfn`` target.
     """
     volume_dirs = " ".join(f"{_CLOUD_CLAUDE_VOLUME}/{sub}" for sub in _CLOUD_CLAUDE_LINK_DIRS)
-    transport.run("bash", "-c", f"mkdir -p ~/.claude {volume_dirs}")
+    parts = [f"mkdir -p ~/.claude {volume_dirs}"]
     for sub in _CLOUD_CLAUDE_LINK_DIRS:
-        transport.run(
-            "bash",
-            "-c",
-            f"ln -sfn {_CLOUD_CLAUDE_VOLUME}/{sub} ~/.claude/{sub}",
+        vol = f"{_CLOUD_CLAUDE_VOLUME}/{sub}"
+        link = f'"$HOME/.claude/{sub}"'
+        parts.append(
+            f"if [ -L {link} ]; then ln -sfn {vol} {link}; "
+            f"elif [ -d {link} ]; then cp -a {link}/. {vol}/ 2>/dev/null || true; "
+            f"rm -rf {link}; ln -s {vol} {link}; "
+            f"else ln -s {vol} {link}; fi"
         )
+    transport.run("bash", "-c", " ; ".join(parts))
 
 
 # --- OpenTofu two-state runner -----------------------------------------------
