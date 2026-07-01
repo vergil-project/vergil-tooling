@@ -79,13 +79,17 @@ def gather() -> list[EpicSummary]:
 
 
 def _row(epic: EpicSummary) -> str:
-    repos = ", ".join(epic.repos) if epic.repos else "—"
-    head = f"- **[#{epic.number}]({epic.url}) {epic.title}**"
-    return f"{head} — {epic.closed}/{epic.total} done · repos: {repos} · created {epic.created}"
+    """One markdown table row for an epic (repos stacked in-cell)."""
+    repos = "<br>".join(r.split("/")[-1] for r in epic.repos) if epic.repos else "—"
+    title = epic.title.replace("|", "\\|")
+    return (
+        f"| [#{epic.number}]({epic.url}) {title} "
+        f"| {epic.closed}/{epic.total} | {repos} | {epic.created} |"
+    )
 
 
 def render(summaries: list[EpicSummary]) -> str:
-    """Render the roadmap markdown, grouped by milestone."""
+    """Render the roadmap markdown as a table per milestone."""
     if not summaries:
         return "# Roadmap\n\n_No active epics._\n"
     by_milestone: dict[str, list[EpicSummary]] = {}
@@ -100,6 +104,8 @@ def render(summaries: list[EpicSummary]) -> str:
     for milestone in sorted(by_milestone):
         lines.append(f"## {milestone}")
         lines.append("")
+        lines.append("| Epic | Done | Repos | Created |")
+        lines.append("| --- | --- | --- | --- |")
         for epic in sorted(by_milestone[milestone], key=lambda e: e.number):
             lines.append(_row(epic))
         lines.append("")
