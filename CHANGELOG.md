@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.99] - 2026-07-01
+
+### Bug fixes
+
+- reject an epic issue in report-ready (guard parity with vrg-submit-pr) (#2071)
+- restore epic and triage issue creation (regression from #2017) (#2075)
+
+### Documentation
+
+- document Closes-based task closure and event-driven rollup (#2073)
+
+### Features
+
+- scaffold the epic-rollup caller in every new repo (#2074)
+
+### Refactoring
+
+- remove the command-triggered task close path (#2072)
+
 ## [2.1.98] - 2026-07-01
 
 ### CI
