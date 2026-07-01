@@ -15,7 +15,7 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from vergil_tooling.lib.identity import Identity
@@ -269,15 +269,15 @@ def update_tooling(transport: Transport, tag: str | None = None, *, fallback_tag
 _PLUGIN_PATH_EXPORT = 'export PATH="$HOME/.local/bin:/usr/local/bin:$PATH"'
 
 
-def _desired_enabled_plugins(transport: Transport) -> set[str]:
-    """Return the plugin ids the guest settings.json marks enabled.
+_OFFICIAL_MARKETPLACE = "claude-plugins-official"
+_OFFICIAL_MARKETPLACE_SOURCE = "anthropics/claude-plugins-official"
 
-    The desired set is declarative: ``enabledPlugins`` in the guest
-    ``~/.claude/settings.json`` (seeded from the host). Since Claude Code
-    v2.1.195 an enabled entry no longer auto-installs, so this is the
-    authoritative list of what *should* be present, independent of what is
-    installed. Absent or unreadable settings yield an empty set — the caller
-    still refreshes anything already installed-and-enabled.
+
+def _read_guest_settings(transport: Transport) -> dict[str, Any]:
+    """Return the guest ``~/.claude/settings.json`` as a dict.
+
+    Absent, unreadable, or non-object settings yield ``{}`` — the caller then
+    registers no marketplaces and refreshes only what is already installed.
     """
     try:
         result = transport.run(
@@ -286,42 +286,53 @@ def _desired_enabled_plugins(transport: Transport) -> set[str]:
             f"{_PLUGIN_PATH_EXPORT} && cat ~/.claude/settings.json",
         )
     except subprocess.CalledProcessError:
-        return set()
+        return {}
     try:
         data = json.loads(result.stdout)
     except json.JSONDecodeError:
-        return set()
-    enabled = data.get("enabledPlugins", {})
-    return {pid for pid, on in enabled.items() if on}
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def _declared_marketplace_sources(transport: Transport) -> list[str]:
-    """Return the ``marketplace add`` sources declared in the guest settings.json.
+def _enabled_plugin_ids(settings: dict[str, Any]) -> set[str]:
+    """Return the plugin ids ``enabledPlugins`` marks true.
 
-    Each ``extraKnownMarketplaces`` entry's ``source`` maps to an add-arg
-    (``owner/repo``, a URL, or a path). Headless ``claude plugin marketplace
-    update``/``list`` do NOT register these on a fresh box (#2021) — only
-    ``marketplace add <source>`` clones the catalog — so update_plugins registers
-    them explicitly before installing. Absent/unreadable settings yield [].
+    Declarative desired set: since Claude Code v2.1.195 an enabled entry no
+    longer auto-installs, so this is the authoritative list of what *should* be
+    present, independent of what is installed.
     """
-    try:
-        result = transport.run(
-            "bash",
-            "-c",
-            f"{_PLUGIN_PATH_EXPORT} && cat ~/.claude/settings.json",
-        )
-    except subprocess.CalledProcessError:
-        return []
-    try:
-        data = json.loads(result.stdout)
-    except json.JSONDecodeError:
-        return []
+    return {pid for pid, on in (settings.get("enabledPlugins") or {}).items() if on}
+
+
+def _marketplace_sources(settings: dict[str, Any]) -> list[str]:
+    """Return the ``marketplace add`` sources needed for the enabled plugins.
+
+    Primarily the ``extraKnownMarketplaces`` entries (each ``source`` -> an
+    add-arg: ``owner/repo``, a URL, or a path). Headless ``claude plugin
+    marketplace update``/``list`` do NOT register these on a fresh box (#2021) —
+    only ``marketplace add <source>`` clones the catalog.
+
+    Hardening (#2029): an enabled plugin can reference a marketplace not declared
+    in ``extraKnownMarketplaces`` — notably the built-in ``claude-plugins-official``,
+    which is not always listed. For such a plugin, derive a source where we can
+    (official -> its Anthropic repo); an undecidable third-party marketplace has
+    no derivable source and is left for the install to surface, never invented.
+    """
+    extra = settings.get("extraKnownMarketplaces") or {}
     sources: list[str] = []
-    for spec in (data.get("extraKnownMarketplaces") or {}).values():
+    for spec in extra.values():
         src = spec.get("source") or {}
         arg = src.get("repo") or src.get("url") or src.get("path")
         if arg:
             sources.append(arg)
+    for pid in _enabled_plugin_ids(settings):
+        if "@" not in pid:
+            continue
+        market = pid.split("@", 1)[1]
+        if market in extra:
+            continue
+        if market == _OFFICIAL_MARKETPLACE and _OFFICIAL_MARKETPLACE_SOURCE not in sources:
+            sources.append(_OFFICIAL_MARKETPLACE_SOURCE)
     return sources
 
 
@@ -354,11 +365,12 @@ def update_plugins(transport: Transport) -> None:
     """
     print("  Refreshing Claude plugins...")
     failures: list[str] = []
-    # Register the declared marketplaces so their catalogs are cloned. Headless
-    # `marketplace update`/`list` do NOT register a fresh box's extraKnownMarketplaces
-    # (#2021) — only `marketplace add <source>` clones the catalog, so a subsequent
-    # install can find the plugin. Idempotent (re-add is a no-op) and best-effort.
-    for source in _declared_marketplace_sources(transport):
+    settings = _read_guest_settings(transport)
+    # Register every marketplace the enabled plugins reference so their catalogs
+    # are cloned. Headless `marketplace update`/`list` do NOT register a fresh
+    # box's extraKnownMarketplaces (#2021) — only `marketplace add <source>` does.
+    # Idempotent (re-add is a no-op) and best-effort.
+    for source in _marketplace_sources(settings):
         print(f"    registering marketplace {source}...")
         try:
             transport.run(
@@ -373,7 +385,7 @@ def update_plugins(transport: Transport) -> None:
         "-c",
         f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace update",
     )
-    desired = _desired_enabled_plugins(transport)
+    desired = _enabled_plugin_ids(settings)
     listing = transport.run(
         "bash",
         "-c",
