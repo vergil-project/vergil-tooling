@@ -9,15 +9,13 @@ from __future__ import annotations
 import re
 
 # ``ALLOWED_LINKAGES`` is the keyword set accepted as a PR *submission-field*
-# value (the ``--linkage`` choices for vrg-submit-pr / vrg-pr-fix-body). It stays
-# Ref-only until vrg-submit-pr learns to emit ``Closes`` for managed tasks (epic
-# vergil-project/.github#75, task T3), where ``Closes`` is added alongside the
-# auto-selection logic and its tests.
-#
-# The *body* patterns below already recognize ``Closes`` as sanctioned linkage,
-# so the CI gate and the extract_* helpers accept a task PR that closes its issue
-# by keyword. ``Fixes``/``Resolves`` stay banned so there is one close keyword.
-ALLOWED_LINKAGES = ("Ref",)
+# value (the ``--linkage`` choices for vrg-submit-pr / vrg-pr-fix-body). ``Ref``
+# references without closing; ``Closes`` auto-closes the linked task on merge and
+# is selected automatically by vrg-submit-pr for managed tasks — a task with an
+# ``epic``-labeled parent (epic vergil-project/.github#75). ``Fixes``/``Resolves``
+# stay banned so there is exactly one close keyword; the body patterns below
+# recognize the close family so the gate and extract_* helpers read either keyword.
+ALLOWED_LINKAGES = ("Ref", "Closes")
 
 # Primary linkage in a PR body: ``Ref`` or the close family (canonical
 # ``Closes``; ``Close``/``Closed`` accepted as equivalents). The keyword is
