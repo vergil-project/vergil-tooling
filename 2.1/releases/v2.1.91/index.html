@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.22/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.20/">
+        <link rel="next" href="../v2.1.90/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.21 - VERGIL Tooling</title>
+        <title>2.1.91 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1421-2026-05-06" class="md-skip">
+        <a href="#release-2191-2026-07-01" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.21
+              2.1.91
             
           </span>
         </div>
@@ -1048,10 +1048,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.91/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.91
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1067,6 +1094,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -6088,37 +6146,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.21
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.21/" class="md-nav__link">
         
   
   
@@ -6134,48 +6165,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9989,17 +9978,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -10017,27 +9995,24 @@
 
 
 
-<h1 id="release-1421-2026-05-06">Release 1.4.21 (2026-05-06)<a class="headerlink" href="#release-1421-2026-05-06" title="Permanent link">&para;</a></h1>
+<h1 id="release-2191-2026-07-01">Release 2.1.91 (2026-07-01)<a class="headerlink" href="#release-2191-2026-07-01" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>use str() in _check_names to satisfy ty type checker</strong></li>
-<li><strong>restore Python 3.12+ support and auto-prepend .venv/bin in st-validate</strong>
-Reverts requires-python from &gt;=3.14 to &gt;=3.12 so standard-tooling
-can be installed in CI containers running any supported Python
-version (3.12, 3.13, 3.14).</li>
+<li>
+<p><strong>cloud session self-seeds Claude config; idempotent volume linking (#2000)</strong>
+The off-platform cloud session path never seeded Claude config, so create/rebuild was the only delivery and nothing repaired a box that came up unseeded. Diagnosed live: a box rebuilt the prior day had no settings.json/CLAUDE.md and projects/todos were not symlinked onto the volume, so it prompted for every action (no bypassPermissions) and wrote history off the persistent volume.</p>
+</li>
+<li>
+<p>_cloud_session now copies the operator's ~/.claude config and relinks the volume dirs before the process-replacing exec_session, mirroring the Lima session path. Idempotent -&gt; self-heals on the next session.</p>
+</li>
+<li>link_cloud_claude_dirs is now merge-safe: an existing real ~/.claude/<sub> directory is merged onto the volume then replaced by a symlink, instead of the old 'ln -sfn' that creates a nested broken symlink over a real dir.</li>
 </ul>
-<p>Expands CI matrix (quality, test, audit) to cover all three
-versions. Pins host install commands to --python 3.14 so the
-recommended host install still targets the latest interpreter.</p>
-<p>Additionally, st-validate now auto-prepends .venv/bin to PATH at
-startup when the directory exists but is not already on PATH,
-eliminating the need for manual PATH workarounds when running
-st-docker-run -- st-validate.</p>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<p>Part of epic vergil-project/.github#69.</p>
 <ul>
-<li><strong>add GHAS check runs (Semgrep OSS, Trivy) to CI gates required checks</strong></li>
-<li><strong>add --config flag to override remote config source</strong></li>
+<li><strong>confirm-main accepts an inline release job (leaf-match) (#2002)</strong>
+The confirm-main hard gate exact-matched the CD release job name against "release / release" (#1853). That name is the reusable-workflow leaf form and holds for every consumer repo, whose cd.yml calls the reusable cd-release workflow. vergil-actions defines that workflow and cannot call itself, so its cd.yml runs an inline job named "cd / release" — which failed the exact match, so a fully-successful release (tag + GitHub Release + boundary/rolling tags) was reported as "Release job not found" and vrg-release aborted at confirm-main.</li>
 </ul>
+<p>Identify the release job by its leaf segment (the part after the last ' / ') being exactly "release" instead of the full name. This accepts both "release / release" (consumers) and "cd / release" (vergil-actions) while still rejecting a decoy like "release-notes / build" (leaf "build"), preserving the #1853 guard against loose substring matches. The same predicate now gates the deferred-publish sweep.</p>
 
 
 
