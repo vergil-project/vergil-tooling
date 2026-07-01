@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from datetime import UTC, datetime
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import epics, git, github
 from vergil_tooling.lib.linkage import normalize_linkage
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
@@ -27,7 +28,28 @@ def _emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def _reject_epic_issue(issue: str) -> None:
+    """Refuse an epic linkage at report time — a PR links a task, not an epic.
+
+    Mirrors vrg-submit-pr's guard so the error surfaces where the value is
+    entered (report time) rather than later at submit time. Best-effort: if
+    epic-ness cannot be determined (no remote, no gh auth — e.g. an offline
+    run), it defers silently to vrg-submit-pr's authoritative check rather than
+    blocking report-ready.
+    """
+    try:
+        links_epic = epics.is_epic_linkage(issue, default_repo=github.current_repo())
+    except (subprocess.CalledProcessError, OSError):
+        return
+    if links_epic:
+        raise WorkflowError(
+            f"--issue links an epic (#{issue}); link a task, not an epic "
+            "(epics are closed by rollup when their tasks complete)."
+        )
+
+
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    _reject_epic_issue(str(args.issue))
     try:
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:

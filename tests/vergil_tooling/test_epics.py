@@ -189,6 +189,24 @@ def test_is_epic_false_without_label() -> None:
         assert epics.is_epic(TASK) is False
 
 
+def test_is_epic_linkage_true_for_epic() -> None:
+    with patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock:
+        assert epics.is_epic_linkage("org/.github#40", default_repo="org/repo") is True
+    mock.assert_called_once_with(IssueRef("org", ".github", 40))
+
+
+def test_is_epic_linkage_false_for_task() -> None:
+    with patch("vergil_tooling.lib.epics.is_epic", return_value=False):
+        assert epics.is_epic_linkage("#42", default_repo="org/repo") is False
+
+
+def test_is_epic_linkage_false_for_unparseable_ref() -> None:
+    # No resolvable default repo -> parse fails -> never an epic (is_epic unused).
+    with patch("vergil_tooling.lib.epics.is_epic") as mock:
+        assert epics.is_epic_linkage("#42", default_repo="") is False
+    mock.assert_not_called()
+
+
 def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),

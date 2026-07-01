@@ -254,6 +254,21 @@ def _resolve_standing_epic(repo: str) -> IssueRef:
     return IssueRef(owner=owner, repo=name, number=int(rows[0]["number"]))
 
 
+def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
+    """True if *ref* points at an epic, so it must not be linked as a PR's task.
+
+    Single source of truth for "is this linkage an epic?", shared by
+    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. Self-scoping: an
+    unparseable ref (e.g. a legacy issue with no resolvable repo) is never an
+    epic and returns False.
+    """
+    try:
+        issue = parse_issue_ref(ref, default_repo=default_repo)
+    except ValueError:
+        return False
+    return is_epic(issue)
+
+
 def rollup(task: IssueRef) -> None:
     """Close *task*'s parent epic if the epic is finite and all children closed.
 

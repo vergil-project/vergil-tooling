@@ -139,10 +139,15 @@ finalization are human actions. The PR handoff is:
 1. The agent records the PR metadata with `vrg-pr-workflow report-ready
    --issue <N> --title --summary --notes` (optional `--linkage`), which writes
    it to `.vergil/pr-workflow.json`. `title`, `summary`, and `notes` are
-   required and non-empty. `linkage` defaults to `Ref` and must stay `Ref`:
-   GitHub auto-close keywords (`Closes`/`Fixes`/`Resolves`) are banned repo-wide
-   because issues stay open until post-merge workflows succeed, and
-   `vrg-submit-pr` rejects any non-`Ref` value before building the PR body.
+   required and non-empty. `linkage` defaults to `Ref`; leave it there.
+   `vrg-submit-pr` auto-selects the keyword at submit time — a **managed task**
+   (an issue with an `epic`-labeled parent) links with `Closes` so it
+   auto-closes on merge, and its parent epic rolls up via the `on: issues.closed`
+   Action; a legacy issue (no epic parent) keeps `Ref` and stays open for manual
+   close. `Fixes`/`Resolves` remain banned so `Closes` is the one close keyword.
+   This is safe because a task is exactly one PR: once it is in develop it is
+   done, and any later change is a new follow-up issue, never a reopening (epic
+   vergil-project/.github#75).
 2. The human runs `vrg-submit-pr` with no arguments, which reads the
    state file, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).

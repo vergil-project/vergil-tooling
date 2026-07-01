@@ -26,10 +26,15 @@ _ALLOWED_AUDIT: dict[str, set[str]] = {
 
 _DENIED_ALWAYS: dict[str, dict[str, str]] = {
     "issue": {
-        # Issue creation must go through vrg-issue-create so every issue is
-        # born linked to an epic (native sub-issue). Denied for every identity
-        # so there is no bypass around linkage. See issue #2017.
-        "create": "Use vrg-issue-create instead of gh issue create.",
+        # Issue creation must go through a shape-specific tool so there is no
+        # bypass around linkage. Denied for every identity. See issues #2017,
+        # #2069. Each tool forces its shape: a task is born linked to an epic, an
+        # epic is top-level in <org>/.github, a triage issue is unlinked.
+        "create": (
+            "Use vrg-issue-create (task under an epic), vrg-epic-create "
+            "(top-level epic), or vrg-triage-create (unlinked triage issue) "
+            "instead of gh issue create."
+        ),
     },
     "pr": {
         "close": "gh pr close is denied by vrg-gh.",

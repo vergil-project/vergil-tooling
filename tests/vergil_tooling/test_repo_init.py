@@ -28,6 +28,7 @@ from vergil_tooling.lib.repo_init import (
     render_ci_workflow,
     render_claude_md,
     render_claude_settings,
+    render_epic_rollup_workflow,
     render_gitignore,
     render_mkdocs_yml,
     render_readme,
@@ -892,6 +893,17 @@ class TestStepCiCdWorkflows:
 
         assert (tmp_path / ".github" / "workflows" / "ci.yml").exists()
         assert not (tmp_path / ".github" / "workflows" / "cd.yml").exists()
+        # Event-driven rollup ships in every repo, even without docs/release.
+        assert (tmp_path / ".github" / "workflows" / "epic-rollup.yml").exists()
+
+
+class TestRenderEpicRollupWorkflow:
+    def test_is_a_thin_caller_to_the_reusable_workflow(self) -> None:
+        content = render_epic_rollup_workflow()
+        assert "on:\n  issues:\n    types: [closed]" in content
+        assert "ops-epic-rollup.yml@v2.1" in content
+        assert "APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}" in content
+        assert "APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}" in content
 
 
 class TestStepDocsSite:
