@@ -295,6 +295,36 @@ def _desired_enabled_plugins(transport: Transport) -> set[str]:
     return {pid for pid, on in enabled.items() if on}
 
 
+def _declared_marketplace_sources(transport: Transport) -> list[str]:
+    """Return the ``marketplace add`` sources declared in the guest settings.json.
+
+    Each ``extraKnownMarketplaces`` entry's ``source`` maps to an add-arg
+    (``owner/repo``, a URL, or a path). Headless ``claude plugin marketplace
+    update``/``list`` do NOT register these on a fresh box (#2021) — only
+    ``marketplace add <source>`` clones the catalog — so update_plugins registers
+    them explicitly before installing. Absent/unreadable settings yield [].
+    """
+    try:
+        result = transport.run(
+            "bash",
+            "-c",
+            f"{_PLUGIN_PATH_EXPORT} && cat ~/.claude/settings.json",
+        )
+    except subprocess.CalledProcessError:
+        return []
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    sources: list[str] = []
+    for spec in (data.get("extraKnownMarketplaces") or {}).values():
+        src = spec.get("source") or {}
+        arg = src.get("repo") or src.get("url") or src.get("path")
+        if arg:
+            sources.append(arg)
+    return sources
+
+
 def update_plugins(transport: Transport) -> None:
     """Reconcile enabled Claude Code plugins inside the guest.
 
@@ -323,6 +353,21 @@ def update_plugins(transport: Transport) -> None:
     failures are collected and surfaced by raising afterwards (never swallowed).
     """
     print("  Refreshing Claude plugins...")
+    failures: list[str] = []
+    # Register the declared marketplaces so their catalogs are cloned. Headless
+    # `marketplace update`/`list` do NOT register a fresh box's extraKnownMarketplaces
+    # (#2021) — only `marketplace add <source>` clones the catalog, so a subsequent
+    # install can find the plugin. Idempotent (re-add is a no-op) and best-effort.
+    for source in _declared_marketplace_sources(transport):
+        print(f"    registering marketplace {source}...")
+        try:
+            transport.run(
+                "bash",
+                "-c",
+                f"{_PLUGIN_PATH_EXPORT} && claude plugin marketplace add {shlex.quote(source)}",
+            )
+        except subprocess.CalledProcessError:
+            failures.append(f"marketplace:{source}")
     transport.run(
         "bash",
         "-c",
@@ -340,7 +385,6 @@ def update_plugins(transport: Transport) -> None:
     # refreshing anything already installed-and-enabled (the pre-#2006 behaviour).
     targets = desired | {pid for pid, plugin in installed.items() if plugin.get("enabled")}
 
-    failures: list[str] = []
     for pid in sorted(targets):
         if pid in installed:
             action = "update"
@@ -360,7 +404,7 @@ def update_plugins(transport: Transport) -> None:
 
     if failures:
         joined = ", ".join(failures)
-        msg = f"failed to reconcile plugin(s): {joined}"
+        msg = f"failed to reconcile: {joined}"
         print(f"ERROR: {msg}", file=sys.stderr)
         raise RuntimeError(msg)
 
