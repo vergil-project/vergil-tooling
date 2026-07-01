@@ -72,7 +72,7 @@ def _load_app_config() -> tuple[str, Path] | None:
     return app_id, key_file
 
 
-def _detect_org() -> str | None:
+def detect_org() -> str | None:
     """Detect the GitHub org from the current repo's git remote."""
     try:
         result = subprocess.run(  # noqa: S603
@@ -183,7 +183,7 @@ def get_installation_token(
     auth is not installation-scoped).
     """
     if org is None:
-        org = _detect_org()
+        org = detect_org()
     if org is None:
         return None
 

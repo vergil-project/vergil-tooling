@@ -13,8 +13,6 @@ from typing import Any
 
 from vergil_tooling.lib import github, linkage, roadmap
 
-_ORG = "vergil-project"
-
 
 @dataclass(frozen=True)
 class TaskDrift:
@@ -26,7 +24,7 @@ class TaskDrift:
     pr_url: str
 
 
-def task_drift(since: str, *, org: str = _ORG) -> list[TaskDrift]:
+def task_drift(since: str, *, org: str) -> list[TaskDrift]:
     """Merged PRs (since *since*) whose ``Ref``'d task is still open."""
     raw: Any = github.read_json(
         "search",
@@ -68,13 +66,28 @@ def epic_drift() -> list[roadmap.EpicSummary]:
     return [epic for epic in roadmap.gather() if epic.total > 0 and epic.closed == epic.total]
 
 
-def render(tasks: list[TaskDrift], epics: list[roadmap.EpicSummary]) -> str:
-    """Format the drift report; a clean state says so explicitly."""
+def render(
+    tasks: list[TaskDrift],
+    epics: list[roadmap.EpicSummary],
+    *,
+    org: str,
+    window_days: int,
+) -> str:
+    """Format the drift report; a clean state says so explicitly.
+
+    The report opens with a banner naming the audited org and window and
+    stating the run is read-only, so the output is never mistaken for a list of
+    actions the tool took.
+    """
+    banner = (
+        f"_Read-only audit of the **{org}** org (merged PRs from the last "
+        f"{window_days} days) — this report changes nothing; a human closes "
+        "anything it lists._"
+    )
+    header = ["# Epic/task drift audit", "", banner, ""]
     if not tasks and not epics:
-        return (
-            "# Epic/task drift audit\n\n_No drift — everything that should be closed is closed._\n"
-        )
-    lines = ["# Epic/task drift audit", "", "## Task drift (merged PR, task still open)", ""]
+        return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
+    lines = [*header, "## Task drift (merged PR, task still open)", ""]
     if tasks:
         for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
             lines.append(
