@@ -548,6 +548,37 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     return "".join(lines)
 
 
+def render_epic_rollup_workflow() -> str:
+    """Render .github/workflows/epic-rollup.yml — the event-driven rollup caller.
+
+    Thin caller (epic vergil-project/.github#75): on any issue close it hands off
+    to the reusable ops-epic-rollup workflow, which closes the parent epic once
+    all its sibling tasks are closed. Static across repos and orgs — the reusable
+    workflow reads the event and resolves the epic repo (``.github``) within the
+    caller's own org, so managed tasks auto-close on merge and their epics roll
+    up with no per-command step.
+    """
+    return (
+        "name: Epic Rollup\n"
+        "\n"
+        "on:\n"
+        "  issues:\n"
+        "    types: [closed]\n"
+        "\n"
+        "permissions:\n"
+        "  contents: read\n"
+        "\n"
+        "jobs:\n"
+        "  epic-rollup:\n"
+        "    uses: vergil-project/vergil-actions/.github/workflows/ops-epic-rollup.yml@v2.1\n"
+        "    permissions:\n"
+        "      contents: read\n"
+        "    secrets:\n"
+        "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n"
+        "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n"
+    )
+
+
 def render_mkdocs_yml(ctx: RepoInitContext) -> str:
     """Render docs/site/mkdocs.yml."""
     return (
@@ -833,6 +864,11 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
 
     ci_content = render_ci_workflow(ctx)
     (workflows_dir / "ci.yml").write_text(ci_content)
+
+    # Event-driven epic rollup ships in every managed repo (epic
+    # vergil-project/.github#75) so a merged task closes and its epic rolls up
+    # with no per-command step.
+    (workflows_dir / "epic-rollup.yml").write_text(render_epic_rollup_workflow())
 
     if ctx.publish_docs or ctx.publish_release:
         cd_content = render_cd_workflow(ctx)
