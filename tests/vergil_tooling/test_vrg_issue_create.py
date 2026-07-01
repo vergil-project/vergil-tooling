@@ -43,7 +43,10 @@ def test_main_creates_issue_and_links_under_epic() -> None:
 def test_main_epic_resolution_failure_creates_nothing() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.resolve_epic_ref", side_effect=ValueError("no standing epic found")),
+        patch(
+            f"{_MOD}.epics.resolve_epic_ref",
+            side_effect=ValueError("multiple standing epics in org/repo — pass an explicit --epic"),
+        ),
         patch(f"{_MOD}.github.create_issue") as mock_create,
     ):
         rc = main(["--epic", "standing", "--title", "T"])
