@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from vergil_tooling.lib import epic_audit, roadmap
+from vergil_tooling.lib import epic_audit, github, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def test_task_drift_flags_open_task_behind_merged_pr() -> None:
@@ -73,6 +77,54 @@ def test_task_drift_skips_release_tracking_issue() -> None:
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
         result = epic_audit.task_drift("2026-06-01", org="vergil-project")
     assert result == []
+
+
+def test_task_drift_resolves_cross_repo_ref() -> None:
+    # A cross-repo Ref (owner/repo#N) must be looked up in the ref's repo, not
+    # the PR's own repo (issue #2111).
+    prs = [
+        {
+            "number": 7,
+            "repository": {"nameWithOwner": "vergil-project/.github"},
+            "url": "u7",
+            "body": "Ref vergil-project/vergil-tooling#42",
+        },
+    ]
+    looked_up: dict[str, str] = {}
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        looked_up["repo"] = args[args.index("--repo") + 1]
+        return {"state": "open", "title": "feat: t", "body": "b"}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
+    assert looked_up["repo"] == "vergil-project/vergil-tooling"
+    assert result == [TaskDrift("vergil-project/vergil-tooling", 42, 7, "u7")]
+
+
+def test_task_drift_skips_unresolvable_task(capsys: pytest.CaptureFixture[str]) -> None:
+    # A ref to a task this run can't see (cross-org, private, deleted) must be
+    # skipped with a warning, not crash the sweep (issue #2111).
+    prs = [
+        {
+            "number": 8,
+            "repository": {"nameWithOwner": "logical-minds-foundry/.github"},
+            "url": "u8",
+            "body": "Ref vergil-project/vergil-tooling#2105",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        raise github.GitHubAPIError(1, ["gh"], "", "GraphQL: Could not resolve to an issue")
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        result = epic_audit.task_drift("2026-06-01", org="logical-minds-foundry")
+    assert result == []
+    assert "skipping vergil-project/vergil-tooling#2105" in capsys.readouterr().err
 
 
 def test_task_drift_returns_empty_on_non_list() -> None:

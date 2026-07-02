@@ -9,6 +9,7 @@ by the caller.
 
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -41,18 +42,36 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
     )
     drift: list[TaskDrift] = []
     for entry in raw if isinstance(raw, list) else []:
-        repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
-        if not repo:
+        pr_repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
+        if not pr_repo:
             continue
         try:
-            task = linkage.extract_tracking_issue(str(entry.get("body") or ""))
+            ref = linkage.extract_tracking_ref(str(entry.get("body") or ""))
         except ValueError:
             continue
-        if task is None:
+        if ref is None:
             continue
-        issue = github.read_json(
-            "issue", "view", str(task), "--repo", repo, "--json", "state,title,body"
-        )
+        # ``ref`` is ``"#N"`` (same-repo) or ``"owner/repo#N"`` (cross-repo).
+        # Resolve the repo the task actually lives in — honor a cross-repo ref
+        # instead of assuming the PR's own repo (issue #2111).
+        repo_part, _, num = ref.rpartition("#")
+        task = int(num)
+        task_repo = repo_part or pr_repo
+        try:
+            issue = github.read_json(
+                "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body"
+            )
+        except github.GitHubAPIError:
+            # The task is in a repo this run can't see (cross-org, private, or
+            # deleted). Not this org's drift to close — warn and skip rather than
+            # abort the whole sweep.
+            print(
+                f"vrg-epic-audit: skipping {task_repo}#{task} (referenced by "
+                f"{pr_repo} PR #{entry.get('number')}) — not found or not "
+                "accessible from this run.",
+                file=sys.stderr,
+            )
+            continue
         if not isinstance(issue, dict):
             continue
         if str(issue.get("state") or "").upper() != "OPEN":
@@ -66,7 +85,7 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
             continue
         drift.append(
             TaskDrift(
-                repo=repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
+                repo=task_repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
             )
         )
     return drift
