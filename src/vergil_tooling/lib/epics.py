@@ -229,20 +229,34 @@ def is_epic(ref: IssueRef) -> bool:
 def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     """Resolve an epic ref, accepting the ``"standing"`` sentinel.
 
-    ``"standing"`` discovers the open issue in *repo* labeled both ``epic`` and
-    ``standing`` — exactly one is expected; zero or several is an error that
-    names an explicit ref instead of guessing. Any other ref is parsed with
-    :func:`parse_issue_ref` and validated to carry the ``epic`` label.
+    ``"standing"`` ensures *repo*'s standing epic exists — creating it if absent
+    and reusing it otherwise — via :func:`ensure_standing_epic`. Any other ref is
+    parsed with :func:`parse_issue_ref` and validated to carry the ``epic`` label.
     """
     if ref == "standing":
-        return _resolve_standing_epic(repo)
+        return ensure_standing_epic(repo)
     epic = parse_issue_ref(ref, default_repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
     return epic
 
 
-def _resolve_standing_epic(repo: str) -> IssueRef:
+_STANDING_EPIC_TITLE = "Epic (standing): Ad-hoc maintenance"
+_STANDING_EPIC_LABELS = ("epic", "standing")
+_STANDING_EPIC_BODY = (
+    "Standing umbrella for ad-hoc maintenance in this repo. Created and reused "
+    "idempotently; tasks routed to the standing epic are linked here.\n"
+)
+
+
+def ensure_standing_epic(repo: str) -> IssueRef:
+    """Return *repo*'s standing epic, creating it if absent (idempotent).
+
+    A standing epic is the per-repo ``Epic (standing): Ad-hoc maintenance``
+    umbrella, labelled ``epic`` + ``standing``. Exactly one is expected: none
+    means create it; several is ambiguous and an error names an explicit ref
+    instead of guessing. Applies to member repos and ``.github`` alike.
+    """
     if "/" not in repo:
         raise ValueError(f"cannot resolve repo for standing epic (repo={repo!r})")
     owner, name = repo.split("/", 1)
@@ -261,15 +275,19 @@ def _resolve_standing_epic(repo: str) -> IssueRef:
         "number",
     )
     rows = [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
-    if not rows:
-        raise ValueError(
-            f"no standing epic found in {repo} "
-            "(label one epic+standing, or pass an explicit --epic)"
-        )
     if len(rows) > 1:
         nums = ", ".join(f"#{r['number']}" for r in rows)
         raise ValueError(f"multiple standing epics in {repo} ({nums}) — pass an explicit --epic")
-    return IssueRef(owner=owner, repo=name, number=int(rows[0]["number"]))
+    if rows:
+        return IssueRef(owner=owner, repo=name, number=int(rows[0]["number"]))
+    url = github.create_issue(
+        repo=repo,
+        title=_STANDING_EPIC_TITLE,
+        body=_STANDING_EPIC_BODY,
+        labels=list(_STANDING_EPIC_LABELS),
+    )
+    number = int(url.rstrip("/").rsplit("/", 1)[-1])
+    return IssueRef(owner=owner, repo=name, number=number)
 
 
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:

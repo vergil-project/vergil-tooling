@@ -336,12 +336,28 @@ def test_resolve_epic_ref_standing_discovers_single_epic() -> None:
     assert "epic" in args and "standing" in args
 
 
-def test_resolve_epic_ref_standing_zero_raises() -> None:
+def test_resolve_epic_ref_standing_zero_creates() -> None:
+    # When no standing epic exists, resolving "standing" creates it idempotently.
+    created = "https://github.com/org/tooling/issues/77"
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
-        pytest.raises(ValueError, match="no standing epic"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
-        epics.resolve_epic_ref("standing", repo="org/tooling")
+        result = epics.resolve_epic_ref("standing", repo="org/tooling")
+    assert result == IssueRef("org", "tooling", 77)
+    assert mock_create.call_args.kwargs["repo"] == "org/tooling"
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "standing"]
+    assert mock_create.call_args.kwargs["title"] == "Epic (standing): Ad-hoc maintenance"
+
+
+def test_ensure_standing_epic_reuses_existing() -> None:
+    # Idempotent: an existing standing epic is returned without creating another.
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1972}]),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_standing_epic("org/tooling") == IssueRef("org", "tooling", 1972)
+    mock_create.assert_not_called()
 
 
 def test_resolve_epic_ref_standing_multiple_raises() -> None:
