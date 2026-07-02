@@ -13,10 +13,90 @@ import os
 import shlex
 import subprocess
 import sys
-from typing import NoReturn, Protocol, runtime_checkable
+import time
+from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 _DEFAULT_WORKDIR = "/tmp"  # noqa: S108
 _TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
+
+# Transient-transport retry for the off-platform transports (IAP tunnel, plain
+# ssh). Both ``gcloud compute ssh`` and ``ssh`` exit 255 when the *transport
+# itself* fails to connect — the IAP "4003: failed to connect to backend" /
+# "Failed to connect to port 22" blip, or ssh's "Connection refused" /
+# "Connection closed" — as opposed to a remote command that ran and returned its
+# own nonzero exit. A burst of short-lived IAP tunnels (readiness + credentials +
+# tooling) can trip a Google-side backend blip that clears in seconds, and a
+# single such blip must not discard a multi-minute rebuild (#1992).
+#
+# Keying the retry on exit 255 alone is safe here: none of the guest-side
+# commands the off-platform pipeline runs return 255, so a 255 is unambiguously a
+# transport failure, never a real remote-command result. Any other nonzero exit
+# is a genuine command failure and is re-raised immediately — retrying it would
+# mask a real fault (no-silent-failures).
+_CONNECT_FAILURE_RETURNCODE = 255
+_CONNECT_RETRIES = 3  # extra attempts after the first (4 total)
+_CONNECT_BACKOFF_BASE_SECS = 2.0  # 2s, 4s, 8s — bounded, ~14s worst case
+
+
+def _run_checked(
+    cmd: list[str],
+    *,
+    quiet: bool,
+    input_data: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run *cmd* under the shared off-platform retry/reporting policy.
+
+    A transient transport-connect failure (exit 255) is retried with bounded
+    exponential backoff; every other nonzero exit is a real remote-command
+    failure and is raised on the first attempt. On the final failure the child's
+    stderr is echoed unless *quiet*.
+
+    ``quiet`` probe callers (the readiness gate's ``_wait_for_ssh`` /
+    ``_poll_cloud_init_status``) own their own poll loop and expect the connect
+    failure back, so they are never retried here — an internal retry would blow
+    out their cadence during the boot race. They also suppress the stderr echo,
+    for which raw IAP 4003 noise would be misleading.
+    """
+
+    def _call() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
+            cmd,
+            check=True,
+            capture_output=True,
+            text=True,
+            input=input_data,
+        )
+
+    return _with_connect_retry(_call, quiet=quiet)
+
+
+def _with_connect_retry(
+    call: Callable[[], subprocess.CompletedProcess[str]],
+    *,
+    quiet: bool,
+) -> subprocess.CompletedProcess[str]:
+    """Invoke *call*, retrying only a transport-connect failure (exit 255)."""
+    for attempt in range(_CONNECT_RETRIES + 1):
+        try:
+            return call()
+        except subprocess.CalledProcessError as exc:
+            transient = exc.returncode == _CONNECT_FAILURE_RETURNCODE
+            last = attempt == _CONNECT_RETRIES
+            if quiet or not transient or last:
+                if exc.stderr and not quiet:
+                    print(exc.stderr, end="", file=sys.stderr)
+                raise
+            delay = _CONNECT_BACKOFF_BASE_SECS * (2**attempt)
+            print(
+                f"  transient transport failure (exit {exc.returncode}); retrying "
+                f"in {delay:.0f}s ({attempt + 1}/{_CONNECT_RETRIES})...",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 @runtime_checkable
@@ -145,32 +225,11 @@ class IapTransport:
         self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
     ) -> subprocess.CompletedProcess[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
-        try:
-            return subprocess.run(  # noqa: S603
-                [*self._base(), f"--command={remote}"],  # noqa: S607
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            if exc.stderr and not quiet:
-                print(exc.stderr, end="", file=sys.stderr)
-            raise
+        return _run_checked([*self._base(), f"--command={remote}"], quiet=quiet)
 
     def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
         remote = f"cd {shlex.quote(workdir)} && {cmd}"
-        try:
-            subprocess.run(  # noqa: S603
-                [*self._base(), f"--command={remote}"],  # noqa: S607
-                check=True,
-                input=input_data,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            if exc.stderr:
-                print(exc.stderr, end="", file=sys.stderr)
-            raise
+        _run_checked([*self._base(), f"--command={remote}"], quiet=False, input_data=input_data)
 
     def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
@@ -224,32 +283,11 @@ class SshTransport:
         self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
     ) -> subprocess.CompletedProcess[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
-        try:
-            return subprocess.run(  # noqa: S603
-                [*self._base(), remote],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            if exc.stderr and not quiet:
-                print(exc.stderr, end="", file=sys.stderr)
-            raise
+        return _run_checked([*self._base(), remote], quiet=quiet)
 
     def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
         remote = f"cd {shlex.quote(workdir)} && {cmd}"
-        try:
-            subprocess.run(  # noqa: S603
-                [*self._base(), remote],
-                check=True,
-                input=input_data,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            if exc.stderr:
-                print(exc.stderr, end="", file=sys.stderr)
-            raise
+        _run_checked([*self._base(), remote], quiet=False, input_data=input_data)
 
     def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
