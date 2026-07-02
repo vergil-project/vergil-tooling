@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.103] - 2026-07-02
+
+### Bug fixes
+
+- refuse meta-only ~/.lima sidecar dirs that poison limactl (#2097) (#2100)
+
+### Chores
+
+- relicense to MIT (#2099)
+
+### Features
+
+- reuse one IAP/SSH connection via ControlMaster/ControlPersist (#2098)
+
 ## [2.1.102] - 2026-07-02
 
 ### Bug fixes
