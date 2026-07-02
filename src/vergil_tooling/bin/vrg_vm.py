@@ -848,6 +848,24 @@ def _cloud_create_stages() -> list[Stage]:
     ]
 
 
+def _teardown_ssh_master(state: _CloudState) -> None:
+    """Best-effort: kill the shared SSH control master the pipeline opened.
+
+    The whole off-platform pipeline rides one multiplexed connection (see
+    ``vm_transport`` mux helpers); this shuts its master down immediately on exit,
+    success or failure, so no background master survives the run (``ControlPersist``
+    is only the backstop). Building the transport needs the persisted box state
+    (e.g. the zone); if the pipeline failed before that was written there is simply
+    no master to close, so a construction failure is the expected nothing-to-do
+    case — the ``close()`` itself already swallows its own transport errors.
+    """
+    try:
+        transport = state.backend.transport()
+    except Exception:  # noqa: BLE001 — no persisted box yet ⇒ no master to tear down
+        return
+    transport.close()
+
+
 def _run_cloud_lifecycle(
     verb: str, state: _CloudState, stages: list[Stage], args: argparse.Namespace
 ) -> int:
@@ -862,6 +880,7 @@ def _run_cloud_lifecycle(
             repo_root=_log_root(),
         )
     finally:
+        _teardown_ssh_master(state)
         if state.modules_root is not None:
             shutil.rmtree(state.modules_root.parent, ignore_errors=True)
 
