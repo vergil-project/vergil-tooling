@@ -140,6 +140,12 @@ def _mux_disabled() -> bool:
     return os.environ.get(_MUX_DISABLE_ENV, "").strip().lower() in _MUX_DISABLE_TRUTHY
 
 
+def _cwd() -> str:
+    """Current working directory as a string — the worktree discriminator for the
+    control socket. Isolated in a helper so callers stay short and testable."""
+    return str(Path.cwd())
+
+
 def _control_dir() -> Path:
     """Directory holding the per-box control sockets.
 
@@ -322,7 +328,7 @@ class IapTransport:
         # glued ``-oKey=Val`` form (no space) is used deliberately: gcloud splits a
         # ``--ssh-flag`` value on spaces, so ``-o ControlPath=…`` would arrive as
         # two mangled tokens — the glued form passes through intact.
-        mux = [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, os.getcwd())]
+        mux = [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, _cwd())]
         return [
             "gcloud",
             "compute",
@@ -366,9 +372,7 @@ class IapTransport:
         """Tear down the shared IAP/SSH control master for this box (best effort)."""
         if _mux_disabled():
             return
-        _shutdown_master(
-            f"{self.ssh_user}@{self.host}", control_socket_path(self.host, os.getcwd())
-        )
+        _shutdown_master(f"{self.ssh_user}@{self.host}", control_socket_path(self.host, _cwd()))
 
 
 class SshTransport:
@@ -387,7 +391,7 @@ class SshTransport:
 
     def _base(self, *, pty: bool = False) -> list[str]:
         mux: list[str] = []
-        for key, value in ssh_mux_options(self.host, os.getcwd()):
+        for key, value in ssh_mux_options(self.host, _cwd()):
             mux += ["-o", f"{key}={value}"]
         return [
             "ssh",
@@ -432,6 +436,4 @@ class SshTransport:
         """Tear down the shared SSH control master for this box (best effort)."""
         if _mux_disabled():
             return
-        _shutdown_master(
-            f"{self.ssh_user}@{self.host}", control_socket_path(self.host, os.getcwd())
-        )
+        _shutdown_master(f"{self.ssh_user}@{self.host}", control_socket_path(self.host, _cwd()))

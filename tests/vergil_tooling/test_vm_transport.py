@@ -1,4 +1,3 @@
-import os
 import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -18,8 +17,10 @@ from vergil_tooling.lib.vm_transport import (
 
 @pytest.fixture(autouse=True)
 def _isolate_control_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep multiplexing hermetic: sockets/dirs go under tmp, never the real home."""
-    monkeypatch.setattr(vm_transport, "_control_dir", lambda: tmp_path / "cm")
+    """Keep multiplexing hermetic: point HOME at tmp so control sockets/dirs land
+    under the test's tmp_path, never the developer's real home. Setting HOME (rather
+    than patching _control_dir) exercises the real _control_dir() path logic too."""
+    monkeypatch.setenv("HOME", str(tmp_path))
 
 
 @pytest.fixture
@@ -528,12 +529,13 @@ class TestSshMuxOptions:
         assert keys == ["ControlMaster", "ControlPath", "ControlPersist"]
         assert dict(opts)["ControlMaster"] == "auto"
         assert dict(opts)["ControlPersist"] == vm_transport._CONTROL_PERSIST
-        assert (tmp_path / "cm").is_dir()  # side effect: parent created for the socket
+        # side effect: the socket's parent dir is created (HOME points at tmp_path)
+        assert (tmp_path / ".config" / "vergil" / "cm").is_dir()
 
     @pytest.mark.usefixtures("_disable_mux")
     def test_disabled_returns_empty(self, tmp_path: Path) -> None:
         assert ssh_mux_options("inst", "/w") == []
-        assert not (tmp_path / "cm").exists()  # nothing created when disabled
+        assert not (tmp_path / ".config" / "vergil" / "cm").exists()  # nothing created
 
 
 class TestMultiplexInjection:
@@ -574,7 +576,7 @@ class TestClose:
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_iap_close_exits_master_and_unlinks_socket(self, mock_run: MagicMock) -> None:
         transport = IapTransport("inst", "z", "p", "vergil")
-        socket = control_socket_path("inst", os.getcwd())
+        socket = control_socket_path("inst", str(Path.cwd()))
         socket.parent.mkdir(parents=True, exist_ok=True)
         socket.write_text("")  # stand in for the live control socket
         transport.close()
@@ -603,7 +605,10 @@ class TestClose:
     @pytest.mark.usefixtures("_disable_mux")
     @patch("vergil_tooling.lib.vm_transport.subprocess.run")
     def test_close_is_noop_when_disabled(self, mock_run: MagicMock) -> None:
+        # Both off-platform transports short-circuit teardown under the kill-switch
+        # (there is no master to close when injection was disabled).
         IapTransport("inst", "z", "p", "vergil").close()
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").close()
         mock_run.assert_not_called()
 
     def test_lima_close_is_noop(self) -> None:
