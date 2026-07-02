@@ -288,9 +288,21 @@ def write_instance_meta(
 
     Lives in ``~/.lima/<instance>/``, removed when ``limactl delete --force`` deletes
     that dir. ``name`` is the optional fourth handle segment (empty for the default).
+
+    The instance dir must already exist — ``limactl create`` makes it before this is
+    called. We refuse to create it ourselves: a dir under ``~/.lima`` without a
+    ``lima.yaml`` makes ``limactl`` fatally abort on *every* command, so conjuring a
+    meta-only dir would poison the whole Lima home. Failing loudly turns a caller
+    mistake (e.g. an un-stubbed unit test) into a test failure instead of a
+    developer-host outage.
     """
     meta_dir = _serial_dir(instance)
-    meta_dir.mkdir(parents=True, exist_ok=True)
+    if not meta_dir.is_dir():
+        raise FileNotFoundError(
+            f"Lima instance dir {meta_dir} does not exist; refusing to write a "
+            "meta-only sidecar that would poison limactl (limactl create must run "
+            "first)."
+        )
     payload = {
         "schema": 2,
         "identity": identity,
