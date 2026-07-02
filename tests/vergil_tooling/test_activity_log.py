@@ -36,6 +36,42 @@ def test_gather_parses_and_skips_incomplete() -> None:
     assert ">=2026-06-01" in args
 
 
+def test_gather_skips_release_tracking_issues() -> None:
+    # A closed ``release: X.Y.Z`` issue is vrg-release bookkeeping, not work —
+    # keep it out of the ledger, whether detected by body marker or by title.
+    results = [
+        {
+            "number": 1912,
+            "title": "labels",
+            "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
+            "url": "u1912",
+            "closedAt": "2026-06-29T10:00:00Z",
+            "body": "real work",
+        },
+        {  # release issue by body marker -> skipped
+            "number": 373,
+            "title": "release: 2.1.4",
+            "repository": {"nameWithOwner": "vergil-project/vergil-containers"},
+            "url": "u373",
+            "closedAt": "2026-06-30T09:00:00Z",
+            "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
+        },
+        {  # release issue by title only (body marker hand-removed) -> skipped
+            "number": 400,
+            "title": "release: 2.1.5",
+            "repository": {"nameWithOwner": "vergil-project/vergil-containers"},
+            "url": "u400",
+            "closedAt": "2026-06-30T10:00:00Z",
+            "body": "",
+        },
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=results):
+        items = activity_log.gather("2026-06-01", org="vergil-project")
+    assert items == [
+        ActivityItem("vergil-project/vergil-tooling", 1912, "labels", "u1912", "2026-06-29")
+    ]
+
+
 def test_gather_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
         assert activity_log.gather("2026-06-01", org="vergil-project") == []

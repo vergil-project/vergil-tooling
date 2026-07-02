@@ -141,6 +141,11 @@ class TestRepoInitContext:
         assert ctx.repo == "vergil-project/vergil-vm"
         assert ctx.completed_steps == set()
 
+    def test_default_license_is_mit(self) -> None:
+        # Standing decision (2026-06-30): new repos default to MIT, not GPL-3.0.
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        assert ctx.license_type == "MIT"
+
     def test_adopt_mode(self) -> None:
         ctx = RepoInitContext(
             org="vergil-project",
@@ -651,7 +656,7 @@ class TestStepGenerateConfig:
                 "y",  # publish releases
                 "y",  # publish docs
                 "",  # vergil version (default v2.0)
-                "1",  # license: GPL-3.0
+                "1",  # license: MIT (option 1)
                 "",  # initial version (default 0.1.0)
             ]
         )
@@ -690,7 +695,7 @@ class TestStepGenerateConfig:
                 "n",  # publish releases
                 "y",  # publish docs
                 "",  # vergil version
-                "1",  # license: GPL-3.0
+                "1",  # license: MIT (option 1)
                 "",  # initial version
             ]
         )

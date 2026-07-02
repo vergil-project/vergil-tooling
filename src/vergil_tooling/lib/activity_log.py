@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import github, release
 
 
 @dataclass(frozen=True)
@@ -44,13 +44,19 @@ def gather(since: str, *, org: str | None = None) -> list[ActivityItem]:
         "--limit",
         "100",
         "--json",
-        "number,title,repository,url,closedAt",
+        "number,title,repository,url,closedAt,body",
     )
     items: list[ActivityItem] = []
     for entry in raw if isinstance(raw, list) else []:
         repo = str((entry.get("repository") or {}).get("nameWithOwner", ""))
         closed = str(entry.get("closedAt") or "")
         if not repo or not closed:
+            continue
+        # Release tracking issues (release: X.Y.Z) are vrg-release bookkeeping,
+        # not epic/task work — keep them out of the ledger. See issue #1984.
+        if release.is_release_tracking_issue(
+            title=str(entry.get("title") or ""), body=str(entry.get("body") or "")
+        ):
             continue
         items.append(
             ActivityItem(

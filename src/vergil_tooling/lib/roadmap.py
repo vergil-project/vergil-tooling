@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import epics, github
+from vergil_tooling.lib import epics, github, release
 
 
 @dataclass(frozen=True)
@@ -41,7 +41,7 @@ def _open_epics(org: str) -> list[Any]:
         "--limit",
         "200",
         "--json",
-        "number,title,createdAt,milestone,labels,url",
+        "number,title,createdAt,milestone,labels,url,body",
     )
     return raw if isinstance(raw, list) else []
 
@@ -61,6 +61,14 @@ def gather(org: str | None = None) -> list[EpicSummary]:
     summaries: list[EpicSummary] = []
     for epic in _open_epics(org):
         if _is_standing(epic):
+            continue
+        # Defense in depth: a release tracking issue is never epic-labelled, so
+        # it should not reach here — but skip it explicitly so a stray label can
+        # never leak release bookkeeping into the roadmap (or epic-drift, which
+        # reads this same gather). See issue #1984.
+        if release.is_release_tracking_issue(
+            title=str(epic.get("title") or ""), body=str(epic.get("body") or "")
+        ):
             continue
         number = int(epic["number"])
         children = epics.child_states(epics.IssueRef(org, ".github", number))
