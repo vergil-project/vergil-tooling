@@ -41,7 +41,7 @@ class RepoInitContext:
     publish_release: bool = False
     publish_docs: bool = True
     vergil_version: str = "v2.1"
-    license_type: str = "GPL-3.0"
+    license_type: str = "MIT"
     initial_version: str = "0.1.0"
 
     @property
@@ -785,8 +785,8 @@ def step_generate_config(ctx: RepoInitContext) -> None:
         default=deps.get("vergil", "v2.1"),
     )
 
-    license_options = ["GPL-3.0", "MIT", "Apache-2.0", "none"]
-    ctx.license_type = prompt_choice("License", license_options, default="GPL-3.0")
+    license_options = ["MIT", "GPL-3.0", "Apache-2.0", "none"]
+    ctx.license_type = prompt_choice("License", license_options, default="MIT")
 
     ctx.initial_version = prompt_free_text("Initial version", default="0.1.0")
 
