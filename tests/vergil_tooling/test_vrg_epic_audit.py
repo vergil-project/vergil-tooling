@@ -63,10 +63,31 @@ def test_help_exits_zero(capsys: pytest.CaptureFixture[str]) -> None:
 
 def test_close_refused_for_agent(capsys: pytest.CaptureFixture[str]) -> None:
     # Refusal happens before any network work, so nothing else needs mocking.
-    with patch(f"{_MOD}.identity_mode.is_human", return_value=False):
+    # Pin the sweep signal off so the refusal is deterministic regardless of env.
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch.dict("os.environ", {"VRG_EPIC_SWEEP": ""}),
+    ):
         rc = main(["--close"])
     assert rc == 1
     assert "human action" in capsys.readouterr().err
+
+
+def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -> None:
+    """The scheduled sweep (VRG_EPIC_SWEEP=1) may --close even though it is not human."""
+    close_drift = MagicMock(return_value=["o/r#1"])
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=False),
+        patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
+        patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=["T"]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=["E"]),
+        patch(f"{_MOD}.epic_audit.close_drift", close_drift),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    close_drift.assert_called_once_with(["T"], ["E"], org="vergil-project")
+    assert "o/r#1" in capsys.readouterr().out
 
 
 def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]) -> None:

@@ -7,12 +7,25 @@ auto-close so a human can close it.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 
 from vergil_tooling.lib import epic_audit, github, identity_mode
 
 _DEFAULT_WINDOW_DAYS = 30
+
+# Set by the scheduled reconciliation workflow (ops-epic-sweep) to authorize the
+# automated ``--close``. The sweep only closes provably-complete drift (epics
+# whose children are all closed, tasks whose PR merged), so it is a trusted,
+# deterministic automation — allowed to close even though it is not a human. An
+# interactive agent session never sets this, so the human/agent gate stands.
+_SWEEP_ENV = "VRG_EPIC_SWEEP"
+
+
+def _automated_sweep() -> bool:
+    """True when running as the trusted scheduled reconciliation sweep."""
+    return os.environ.get(_SWEEP_ENV) == "1"
 
 
 def _positive_int(raw: str) -> int:
@@ -51,7 +64,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Close the drifted task issues and rolled-up epics (with an "
             "explanatory comment on each) instead of only reporting them. A "
-            "human action — refused in agent sessions. Default: read-only."
+            "human action (or the scheduled reconciliation sweep) — refused in "
+            "interactive agent sessions. Default: read-only."
         ),
     )
     return parser.parse_args(argv)
@@ -60,12 +74,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     # Gate the write path before any network work so a rejected agent run is
-    # cheap and unambiguous.
-    if args.close and not identity_mode.is_human():
+    # cheap and unambiguous. A human may close interactively; the scheduled
+    # reconciliation sweep (ops-epic-sweep) closes via the _SWEEP_ENV signal.
+    if args.close and not (identity_mode.is_human() or _automated_sweep()):
         print(
             "vrg-epic-audit: --close is a human action and was refused in an "
-            "agent session; run without --close to preview the drift, or run as "
-            "a human to apply the closes.",
+            "interactive agent session; run without --close to preview the "
+            "drift, or run as a human to apply the closes. (The scheduled sweep "
+            f"authorizes automated closes via ${_SWEEP_ENV}.)",
             file=sys.stderr,
         )
         return 1
