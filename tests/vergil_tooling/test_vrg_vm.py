@@ -202,6 +202,7 @@ def test_recover_handle_roundtrips_named_instance(
     from vergil_tooling.lib.lima import write_instance_meta
 
     inst = "vergil-user.lmf.mq.cloud-x86"
+    (tmp_path / ".lima" / inst).mkdir(parents=True)  # limactl create made this
     write_instance_meta(inst, "vergil-user", "lmf", "mq", "cloud-x86")
     assert recover_handle(inst) == ("vergil-user", "lmf", "mq", "cloud-x86")
 
@@ -214,6 +215,7 @@ def test_recover_handle_default_instance_name_none(
     from vergil_tooling.lib.lima import write_instance_meta
 
     inst = "vergil-user.lmf.mq"
+    (tmp_path / ".lima" / inst).mkdir(parents=True)  # limactl create made this
     write_instance_meta(inst, "vergil-user", "lmf", "mq")
     assert recover_handle(inst) == ("vergil-user", "lmf", "mq", None)
 
@@ -2637,6 +2639,15 @@ class TestOffPlatformDispatch:
 
 
 class TestCreateDedicated:
+    @pytest.fixture(autouse=True)
+    def _stub_instance_meta(self) -> Iterator[None]:
+        """The dedicated create/rebuild path writes a real ``~/.lima`` sidecar via
+        ``write_instance_meta``. With ``create_vm`` mocked the instance dir never
+        exists, so the real writer now refuses (and, before that guard, silently
+        poisoned the host's Lima home). Stub it so these unit tests stay hermetic."""
+        with patch("vergil_tooling.bin.vrg_vm.write_instance_meta"):
+            yield
+
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
