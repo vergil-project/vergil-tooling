@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import github, linkage, roadmap
+from vergil_tooling.lib import github, linkage, release, roadmap
 
 
 @dataclass(frozen=True)
@@ -50,15 +50,25 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
             continue
         if task is None:
             continue
-        state = github.read_output(
-            "issue", "view", str(task), "--repo", repo, "--json", "state", "--jq", ".state"
-        ).upper()
-        if state == "OPEN":
-            drift.append(
-                TaskDrift(
-                    repo=repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
-                )
+        issue = github.read_json(
+            "issue", "view", str(task), "--repo", repo, "--json", "state,title,body"
+        )
+        if not isinstance(issue, dict):
+            continue
+        if str(issue.get("state") or "").upper() != "OPEN":
+            continue
+        # A merged release PR Refs its release: X.Y.Z tracking issue, which stays
+        # open as vrg-release bookkeeping — not drift. Skip it so the audit does
+        # not flag release issues as slipped tasks. See issue #1984.
+        if release.is_release_tracking_issue(
+            title=str(issue.get("title") or ""), body=str(issue.get("body") or "")
+        ):
+            continue
+        drift.append(
+            TaskDrift(
+                repo=repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
             )
+        )
     return drift
 
 

@@ -37,19 +37,65 @@ def test_task_drift_flags_open_task_behind_merged_pr() -> None:
         },
     ]
 
-    def fake_state(*args: str) -> str:
-        return "open" if args[2] == "1947" else "closed"
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        # issue view: args = ("issue", "view", "<number>", ...)
+        state = "open" if args[2] == "1947" else "closed"
+        return {"state": state, "title": f"feat: task {args[2]}", "body": "task body"}
 
-    with (
-        patch("vergil_tooling.lib.github.read_json", return_value=prs),
-        patch("vergil_tooling.lib.github.read_output", side_effect=fake_state),
-    ):
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
         result = epic_audit.task_drift("2026-06-01", org="vergil-project")
     assert result == [TaskDrift("vergil-project/vergil-tooling", 1947, 1948, "u1948")]
 
 
+def test_task_drift_skips_release_tracking_issue() -> None:
+    # A merged release PR Refs its open ``release: X.Y.Z`` tracking issue, which
+    # is vrg-release bookkeeping — not a slipped task. It must not be flagged.
+    prs = [
+        {
+            "number": 500,
+            "repository": {"nameWithOwner": "vergil-project/vergil-containers"},
+            "url": "u500",
+            "body": "Ref #373",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        return {
+            "state": "open",
+            "title": "release: 2.1.4",
+            "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
+        }
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        result = epic_audit.task_drift("2026-06-01", org="vergil-project")
+    assert result == []
+
+
 def test_task_drift_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
+        assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
+
+
+def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
+    # Defensive: gh issue view --json returns a JSON object, but if the response
+    # is ever shaped unexpectedly (a list), skip the entry rather than crash.
+    prs = [
+        {
+            "number": 1948,
+            "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
+            "url": "u1948",
+            "body": "Ref #1947",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        return prs if args[0] == "search" else ["unexpected"]
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
         assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
 
 
