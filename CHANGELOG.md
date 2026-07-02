@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.102] - 2026-07-02
+
+### Bug fixes
+
+- exclude release-tracking issues from roadmap/activity-log/audit (#2089)
+- retry transient IAP/SSH transport-connect failures (#1992) (#2091)
+- retry transient IAP connect failures on cloud spec-fingerprint read (#2092)
+
+### Chores
+
+- default new-repo license to MIT (#2090)
+
 ## [2.1.101] - 2026-07-02
 
 ### Features
