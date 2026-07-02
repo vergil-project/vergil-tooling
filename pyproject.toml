@@ -7,7 +7,7 @@ name = "vergil-tooling"
 version = "2.1.103"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
-license = "GPL-3.0-or-later"
+license = "MIT"
 license-files = ["LICENSE"]
 dependencies = ["rich>=13.0", "pyyaml>=6.0"]
 
