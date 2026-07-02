@@ -673,9 +673,7 @@ class TestAwaitReadiness:
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
         monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", lambda _line: None)
         clock = iter([0.0, 0.0, 1000.0])
-        monkeypatch.setattr(
-            "vergil_tooling.lib.vm_cloud.time.monotonic", lambda: next(clock)
-        )
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.monotonic", lambda: next(clock))
         transport = MagicMock()
         transport.run.side_effect = [
             _done("status: done\n"),
