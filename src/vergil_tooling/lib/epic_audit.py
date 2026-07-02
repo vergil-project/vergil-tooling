@@ -65,7 +65,9 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
         ):
             continue
         drift.append(
-            TaskDrift(repo=repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"]))
+            TaskDrift(
+                repo=repo, task=task, pr_number=int(entry["number"]), pr_url=str(entry["url"])
+            )
         )
     return drift
 

@@ -80,6 +80,25 @@ def test_task_drift_returns_empty_on_non_list() -> None:
         assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
 
 
+def test_task_drift_skips_when_issue_view_is_not_an_object() -> None:
+    # Defensive: gh issue view --json returns a JSON object, but if the response
+    # is ever shaped unexpectedly (a list), skip the entry rather than crash.
+    prs = [
+        {
+            "number": 1948,
+            "repository": {"nameWithOwner": "vergil-project/vergil-tooling"},
+            "url": "u1948",
+            "body": "Ref #1947",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        return prs if args[0] == "search" else ["unexpected"]
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
+
+
 def test_epic_drift_flags_all_done_open_epics() -> None:
     summaries = [
         roadmap.EpicSummary(40, "Convention", "2026-06-28", None, (), 9, 9, "u40"),  # all done
