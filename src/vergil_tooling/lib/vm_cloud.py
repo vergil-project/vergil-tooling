@@ -450,6 +450,48 @@ def _wait_for_cloud_init(
             tail.stop()
 
 
+def _read_fingerprint(
+    transport: Transport,
+    *,
+    timeout_secs: float = _SSH_READY_TIMEOUT_SECS,
+    poll_secs: float = _SSH_PROBE_INTERVAL_SECS,
+) -> str:
+    """Read the stamped spec fingerprint, retrying transient connect failures.
+
+    The fingerprint read is a single SSH call that lands right as cloud-init
+    finishes — exactly when sshd may restart / regenerate host keys — so the IAP
+    tunnel can fail to connect (ssh exit 255 / IAP 4003) for that one command on
+    an otherwise-healthy box. Like ``_wait_for_ssh`` and ``_poll_cloud_init_status``,
+    we treat a connect failure as "not ready yet" and retry on the same bounded
+    cadence, emitting a heartbeat so the wait stays visible. A command that
+    actually ran and exited nonzero (exit != 255) is a genuinely missing or
+    unreadable marker and raises immediately; only an exhausted timeout of
+    connect failures is otherwise terminal. The probe runs ``quiet`` so the
+    expected transient 4003 noise does not spam the operator.
+    """
+    started = time.monotonic()
+    deadline = started + timeout_secs
+    while True:
+        try:
+            return transport.run("cat", _FINGERPRINT_PATH, quiet=True).stdout
+        except subprocess.CalledProcessError as exc:
+            if not _is_connection_failure(exc):
+                raise RuntimeError(
+                    f"could not read the spec fingerprint marker ({_FINGERPRINT_PATH}) "
+                    "on the cloud box — rebuild the VM"
+                ) from exc
+            now = time.monotonic()
+            if now >= deadline:
+                raise RuntimeError(
+                    f"could not read the spec fingerprint marker ({_FINGERPRINT_PATH}) "
+                    f"on the cloud box: SSH never became reachable within "
+                    f"{int(timeout_secs)}s (last exit {exc.returncode}) — rebuild the VM"
+                ) from exc
+            beat = _readiness_heartbeat(now - started, "", "reading spec fingerprint")
+            progress.emit(beat)
+            time.sleep(poll_secs)
+
+
 def await_readiness(transport: Transport, fingerprint: str, *, verbose: bool = False) -> None:
     """Synthesize a hard-fail readiness gate for a cloud box.
 
@@ -459,14 +501,8 @@ def await_readiness(transport: Transport, fingerprint: str, *, verbose: bool = F
     ``RuntimeError`` so the create pipeline aborts loudly (no half-ready box).
     """
     _wait_for_cloud_init(transport, verbose=verbose)
-    try:
-        result = transport.run("cat", _FINGERPRINT_PATH)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"could not read the spec fingerprint marker ({_FINGERPRINT_PATH}) "
-            "on the cloud box — rebuild the VM"
-        ) from exc
-    if result.stdout.strip() != fingerprint:
+    stamped = _read_fingerprint(transport)
+    if stamped.strip() != fingerprint:
         raise RuntimeError("spec fingerprint mismatch on the cloud box — rebuild the VM")
 
 

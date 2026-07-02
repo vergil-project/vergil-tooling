@@ -633,12 +633,53 @@ class TestAwaitReadiness:
             await_readiness(transport, "fp123")
 
     def test_raises_when_marker_read_fails(self) -> None:
+        # A command that actually ran and exited nonzero (exit 1, not the 255
+        # transport-connect code) is a genuinely missing/unreadable marker and
+        # surfaces the "rebuild the VM" guidance immediately — no retry.
         transport = MagicMock()
         transport.run.side_effect = [
             _done("status: done\n"),
             subprocess.CalledProcessError(1, "cat"),
         ]
-        with pytest.raises(RuntimeError):
+        with pytest.raises(RuntimeError, match="could not read the spec fingerprint marker"):
+            await_readiness(transport, "fp123")
+
+    def test_retries_transient_connect_failure_during_marker_read(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A transient exit-255 (IAP 4003) on the fingerprint read — sshd
+        # restarting right at cloud-init completion — must be retried, not
+        # misreported as an unreadable marker.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        emitted: list[str] = []
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", emitted.append)
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _done("status: done\n"),
+            subprocess.CalledProcessError(255, "ssh"),
+            subprocess.CalledProcessError(255, "ssh"),
+            _done("fp123\n"),
+        ]
+        await_readiness(transport, "fp123")  # no raise
+        beats = [line for line in emitted if "reading spec fingerprint" in line]
+        assert len(beats) == 2
+
+    def test_marker_read_raises_after_bounded_connect_timeout(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Persistent connect failures on the fingerprint read are terminal once
+        # the bounded timeout is exhausted — with a message that says SSH never
+        # became reachable, not that the marker file is missing.
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.sleep", lambda _s: None)
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.progress.emit", lambda _line: None)
+        clock = iter([0.0, 0.0, 1000.0])
+        monkeypatch.setattr("vergil_tooling.lib.vm_cloud.time.monotonic", lambda: next(clock))
+        transport = MagicMock()
+        transport.run.side_effect = [
+            _done("status: done\n"),
+            subprocess.CalledProcessError(255, "ssh"),
+        ]
+        with pytest.raises(RuntimeError, match="SSH never became reachable"):
             await_readiness(transport, "fp123")
 
     def test_verbose_streams_log_tail(self, monkeypatch: pytest.MonkeyPatch) -> None:
