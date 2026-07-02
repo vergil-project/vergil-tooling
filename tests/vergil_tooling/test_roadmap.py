@@ -72,6 +72,36 @@ def test_gather_handles_no_milestone_and_no_children() -> None:
     assert result[0].repos == ()
 
 
+def test_gather_skips_release_tracking_issue() -> None:
+    # Defense in depth: a release tracking issue is never epic-labelled, but if a
+    # stray ``epic`` label ever lands on one it must not leak into the roadmap.
+    epic_list = [
+        {
+            "number": 40,
+            "title": "Convention",
+            "createdAt": "2026-06-28T10:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u40",
+        },
+        {
+            "number": 373,
+            "title": "release: 2.1.4",
+            "createdAt": "2026-06-30T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u373",
+            "body": "<!-- vrg-release:progress -->\n- [x] tag\n",
+        },
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+    ):
+        result = roadmap.gather("vergil-project")
+    assert [e.number for e in result] == [40]
+
+
 def test_gather_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
         assert roadmap.gather("vergil-project") == []
