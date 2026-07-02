@@ -9,11 +9,14 @@ and tooling logic does not.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import os
 import shlex
 import subprocess
 import sys
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
@@ -99,6 +102,108 @@ def _with_connect_retry(
     raise AssertionError("unreachable")  # pragma: no cover
 
 
+# ---------------------------------------------------------------------------
+# SSH connection multiplexing (ControlMaster/ControlPath/ControlPersist).
+#
+# Off-platform pipelines run ~18-20 guest commands back-to-back, each of which
+# would otherwise open a fresh IAP tunnel + SSH handshake + auth. That burst is
+# the *trigger* behind the IAP "4003: failed to connect to backend" blip (#1992
+# retries the residual; this removes most of them) and leaves ~25 half-open
+# sessions lingering until sshd's ClientAlive reaps them. Multiplexing makes a
+# whole pipeline ride one underlying connection: the first command opens the
+# master, the rest reuse it over its control socket, and the master self-reaps
+# ``_CONTROL_PERSIST`` after the last client disconnects.
+#
+# The socket is a filesystem path keyed by (host, workdir), so every per-step
+# transport object the pipeline builds for the same box shares one master
+# automatically — no need to thread a single transport through the pipeline.
+# ---------------------------------------------------------------------------
+
+# Idle lifetime of the background master after the last channel closes. Explicit
+# teardown (``close()``) kills it immediately on pipeline exit; this is the
+# backstop that reaps a master a crashed run failed to close.
+_CONTROL_PERSIST = "60s"
+
+# 16 hex chars of a sha256 keeps the socket filename short so the full path stays
+# well under the Unix domain-socket ``sun_path`` cap (104 on macOS, 108 on Linux)
+# even for long home directories — a real failure mode for naive temp/state paths.
+_SOCKET_HASH_LEN = 16
+
+# Kill-switch: multiplexing is on by default; set this env truthy to disable all
+# injection so the transports behave exactly as they did pre-#2088. Cheap insurance
+# for the off-platform path, which cannot be validated on a real box pre-merge.
+_MUX_DISABLE_ENV = "VERGIL_VM_DISABLE_SSH_MUX"
+_MUX_DISABLE_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _mux_disabled() -> bool:
+    return os.environ.get(_MUX_DISABLE_ENV, "").strip().lower() in _MUX_DISABLE_TRUTHY
+
+
+def _cwd() -> str:
+    """Current working directory as a string — the worktree discriminator for the
+    control socket. Isolated in a helper so callers stay short and testable."""
+    return str(Path.cwd())
+
+
+def _control_dir() -> Path:
+    """Directory holding the per-box control sockets.
+
+    Under ``~/.config/vergil`` to match the existing off-platform state (e.g.
+    ``SshTransport``'s ``UserKnownHostsFile``) and to stay short enough for the
+    socket-path length cap.
+    """
+    return Path.home() / ".config" / "vergil" / "cm"
+
+
+def control_socket_path(host: str, workdir: str) -> Path:
+    """Deterministic control-socket path for a (host, workdir) pair.
+
+    ``host`` is already globally unique per box (a hash of identity/org/repo/name);
+    ``workdir`` adds worktree isolation so two worktrees reaching the same box get
+    distinct sockets and never clobber each other's master. Within one pipeline the
+    cwd is constant, so every step resolves to the same socket and shares the master.
+    """
+    digest = hashlib.sha256(f"{host}\0{workdir}".encode()).hexdigest()[:_SOCKET_HASH_LEN]
+    return _control_dir() / digest
+
+
+def ssh_mux_options(host: str, workdir: str) -> list[tuple[str, str]]:
+    """SSH multiplexing ``-o`` options for a box, or ``[]`` when disabled.
+
+    Creating the control dir (0700) is a side effect here because ssh requires the
+    socket's parent to exist before it opens the master.
+    """
+    if _mux_disabled():
+        return []
+    socket = control_socket_path(host, workdir)
+    socket.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return [
+        ("ControlMaster", "auto"),
+        ("ControlPath", str(socket)),
+        ("ControlPersist", _CONTROL_PERSIST),
+    ]
+
+
+def _shutdown_master(dest: str, control_path: Path) -> None:
+    """Best-effort teardown of a shared SSH control master.
+
+    ``ssh -O exit`` signals the background master over its control socket to exit
+    now; with no socket it fails fast without opening a connection, so the error is
+    swallowed. The socket file is then removed. ``ControlPersist`` is the final
+    backstop for any master this could not reach.
+    """
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(  # noqa: S603
+            ["ssh", "-o", f"ControlPath={control_path}", "-O", "exit", dest],  # noqa: S607
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    with contextlib.suppress(OSError):
+        control_path.unlink(missing_ok=True)
+
+
 @runtime_checkable
 class Transport(Protocol):
     """Execute commands inside a guest, regardless of how we reach it."""
@@ -124,6 +229,10 @@ class Transport(Protocol):
     ) -> subprocess.Popen[str]: ...  # pragma: no cover
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn: ...  # pragma: no cover
+
+    def close(self) -> None:
+        """Tear down any shared connection state (no-op for connectionless backends)."""
+        ...  # pragma: no cover
 
 
 class LimaTransport:
@@ -194,6 +303,10 @@ class LimaTransport:
         ]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
+    def close(self) -> None:
+        """No persistent connection to tear down — limactl has no control master."""
+        return
+
 
 class IapTransport:
     """Transport over a GCP IAP SSH tunnel (no public IP, IAM-authed).
@@ -211,6 +324,11 @@ class IapTransport:
         self.ssh_user = ssh_user
 
     def _base(self) -> list[str]:
+        # Multiplexing options ride the underlying ssh via ``--ssh-flag``. The
+        # glued ``-oKey=Val`` form (no space) is used deliberately: gcloud splits a
+        # ``--ssh-flag`` value on spaces, so ``-o ControlPath=…`` would arrive as
+        # two mangled tokens — the glued form passes through intact.
+        mux = [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, _cwd())]
         return [
             "gcloud",
             "compute",
@@ -219,6 +337,7 @@ class IapTransport:
             "--tunnel-through-iap",
             f"--zone={self.zone}",
             f"--project={self.project}",
+            *mux,
         ]
 
     def run(
@@ -249,6 +368,12 @@ class IapTransport:
         cmd = [*self._base(), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
+    def close(self) -> None:
+        """Tear down the shared IAP/SSH control master for this box (best effort)."""
+        if _mux_disabled():
+            return
+        _shutdown_master(f"{self.ssh_user}@{self.host}", control_socket_path(self.host, _cwd()))
+
 
 class SshTransport:
     """Transport over plain ``ssh`` to a public-IP host (Azure off-platform).
@@ -265,6 +390,9 @@ class SshTransport:
         self.key_path = key_path
 
     def _base(self, *, pty: bool = False) -> list[str]:
+        mux: list[str] = []
+        for key, value in ssh_mux_options(self.host, _cwd()):
+            mux += ["-o", f"{key}={value}"]
         return [
             "ssh",
             *(["-t"] if pty else []),
@@ -276,6 +404,7 @@ class SshTransport:
             "StrictHostKeyChecking=accept-new",
             "-o",
             "UserKnownHostsFile=~/.config/vergil/known_hosts",
+            *mux,
             f"{self.ssh_user}@{self.host}",
         ]
 
@@ -302,3 +431,9 @@ class SshTransport:
         remote = f"cd {shlex.quote(workdir)} && {inner}"
         cmd = [*self._base(pty=True), remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
+
+    def close(self) -> None:
+        """Tear down the shared SSH control master for this box (best effort)."""
+        if _mux_disabled():
+            return
+        _shutdown_master(f"{self.ssh_user}@{self.host}", control_socket_path(self.host, _cwd()))

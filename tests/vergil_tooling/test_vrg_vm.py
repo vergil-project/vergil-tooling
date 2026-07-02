@@ -36,6 +36,7 @@ from vergil_tooling.bin.vrg_vm import (
     _resolve_target,
     _resolve_vm_verbose,
     _target_ref,
+    _teardown_ssh_master,
     _volume_rows,
     _warn_under,
     discover_dedicated,
@@ -201,6 +202,7 @@ def test_recover_handle_roundtrips_named_instance(
     from vergil_tooling.lib.lima import write_instance_meta
 
     inst = "vergil-user.lmf.mq.cloud-x86"
+    (tmp_path / ".lima" / inst).mkdir(parents=True)  # limactl create made this
     write_instance_meta(inst, "vergil-user", "lmf", "mq", "cloud-x86")
     assert recover_handle(inst) == ("vergil-user", "lmf", "mq", "cloud-x86")
 
@@ -213,6 +215,7 @@ def test_recover_handle_default_instance_name_none(
     from vergil_tooling.lib.lima import write_instance_meta
 
     inst = "vergil-user.lmf.mq"
+    (tmp_path / ".lima" / inst).mkdir(parents=True)  # limactl create made this
     write_instance_meta(inst, "vergil-user", "lmf", "mq")
     assert recover_handle(inst) == ("vergil-user", "lmf", "mq", None)
 
@@ -2636,6 +2639,15 @@ class TestOffPlatformDispatch:
 
 
 class TestCreateDedicated:
+    @pytest.fixture(autouse=True)
+    def _stub_instance_meta(self) -> Iterator[None]:
+        """The dedicated create/rebuild path writes a real ``~/.lima`` sidecar via
+        ``write_instance_meta``. With ``create_vm`` mocked the instance dir never
+        exists, so the real writer now refuses (and, before that guard, silently
+        poisoned the host's Lima home). Stub it so these unit tests stay hermetic."""
+        with patch("vergil_tooling.bin.vrg_vm.write_instance_meta"):
+            yield
+
     @patch("vergil_tooling.bin.vrg_vm.stop_vm")
     @patch("vergil_tooling.bin.vrg_vm.install_tooling")
     @patch("vergil_tooling.bin.vrg_vm.inject_credentials")
@@ -3757,6 +3769,24 @@ class TestCloudStageGuards:
     def test_require_transport_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="tofu-vm did not run"):
             _cs_credentials(self._state(tmp_path))
+
+
+class TestTeardownSshMaster:
+    def test_closes_the_shared_master(self) -> None:
+        # On pipeline exit the shared SSH/IAP control master is torn down.
+        state = MagicMock()
+        transport = MagicMock()
+        state.backend.transport.return_value = transport
+        _teardown_ssh_master(state)
+        transport.close.assert_called_once_with()
+
+    def test_absent_box_state_is_a_quiet_noop(self) -> None:
+        # A pipeline that failed before the box was applied has no master to close;
+        # building the transport raises, and teardown swallows it rather than
+        # masking the original failure with a cleanup error.
+        state = MagicMock()
+        state.backend.transport.side_effect = RuntimeError("zone not persisted")
+        _teardown_ssh_master(state)  # no raise
 
 
 class TestCloudLinkClaudeCopiesConfig:

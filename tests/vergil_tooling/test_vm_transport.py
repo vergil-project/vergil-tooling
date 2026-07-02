@@ -1,14 +1,31 @@
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib import vm_transport
 from vergil_tooling.lib.vm_transport import (
     _CONNECT_RETRIES,
     IapTransport,
     LimaTransport,
     SshTransport,
+    control_socket_path,
+    ssh_mux_options,
 )
+
+
+@pytest.fixture(autouse=True)
+def _isolate_control_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep multiplexing hermetic: point HOME at tmp so control sockets/dirs land
+    under the test's tmp_path, never the developer's real home. Setting HOME (rather
+    than patching _control_dir) exercises the real _control_dir() path logic too."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
+@pytest.fixture
+def _disable_mux(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(vm_transport._MUX_DISABLE_ENV, "1")
 
 
 class TestLimaTransport:
@@ -474,3 +491,125 @@ class TestSshTransport:
         # the remote command (the bug: -t after user@host → no PTY allocated).
         assert cmd.index("-t") < cmd.index("ubuntu@1.2.3.4")
         assert any("cd /work && exec bash" in a for a in cmd)
+
+
+_HEX16 = 16
+
+
+class TestControlSocketPath:
+    def test_deterministic_for_same_host_and_workdir(self) -> None:
+        a = control_socket_path("inst-abc", "/w/tree")
+        b = control_socket_path("inst-abc", "/w/tree")
+        assert a == b
+
+    def test_unique_per_host(self) -> None:
+        assert control_socket_path("inst-a", "/w") != control_socket_path("inst-b", "/w")
+
+    def test_unique_per_workdir(self) -> None:
+        # Two worktrees reaching the same box must not share a master socket.
+        assert control_socket_path("inst", "/w/one") != control_socket_path("inst", "/w/two")
+
+    def test_filename_is_short_hex(self) -> None:
+        name = control_socket_path("inst", "/w").name
+        assert len(name) == _HEX16
+        assert all(c in "0123456789abcdef" for c in name)
+
+    def test_full_path_stays_under_socket_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # sun_path cap is 104 (macOS) / 108 (Linux); a realistically long home must
+        # still fit. Point _control_dir at a long-username home and check the margin.
+        long_home = Path("/Users/a-rather-long-developer-username/.config/vergil/cm")
+        monkeypatch.setattr(vm_transport, "_control_dir", lambda: long_home)
+        assert len(str(control_socket_path("inst", "/some/deep/worktree/path"))) < 104  # noqa: PLR2004
+
+
+class TestSshMuxOptions:
+    def test_enabled_returns_three_options_and_creates_dir(self, tmp_path: Path) -> None:
+        opts = ssh_mux_options("inst", "/w")
+        keys = [k for k, _ in opts]
+        assert keys == ["ControlMaster", "ControlPath", "ControlPersist"]
+        assert dict(opts)["ControlMaster"] == "auto"
+        assert dict(opts)["ControlPersist"] == vm_transport._CONTROL_PERSIST
+        # side effect: the socket's parent dir is created (HOME points at tmp_path)
+        assert (tmp_path / ".config" / "vergil" / "cm").is_dir()
+
+    @pytest.mark.usefixtures("_disable_mux")
+    def test_disabled_returns_empty(self, tmp_path: Path) -> None:
+        assert ssh_mux_options("inst", "/w") == []
+        assert not (tmp_path / ".config" / "vergil" / "cm").exists()  # nothing created
+
+
+class TestMultiplexInjection:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_iap_injects_glued_ssh_flags(self, mock_run: MagicMock) -> None:
+        # gcloud splits --ssh-flag on spaces, so the glued -oKey=Val form is required.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        args = mock_run.call_args[0][0]
+        assert "--ssh-flag=-oControlMaster=auto" in args
+        assert "--ssh-flag=-oControlPersist=60s" in args
+        paths = [a for a in args if a.startswith("--ssh-flag=-oControlPath=")]
+        assert len(paths) == 1
+        socket = Path(paths[0].split("=", 2)[2])
+        assert len(socket.name) == _HEX16
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_ssh_injects_split_o_flags(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("true")
+        argv = mock_run.call_args[0][0]
+        assert "ControlMaster=auto" in argv
+        # each option is a -o followed by Key=Val, inserted before the destination.
+        assert argv[argv.index("ControlMaster=auto") - 1] == "-o"
+        assert any(a.startswith("ControlPath=") for a in argv)
+        assert argv.index("ControlMaster=auto") < argv.index("ubuntu@1.2.3.4")
+
+    @pytest.mark.usefixtures("_disable_mux")
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_kill_switch_removes_all_injection(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        args = mock_run.call_args[0][0]
+        assert not any("Control" in a for a in args)
+
+
+class TestClose:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_iap_close_exits_master_and_unlinks_socket(self, mock_run: MagicMock) -> None:
+        transport = IapTransport("inst", "z", "p", "vergil")
+        socket = control_socket_path("inst", str(Path.cwd()))
+        socket.parent.mkdir(parents=True, exist_ok=True)
+        socket.write_text("")  # stand in for the live control socket
+        transport.close()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[0] == "ssh"
+        assert "-O" in cmd
+        assert "exit" in cmd
+        assert f"ControlPath={socket}" in cmd
+        assert "vergil@inst" in cmd
+        assert not socket.exists()  # removed after teardown
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_ssh_close_exits_master(self, mock_run: MagicMock) -> None:
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").close()
+        cmd = mock_run.call_args[0][0]
+        assert cmd[:1] == ["ssh"]
+        assert cmd[-3:] == ["-O", "exit", "ubuntu@1.2.3.4"]
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_close_swallows_teardown_errors(self, mock_run: MagicMock) -> None:
+        # A missing socket makes `ssh -O exit` fail; teardown is best-effort and
+        # must never raise (the pipeline is already exiting).
+        mock_run.side_effect = OSError("ssh not found")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").close()  # no raise
+
+    @pytest.mark.usefixtures("_disable_mux")
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_close_is_noop_when_disabled(self, mock_run: MagicMock) -> None:
+        # Both off-platform transports short-circuit teardown under the kill-switch
+        # (there is no master to close when injection was disabled).
+        IapTransport("inst", "z", "p", "vergil").close()
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").close()
+        mock_run.assert_not_called()
+
+    def test_lima_close_is_noop(self) -> None:
+        LimaTransport("vm-x").close()  # no raise, no connection to tear down

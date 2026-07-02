@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 def test_write_then_read_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lima.Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / ".lima" / "u.org.repo").mkdir(parents=True)  # limactl create made this
     lima.write_instance_meta("u.org.repo", "vergil-user", "org", "repo")
     assert lima.read_instance_meta("u.org.repo") == {
         "schema": 2,
@@ -23,6 +24,17 @@ def test_write_then_read_round_trips(tmp_path: Path, monkeypatch: pytest.MonkeyP
         "repo": "repo",
         "name": "",
     }
+
+
+def test_write_refuses_when_instance_dir_absent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A meta-only dir with no ``lima.yaml`` poisons every ``limactl`` command, so
+    the sidecar must never conjure an instance dir — it fails loudly instead."""
+    monkeypatch.setattr(lima.Path, "home", classmethod(lambda cls: tmp_path))
+    with pytest.raises(FileNotFoundError):
+        lima.write_instance_meta("u.org.repo", "vergil-user", "org", "repo")
+    assert not (tmp_path / ".lima" / "u.org.repo").exists()
 
 
 def test_read_returns_none_when_absent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
