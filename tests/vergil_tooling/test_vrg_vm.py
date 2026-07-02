@@ -36,6 +36,7 @@ from vergil_tooling.bin.vrg_vm import (
     _resolve_target,
     _resolve_vm_verbose,
     _target_ref,
+    _teardown_ssh_master,
     _volume_rows,
     _warn_under,
     discover_dedicated,
@@ -3757,6 +3758,24 @@ class TestCloudStageGuards:
     def test_require_transport_raises(self, tmp_path: Path) -> None:
         with pytest.raises(RuntimeError, match="tofu-vm did not run"):
             _cs_credentials(self._state(tmp_path))
+
+
+class TestTeardownSshMaster:
+    def test_closes_the_shared_master(self) -> None:
+        # On pipeline exit the shared SSH/IAP control master is torn down.
+        state = MagicMock()
+        transport = MagicMock()
+        state.backend.transport.return_value = transport
+        _teardown_ssh_master(state)
+        transport.close.assert_called_once_with()
+
+    def test_absent_box_state_is_a_quiet_noop(self) -> None:
+        # A pipeline that failed before the box was applied has no master to close;
+        # building the transport raises, and teardown swallows it rather than
+        # masking the original failure with a cleanup error.
+        state = MagicMock()
+        state.backend.transport.side_effect = RuntimeError("zone not persisted")
+        _teardown_ssh_master(state)  # no raise
 
 
 class TestCloudLinkClaudeCopiesConfig:
