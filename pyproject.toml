@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.107"
+version = "2.1.108"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -13,6 +13,7 @@ dependencies = ["rich>=13.0", "pyyaml>=6.0"]
 
 [project.scripts]
 vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"
+vrg-adhoc-epic = "vergil_tooling.bin.vrg_adhoc_epic:main"
 vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
 vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
@@ -55,7 +56,8 @@ vrg-roadmap = "vergil_tooling.bin.vrg_roadmap:main"
 vrg-sarif-evaluate = "vergil_tooling.bin.vrg_sarif_evaluate:main"
 vrg-scorecard = "vergil_tooling.bin.vrg_scorecard:main"
 vrg-semgrep-scan = "vergil_tooling.bin.vrg_semgrep_scan:main"
-vrg-standing-epic = "vergil_tooling.bin.vrg_standing_epic:main"
+# Deprecated alias for vrg-adhoc-epic during the ad-hoc rollout (epic #85); removed in Task 11.
+vrg-standing-epic = "vergil_tooling.bin.vrg_adhoc_epic:main"
 vrg-submit-pr = "vergil_tooling.bin.vrg_submit_pr:main"
 vrg-triage-create = "vergil_tooling.bin.vrg_triage_create:main"
 vrg-update-deps = "vergil_tooling.bin.vrg_update_deps:main"
