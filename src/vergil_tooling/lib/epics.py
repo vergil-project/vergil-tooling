@@ -227,67 +227,85 @@ def is_epic(ref: IssueRef) -> bool:
 
 
 def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
-    """Resolve an epic ref, accepting the ``"standing"`` sentinel.
+    """Resolve an epic ref, accepting the ``"adhoc"`` sentinel.
 
-    ``"standing"`` ensures *repo*'s standing epic exists — creating it if absent
-    and reusing it otherwise — via :func:`ensure_standing_epic`. Any other ref is
-    parsed with :func:`parse_issue_ref` and validated to carry the ``epic`` label.
+    ``"adhoc"`` (and the deprecated alias ``"standing"``) ensures *repo*'s ad-hoc
+    epic exists in ``<org>/.github`` — creating it if absent and reusing it
+    otherwise — via :func:`ensure_adhoc_epic`. Any other ref is parsed with
+    :func:`parse_issue_ref` and validated to carry the ``epic`` label.
     """
-    if ref == "standing":
-        return ensure_standing_epic(repo)
+    if ref in ("adhoc", "standing"):
+        return ensure_adhoc_epic(repo)
     epic = parse_issue_ref(ref, default_repo=repo)
     if not is_epic(epic):
         raise ValueError(f"{epic.slug} is not an epic (missing the 'epic' label)")
     return epic
 
 
-_STANDING_EPIC_TITLE = "Epic (standing): Ad-hoc maintenance"
-_STANDING_EPIC_LABELS = ("epic", "standing")
-_STANDING_EPIC_BODY = (
-    "Standing umbrella for ad-hoc maintenance in this repo. Created and reused "
-    "idempotently; tasks routed to the standing epic are linked here.\n"
+_ADHOC_EPIC_TITLE_PREFIX = "Epic (ad hoc): "
+_ADHOC_EPIC_LABELS = ("epic", "ad-hoc")
+_ADHOC_EPIC_BODY = (
+    "Perpetual umbrella for ad-hoc work in {repo}. Created and reused "
+    "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
 )
 
 
-def ensure_standing_epic(repo: str) -> IssueRef:
-    """Return *repo*'s standing epic, creating it if absent (idempotent).
+def ensure_adhoc_epic(target_repo: str) -> IssueRef:
+    """Return *target_repo*'s ad-hoc epic in ``<org>/.github``, creating it if absent.
 
-    A standing epic is the per-repo ``Epic (standing): Ad-hoc maintenance``
-    umbrella, labelled ``epic`` + ``standing``. Exactly one is expected: none
-    means create it; several is ambiguous and an error names an explicit ref
-    instead of guessing. Applies to member repos and ``.github`` alike.
+    All ad-hoc epics live in the org's ``.github`` repo, one per repo, each
+    disambiguated by the title ``Epic (ad hoc): <bare repo name>`` and labelled
+    ``epic`` + ``ad-hoc``. Idempotent: an existing epic with that title is
+    reused; none means create it; two sharing the title is ambiguous and an
+    error names an explicit ref instead of guessing. Applies to member repos and
+    ``.github`` itself alike.
     """
-    if "/" not in repo:
-        raise ValueError(f"cannot resolve repo for standing epic (repo={repo!r})")
-    owner, name = repo.split("/", 1)
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
+    owner, bare = target_repo.split("/", 1)
+    dotgithub = f"{owner}/.github"
+    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
     raw: Any = github.read_json(
         "issue",
         "list",
         "--repo",
-        repo,
+        dotgithub,
         "--label",
         "epic",
         "--label",
-        "standing",
+        "ad-hoc",
         "--state",
         "open",
         "--json",
-        "number",
+        "number,title",
     )
-    rows = [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    rows = (
+        [r for r in raw if isinstance(r, dict) and r.get("title") == title]
+        if isinstance(raw, list)
+        else []
+    )
     if len(rows) > 1:
         nums = ", ".join(f"#{r['number']}" for r in rows)
-        raise ValueError(f"multiple standing epics in {repo} ({nums}) — pass an explicit --epic")
+        raise ValueError(
+            f"multiple ad-hoc epics titled {title!r} in {dotgithub} ({nums}) — "
+            "pass an explicit --epic"
+        )
     if rows:
-        return IssueRef(owner=owner, repo=name, number=int(rows[0]["number"]))
+        return IssueRef(owner=owner, repo=".github", number=int(rows[0]["number"]))
     url = github.create_issue(
-        repo=repo,
-        title=_STANDING_EPIC_TITLE,
-        body=_STANDING_EPIC_BODY,
-        labels=list(_STANDING_EPIC_LABELS),
+        repo=dotgithub,
+        title=title,
+        body=_ADHOC_EPIC_BODY.format(repo=target_repo),
+        labels=list(_ADHOC_EPIC_LABELS),
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
-    return IssueRef(owner=owner, repo=name, number=number)
+    return IssueRef(owner=owner, repo=".github", number=number)
+
+
+# Deprecated alias kept for the ad-hoc rollout window (epic #85); callers still
+# importing ``ensure_standing_epic`` keep working. Removed in the retire-standing
+# task once the migration is complete.
+ensure_standing_epic = ensure_adhoc_epic
 
 
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
@@ -309,13 +327,14 @@ def rollup(task: IssueRef) -> None:
     """Close *task*'s parent epic if the epic is finite and all children closed.
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
-    legacy issues have no epic parent, so finalize never rolls them up. A
-    ``standing`` epic is perpetual and never auto-closes.
+    legacy issues have no epic parent, so finalize never rolls them up. An
+    ``ad-hoc`` epic (or its deprecated ``standing`` alias) is perpetual and never
+    auto-closes.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
-    if "standing" in _labels(parent):
+    if _labels(parent) & {"ad-hoc", "standing"}:
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

@@ -11,7 +11,8 @@
     {"name": "rtfm", "color": "f9d0c4", "description": "Resolved by reading existing docs"},
     {"name": "observability", "color": "1d76db", "description": "Monitoring, reporting, health checks"},
     {"name": "epic", "color": "6f42c1", "description": "Umbrella issue; finite epics close when all sub-issues close"},
-    {"name": "standing", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
+    {"name": "standing", "color": "5319e7", "description": "Deprecated alias for ad-hoc; retired after the ad-hoc migration (epic #85)"},
+    {"name": "ad-hoc", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
     {"name": "triage", "color": "d93f0b", "description": "Uncurated intake; not yet folded into the epic/task model"},
     {"name": "idea", "color": "fef2c0", "description": "Seed to be expanded into an epic"},
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"}
