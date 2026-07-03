@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+from vergil_tooling.lib.linkage import find_linkage_keyword, freetext_linkage_error
+
 _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
 _ISSUE_CROSS_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9]\d*$")
 
@@ -26,6 +28,10 @@ def resolve_issue_ref(issue: str) -> str:
 
 def build_pr_body(*, summary: str, linkage: str, issue_ref: str, notes: str) -> str:
     """Render the canonical PR body from validated fields."""
+    for value in (summary, notes):
+        found = find_linkage_keyword(value)
+        if found:
+            raise SystemExit(freetext_linkage_error(found, issue_ref.lstrip("#")))
     notes_section = notes or "-"
     return (
         f"# Pull Request\n\n"
