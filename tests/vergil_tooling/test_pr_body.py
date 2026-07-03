@@ -46,3 +46,22 @@ def test_resolve_issue_ref_invalid() -> None:
 def test_resolve_issue_ref_zero() -> None:
     with pytest.raises(SystemExit, match="must be a number"):
         pr_body.resolve_issue_ref("0")
+
+
+def test_build_pr_body_rejects_linkage_keyword_in_notes() -> None:
+    with pytest.raises(SystemExit) as exc:
+        pr_body.build_pr_body(summary="s", linkage="Closes", issue_ref="#42", notes="Ref #99")
+    assert "Ref #99" in str(exc.value)
+
+
+def test_build_pr_body_rejects_linkage_keyword_in_summary() -> None:
+    with pytest.raises(SystemExit) as exc:
+        pr_body.build_pr_body(summary="Closes #7", linkage="Closes", issue_ref="#42", notes="")
+    assert "Closes #7" in str(exc.value)
+
+
+def test_build_pr_body_allows_bare_reference_in_notes() -> None:
+    body = pr_body.build_pr_body(
+        summary="s", linkage="Closes", issue_ref="#42", notes="See #99 for background"
+    )
+    assert "See #99 for background" in body

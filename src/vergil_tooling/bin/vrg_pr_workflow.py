@@ -14,7 +14,11 @@ import sys
 from datetime import UTC, datetime
 
 from vergil_tooling.lib import epics, git, github
-from vergil_tooling.lib.linkage import normalize_linkage
+from vergil_tooling.lib.linkage import (
+    find_linkage_keyword,
+    freetext_linkage_error,
+    normalize_linkage,
+)
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
@@ -54,6 +58,10 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:
         raise WorkflowError(f"report-ready: {exc}") from exc
+    for value in (args.notes, args.summary):
+        found = find_linkage_keyword(value)
+        if found:
+            raise WorkflowError(freetext_linkage_error(found, str(args.issue)))
     state = transport.read()
     if state is None:
         state = engine.init_state(
