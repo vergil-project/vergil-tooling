@@ -244,7 +244,20 @@ def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     assert "40" in mock_run.call_args.args
 
 
-def test_rollup_skips_standing_epic() -> None:
+def test_rollup_skips_adhoc_epic() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()
+
+
+def test_rollup_skips_standing_epic_alias() -> None:
+    # 'standing' remains perpetual during the rollout window (deprecated alias).
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
         patch("vergil_tooling.lib.epics.is_epic", return_value=True),
@@ -323,49 +336,82 @@ def test_remove_child_issues_removesubissue_mutation() -> None:
     assert mock_graphql.call_args.kwargs == {"parent": "EPIC_ID", "child": "TASK_ID"}
 
 
-# -- resolve_epic_ref --------------------------------------------------------
+# -- resolve_epic_ref / ensure_adhoc_epic ------------------------------------
 
 
-def test_resolve_epic_ref_standing_discovers_single_epic() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1972}]) as mock_list:
-        assert epics.resolve_epic_ref("standing", repo="org/tooling") == IssueRef(
-            "org", "tooling", 1972
+def _adhoc_row(number: int, repo_bare: str = "tooling") -> dict:
+    """A .github issue-list row for an ad-hoc epic titled for *repo_bare*."""
+    return {"number": number, "title": f"Epic (ad hoc): {repo_bare}"}
+
+
+def test_resolve_epic_ref_adhoc_discovers_single_epic() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]) as mock_list:
+        assert epics.resolve_epic_ref("adhoc", repo="org/tooling") == IssueRef(
+            "org", ".github", 1972
         )
-    # discovery filters open issues carrying both the epic and standing labels
+    # discovery targets <org>/.github, filtering issues carrying epic + ad-hoc
     args = mock_list.call_args.args
-    assert "epic" in args and "standing" in args
+    assert "org/.github" in args and "epic" in args and "ad-hoc" in args
 
 
-def test_resolve_epic_ref_standing_zero_creates() -> None:
-    # When no standing epic exists, resolving "standing" creates it idempotently.
-    created = "https://github.com/org/tooling/issues/77"
+def test_resolve_epic_ref_standing_is_deprecated_alias_for_adhoc() -> None:
+    # 'standing' still resolves during the rollout window, routing to .github.
+    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]):
+        assert epics.resolve_epic_ref("standing", repo="org/tooling") == IssueRef(
+            "org", ".github", 1972
+        )
+
+
+def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
+    # When no ad-hoc epic exists, ensure creates it in <org>/.github, by title.
+    created = "https://github.com/org/.github/issues/77"
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
-        result = epics.resolve_epic_ref("standing", repo="org/tooling")
-    assert result == IssueRef("org", "tooling", 77)
-    assert mock_create.call_args.kwargs["repo"] == "org/tooling"
-    assert mock_create.call_args.kwargs["labels"] == ["epic", "standing"]
-    assert mock_create.call_args.kwargs["title"] == "Epic (standing): Ad-hoc maintenance"
+        result = epics.ensure_adhoc_epic("org/tooling")
+    assert result == IssueRef("org", ".github", 77)
+    assert mock_create.call_args.kwargs["repo"] == "org/.github"
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "ad-hoc"]
+    assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): tooling"
 
 
-def test_ensure_standing_epic_reuses_existing() -> None:
-    # Idempotent: an existing standing epic is returned without creating another.
+def test_ensure_adhoc_epic_for_dotgithub_itself() -> None:
+    created = "https://github.com/org/.github/issues/5"
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1972}]),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        assert epics.ensure_adhoc_epic("org/.github") == IssueRef("org", ".github", 5)
+    assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): .github"
+
+
+def test_ensure_adhoc_epic_reuses_existing_by_title() -> None:
+    # Idempotent and title-disambiguated: the same-title epic is reused; a
+    # different repo's ad-hoc epic in the same .github list is ignored.
+    rows = [_adhoc_row(1972), {"number": 40, "title": "Epic (ad hoc): actions"}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
         patch("vergil_tooling.lib.github.create_issue") as mock_create,
     ):
-        assert epics.ensure_standing_epic("org/tooling") == IssueRef("org", "tooling", 1972)
+        assert epics.ensure_adhoc_epic("org/tooling") == IssueRef("org", ".github", 1972)
     mock_create.assert_not_called()
 
 
-def test_resolve_epic_ref_standing_multiple_raises() -> None:
+def test_ensure_standing_epic_is_backward_compatible_alias() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]):
+        assert epics.ensure_standing_epic("org/tooling") == IssueRef("org", ".github", 1972)
+
+
+def test_ensure_adhoc_epic_multiple_same_title_raises() -> None:
     with (
-        patch("vergil_tooling.lib.github.read_json", return_value=[{"number": 1}, {"number": 2}]),
-        pytest.raises(ValueError, match="multiple standing epics"),
+        patch(
+            "vergil_tooling.lib.github.read_json",
+            return_value=[_adhoc_row(1), _adhoc_row(2)],
+        ),
+        pytest.raises(ValueError, match="multiple ad-hoc epics"),
     ):
-        epics.resolve_epic_ref("standing", repo="org/tooling")
+        epics.ensure_adhoc_epic("org/tooling")
 
 
 def test_resolve_epic_ref_explicit_validates_epic() -> None:
@@ -383,6 +429,6 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
         epics.resolve_epic_ref("#123", repo="org/repo")
 
 
-def test_resolve_epic_ref_standing_repo_without_owner_raises() -> None:
-    with pytest.raises(ValueError, match="cannot resolve repo"):
-        epics.resolve_epic_ref("standing", repo="tooling")
+def test_ensure_adhoc_epic_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo for ad-hoc epic"):
+        epics.ensure_adhoc_epic("tooling")

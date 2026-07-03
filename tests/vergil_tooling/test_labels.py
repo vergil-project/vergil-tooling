@@ -62,11 +62,12 @@ def test_delete_list_is_strings() -> None:
 
 
 def test_registry_includes_convention_labels() -> None:
-    # epic/task convention (epic #40): Role (epic, standing), Stage (triage),
-    # Kind (idea), Exception (hotfix). The remaining Kind axis reuses the
-    # existing conventional-commit labels already in the registry.
+    # epic/task convention (epic #40, #85): Role (epic, ad-hoc), Stage (triage),
+    # Kind (idea, research), Exception (hotfix). "standing" is retained during the
+    # ad-hoc rollout window as a deprecated alias (removed in epic #85, Task 11).
+    # The remaining Kind axis reuses the existing conventional-commit labels.
     names = {label["name"] for label in load_labels()["labels"]}
-    for required in {"epic", "standing", "triage", "idea", "hotfix"}:
+    for required in {"epic", "ad-hoc", "standing", "triage", "idea", "research", "hotfix"}:
         assert required in names, f"convention label missing: {required}"
 
 
