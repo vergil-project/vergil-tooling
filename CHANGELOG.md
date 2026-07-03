@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.106] - 2026-07-03
+
+### Features
+
+- enforce single-task linkage at PR-body construction (#2118)
+
 ## [2.1.105] - 2026-07-02
 
 ### Bug fixes
