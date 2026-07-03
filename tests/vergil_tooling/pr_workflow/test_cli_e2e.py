@@ -287,3 +287,18 @@ def test_report_ready_strips_issue_number_from_linkage_and_warns(
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] is True
     assert "warning" in out
+
+
+def test_report_ready_rejects_linkage_keyword_in_notes(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+    ):
+        rc = vrg_pr_workflow.main(
+            ["--base", "develop", "report-ready",
+             "--issue", "42", "--title", "t", "--summary", "s", "--notes", "Ref #157"]
+        )
+    assert rc == 1
+    assert "Ref #157" in capsys.readouterr().err
