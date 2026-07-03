@@ -145,3 +145,46 @@ def test_extract_tracking_ref_none() -> None:
 def test_extract_tracking_ref_multiple_raises() -> None:
     with pytest.raises(ValueError, match="multiple"):
         extract_tracking_ref("Ref #1\nRef #2")
+
+
+from vergil_tooling.lib.linkage import find_linkage_keyword
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("Ref #157", "Ref #157"),
+        ("Ref: #157", "Ref: #157"),
+        ("Closes #42", "Closes #42"),
+        ("- Fixes #9", "Fixes #9"),
+        ("this also Resolves #9 in passing", "Resolves #9"),
+        ("Ref owner/repo#3", "Ref owner/repo#3"),
+        ("Closes vergil-project/.github#82", "Closes vergil-project/.github#82"),
+    ],
+)
+def test_find_linkage_keyword_matches(text: str, expected: str) -> None:
+    assert find_linkage_keyword(text) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "See #200 for background",
+        "Part of epic vergil-project/.github#82",
+        "referenced the earlier work",
+        "no linkage here",
+        "",
+    ],
+)
+def test_find_linkage_keyword_ignores_bare_and_plain(text: str) -> None:
+    assert find_linkage_keyword(text) is None
+
+
+from vergil_tooling.lib.linkage import freetext_linkage_error
+
+
+def test_freetext_linkage_error_names_offender_and_redirects() -> None:
+    msg = freetext_linkage_error("Ref #157", "83")
+    assert "Ref #157" in msg
+    assert "vrg-gh issue comment 83" in msg
+    assert "added for you" in msg

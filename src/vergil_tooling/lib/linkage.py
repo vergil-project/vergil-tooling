@@ -84,6 +84,48 @@ def normalize_linkage(value: str) -> tuple[str, str | None]:
     return keyword, warning
 
 
+# Any issue-linkage keyword (Ref, or the close/fix/resolve family) followed by an
+# issue reference, matched mid-line (not anchored) so a smuggled "... this also
+# Closes #999" is caught. A bare "#200" does NOT match, so a lightweight
+# cross-reference in free text is still allowed. This is the guard for the
+# free-text PR fields (--notes/--summary): broader than LINKAGE_RE (anchored,
+# Ref/Close only) and commit_message.AUTOCLOSE_RE (close family only).
+_FREETEXT_LINKAGE_RE = re.compile(
+    r"\b(?:ref|close[sd]?|fix(?:e[sd])?|resolve[sd]?):?\s+"
+    r"(?:[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#[0-9]+",
+    re.IGNORECASE,
+)
+
+
+def find_linkage_keyword(text: str) -> str | None:
+    """Return the first issue-linkage keyword+ref in *text*, or None.
+
+    Matches Ref / Close[sd] / Fix(es|ed) / Resolve[sd] followed by an issue
+    reference (#N or owner/repo#N), anywhere in the line. A bare "#200" does not
+    match. The returned substring (e.g. "Ref #157") names the offending text in
+    the guard's error message.
+    """
+    match = _FREETEXT_LINKAGE_RE.search(text)
+    return match.group(0) if match else None
+
+
+def freetext_linkage_error(found: str, primary_issue: str) -> str:
+    """User-ready error for a linkage keyword smuggled into --notes/--summary.
+
+    Rejects rather than strips: a keyword the agent typed is a signal that a real
+    relationship exists, so the message redirects that reasoning to a lossless
+    home — a comment on the primary issue — instead of discarding it.
+    """
+    return (
+        f"notes/summary must not contain an issue-linkage keyword (found {found!r}). "
+        "A PR links exactly one task, and that link is added for you automatically. "
+        "If this change genuinely relates to another issue, record it — and why — "
+        "as a comment on the primary issue: "
+        f'vrg-gh issue comment {primary_issue} --body "Related to #N — <the reason>". '
+        "Don't encode it as a bare linkage in notes, where the reasoning is lost."
+    )
+
+
 def extract_tracking_issue(text: str) -> int | None:
     """Return the tracking issue number from a ``Ref #N`` / ``Closes #N`` match.
 
