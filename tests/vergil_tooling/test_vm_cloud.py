@@ -439,9 +439,48 @@ class TestBootstrap:
         identity.auth_type = "app"
         bootstrap_volume(transport, identity, "org", "repo")
         # reattach fetches via vrg-git (token injection), run inside the repo so the
-        # org resolves from its own remote.
+        # org resolves from its own remote, and inside the repo's checkout dir.
         fetch_call = transport.run.call_args_list[-1]
-        assert list(fetch_call.args) == ["vrg-git", "fetch", "--all"]
+        assert fetch_call.args[0] == "bash"
+        assert fetch_call.args[1] == "-c"
+        assert "vrg-git fetch --all" in fetch_call.args[2]
+        assert fetch_call.kwargs["workdir"] == "/vergil/projects/org/repo"
+
+    def test_clone_command_exports_local_bin_path(self) -> None:
+        # Regression (#2145): the fresh-volume clone runs vrg-git, which lives in
+        # ~/.local/bin — absent from the non-login guest shell's default PATH. Without
+        # the PATH export the guest command 127s (command not found).
+        transport = MagicMock()
+        transport.run.side_effect = [
+            subprocess.CalledProcessError(1, "test"),  # path absent
+            MagicMock(),  # clone
+            MagicMock(),  # mkdir
+        ]
+        identity = MagicMock()
+        identity.auth_type = "app"
+        bootstrap_volume(transport, identity, "org", "repo")
+        clone_call = transport.run.call_args_list[1]
+        assert clone_call.args[0] == "bash"
+        assert clone_call.args[1] == "-c"
+        assert "$HOME/.local/bin" in clone_call.args[2]
+        assert "vrg-git clone" in clone_call.args[2]
+
+    def test_fetch_command_exports_local_bin_path(self) -> None:
+        # Regression (#2145): the reattach fetch — the branch exercised on every
+        # rebuild of an existing volume — must export ~/.local/bin so vrg-git resolves
+        # over the non-login guest shell instead of exiting 127.
+        transport = MagicMock()
+        transport.run.side_effect = [
+            MagicMock(),  # test -d succeeds (present)
+            MagicMock(),  # fetch
+        ]
+        identity = MagicMock()
+        identity.auth_type = "app"
+        bootstrap_volume(transport, identity, "org", "repo")
+        fetch_call = transport.run.call_args_list[-1]
+        assert fetch_call.args[0] == "bash"
+        assert fetch_call.args[1] == "-c"
+        assert "$HOME/.local/bin" in fetch_call.args[2]
         assert fetch_call.kwargs["workdir"] == "/vergil/projects/org/repo"
 
 
