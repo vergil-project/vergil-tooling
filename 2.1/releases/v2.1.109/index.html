@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.3.4/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.3.2/">
+        <link rel="next" href="../v2.1.108/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.3.3 - VERGIL Tooling</title>
+        <title>2.1.109 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-133-2026-04-27" class="md-skip">
+        <a href="#release-21109-2026-07-04" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.3.3
+              2.1.109
             
           </span>
         </div>
@@ -1084,10 +1084,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.109/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.109
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1103,6 +1130,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -7272,37 +7330,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.3.3
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.3.3/" class="md-nav__link">
         
   
   
@@ -7318,37 +7349,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10565,10 +10565,11 @@
 
 
 
-<h1 id="release-133-2026-04-27">Release 1.3.3 (2026-04-27)<a class="headerlink" href="#release-133-2026-04-27" title="Permanent link">&para;</a></h1>
+<h1 id="release-21109-2026-07-04">Release 2.1.109 (2026-07-04)<a class="headerlink" href="#release-21109-2026-07-04" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>auto-remove worktree before deleting merged branch (#315)</strong></li>
+<li><strong>drop 'security / standards' required check from CI-gates ruleset (#2141)</strong>
+Branch protection is managed as code; the CI-gates ruleset required a 'security / standards' check whose job is being retired (epic vergil-project/.github#82, Task B). A required check that never reports blocks all merges fleet-wide, so it is removed from the derived ruleset. A human reconciles live rulesets with 'vrg-github-repo-config apply' after this releases. Ref #2140</li>
 </ul>
 
 
