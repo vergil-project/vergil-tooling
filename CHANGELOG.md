@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.112] - 2026-07-04
+
+### Features
+
+- add intake --kind and default vrg-triage-create to org .github (#2125) (#2156)
+
 ## [2.1.111] - 2026-07-04
 
 ### Bug fixes
