@@ -233,11 +233,10 @@ def _print_pr_watch(pr_url: str) -> None:
 def _reject_if_epic_link(issue_ref: str) -> None:
     """Abort if the linkage points at an epic — PRs link a task, never an epic.
 
-    This lives here, not in the pr-issue-linkage CI gate, because deciding
-    epic-ness needs an authenticated, cross-repo ``gh`` call (e.g. an epic in
-    ``.github``) — which vrg-submit-pr has via the App installation token and the
-    CI gate (a dependency-free body regex) does not. Self-scoping: legacy issues
-    are never epics, so they pass.
+    This lives here, at PR construction time, because deciding epic-ness needs
+    an authenticated, cross-repo ``gh`` call (e.g. an epic in ``.github``) —
+    which vrg-submit-pr has via the App installation token. Self-scoping:
+    legacy issues are never epics, so they pass.
     """
     if epics.is_epic_linkage(issue_ref, default_repo=github.current_repo()):
         raise SystemExit(
