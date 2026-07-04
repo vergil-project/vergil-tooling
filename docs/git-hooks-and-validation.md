@@ -16,7 +16,6 @@
 - [Validators](#validators)
   - [repo-profile](#repo-profile)
   - [markdown-standards](#markdown-standards)
-  - [pr-issue-linkage](#pr-issue-linkage)
 - [Validation Matrix](#validation-matrix)
 - [Configuration Points](#configuration-points)
 - [Exit Code Conventions](#exit-code-conventions)
@@ -153,23 +152,6 @@ checks.
 Code blocks (fenced with `` ``` `` or `~~~`) are excluded
 from structural analysis.
 
-### pr-issue-linkage
-
-CI-only script that validates pull request bodies contain
-issue linkage.
-
-**Requires**: `GITHUB_EVENT_PATH` environment variable
-pointing to the GitHub Actions event payload JSON.
-
-**Accepted linkage keyword**: `Ref` — followed by `#123`
-or a cross-repo reference like `owner/repo#123`. Auto-close
-keywords (`Fixes`, `Closes`, `Resolves` and variants) are
-rejected to keep issues open until post-merge workflows
-succeed.
-
-The keyword may optionally include a colon and may appear
-as a list item.
-
 ## Validation Matrix
 
 The following table shows where each validation runs:
@@ -199,7 +181,6 @@ The following table shows where each validation runs:
 | MEMORY.md writes                    |            | | *(removed 2026-04-23; formerly plugin)* | |
 | Repository profile                  |            |            |        | yes |
 | Markdown standards                  |            |            |        | yes |
-| PR issue linkage                    |            |            |        | yes |
 
 The hook guard and plugin hooks for raw `git`/`gh` commands overlap
 deliberately: the hook guard (`.claude/hooks/guard.sh`) catches all

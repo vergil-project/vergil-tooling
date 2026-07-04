@@ -33,12 +33,6 @@ Run inside dev containers launched by `vrg-container-run`.
 | [vrg-repo-profile](lint/repo-profile.md) | Repository profile attribute validation |
 | [Markdown validation](lint/markdown-standards.md) | Markdownlint with bundled canonical config |
 
-## CI-only tools
-
-| Tool | Purpose |
-| ---- | ------- |
-| [vrg-pr-issue-linkage](lint/pr-issue-linkage.md) | PR body issue linkage validation |
-
 ## Git Hooks
 
 | Hook | Purpose |

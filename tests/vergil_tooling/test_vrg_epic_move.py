@@ -87,6 +87,19 @@ def test_main_accepts_standing_epic() -> None:
     mock_add.assert_called_once_with(NEW, TASK)
 
 
+def test_main_accepts_adhoc_epic() -> None:
+    """The 'adhoc' sentinel skips the cross-org guard (it resolves in .github)."""
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=NEW),
+        patch(f"{_MOD}.epics.parent_of", return_value=None),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--task", "#42", "--epic", "adhoc"])
+    assert rc == 0
+    mock_add.assert_called_once_with(NEW, TASK)
+
+
 def test_main_scopes_token_to_task_owner() -> None:
     """The re-parent runs under the task's owner installation, not cwd (#2070)."""
     with (

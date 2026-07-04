@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.111] - 2026-07-04
+
+### Bug fixes
+
+- accept adhoc sentinel in issue-create/epic-move cross-org guard (#2124) (#2151)
+
+### Chores
+
+- delete dead vrg-pr-issue-linkage tool and its docs (#2150)
+
 ## [2.1.110] - 2026-07-04
 
 ### Bug fixes

@@ -10,7 +10,6 @@ and its exit codes.
 | Branch naming | Yes | -- | `pre-commit` |
 | Repository profile | -- | Yes | `vrg-repo-profile` |
 | Markdown standards | -- | Yes | `vrg-validate` (common checks) |
-| PR issue linkage | -- | Yes | `vrg-pr-issue-linkage` |
 | Shellcheck | -- | Yes | CI workflow step |
 
 ## Local Hooks
@@ -44,14 +43,9 @@ Runs markdownlint on published markdown (`docs/site/**/*.md` and
 See the [Markdown Validation](../reference/lint/markdown-standards.md)
 reference for config details and file scope.
 
-### vrg-pr-issue-linkage
-
-**Trigger:** PR opened or updated
-
-Validates the PR body links exactly one task with `Ref #N` or
-`Closes #N`. `Closes` auto-closes a task on merge (a task is one
-PR); `Fixes`/`Resolves` and variants are rejected so there is
-one sanctioned close keyword.
+PR body issue linkage (`Ref #N` / `Closes #N`, with `Fixes`/`Resolves`
+banned) is validated at PR construction time by `vrg-submit-pr`
+rather than as a separate CI check.
 
 ## Exit Code Reference
 
