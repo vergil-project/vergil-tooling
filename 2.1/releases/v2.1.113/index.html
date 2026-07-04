@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.30/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.26/">
+        <link rel="next" href="../v2.1.112/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.27 - VERGIL Tooling</title>
+        <title>2.1.113 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2127-2026-06-11" class="md-skip">
+        <a href="#release-21113-2026-07-04" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.27
+              2.1.113
             
           </span>
         </div>
@@ -1092,10 +1092,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.113/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.113
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1111,6 +1138,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3444,37 +3502,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.27
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.27/" class="md-nav__link">
         
   
   
@@ -3490,48 +3521,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#refactoring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Refactoring
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10639,17 +10628,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#refactoring" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10677,67 +10655,12 @@
 
 
 
-<h1 id="release-2127-2026-06-11">Release 2.1.27 (2026-06-11)<a class="headerlink" href="#release-2127-2026-06-11" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add vergil ecosystem updater and per-run selector (#1601)</strong></li>
-<li>refactor(update-deps): rename python-uv updater to python</li>
-</ul>
-<p>Simplify updater identifiers to the bare language name for the upcoming --only/--skip selector. Ref #1591</p>
-<ul>
-<li>feat(update-deps): add per-run updater selector (--only/--skip)</li>
-</ul>
-<p>select_updaters filters the registry by name (--only / --skip, mutually exclusive, unknown name fails loud), composed before the applies() filter. CLI exposes --only/--skip as a mutually exclusive group; the names are threaded through UpdateDepsState. Default (neither) keeps the bundled all-applicable behavior. Ref #1591</p>
-<ul>
-<li>feat(update-deps): thread --vergil bump target (implies only the vergil updater)</li>
-</ul>
-<p>--vergil X.Y is the deliberate ecosystem-upgrade flag: mutually exclusive with --only/--skip, it scopes the run to only the vergil updater and carries the bump target through UpdateDepsState and ctx.vergil_bump (set in preflight). Normal runs leave it unset, running vergil in normalize mode. Ref #1591</p>
-<ul>
-<li>feat(update-deps): add vergil version helpers and ref rewriting</li>
-</ul>
-<p>format_version normalizes X.Y/vX.Y to vX.Y; read_source_version reads [dependencies].vergil; set_source_version rewrites that line (idempotent); normalize_refs rewrites drifting 'uses: vergil-*@vX.Y' workflow refs to the target while leaving third-party actions alone (format-preserving, idempotent). Ref #1591</p>
-<ul>
-<li>feat(update-deps): add vergil ecosystem updater and register it</li>
-</ul>
-<p>VergilUpdater (name 'vergil') normalizes drifting workflow refs to the vergil.toml source-of-truth on a normal run, and on --vergil X.Y rewrites the source then normalizes (bump). Operates on the worktree. Registered in DEFAULT_REGISTRY after python. Ref #1591</p>
-<ul>
-<li>refactor(update-deps): satisfy mypy and ty typecheck gates</li>
-</ul>
-<p>Accept Sequence[Updater] (covariant) in the registry selectors so a list of concrete updaters type-checks under ty; annotate the tomllib-read vergil version as str so mypy does not see an Any return. Ref #1591</p>
-<ul>
-<li><strong>allow read-only git subcommands and read-only reflog (#1604)</strong>
-Admit the full set of purely read-only git subcommands (blame,
-annotate, grep, ls-files, ls-tree, cat-file, rev-list, merge-base,
-name-rev, for-each-ref, show-ref, show-branch, cherry, describe,
-shortlog, whatchanged, count-objects, verify-commit, verify-tag, var,
-and the plumbing diffs) to the vrg-git allowlist so agents have maximum
-read-only access for triage and debugging.</li>
-</ul>
-<p>Promote reflog from blanket-denied to read-only gating: the read-only
-forms (bare invocation, show, exists) are allowed while the mutating
-sub-operations expire and delete remain denied.</p>
-<p>The remaining dual-mode commands are left denied for now: config has a
-broad mutating-flag surface whose read-only forms (--get/--list) need a
-careful flag allowlist, and tag/notes share the bare-default-writes
-ambiguity. These are deferred to a dedicated follow-up rather than
-risking a loosened write path.</p>
-<p>Update the permission-model guide allowlist table to match.</p>
-<ul>
-<li><strong>VM-local Claude plugin lifecycle and .claude share-set cleanup (#1605)</strong></li>
-<li>docs(specs): .claude share-set audit design (#1603)</li>
-</ul>
-<p>Approved brainstorming design: remove the vestigial sessions mount, document the projects-vs-sessions persistence model (code comment plus a docs guide), and define the human-run plugins EXDEV experiment that seeds a follow-up decision. No plugins wiring in this issue.</p>
+<h1 id="release-21113-2026-07-04">Release 2.1.113 (2026-07-04)<a class="headerlink" href="#release-21113-2026-07-04" title="Permanent link">&para;</a></h1>
 <h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>run vrg-release in a managed worktree (#1600)</strong></li>
-<li>refactor(worktree): extract shared managed-worktree helper into lib/managed_worktree</li>
+<li><strong>treat ad-hoc epics as perpetual in roadmap/audit (alias-aware) (#2126) (#2160)</strong>
+Phase 1 (epic #85). roadmap._is_standing becomes _is_perpetual and matches either 'ad-hoc' or the deprecated 'standing' alias, so ad-hoc buckets are excluded from the strategic roadmap (and from epic-drift, which reads the same gather). This preserves the canonical 'epic AND NOT ad-hoc' strategic view. epic_audit/rollup/epic-create docstrings and help updated to ad-hoc wording. No behavior change for standing during the rollout window.</li>
 </ul>
-<p>vrg-update-deps introduced the managed-worktree create/remove logic under lib/update_deps/worktree.py, coupled to UpdateDepsError. Promote it to a neutral lib/managed_worktree module that raises a generic ManagedWorktreeError, so vrg-release can adopt the same mechanism (#1578) without importing update-deps internals. Each caller translates the error into its own pipeline error type at the boundary.</p>
-<ul>
-<li>refactor(release): perform all release branch work in a managed worktree (#1578)</li>
-</ul>
-<p>vrg-release switched HEAD in the root checkout across develop -&gt; release/<v> -&gt; develop -&gt; release/post-<v> while running. A parallel agent branching off develop during that window saw the base branch in-flight — bad hygiene and a real collision risk.</p>
-<p>Preflight now creates a managed worktree on release/<v> off develop and chdir's into it, so every commit, push, and PR happens in the worktree and the root checkout's HEAD never moves. prepare no longer creates the branch or checks out develop; back-merge-bump drops its trailing develop checkout/ff (the root's develop is synced later by the finalize cleanup stage, from the root checkout). A new teardown-worktree stage removes the worktree and returns to the root before close-finalize, which runs vrg-finalize-pr — a command that refuses to run outside the main worktree. On a fail-fast abort the worktree is left in place for debugging, matching vrg-update-deps.</p>
 
 
 
