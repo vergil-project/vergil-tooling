@@ -25,7 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         ),
         epilog=(
             "Run from inside a repo in the target org. Extra --label values are "
-            "added alongside 'epic' (e.g. --label standing for a standing epic)."
+            "added alongside 'epic' (e.g. --label ad-hoc for an ad-hoc epic)."
         ),
     )
     parser.add_argument("--title", required=True, help="Epic title")

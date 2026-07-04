@@ -1,7 +1,7 @@
 """Generate the project roadmap from open finite epics in the org ``.github`` repo.
 
 "Where we're going", derived mechanically from epic metadata — no hand editing.
-``gather`` reads the open ``epic``-labelled issues (skipping ``standing`` buckets)
+``gather`` reads the open ``epic``-labelled issues (skipping perpetual ``ad-hoc`` buckets)
 and rolls up each one's children via :mod:`vergil_tooling.lib.epics`; ``render``
 turns the summaries into markdown grouped by milestone.
 """
@@ -46,12 +46,15 @@ def _open_epics(org: str) -> list[Any]:
     return raw if isinstance(raw, list) else []
 
 
-def _is_standing(epic: Any) -> bool:
-    return any((label or {}).get("name") == "standing" for label in (epic.get("labels") or []))
+def _is_perpetual(epic: Any) -> bool:
+    """True if the epic is a perpetual ad-hoc bucket (``ad-hoc``, or its
+    deprecated ``standing`` alias) — excluded from the strategic roadmap."""
+    names = {(label or {}).get("name") for label in (epic.get("labels") or [])}
+    return bool(names & {"ad-hoc", "standing"})
 
 
 def gather(org: str | None = None) -> list[EpicSummary]:
-    """Summarize every open finite (non-standing) epic in *org*'s ``.github``.
+    """Summarize every open finite (non-perpetual) epic in *org*'s ``.github``.
 
     *org* defaults to the owner of the current repo's git remote, so the same
     command reports each org's own roadmap.
@@ -60,7 +63,7 @@ def gather(org: str | None = None) -> list[EpicSummary]:
         org = github.current_org()
     summaries: list[EpicSummary] = []
     for epic in _open_epics(org):
-        if _is_standing(epic):
+        if _is_perpetual(epic):
             continue
         # Defense in depth: a release tracking issue is never epic-labelled, so
         # it should not reach here — but skip it explicitly so a stray label can
