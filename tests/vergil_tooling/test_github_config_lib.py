@@ -232,7 +232,7 @@ def test_ci_gates_always_includes_common_and_security() -> None:
     assert "quality / common" in check_names
     assert "security / trivy" in check_names
     assert "security / semgrep" in check_names
-    assert "security / standards" in check_names
+    assert "security / standards" not in check_names
     assert "Trivy" in check_names
     assert "Semgrep OSS" in check_names
 
@@ -268,7 +268,7 @@ def test_ci_gates_without_ghas_drops_alert_checks() -> None:
     assert "CodeQL" not in names
     assert "security / trivy" in names
     assert "security / semgrep" in names
-    assert "security / standards" in names
+    assert "security / standards" not in names
     assert "quality / common" in names
 
 
