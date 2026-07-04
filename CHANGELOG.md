@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.114] - 2026-07-04
+
+### Features
+
+- add invariant-enforcement checks (report-only) (#2164)
+
 ## [2.1.113] - 2026-07-04
 
 ### Refactoring
