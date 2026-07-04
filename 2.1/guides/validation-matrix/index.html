@@ -1018,6 +1018,8 @@
       
         
       
+        
+      
     
     
     
@@ -1070,6 +1072,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.111/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.111
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -7848,8 +7878,6 @@
       
         
       
-        
-      
     
     
     
@@ -7938,34 +7966,6 @@
     
   
     markdown-validation
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../reference/lint/pr-issue-linkage/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    pr-issue-linkage
   
 
     
@@ -10554,17 +10554,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-pr-issue-linkage
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -10724,17 +10713,6 @@
   
 </li>
         
-          <li class="md-nav__item">
-  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-pr-issue-linkage
-      
-    </span>
-  </a>
-  
-</li>
-        
       </ul>
     </nav>
   
@@ -10801,12 +10779,6 @@ and its exit codes.</p>
 <td><code>vrg-validate</code> (common checks)</td>
 </tr>
 <tr>
-<td>PR issue linkage</td>
-<td>--</td>
-<td>Yes</td>
-<td><code>vrg-pr-issue-linkage</code></td>
-</tr>
-<tr>
 <td>Shellcheck</td>
 <td>--</td>
 <td>Yes</td>
@@ -10859,12 +10831,9 @@ attributes.</p>
 <code>README.md</code>) using the canonical config bundled in vergil-tooling.
 See the <a href="../../reference/lint/markdown-standards/">Markdown Validation</a>
 reference for config details and file scope.</p>
-<h3 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h3>
-<p><strong>Trigger:</strong> PR opened or updated</p>
-<p>Validates the PR body links exactly one task with <code>Ref #N</code> or
-<code>Closes #N</code>. <code>Closes</code> auto-closes a task on merge (a task is one
-PR); <code>Fixes</code>/<code>Resolves</code> and variants are rejected so there is
-one sanctioned close keyword.</p>
+<p>PR body issue linkage (<code>Ref #N</code> / <code>Closes #N</code>, with <code>Fixes</code>/<code>Resolves</code>
+banned) is validated at PR construction time by <code>vrg-submit-pr</code>
+rather than as a separate CI check.</p>
 <h2 id="exit-code-reference">Exit Code Reference<a class="headerlink" href="#exit-code-reference" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
