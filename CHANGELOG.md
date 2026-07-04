@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.110] - 2026-07-04
+
+### Bug fixes
+
+- export ~/.local/bin PATH for bootstrap_volume vrg-git calls (#2146)
+
 ## [2.1.109] - 2026-07-04
 
 ### Bug fixes
