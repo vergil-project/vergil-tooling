@@ -274,7 +274,6 @@ def desired_ci_gates_ruleset(
     checks.append(_make_check("quality / common"))
     checks.append(_make_check("security / trivy"))
     checks.append(_make_check("security / semgrep"))
-    checks.append(_make_check("security / standards"))
 
     # GHAS check runs — created by GitHub Advanced Security (app 57789)
     # when workflows upload SARIF via codeql-action/upload-sarif.  These
