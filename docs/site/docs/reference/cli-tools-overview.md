@@ -236,24 +236,6 @@ placeholder values.
 | Exit codes | 0 valid, 1 invalid, 2 file not found |
 | Status | Active |
 
-## CI-only tools
-
-### vrg-pr-issue-linkage
-
-Check that a pull request body links exactly one task with `Ref`
-or `Closes`, and does not contain the banned `Fixes`/`Resolves`
-auto-close keywords. Reads the GitHub event payload from
-`GITHUB_EVENT_PATH`.
-
-| Attribute | Value |
-|---|---|
-| Source | `vergil_tooling.bin.vrg_pr_issue_linkage` |
-| Args | None |
-| Preconditions | `GITHUB_EVENT_PATH` set and pointing to a valid JSON file |
-| Failure mode | Exit 2 for missing env var or file; exit 1 for a banned keyword (`Fixes`/`Resolves`), multiple, or missing linkage |
-| Exit codes | 0 valid, 1 rejected linkage or missing linkage, 2 infrastructure error |
-| Status | Active |
-
 ## Removed in this audit
 
 ### st-list-project-repos (removed)
@@ -299,8 +281,7 @@ interface than argparse would provide. No alignment needed.
 
 - 0: success
 - 1: check failure, validation error, or precondition violation
-- 2: infrastructure error (used by `vrg-repo-profile`,
-  `vrg-pr-issue-linkage`)
+- 2: infrastructure error (used by `vrg-repo-profile`)
 
 The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.

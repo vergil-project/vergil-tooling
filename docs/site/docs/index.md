@@ -12,7 +12,7 @@ commits, PRs, releases, and validation alongside bash validators and git hooks
 `vrg-finalize-pr`, `vrg-validate`
 
 **Lint tools** (installed as `vrg-*`):
-`vrg-repo-profile`, `vrg-pr-issue-linkage`, validation drivers
+`vrg-repo-profile`, validation drivers
 
 **Claude Code hook guard** (`.claude/hooks/`):
 PreToolUse hook that blocks raw `git` and `gh`, routing through `vrg-*` wrappers
