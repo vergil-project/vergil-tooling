@@ -7947,34 +7947,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ci-only-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CI-only tools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="CI-only tools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-pr-issue-linkage
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#removed-in-this-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8208,8 +8180,6 @@
       
         
       
-        
-      
     
     
     
@@ -8301,34 +8271,6 @@
     
   
     markdown-validation
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../lint/pr-issue-linkage/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    pr-issue-linkage
   
 
     
@@ -11054,34 +10996,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#ci-only-tools" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CI-only tools
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="CI-only tools">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#vrg-pr-issue-linkage" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        vrg-pr-issue-linkage
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#removed-in-this-audit" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11741,46 +11655,6 @@ placeholder values.</p>
 </tr>
 </tbody>
 </table>
-<h2 id="ci-only-tools">CI-only tools<a class="headerlink" href="#ci-only-tools" title="Permanent link">&para;</a></h2>
-<h3 id="vrg-pr-issue-linkage">vrg-pr-issue-linkage<a class="headerlink" href="#vrg-pr-issue-linkage" title="Permanent link">&para;</a></h3>
-<p>Check that a pull request body links exactly one task with <code>Ref</code>
-or <code>Closes</code>, and does not contain the banned <code>Fixes</code>/<code>Resolves</code>
-auto-close keywords. Reads the GitHub event payload from
-<code>GITHUB_EVENT_PATH</code>.</p>
-<table>
-<thead>
-<tr>
-<th>Attribute</th>
-<th>Value</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Source</td>
-<td><code>vergil_tooling.bin.vrg_pr_issue_linkage</code></td>
-</tr>
-<tr>
-<td>Args</td>
-<td>None</td>
-</tr>
-<tr>
-<td>Preconditions</td>
-<td><code>GITHUB_EVENT_PATH</code> set and pointing to a valid JSON file</td>
-</tr>
-<tr>
-<td>Failure mode</td>
-<td>Exit 2 for missing env var or file; exit 1 for a banned keyword (<code>Fixes</code>/<code>Resolves</code>), multiple, or missing linkage</td>
-</tr>
-<tr>
-<td>Exit codes</td>
-<td>0 valid, 1 rejected linkage or missing linkage, 2 infrastructure error</td>
-</tr>
-<tr>
-<td>Status</td>
-<td>Active</td>
-</tr>
-</tbody>
-</table>
 <h2 id="removed-in-this-audit">Removed in this audit<a class="headerlink" href="#removed-in-this-audit" title="Permanent link">&para;</a></h2>
 <h3 id="st-list-project-repos-removed">st-list-project-repos (removed)<a class="headerlink" href="#st-list-project-repos-removed" title="Permanent link">&para;</a></h3>
 <p>Entry point declared in <code>pyproject.toml</code> but the source module
@@ -11817,8 +11691,7 @@ interface than argparse would provide. No alignment needed.</p>
 <ul>
 <li>0: success</li>
 <li>1: check failure, validation error, or precondition violation</li>
-<li>2: infrastructure error (used by <code>vrg-repo-profile</code>,
-  <code>vrg-pr-issue-linkage</code>)</li>
+<li>2: infrastructure error (used by <code>vrg-repo-profile</code>)</li>
 </ul>
 <p>The 1-vs-2 distinction is not universal. Tools added before the
 convention was established use 1 for all errors.</p>
