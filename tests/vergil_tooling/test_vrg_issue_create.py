@@ -40,6 +40,21 @@ def test_main_creates_issue_and_links_under_epic() -> None:
     mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
 
 
+def test_main_adhoc_sentinel_skips_cross_org_guard() -> None:
+    # 'adhoc' (like the deprecated 'standing') resolves within the repo's org
+    # (.github), so it must skip the explicit-ref cross-org guard and link.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+        patch(f"{_MOD}.epics.add_child") as mock_add,
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T"])
+    assert rc == 0
+    mock_resolve.assert_called_once_with("adhoc", repo="org/repo")
+    mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+
+
 def test_main_epic_resolution_failure_creates_nothing() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
