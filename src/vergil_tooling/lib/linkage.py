@@ -1,7 +1,8 @@
 """Shared issue-linkage regex patterns.
 
-Extracted from ``vrg_pr_issue_linkage`` so both the CI gate and
-``vrg-resolve-tracking-issue`` use the same patterns.
+Shared across the linkage tooling — ``vrg-resolve-tracking-issue`` and the
+PR-body construction guard (``find_linkage_keyword``) — so linkage recognition
+stays consistent everywhere it is applied.
 """
 
 from __future__ import annotations
