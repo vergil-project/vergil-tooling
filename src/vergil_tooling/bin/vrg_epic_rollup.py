@@ -6,7 +6,8 @@ Thin CLI over ``epics.rollup`` for the ``on: issues.closed`` Action (issue
 tasks are now closed.
 
 ``epics.rollup`` is a no-op unless the closed issue is a managed task with an
-``epic``-labeled, non-``standing`` parent, so this is safe to fire on *every*
+``epic``-labeled, non-perpetual parent (an ``ad-hoc`` epic, or its deprecated
+``standing`` alias, never auto-closes), so this is safe to fire on *every*
 issue close. Moving rollup here makes it event-driven — it no longer depends on
 ``vrg-finalize-pr`` running.
 

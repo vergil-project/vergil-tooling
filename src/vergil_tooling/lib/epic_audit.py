@@ -1,7 +1,7 @@
 """Audit for epic/task drift — work that slipped through auto-close.
 
 ``task_drift`` finds merged PRs whose ``Ref``'d task is still open;
-``epic_drift`` finds open, non-standing epics whose children are all closed
+``epic_drift`` finds open, non-perpetual epics whose children are all closed
 (should have rolled up). ``render`` formats both sections for review;
 ``close_drift`` closes them with an explanatory comment — a human action, gated
 by the caller.
@@ -92,7 +92,7 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
 
 
 def epic_drift() -> list[roadmap.EpicSummary]:
-    """Open, non-standing epics whose children are all closed (should roll up)."""
+    """Open, non-perpetual epics whose children are all closed (should roll up)."""
     return [epic for epic in roadmap.gather() if epic.total > 0 and epic.closed == epic.total]
 
 
