@@ -224,12 +224,25 @@ def preflight(provider: str = "gcp") -> None:
     strategy_for(provider).preflight()
 
 
+# `uv tool install` puts vrg-git in ~/.local/bin, but a `gcloud compute ssh
+# --command=…` / `ssh <host> <cmd>` runs a non-login, non-interactive shell whose
+# PATH is the system default (no ~/.local/bin) and which sources no shell config.
+# So a bare `vrg-git` resolves to nothing → exit 127. Every other in-guest tool
+# call prepends ~/.local/bin for exactly this reason (see vm_guest's
+# _PLUGIN_PATH_EXPORT / _uv_tool_install); bootstrap_volume must too, or its
+# vrg-git clone/fetch 127s (#2145, a regression from the git→vrg-git switch #1791).
+_GIT_PATH_EXPORT = 'export PATH="$HOME/.local/bin:$PATH"'
+
+
 def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: str) -> None:
     """Clone the repo onto the persistent volume, reattach (fetch), or skip.
 
     - ``auth_type == "none"``: credential-less identity — skip checkout, logged.
     - existing ``/vergil/projects/<org>/<repo>``: reattached volume — fetch only.
     - absent: fresh volume — in-guest ``vrg-git clone`` + seed ``/vergil/claude``.
+
+    The ``vrg-git`` calls run through ``bash -c`` with ``_GIT_PATH_EXPORT`` so the
+    ~/.local/bin binary resolves over the non-login guest shell (#2145).
     """
     if identity.auth_type == "none":
         print("  Skipping checkout (credential-less identity)")
@@ -239,13 +252,18 @@ def bootstrap_volume(transport: Transport, identity: Identity, org: str, repo: s
         transport.run("test", "-d", path)
     except subprocess.CalledProcessError:
         print(f"  Cloning {org}/{repo} onto the volume...")
-        transport.run("vrg-git", "clone", f"https://github.com/{org}/{repo}.git", path)
+        url = f"https://github.com/{org}/{repo}.git"
+        transport.run(
+            "bash",
+            "-c",
+            f"{_GIT_PATH_EXPORT} && vrg-git clone {shlex.quote(url)} {shlex.quote(path)}",
+        )
         transport.run("mkdir", "-p", "/vergil/claude")
     else:
         print(f"  Reattaching existing checkout for {org}/{repo}...")
         # vrg-git (not raw git) so the installation token is injected, run inside the
         # repo so `fetch` resolves the org from its own remote (#1790).
-        transport.run("vrg-git", "fetch", "--all", workdir=path)
+        transport.run("bash", "-c", f"{_GIT_PATH_EXPORT} && vrg-git fetch --all", workdir=path)
 
 
 _FINGERPRINT_PATH = "/etc/vergil/vm-spec.fingerprint"
