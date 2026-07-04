@@ -17,6 +17,8 @@ def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
         patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
     ):
         rc = main([])
     out = capsys.readouterr().out
@@ -25,6 +27,28 @@ def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
     # The read-only banner names the auto-detected org and states nothing changed.
     assert "Read-only audit" in out
     assert "**vergil-project**" in out
+
+
+def test_main_reports_invariant_violations(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(
+            f"{_MOD}.epic_audit.epic_outside_dotgithub",
+            return_value=["vergil-project/vergil-tooling#99"],
+        ),
+        patch(
+            f"{_MOD}.epic_audit.stray_dotgithub_issue",
+            return_value=["vergil-project/.github#7"],
+        ),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Invariant violations" in out
+    assert "vergil-project/vergil-tooling#99" in out
+    assert "vergil-project/.github#7" in out
 
 
 def test_main_errors_when_org_undetectable(capsys: pytest.CaptureFixture[str]) -> None:
@@ -40,6 +64,8 @@ def test_window_days_controls_since() -> None:
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
         patch(f"{_MOD}.epic_audit.task_drift", task_drift),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
     ):
         rc = main(["--window-days", "7"])
     assert rc == 0

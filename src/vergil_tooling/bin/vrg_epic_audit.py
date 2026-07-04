@@ -40,10 +40,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-epic-audit",
         description=(
-            "Report epic/task drift for the current repo's GitHub org: merged "
-            "PRs whose Ref'd task issue is still open, and open non-standing "
-            "epics whose children are all closed. Read-only by default; pass "
-            "--close (as a human) to actually close what it finds."
+            "Report epic/task drift and invariant violations for the current "
+            "repo's GitHub org: merged PRs whose Ref'd task is still open, open "
+            "non-perpetual epics whose children are all closed, and issues in "
+            "the wrong place (epics outside .github; stray .github issues). "
+            "Read-only by default; pass --close (as a human) to close the drift "
+            "it finds (invariant violations are report-only)."
         ),
         epilog=(
             "Scope: the org is auto-detected from this repo's 'origin' remote, "
@@ -101,7 +103,18 @@ def main(argv: list[str] | None = None) -> int:
         closed = epic_audit.close_drift(tasks, epics, org=org)
         print(epic_audit.render_closed(closed, org=org, window_days=args.window_days))
         return 0
-    print(epic_audit.render(tasks, epics, org=org, window_days=args.window_days))
+    epics_outside = epic_audit.epic_outside_dotgithub(org)
+    stray = epic_audit.stray_dotgithub_issue(org)
+    print(
+        epic_audit.render(
+            tasks,
+            epics,
+            org=org,
+            window_days=args.window_days,
+            epics_outside=epics_outside,
+            stray=stray,
+        )
+    )
     return 0
 
 

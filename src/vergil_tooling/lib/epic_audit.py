@@ -13,7 +13,7 @@ import sys
 from dataclasses import dataclass
 from typing import Any
 
-from vergil_tooling.lib import github, linkage, release, roadmap
+from vergil_tooling.lib import epics, github, linkage, release, roadmap
 
 
 @dataclass(frozen=True)
@@ -96,26 +96,104 @@ def epic_drift() -> list[roadmap.EpicSummary]:
     return [epic for epic in roadmap.gather() if epic.total > 0 and epic.closed == epic.total]
 
 
+_INTAKE_LABELS = frozenset({"triage", "idea", "research"})
+
+
+def epic_outside_dotgithub(org: str) -> list[str]:
+    """Open ``epic``-labelled issues living outside ``<org>/.github`` (invariant 1).
+
+    Invariant 1 (epic #85): all epics live in the org's ``.github``. Any open
+    epic-labelled issue in another repo is a violation; returns their
+    ``owner/repo#n`` slugs.
+    """
+    raw: Any = github.read_json(
+        "search",
+        "issues",
+        "--owner",
+        org,
+        "--label",
+        "epic",
+        "--state",
+        "open",
+        "--json",
+        "number,repository",
+    )
+    dotgithub = f"{org}/.github"
+    violations: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
+        if not name_with_owner or name_with_owner == dotgithub:
+            continue
+        violations.append(f"{name_with_owner}#{item['number']}")
+    return violations
+
+
+def stray_dotgithub_issue(org: str) -> list[str]:
+    """Open ``<org>/.github`` issues that violate invariant 2 (epic #85).
+
+    ``.github`` holds only epics, intake (``triage``/``idea``/``research``), and
+    managed tasks whose closing PR lands in ``.github`` (a task linked under an
+    epic). An open ``.github`` issue that is none of these — an unlinked,
+    non-epic, non-intake issue — is a stray; returns their slugs. When a
+    candidate's parent cannot be confirmed as an epic it is reported (fail-loud,
+    the human decides).
+    """
+    dotgithub = f"{org}/.github"
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        dotgithub,
+        "--state",
+        "open",
+        "--limit",
+        "500",
+        "--json",
+        "number,labels",
+    )
+    strays: list[str] = []
+    for item in raw if isinstance(raw, list) else []:
+        if not isinstance(item, dict):
+            continue
+        labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
+        if "epic" in labels or (labels & _INTAKE_LABELS):
+            continue
+        number = int(item["number"])
+        parent = epics.parent_of(epics.IssueRef(org, ".github", number))
+        if parent is not None and epics.is_epic(parent):
+            continue
+        strays.append(f"{dotgithub}#{number}")
+    return strays
+
+
 def render(
     tasks: list[TaskDrift],
-    epics: list[roadmap.EpicSummary],
+    epic_summaries: list[roadmap.EpicSummary],
     *,
     org: str,
     window_days: int,
+    epics_outside: list[str] | None = None,
+    stray: list[str] | None = None,
 ) -> str:
-    """Format the drift report; a clean state says so explicitly.
+    """Format the drift + invariant report; a clean state says so explicitly.
 
     The report opens with a banner naming the audited org and window and
     stating the run is read-only, so the output is never mistaken for a list of
-    actions the tool took.
+    actions the tool took. ``epics_outside`` and ``stray`` are the invariant
+    violations (epic #85); their section appears only when there is something to
+    report.
     """
+    epics_outside = epics_outside or []
+    stray = stray or []
     banner = (
         f"_Read-only audit of the **{org}** org (merged PRs from the last "
         f"{window_days} days) — this report changes nothing; run `--close` (as "
         "a human) to close what it lists._"
     )
     header = ["# Epic/task drift audit", "", banner, ""]
-    if not tasks and not epics:
+    if not tasks and not epic_summaries and not epics_outside and not stray:
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
     lines = [*header, "## Task drift (merged PR, task still open)", ""]
     if tasks:
@@ -126,13 +204,21 @@ def render(
     else:
         lines.append("- _none_")
     lines += ["", "## Epic drift (all children closed, epic still open)", ""]
-    if epics:
-        for epic in sorted(epics, key=lambda e: e.number):
+    if epic_summaries:
+        for epic in sorted(epic_summaries, key=lambda e: e.number):
             lines.append(
                 f"- [#{epic.number}]({epic.url}) {epic.title} — {epic.closed}/{epic.total} done"
             )
     else:
         lines.append("- _none_")
+    if epics_outside or stray:
+        lines += ["", "## Invariant violations (issues in the wrong place)", ""]
+        if epics_outside:
+            lines.append("**Epics outside `.github`** — move each to the org's `.github`:")
+            lines += [f"- {slug}" for slug in sorted(epics_outside)]
+        if stray:
+            lines.append("**Stray `.github` issues** — not an epic, intake, or linked task:")
+            lines += [f"- {slug}" for slug in sorted(stray)]
     lines.append("")
     return "\n".join(lines)
 

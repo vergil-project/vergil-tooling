@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
-from vergil_tooling.lib import epic_audit, github, roadmap
+from vergil_tooling.lib import epic_audit, epics, github, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
 
 if TYPE_CHECKING:
@@ -160,6 +160,56 @@ def test_epic_drift_flags_all_done_open_epics() -> None:
     with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=summaries):
         result = epic_audit.epic_drift()
     assert [e.number for e in result] == [40]
+
+
+def test_epic_outside_dotgithub_flags_non_dotgithub_epics() -> None:
+    issues = [
+        {"number": 99, "repository": {"nameWithOwner": "vergil-project/vergil-tooling"}},
+        {"number": 40, "repository": {"nameWithOwner": "vergil-project/.github"}},  # ok
+        {"number": 5, "repository": {}},  # no repo -> skipped
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search:
+        result = epic_audit.epic_outside_dotgithub("vergil-project")
+    assert result == ["vergil-project/vergil-tooling#99"]
+    args = mock_search.call_args.args
+    assert "search" in args and "issues" in args and "epic" in args
+
+
+def test_stray_dotgithub_issue_flags_unlinked_non_epic_non_intake() -> None:
+    issues = [
+        {"number": 40, "labels": [{"name": "epic"}]},  # epic -> ok
+        {"number": 50, "labels": [{"name": "idea"}]},  # intake -> ok
+        {"number": 86, "labels": [{"name": "documentation"}]},  # managed task -> ok
+        {"number": 7, "labels": []},  # unlinked, non-epic, non-intake -> STRAY
+    ]
+
+    def fake_parent_of(ref: epics.IssueRef) -> epics.IssueRef | None:
+        # #86 is a managed task under an epic; #7 has no parent.
+        if ref.number == 86:
+            return epics.IssueRef("vergil-project", ".github", 85)
+        return None
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=issues),
+        patch("vergil_tooling.lib.epics.parent_of", side_effect=fake_parent_of),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+    ):
+        result = epic_audit.stray_dotgithub_issue("vergil-project")
+    assert result == ["vergil-project/.github#7"]
+
+
+def test_render_shows_invariant_violations() -> None:
+    out = epic_audit.render(
+        [],
+        [],
+        org="vergil-project",
+        window_days=30,
+        epics_outside=["vergil-project/vergil-tooling#99"],
+        stray=["vergil-project/.github#7"],
+    )
+    assert "Invariant violations" in out
+    assert "vergil-project/vergil-tooling#99" in out
+    assert "vergil-project/.github#7" in out
 
 
 def test_render_clean() -> None:
