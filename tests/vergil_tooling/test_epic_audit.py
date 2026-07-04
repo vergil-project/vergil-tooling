@@ -212,6 +212,32 @@ def test_render_shows_invariant_violations() -> None:
     assert "vergil-project/.github#7" in out
 
 
+def test_render_invariant_only_epics_outside() -> None:
+    out = epic_audit.render(
+        [],
+        [],
+        org="vergil-project",
+        window_days=30,
+        epics_outside=["vergil-project/vergil-tooling#99"],
+    )
+    assert "Epics outside" in out
+    assert "vergil-project/vergil-tooling#99" in out
+    assert "Stray" not in out
+
+
+def test_render_invariant_only_stray() -> None:
+    out = epic_audit.render(
+        [],
+        [],
+        org="vergil-project",
+        window_days=30,
+        stray=["vergil-project/.github#7"],
+    )
+    assert "Stray" in out
+    assert "vergil-project/.github#7" in out
+    assert "Epics outside" not in out
+
+
 def test_render_clean() -> None:
     out = epic_audit.render([], [], org="vergil-project", window_days=30)
     assert "No drift" in out

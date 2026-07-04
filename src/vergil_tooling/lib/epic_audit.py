@@ -121,8 +121,6 @@ def epic_outside_dotgithub(org: str) -> list[str]:
     dotgithub = f"{org}/.github"
     violations: list[str] = []
     for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict):
-            continue
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
         if not name_with_owner or name_with_owner == dotgithub:
             continue
@@ -155,8 +153,6 @@ def stray_dotgithub_issue(org: str) -> list[str]:
     )
     strays: list[str] = []
     for item in raw if isinstance(raw, list) else []:
-        if not isinstance(item, dict):
-            continue
         labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
         if "epic" in labels or (labels & _INTAKE_LABELS):
             continue
