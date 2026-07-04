@@ -20,7 +20,6 @@ Hard gates (required status checks on `develop`):
   - Repository profile validation (`repo-profile`)
   - Markdownlint (`markdown-standards`)
   - Commit message lint (CI validator)
-  - Issue linkage validation (`pr-issue-linkage`)
   - Shellcheck on all bash scripts
   - Python lint, type-check, and tests
 
