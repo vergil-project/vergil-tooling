@@ -52,6 +52,35 @@ def test_gather_summarizes_open_epics_and_skips_standing() -> None:
     assert (summary.total, summary.closed) == (2, 1)
 
 
+def test_gather_skips_adhoc_epic() -> None:
+    # The ad-hoc bucket is perpetual and excluded from the strategic roadmap,
+    # just like the deprecated 'standing' alias (epic #85).
+    epic_list = [
+        {
+            "number": 40,
+            "title": "Convention",
+            "createdAt": "2026-06-28T10:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u40",
+        },
+        {
+            "number": 6,
+            "title": "Epic (ad hoc): vergil-tooling",
+            "createdAt": "2026-01-01T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}, {"name": "ad-hoc"}],  # ad-hoc -> skipped
+            "url": "u6",
+        },
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list),
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+    ):
+        result = roadmap.gather("vergil-project")
+    assert [s.number for s in result] == [40]
+
+
 def test_gather_handles_no_milestone_and_no_children() -> None:
     epic_list = [
         {
