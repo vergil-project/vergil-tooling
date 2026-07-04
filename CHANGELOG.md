@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.109] - 2026-07-04
+
+### Bug fixes
+
+- drop 'security / standards' required check from CI-gates ruleset (#2141)
+
 ## [2.1.108] - 2026-07-03
 
 ### Refactoring
