@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vergil-tooling"
-version = "2.1.115"
+version = "2.1.116"
 description = "VERGIL — Validation Engine for Repository Governance, Integration & Lifecycle"
 requires-python = ">=3.12,<4.0"
 license = "MIT"
@@ -14,6 +14,7 @@ dependencies = ["rich>=13.0", "pyyaml>=6.0"]
 [project.scripts]
 vrg-activity-log = "vergil_tooling.bin.vrg_activity_log:main"
 vrg-adhoc-epic = "vergil_tooling.bin.vrg_adhoc_epic:main"
+vrg-adhoc-migrate = "vergil_tooling.bin.vrg_adhoc_migrate:main"
 vrg-audit-approve = "vergil_tooling.bin.vrg_audit_approve:main"
 vrg-await = "vergil_tooling.bin.vrg_await:main"
 vrg-changelog = "vergil_tooling.bin.vrg_changelog:main"
