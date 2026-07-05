@@ -18,9 +18,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Move a task under a different epic.")
     parser.add_argument("--task", required=True, help="Task ref: owner/repo#N or #N")
-    parser.add_argument(
-        "--epic", required=True, help="Target epic: 'standing', #N, or owner/repo#N"
-    )
+    parser.add_argument("--epic", required=True, help="Target epic: 'adhoc', #N, or owner/repo#N")
     return parser.parse_args(argv)
 
 
