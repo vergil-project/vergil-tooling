@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.97/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.95/">
+        <link rel="next" href="../v2.1.114/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.96 - VERGIL Tooling</title>
+        <title>2.1.115 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2196-2026-07-01" class="md-skip">
+        <a href="#release-21115-2026-07-05" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.96
+              2.1.115
             
           </span>
         </div>
@@ -1096,10 +1096,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.115/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.115
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1115,6 +1142,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1628,37 +1686,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.96
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.96/" class="md-nav__link">
         
   
   
@@ -1674,37 +1705,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10688,10 +10688,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Documentation
       
     </span>
   </a>
@@ -10715,11 +10715,11 @@
 
 
 
-<h1 id="release-2196-2026-07-01">Release 2.1.96 (2026-07-01)<a class="headerlink" href="#release-2196-2026-07-01" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21115-2026-07-05">Release 2.1.115 (2026-07-05)<a class="headerlink" href="#release-21115-2026-07-05" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add --help, auto-detect org, --window-days, read-only banner (#2048)</strong>
-vrg-epic-audit now has an argparse CLI: --help documents that it audits the current repo's GitHub org (auto-detected from origin), scans merged PRs over a --window-days window (default 30), and is read-only. Promotes github._detect_org to public detect_org; the org is resolved from the repo instead of a hardcoded 'vergil-project', and an undetectable org now errors clearly instead of silently defaulting. render() prepends a banner naming the org/window and stating the run changed nothing — resolving the confusion that the output looked like a menu of actions. Removes vrg-epic-audit from the help-coverage KNOWN_GAPS ratchet. Ref vergil-project/vergil-tooling#2040.</li>
+<li><strong>point --epic help at the adhoc sentinel (#2130) (#2169)</strong>
+Epic vergil-project/.github#85, Task 12. The living-doc standing-&gt;ad-hoc sweep found nothing to rename: no living doc or site-docs guide describes the epic/task model (it lived only in the epic specs), and CLAUDE.md's 'standing' is the no-direct-commits policy, unrelated. The one real user-facing item: the --epic help in vrg-issue-create and vrg-epic-move still showed 'standing' as the sentinel; point users at 'adhoc' (standing keeps working as the silent deprecated alias). The comprehensive issue-management site-docs guide the sweep revealed as missing is filed as its own task (#2168) under this epic.</li>
 </ul>
 
 
