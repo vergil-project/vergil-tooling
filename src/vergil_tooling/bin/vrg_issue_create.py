@@ -23,7 +23,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Create an issue linked under an epic (native sub-issue)."
     )
-    parser.add_argument("--epic", required=True, help="Epic ref: 'standing', #N, or owner/repo#N")
+    parser.add_argument("--epic", required=True, help="Epic ref: 'adhoc', #N, or owner/repo#N")
     parser.add_argument("--title", required=True, help="Issue title")
     parser.add_argument("--body", default="", help="Issue body text")
     parser.add_argument("--body-file", help="Read the issue body from a file")
