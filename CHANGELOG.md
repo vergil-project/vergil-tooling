@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.117] - 2026-07-07
+
+### Bug fixes
+
+- also freeze relative workflow refs (#2177) (#2178)
+- strip GitHub-injected dismissal_restriction from ruleset comparison (#2180)
+
 ## [2.1.116] - 2026-07-05
 
 ### Features
