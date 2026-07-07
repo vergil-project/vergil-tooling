@@ -56,6 +56,13 @@ class TestFreezeReferences:
         result = freeze_references(content, _OWNER, _TAG)
         assert result == f"    uses: {_OWNER}/actions/local/setup/action.yml@{_TAG}"
 
+    def test_freezes_relative_workflow_ref(self) -> None:
+        # A relative nested-reusable-workflow ref must also be fully-qualified so
+        # it resolves when the reusable workflow is called cross-repo.
+        content = "    uses: ./.github/workflows/cd-docs.yml"
+        result = freeze_references(content, _OWNER, _TAG)
+        assert result == f"    uses: {_OWNER}/.github/workflows/cd-docs.yml@{_TAG}"
+
     def test_freezes_develop_ref(self) -> None:
         content = f"    uses: {_OWNER}/.github/workflows/ci.yml@develop"
         result = freeze_references(content, _OWNER, _TAG)
@@ -106,6 +113,12 @@ class TestValidateNoUnfrozen:
         findings = validate_no_unfrozen(content, "ci.yml", _OWNER)
         assert len(findings) == 1
         assert findings[0] == Finding(file="ci.yml", line=1, text="uses: ./actions/setup")
+
+    def test_detects_relative_workflow_ref(self) -> None:
+        content = "    uses: ./.github/workflows/cd-docs.yml"
+        findings = validate_no_unfrozen(content, "cd-docs-refresh.yml", _OWNER)
+        assert len(findings) == 1
+        assert findings[0].line == 1
 
     def test_detects_develop_ref(self) -> None:
         content = f"    uses: {_OWNER}/actions/setup@develop"
