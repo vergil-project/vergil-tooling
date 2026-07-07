@@ -374,7 +374,12 @@ def _fetch_vulnerability_alerts(repo: str) -> bool:
     return "204" in result.stdout.split("\n")[0]
 
 
-_STRIP_RULE_PARAMS = frozenset({"do_not_enforce_on_create"})
+# API-default fields GitHub injects into rule parameters that the desired state
+# never sets. They must be stripped before comparison, else audit reports
+# phantom drift that apply can never resolve (GitHub re-injects the default on
+# every write). ``dismissal_restriction`` was added when GitHub began emitting
+# it as a default on the ``pull_request`` rule (issue #2179).
+_STRIP_RULE_PARAMS = frozenset({"do_not_enforce_on_create", "dismissal_restriction"})
 
 
 def _normalize_rules(rules: Sequence[object]) -> list[dict[str, object]]:

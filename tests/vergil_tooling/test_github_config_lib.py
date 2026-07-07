@@ -1429,6 +1429,28 @@ def test_normalize_rules_strips_default_params() -> None:
     assert params["strict_required_status_checks_policy"] is True
 
 
+def test_normalize_rules_strips_dismissal_restriction() -> None:
+    # GitHub's rulesets API injects ``dismissal_restriction`` as a server-side
+    # default on the ``pull_request`` rule; the desired state never sets it, so
+    # it must be stripped to avoid phantom drift (issue #2179).
+    rules: list[object] = [
+        {
+            "type": "pull_request",
+            "parameters": {
+                "required_approving_review_count": 0,
+                "dismissal_restriction": {"enabled": False, "allowed_actors": []},
+                "allowed_merge_methods": ["merge", "squash", "rebase"],
+            },
+        },
+    ]
+    result = _normalize_rules(rules)
+    assert len(result) == 1
+    params = cast("dict[str, object]", result[0]["parameters"])
+    assert "dismissal_restriction" not in params
+    assert params["required_approving_review_count"] == 0
+    assert params["allowed_merge_methods"] == ["merge", "squash", "rebase"]
+
+
 def test_normalize_rules_skips_non_dict_entries() -> None:
     rules: list[object] = [
         "not-a-dict",
