@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_issue_create import main, parse_args
 from vergil_tooling.lib import epics, github
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 _MOD = "vergil_tooling.bin.vrg_issue_create"
 
@@ -38,6 +42,96 @@ def test_main_creates_issue_and_links_under_epic() -> None:
     assert mock_create.call_args.kwargs["title"] == "T"
     assert mock_create.call_args.kwargs["labels"] == ["bug"]
     mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
+
+
+def test_kind_validation_applies_label_and_scaffold() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--kind",
+                "validation",
+                "--title",
+                "Validate the thing",
+                "--blocked-by",
+                "org/repo#5",
+            ]
+        )
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert "validation" in kwargs["labels"]
+    body = kwargs["body"]
+    assert "Blocked-by: org/repo#5" in body  # machine-parseable reflink present
+    assert "## Preconditions" in body
+    assert "## Results" in body
+    assert kwargs["body_file"] is None
+
+
+def test_kind_validation_without_blockers_has_no_dependency_reflink() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--kind", "validation", "--title", "V"])
+    assert rc == 0
+    body = mock_create.call_args.kwargs["body"]
+    assert "Blocked-by:" not in body
+    assert "## Preconditions" in body
+
+
+def test_kind_validation_rejects_body_file(tmp_path: Path) -> None:
+    body_file = tmp_path / "b.md"
+    body_file.write_text("x")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--kind",
+                "validation",
+                "--title",
+                "V",
+                "--body-file",
+                str(body_file),
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
+def test_kind_validation_rejects_invalid_blocked_by() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(
+            ["--epic", "adhoc", "--kind", "validation", "--title", "V", "--blocked-by", "not-a-ref"]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
+def test_kind_defaults_to_task_without_validation_label() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--label", "bug"])
+    assert rc == 0
+    assert mock_create.call_args.kwargs["labels"] == ["bug"]  # no validation label added
 
 
 def test_main_adhoc_sentinel_skips_cross_org_guard() -> None:
