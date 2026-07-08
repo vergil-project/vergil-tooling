@@ -270,6 +270,14 @@ def test_is_operational_task_false_for_unparseable_ref() -> None:
     mock.assert_not_called()
 
 
+def test_is_operational_true_for_deployment() -> None:
+    # The deployment label joins the operational set (epic #124).
+    labels = {"labels": [{"name": "deployment"}]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=labels):
+        assert epics.is_operational(TASK) is True
+        assert epics.operational_kind(TASK) == "deployment"
+
+
 def test_render_blocked_by_emits_one_line_per_dep() -> None:
     out = epics.render_blocked_by([IssueRef("o", "r", 5), IssueRef("o", "r", 8)])
     assert "Blocked-by: o/r#5" in out
