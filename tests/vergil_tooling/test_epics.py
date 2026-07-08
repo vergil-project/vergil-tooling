@@ -259,6 +259,53 @@ def test_is_validation_task_false_for_unparseable_ref() -> None:
     mock.assert_not_called()
 
 
+def test_render_blocked_by_emits_one_line_per_dep() -> None:
+    out = epics.render_blocked_by([IssueRef("o", "r", 5), IssueRef("o", "r", 8)])
+    assert "Blocked-by: o/r#5" in out
+    assert "Blocked-by: o/r#8" in out
+
+
+def test_render_blocked_by_empty_is_empty_string() -> None:
+    assert epics.render_blocked_by([]) == ""
+
+
+def test_blockers_of_parses_reflink_body() -> None:
+    body = "Do the thing.\nBlocked-by: o/r#5\nBlocked-by: o/r#8\n"
+    with patch("vergil_tooling.lib.github.read_output", return_value=body):
+        refs = epics.blockers_of(IssueRef("o", "r", 42))
+    assert refs == [IssueRef("o", "r", 5), IssueRef("o", "r", 8)]
+
+
+def test_blockers_of_empty_when_no_reflinks() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="no dependencies here"):
+        assert epics.blockers_of(IssueRef("o", "r", 42)) == []
+
+
+def test_all_blockers_closed_true_when_all_closed() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[IssueRef("o", "r", 5)]),
+        patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"),
+    ):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+
+
+def test_all_blockers_closed_false_when_any_open() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.epics.blockers_of",
+            return_value=[IssueRef("o", "r", 5), IssueRef("o", "r", 8)],
+        ),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]),
+    ):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is False
+
+
+def test_all_blockers_closed_true_when_no_blockers() -> None:
+    # No blockers -> nothing holds it -> runnable (vacuously all-closed).
+    with patch("vergil_tooling.lib.epics.blockers_of", return_value=[]):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+
+
 def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
