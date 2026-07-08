@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.56/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.53/">
+        <link rel="next" href="../v2.1.119/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.54 - VERGIL Tooling</title>
+        <title>2.1.120 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2054-2026-05-25" class="md-skip">
+        <a href="#release-21120-2026-07-08" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.54
+              2.1.120
             
           </span>
         </div>
@@ -1106,10 +1106,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.120/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.120
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1125,6 +1152,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5138,37 +5196,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.54
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.54/" class="md-nav__link">
         
   
   
@@ -5184,48 +5215,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10849,21 +10838,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -10887,44 +10865,16 @@
 
 
 
-<h1 id="release-2054-2026-05-25">Release 2.0.54 (2026-05-25)<a class="headerlink" href="#release-2054-2026-05-25" title="Permanent link">&para;</a></h1>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<h1 id="release-21120-2026-07-08">Release 2.1.120 (2026-07-08)<a class="headerlink" href="#release-21120-2026-07-08" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>stateless VM lifecycle design spec</strong>
-Supersedes distribution and dynamic tooling management sections of #894. VMs are dataless and stateless — all persistent data lives on the host via selective mounts (projects/, skills/) and file copies (CLAUDE.md, settings.json). vergil-tooling is the sole in-place-updatable component; everything else updates via VM rebuild on a 3-day staleness threshold. Ref #907</p>
-</li>
-<li>
-<p><strong>stateless VM lifecycle implementation plan</strong>
-Seven-task TDD implementation plan for issue #907: vm_age_days, copy_claude_config, try_update_tooling, staleness enforcement in start and session, rebuild command, and test updates.</p>
-</li>
+<li><strong>bound the cloud transport so a wedged SSH ControlMaster can't hang forever (#2202) (#2204)</strong>
+A guest command over a wedged connection — most visibly copy_claude_config's mkdir -p ~/.claude before every vrg-vm session, multiplexed over a stale SSH ControlMaster whose peer went away — blocked forever with no output, indistinguishable from a dead VM (root-caused live: a healthy GCP box, a wedged 08:46 interactive master, the next session hung on it).</li>
 </ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<p>Two independent guards in vm_transport.py: (1) ConnectTimeout + ServerAlive<em> on both off-platform _base()s, so a dead </em>network* connection drops without capping a healthy long command's runtime; (2) a generous wall-clock timeout on _run_checked's subprocess.run (VERGIL_VM_CMD_TIMEOUT, default 600s, 0 disables) as the hard backstop for the mux-channel-open wedge, which blocks on the local control socket before keepalives apply. A timeout raises TransportTimeoutError (not retried — it already spent its budget) with an actionable message: the VERGIL_VM_DISABLE_SSH_MUX=1 escape hatch and how to reap the master. VERGIL_VM_DEBUG=1 adds per-command tracing.</p>
 <ul>
-<li>
-<p><strong>vm_age_days reads VM creation time from Lima metadata</strong>
-Returns fractional days since VM creation using the Lima instance directory birth time. Falls back to mtime on platforms without st_birthtime.</p>
-</li>
-<li>
-<p><strong>copy_claude_config copies CLAUDE.md and settings.json into VM</strong>
-One-way host-to-VM copy for files that cannot be mounted (Lima mounts directories only).</p>
-</li>
-<li>
-<p><strong>try_update_tooling wraps update with graceful fallback</strong>
-Returns False and warns on failure instead of aborting. Used by start and session to avoid blocking on network errors.</p>
-</li>
-<li>
-<p><strong>staleness enforcement and auto-update in vrg-vm start</strong>
-Refuses to start VMs older than 3 days unless --allow-stale-vm is passed. Auto-updates vergil-tooling and copies Claude config on start.</p>
-</li>
-<li>
-<p><strong>staleness enforcement in vrg-vm session</strong>
-Session refuses to connect to VMs older than 3 days unless --allow-stale-vm is passed. Also copies Claude config and uses graceful tooling update.</p>
-</li>
-<li>
-<p><strong>vrg-vm rebuild command for stateless VM lifecycle</strong>
-Destroys and recreates the VM in one step. Safe because VMs are stateless — all persistent data lives on host mounts. Also fixes mypy st_birthtime error and adds missing coverage tests.</p>
-</li>
+<li><strong>keep label descriptions within GitHub's 100-char limit (#2205)</strong>
+The validation label's description was 114 chars; GitHub caps label descriptions at 100, so vrg-ensure-label failed with HTTP 422 and the label could not be provisioned to any repo. Shorten it to 90 chars and add a registry test asserting every label description is &lt;=100 chars so this cannot recur. Found by the post-merge-validation dogfood. Ref #2203.</li>
 </ul>
 
 
