@@ -43,6 +43,94 @@ _CONNECT_FAILURE_RETURNCODE = 255
 _CONNECT_RETRIES = 3  # extra attempts after the first (4 total)
 _CONNECT_BACKOFF_BASE_SECS = 2.0  # 2s, 4s, 8s — bounded, ~14s worst case
 
+# --- Hang prevention (#2202) --------------------------------------------------
+# Without any bound, a guest command over a wedged connection — most visibly a new
+# multiplexed channel opened over a stale SSH ControlMaster whose peer went away —
+# blocks forever with no output, indistinguishable from a dead VM. Two independent
+# guards prevent that: SSH connection-liveness options (below), and a wall-clock
+# backstop on the subprocess.
+
+# ssh keepalive / connect bounding, shared by both off-platform transports.
+#   ConnectTimeout      — cap the initial TCP/tunnel connect.
+#   ServerAliveInterval — after auth, probe the peer this often when idle.
+#   ServerAliveCountMax — drop the connection (ssh exits 255 -> the transient-retry
+#                         path) after this many unanswered probes. This kills a
+#                         mid-command *network* wedge WITHOUT capping a healthy
+#                         long-running command's runtime.
+# ~60s to declare a live-then-dead connection dead — generous enough not to trip on
+# a heavily loaded box mid-rebuild.
+_SSH_CONNECT_TIMEOUT = 30
+_SSH_ALIVE_INTERVAL = 15
+_SSH_ALIVE_COUNT_MAX = 4
+
+
+def _ssh_keepalive_options() -> list[tuple[str, str]]:
+    """(key, value) ssh ``-o`` options that bound a wedged/unreachable connection."""
+    return [
+        ("ConnectTimeout", str(_SSH_CONNECT_TIMEOUT)),
+        ("ServerAliveInterval", str(_SSH_ALIVE_INTERVAL)),
+        ("ServerAliveCountMax", str(_SSH_ALIVE_COUNT_MAX)),
+    ]
+
+
+# Wall-clock backstop on a single guest command. The keepalive options above catch a
+# dead *network* connection, but opening a new multiplexed channel over a wedged
+# ControlMaster blocks on the local control socket before keepalives apply, so it
+# needs a hard cap. Generous by design: guest provisioning steps legitimately run
+# for minutes, so this must never trip a healthy command — it only turns an
+# otherwise-infinite hang into a loud, actionable failure. Override via env; 0 or a
+# negative value disables it (an explicit opt-out).
+_GUEST_CMD_TIMEOUT_ENV = "VERGIL_VM_CMD_TIMEOUT"
+_GUEST_CMD_TIMEOUT_DEFAULT_SECS = 600.0
+
+
+def _guest_cmd_timeout() -> float | None:
+    """Per-command wall-clock bound in seconds, or ``None`` when disabled."""
+    raw = os.environ.get(_GUEST_CMD_TIMEOUT_ENV, "").strip()
+    if not raw:
+        return _GUEST_CMD_TIMEOUT_DEFAULT_SECS
+    try:
+        secs = float(raw)
+    except ValueError:
+        return _GUEST_CMD_TIMEOUT_DEFAULT_SECS
+    return secs if secs > 0 else None
+
+
+# Opt-in diagnostics: the operator's triage aid when a guest command misbehaves.
+_DEBUG_ENV = "VERGIL_VM_DEBUG"
+_DEBUG_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _debug_enabled() -> bool:
+    return os.environ.get(_DEBUG_ENV, "").strip().lower() in _DEBUG_TRUTHY
+
+
+def _debug(msg: str) -> None:
+    # Callers guard with _debug_enabled() so the (potentially expensive) message is
+    # only built when tracing is on.
+    print(f"[vm-transport] {msg}", file=sys.stderr)
+
+
+class TransportTimeoutError(RuntimeError):
+    """A guest command exceeded its wall-clock bound (#2202).
+
+    Raised instead of hanging forever so the operator gets an actionable failure
+    (which command, on which host, and how to recover) rather than a dead terminal.
+    """
+
+    def __init__(self, cmd: list[str], timeout: float) -> None:
+        self.cmd = cmd
+        self.timeout = timeout
+        super().__init__(
+            f"guest command timed out after {timeout:.0f}s — the connection may be "
+            f"wedged (e.g. a stale SSH ControlMaster whose peer went away):\n"
+            f"  {shlex.join(cmd)}\n"
+            f"Recover: retry with VERGIL_VM_DISABLE_SSH_MUX=1 to bypass connection "
+            f"multiplexing, or reap the master with `ssh -O exit`. Tune the bound "
+            f"with {_GUEST_CMD_TIMEOUT_ENV} (0 disables it); set {_DEBUG_ENV}=1 for "
+            f"per-command tracing."
+        )
+
 
 def _run_checked(
     cmd: list[str],
@@ -62,16 +150,27 @@ def _run_checked(
     failure back, so they are never retried here — an internal retry would blow
     out their cadence during the boot race. They also suppress the stderr echo,
     for which raw IAP 4003 noise would be misleading.
+
+    A wall-clock timeout (:func:`_guest_cmd_timeout`) is applied so a wedged
+    connection fails loudly instead of hanging forever (#2202); it raises
+    :class:`TransportTimeoutError` and is *not* retried — a timeout already burned its
+    full budget, so another attempt would only burn more.
     """
+    if _debug_enabled():
+        _debug(f"run (timeout={_guest_cmd_timeout()}): {shlex.join(cmd)}")
 
     def _call() -> subprocess.CompletedProcess[str]:
-        return subprocess.run(  # noqa: S603
-            cmd,
-            check=True,
-            capture_output=True,
-            text=True,
-            input=input_data,
-        )
+        try:
+            return subprocess.run(  # noqa: S603
+                cmd,
+                check=True,
+                capture_output=True,
+                text=True,
+                input=input_data,
+                timeout=_guest_cmd_timeout(),
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise TransportTimeoutError(cmd, exc.timeout) from exc
 
     return _with_connect_retry(_call, quiet=quiet)
 
@@ -329,6 +428,8 @@ class IapTransport:
         # ``--ssh-flag`` value on spaces, so ``-o ControlPath=…`` would arrive as
         # two mangled tokens — the glued form passes through intact.
         mux = [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, _cwd())]
+        # Connection-liveness bounding (#2202) rides the same glued --ssh-flag form.
+        keepalive = [f"--ssh-flag=-o{key}={value}" for key, value in _ssh_keepalive_options()]
         return [
             "gcloud",
             "compute",
@@ -337,6 +438,7 @@ class IapTransport:
             "--tunnel-through-iap",
             f"--zone={self.zone}",
             f"--project={self.project}",
+            *keepalive,
             *mux,
         ]
 
@@ -390,9 +492,10 @@ class SshTransport:
         self.key_path = key_path
 
     def _base(self, *, pty: bool = False) -> list[str]:
-        mux: list[str] = []
-        for key, value in ssh_mux_options(self.host, _cwd()):
-            mux += ["-o", f"{key}={value}"]
+        # Connection-liveness bounding (#2202) + multiplexing, both as split -o pairs.
+        opts: list[str] = []
+        for key, value in [*_ssh_keepalive_options(), *ssh_mux_options(self.host, _cwd())]:
+            opts += ["-o", f"{key}={value}"]
         return [
             "ssh",
             *(["-t"] if pty else []),
@@ -404,7 +507,7 @@ class SshTransport:
             "StrictHostKeyChecking=accept-new",
             "-o",
             "UserKnownHostsFile=~/.config/vergil/known_hosts",
-            *mux,
+            *opts,
             f"{self.ssh_user}@{self.host}",
         ]
 
