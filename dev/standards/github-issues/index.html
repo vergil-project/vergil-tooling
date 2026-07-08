@@ -9078,6 +9078,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#validation-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation tasks
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11072,6 +11083,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#validation-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation tasks
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11101,6 +11123,9 @@ tracked, reviewable, and auditable.</p>
 <li>Primary issue: The single issue a pull request is intended to close.</li>
 <li>Sub-issue: A scoped unit of work that contributes to a parent issue but does
   not complete it.</li>
+<li>Validation task: A task whose acceptance is proven by running a check and
+  recording the result as a comment — not by merging a pull request. See
+  <a href="#validation-tasks">Validation tasks</a>.</li>
 </ul>
 <h2 id="core-rules">Core rules<a class="headerlink" href="#core-rules" title="Permanent link">&para;</a></h2>
 <ul>
@@ -11190,6 +11215,40 @@ capture the required structure.</p>
 <li>A closed issue must reflect completed work. If work is deferred, keep the
   issue open or create a follow-up issue and link it explicitly.</li>
 </ul>
+<h2 id="validation-tasks">Validation tasks<a class="headerlink" href="#validation-tasks" title="Permanent link">&para;</a></h2>
+<p>Some work's acceptance can only be confirmed <strong>after merge</strong> — a cold rebuild, a
+live-environment check, a deploy smoke test. Auto-close would close such a task
+the moment its code lands, so an epic could report "done" before the check ran. A
+<strong>validation task</strong> re-establishes that gate.</p>
+<ul>
+<li><strong>Acceptance is a recorded result, not a merge.</strong> A validation task is proven
+  by running its checklist and posting <code>Outcome: PASS</code> (or <code>Outcome: FAIL</code>) as a
+  comment.</li>
+<li><strong>It is not PR-workable.</strong> It has no code PR and never auto-closes; the PR
+  tooling (<code>vrg-submit-pr</code>, <code>vrg-pr-workflow report-ready</code>) refuses it. It is run
+  with the <code>issue-validate</code> skill, not implemented.</li>
+<li><strong>It closes only on PASS.</strong> On FAIL it stays open — like a pull request that
+  cannot merge — follow-up fix issues are filed, and the parent epic stays open
+  too.</li>
+<li><strong>It gates epic closure.</strong> As an open child it holds the epic open until it
+  passes, so an epic's rollup is honest about outstanding validation.</li>
+<li><strong>It records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads
+  them to report each validation as <em>runnable</em> (dependencies closed) or
+  <em>blocked</em>.</li>
+</ul>
+<p>Create one with the sanctioned path — never hand-roll the body:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span>--kind<span class="w"> </span>validation<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;Validate: &lt;what&gt;&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+</code></pre></div>
+<p>This stamps the <code>validation</code> label and an executable scaffold: an author-defined
+<strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
+mechanism is prescribed; if a precondition is unmet, record <code>blocked</code> and stop,
+never fabricating), the <strong>commands</strong>, the <strong>acceptance criteria</strong>, and a
+<strong>PASS/FAIL results template</strong>.</p>
+<p>Add a validation task when acceptance needs a cold rebuild, a live check, or a
+deploy smoke test — i.e. the pipeline's own tests cannot prove it. Provisioning
+and infrastructure work carry a cold-rebuild validation by default. Do not add
+one for docs, or code fully covered by pipeline tests, where merge means done.</p>
 
 
 
