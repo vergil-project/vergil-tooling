@@ -395,6 +395,23 @@ def test_closed_validation_pass_marker_excludes_unresolved_template() -> None:
         assert epic_audit.closed_operational_without_success("org") == ["org/repo#1"]
 
 
+def test_success_marker_accepts_success_and_legacy_pass() -> None:
+    search = [
+        {"number": 1, "repository": {"nameWithOwner": "org/repo"}},  # SUCCESS -> ok
+        {"number": 2, "repository": {"nameWithOwner": "org/repo"}},  # legacy PASS -> ok
+        {"number": 3, "repository": {"nameWithOwner": "org/repo"}},  # neither -> flagged
+    ]
+    bodies = {"1": "- Outcome: SUCCESS", "2": "- Outcome: PASS", "3": "closed early"}
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return search
+        return {"comments": [{"body": bodies[args[2]]}]}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        assert epic_audit.closed_operational_without_success("org") == ["org/repo#3"]
+
+
 def test_render_includes_operational_pending_section() -> None:
     status = epic_audit.OperationalStatus(
         epics.IssueRef("org", ".github", 115),

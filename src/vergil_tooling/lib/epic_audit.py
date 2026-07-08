@@ -146,12 +146,13 @@ def operational_pending(org: str) -> list[OperationalStatus]:
     return pending
 
 
-# An operational task records its result as a comment; the current success marker
-# is ``Outcome: PASS`` (unified to SUCCESS in a later task). Kept narrow so the
-# scaffold's unresolved ``Outcome: PASS / FAIL`` template line does not read as a
+# An operational task records its result as a comment; the unified success marker
+# is ``Outcome: SUCCESS`` (``Outcome: PASS`` is recognized as a legacy alias, so
+# validations closed before the unification are not falsely flagged). Kept narrow
+# so an unresolved ``Outcome: SUCCESS / FAILURE`` template line does not read as a
 # success.
 _OPERATIONAL_SUCCESS_RE = re.compile(
-    r"^\s*[-*]?\s*Outcome:\s*PASS\s*$", re.MULTILINE | re.IGNORECASE
+    r"^\s*[-*]?\s*Outcome:\s*(?:SUCCESS|PASS)\s*$", re.MULTILINE | re.IGNORECASE
 )
 
 
