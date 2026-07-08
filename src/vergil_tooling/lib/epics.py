@@ -323,6 +323,28 @@ def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
     return is_epic(issue)
 
 
+def is_validation(ref: IssueRef) -> bool:
+    """True if *ref* carries the ``validation`` label (a validation task)."""
+    return "validation" in _labels(ref)
+
+
+def is_validation_task(ref: str, *, default_repo: str) -> bool:
+    """True if *ref* is a validation task, so PR tooling must refuse it.
+
+    Single source of truth for "is this a validation task?", shared by
+    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. A validation task is
+    proven by running its checklist and recording PASS/FAIL as a comment — it has
+    no code PR — so the PR path is refused before any work begins. Self-scoping:
+    an unparseable ref (e.g. a legacy issue with no resolvable repo) is never a
+    validation task and returns False.
+    """
+    try:
+        issue = parse_issue_ref(ref, default_repo=default_repo)
+    except ValueError:
+        return False
+    return is_validation(issue)
+
+
 def rollup(task: IssueRef) -> None:
     """Close *task*'s parent epic if the epic is finite and all children closed.
 
