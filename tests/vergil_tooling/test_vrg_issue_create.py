@@ -73,6 +73,36 @@ def test_kind_validation_applies_label_and_scaffold() -> None:
     assert kwargs["body_file"] is None
 
 
+def test_kind_deployment_applies_label_and_scaffold() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--kind",
+                "deployment",
+                "--title",
+                "Deploy the thing",
+                "--blocked-by",
+                "org/repo#5",
+            ]
+        )
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert "deployment" in kwargs["labels"]
+    body = kwargs["body"]
+    assert "Blocked-by: org/repo#5" in body
+    assert "## Deploy steps" in body  # deployment-specific scaffold section
+    assert "release" in body.lower()  # release-as-precondition boundary
+    assert "## Results" in body
+    assert kwargs["body_file"] is None
+
+
 def test_kind_validation_without_blockers_has_no_dependency_reflink() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
