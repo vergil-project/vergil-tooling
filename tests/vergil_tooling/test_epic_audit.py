@@ -371,7 +371,8 @@ def test_closed_operational_without_success_flags_missing_pass() -> None:
 
     def fake_read_json(*args: str) -> object:
         if args[0] == "search":
-            return search
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
         number = args[2]
         if number == "120":
             return {"comments": [{"body": "ran it\n- Outcome: PASS"}]}
@@ -388,7 +389,8 @@ def test_closed_validation_pass_marker_excludes_unresolved_template() -> None:
 
     def fake_read_json(*args: str) -> object:
         if args[0] == "search":
-            return search
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
         return {"comments": [{"body": "- Outcome: PASS / FAIL"}]}
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
@@ -405,7 +407,8 @@ def test_success_marker_accepts_success_and_legacy_pass() -> None:
 
     def fake_read_json(*args: str) -> object:
         if args[0] == "search":
-            return search
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
         return {"comments": [{"body": bodies[args[2]]}]}
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):

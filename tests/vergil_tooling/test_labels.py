@@ -83,6 +83,18 @@ def test_registry_includes_validation_label() -> None:
     assert entry["description"], "validation label needs a description"
 
 
+def test_registry_includes_deployment_label() -> None:
+    # Deployment task type (epic vergil-project/.github#124): an operational task
+    # that installs/syncs merged changes so they are usable; never PR-workable,
+    # never auto-closed, closed only on a recorded SUCCESS comment.
+    entry = next(
+        (label for label in load_labels()["labels"] if label["name"] == "deployment"),
+        None,
+    )
+    assert entry is not None, "deployment label missing from the registry"
+    assert entry["description"], "deployment label needs a description"
+
+
 def test_label_descriptions_within_github_limit() -> None:
     # GitHub caps a label's description at 100 chars; a longer one fails
     # provisioning with HTTP 422 so vrg-ensure-label --sync cannot deploy it.
