@@ -71,6 +71,18 @@ def test_registry_includes_convention_labels() -> None:
         assert required in names, f"convention label missing: {required}"
 
 
+def test_registry_includes_validation_label() -> None:
+    # Post-merge validation task type (epic vergil-project/.github#115): a
+    # validation task is never PR-workable and never auto-closed — it closes only
+    # when its checklist runs and a PASS result is recorded as a comment.
+    entry = next(
+        (label for label in load_labels()["labels"] if label["name"] == "validation"),
+        None,
+    )
+    assert entry is not None, "validation label missing from the registry"
+    assert entry["description"], "validation label needs a description"
+
+
 def test_label_change_is_additive_only() -> None:
     # Convention labels are added additively; retiring default cruft is deferred
     # to the per-repo migration pass (epic #40, Task 9). This task must not
