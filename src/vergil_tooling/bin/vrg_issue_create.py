@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from importlib import resources
 
 from vergil_tooling.lib import epics, github
 
@@ -30,11 +31,43 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--label", action="append", default=[], help="Label (repeatable)")
     parser.add_argument("--assignee", action="append", default=[], help="Assignee (repeatable)")
     parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
+    parser.add_argument(
+        "--kind",
+        choices=("task", "validation"),
+        default="task",
+        help="Issue kind; 'validation' stamps the validation label and executable scaffold",
+    )
+    parser.add_argument(
+        "--blocked-by",
+        action="append",
+        default=[],
+        metavar="REF",
+        help="Dependency ref this validation task is blocked by (repeatable; validation only)",
+    )
     return parser.parse_args(argv)
 
 
 def _issue_number_from_url(url: str) -> int:
     return int(url.rstrip("/").rsplit("/", 1)[-1])
+
+
+def _render_validation_body(*, intro: str, deps: list[epics.IssueRef]) -> str:
+    """Build a validation-task body from the scaffold template.
+
+    The scaffold carries the generic precondition self-check, commands,
+    acceptance criteria, and PASS/FAIL results template. *deps* are rendered as
+    machine-parseable ``Blocked-by:`` reflinks under a Dependencies heading (or
+    omitted entirely when there are none).
+    """
+    template = (
+        resources.files("vergil_tooling.data")
+        .joinpath("validation_task_body.md")
+        .read_text(encoding="utf-8")
+    )
+    blocked_by = ""
+    if deps:
+        blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
+    return template.format(intro=intro or "Post-merge validation task.", blocked_by=blocked_by)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -59,6 +92,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
+    # Build the issue body/labels. A validation task stamps the executable
+    # scaffold + the ``validation`` label and renders its Blocked-by reflinks;
+    # a plain task passes the caller's body/labels through unchanged.
+    labels = list(args.label)
+    body = args.body
+    body_file = args.body_file
+    if args.kind == "validation":
+        if args.body_file:
+            print(
+                "vrg-issue-create: --body-file is not compatible with --kind validation "
+                "(the validation scaffold defines the body)",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]
+        except ValueError as exc:
+            print(f"vrg-issue-create: invalid --blocked-by ref: {exc}", file=sys.stderr)
+            return 1
+        labels.append("validation")
+        body = _render_validation_body(intro=args.body, deps=deps)
+        body_file = None
+
     # Scope every App-token call below to the issue's owner, not the cwd org.
     try:
         with github.target_org(owner):
@@ -71,9 +127,9 @@ def main(argv: list[str] | None = None) -> int:
             url = github.create_issue(
                 repo=repo,
                 title=args.title,
-                body=args.body,
-                body_file=args.body_file,
-                labels=args.label,
+                body=body,
+                body_file=body_file,
+                labels=labels,
                 assignees=args.assignee,
             )
             task = epics.IssueRef(owner=owner, repo=name, number=_issue_number_from_url(url))

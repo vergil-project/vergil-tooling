@@ -230,6 +230,82 @@ def test_is_epic_linkage_false_for_unparseable_ref() -> None:
     mock.assert_not_called()
 
 
+def test_is_validation_true_when_labeled() -> None:
+    labels = {"labels": [{"name": "validation"}, {"name": "task"}]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=labels):
+        assert epics.is_validation(TASK) is True
+
+
+def test_is_validation_false_without_label() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value={"labels": [{"name": "task"}]}):
+        assert epics.is_validation(TASK) is False
+
+
+def test_is_validation_task_true_for_validation() -> None:
+    with patch("vergil_tooling.lib.epics.is_validation", return_value=True) as mock:
+        assert epics.is_validation_task("org/repo#7", default_repo="org/repo") is True
+    mock.assert_called_once_with(IssueRef("org", "repo", 7))
+
+
+def test_is_validation_task_false_for_plain_task() -> None:
+    with patch("vergil_tooling.lib.epics.is_validation", return_value=False):
+        assert epics.is_validation_task("#42", default_repo="org/repo") is False
+
+
+def test_is_validation_task_false_for_unparseable_ref() -> None:
+    # No resolvable default repo -> parse fails -> never a validation task.
+    with patch("vergil_tooling.lib.epics.is_validation") as mock:
+        assert epics.is_validation_task("#42", default_repo="") is False
+    mock.assert_not_called()
+
+
+def test_render_blocked_by_emits_one_line_per_dep() -> None:
+    out = epics.render_blocked_by([IssueRef("o", "r", 5), IssueRef("o", "r", 8)])
+    assert "Blocked-by: o/r#5" in out
+    assert "Blocked-by: o/r#8" in out
+
+
+def test_render_blocked_by_empty_is_empty_string() -> None:
+    assert epics.render_blocked_by([]) == ""
+
+
+def test_blockers_of_parses_reflink_body() -> None:
+    body = "Do the thing.\nBlocked-by: o/r#5\nBlocked-by: o/r#8\n"
+    with patch("vergil_tooling.lib.github.read_output", return_value=body):
+        refs = epics.blockers_of(IssueRef("o", "r", 42))
+    assert refs == [IssueRef("o", "r", 5), IssueRef("o", "r", 8)]
+
+
+def test_blockers_of_empty_when_no_reflinks() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="no dependencies here"):
+        assert epics.blockers_of(IssueRef("o", "r", 42)) == []
+
+
+def test_all_blockers_closed_true_when_all_closed() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.blockers_of", return_value=[IssueRef("o", "r", 5)]),
+        patch("vergil_tooling.lib.epics._issue_state", return_value="CLOSED"),
+    ):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+
+
+def test_all_blockers_closed_false_when_any_open() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.epics.blockers_of",
+            return_value=[IssueRef("o", "r", 5), IssueRef("o", "r", 8)],
+        ),
+        patch("vergil_tooling.lib.epics._issue_state", side_effect=["CLOSED", "OPEN"]),
+    ):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is False
+
+
+def test_all_blockers_closed_true_when_no_blockers() -> None:
+    # No blockers -> nothing holds it -> runnable (vacuously all-closed).
+    with patch("vergil_tooling.lib.epics.blockers_of", return_value=[]):
+        assert epics.all_blockers_closed(IssueRef("o", "r", 42)) is True
+
+
 def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
@@ -242,6 +318,21 @@ def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     mock_run.assert_called_once()
     assert mock_run.call_args.args[:2] == ("issue", "close")
     assert "40" in mock_run.call_args.args
+
+
+def test_rollup_holds_epic_open_while_validation_child_open() -> None:
+    # A validation task is a normal open child; the rollup must not close the epic
+    # while it is open. This locks in the "validation gates epic closure" guarantee
+    # that the whole post-merge-validation framework depends on.
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=False),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()  # epic stays open — a validation child is still open
 
 
 def test_rollup_skips_adhoc_epic() -> None:

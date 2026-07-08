@@ -15,6 +15,8 @@ _MOD = "vergil_tooling.bin.vrg_epic_audit"
 def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.validation_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_validation_without_pass", return_value=[]),
         patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
@@ -32,6 +34,8 @@ def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
 def test_main_reports_invariant_violations(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.validation_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_validation_without_pass", return_value=[]),
         patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(
@@ -62,6 +66,8 @@ def test_window_days_controls_since() -> None:
     task_drift = MagicMock(return_value=[])
     with (
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.validation_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_validation_without_pass", return_value=[]),
         patch(f"{_MOD}.epic_audit.task_drift", task_drift),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
@@ -106,6 +112,8 @@ def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -
         patch(f"{_MOD}.identity_mode.is_human", return_value=False),
         patch.dict("os.environ", {"VRG_EPIC_SWEEP": "1"}),
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.validation_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_validation_without_pass", return_value=[]),
         patch(f"{_MOD}.epic_audit.task_drift", return_value=["T"]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=["E"]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),
@@ -121,6 +129,8 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
     with (
         patch(f"{_MOD}.identity_mode.is_human", return_value=True),
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.validation_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_validation_without_pass", return_value=[]),
         patch(f"{_MOD}.epic_audit.task_drift", return_value=["T"]),
         patch(f"{_MOD}.epic_audit.epic_drift", return_value=["E"]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),

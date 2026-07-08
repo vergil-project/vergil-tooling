@@ -47,6 +47,11 @@ _PARENT_RE = re.compile(
     re.MULTILINE,
 )
 
+_BLOCKED_BY_RE = re.compile(
+    r"^\s*Blocked-by:\s*([A-Za-z0-9._-]+)/([A-Za-z0-9._-]+)#(\d+)\s*$",
+    re.MULTILINE,
+)
+
 _REF_RE = re.compile(r"^(?:([A-Za-z0-9._-]+/[A-Za-z0-9._-]+))?#([0-9]+)$")
 
 
@@ -176,6 +181,41 @@ def child_states(epic: IssueRef) -> list[ChildState]:
     """All child tasks of *epic*: native sub-issues preferred, reflink fallback."""
     native = _native_child_states(epic)
     return native if native else _reflink_child_states(epic)
+
+
+def render_blocked_by(deps: list[IssueRef]) -> str:
+    """Render the ``Blocked-by:`` reflink lines for a validation task body.
+
+    One ``Blocked-by: owner/repo#N`` line per dependency — the portable mirror of
+    the ``Parent:`` sub-issue reflink. Empty *deps* yields the empty string.
+    """
+    return "".join(f"Blocked-by: {dep.slug}\n" for dep in deps)
+
+
+def blockers_of(task: IssueRef) -> list[IssueRef]:
+    """Deps *task* is blocked by, parsed from its ``Blocked-by:`` body reflinks.
+
+    Storage is the portable body reflink — the mirror of the ``Parent:``
+    sub-issue fallback — chosen by the storage spike (#2184) because GitHub's
+    native issue dependencies are REST-only and out of the sanctioned tooling's
+    reach. If native dependencies become reachable later, this is the one place
+    that would prefer them over the reflink.
+    """
+    body = github.read_output("api", _issue_endpoint(task), "--jq", ".body") or ""
+    return [
+        IssueRef(owner=match.group(1), repo=match.group(2), number=int(match.group(3)))
+        for match in _BLOCKED_BY_RE.finditer(body)
+    ]
+
+
+def all_blockers_closed(task: IssueRef) -> bool:
+    """True iff every blocker of *task* is CLOSED.
+
+    No blockers means nothing holds *task*, so it is runnable — the empty case is
+    vacuously True. Used by the validation-aware rollup to classify an open
+    validation task as runnable (blockers closed) vs blocked.
+    """
+    return all(_issue_state(dep) == "CLOSED" for dep in blockers_of(task))
 
 
 def parent_of(task: IssueRef) -> IssueRef | None:
@@ -321,6 +361,28 @@ def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
     except ValueError:
         return False
     return is_epic(issue)
+
+
+def is_validation(ref: IssueRef) -> bool:
+    """True if *ref* carries the ``validation`` label (a validation task)."""
+    return "validation" in _labels(ref)
+
+
+def is_validation_task(ref: str, *, default_repo: str) -> bool:
+    """True if *ref* is a validation task, so PR tooling must refuse it.
+
+    Single source of truth for "is this a validation task?", shared by
+    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. A validation task is
+    proven by running its checklist and recording PASS/FAIL as a comment — it has
+    no code PR — so the PR path is refused before any work begins. Self-scoping:
+    an unparseable ref (e.g. a legacy issue with no resolvable repo) is never a
+    validation task and returns False.
+    """
+    try:
+        issue = parse_issue_ref(ref, default_repo=default_repo)
+    except ValueError:
+        return False
+    return is_validation(issue)
 
 
 def rollup(task: IssueRef) -> None:
