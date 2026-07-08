@@ -83,6 +83,15 @@ def test_registry_includes_validation_label() -> None:
     assert entry["description"], "validation label needs a description"
 
 
+def test_label_descriptions_within_github_limit() -> None:
+    # GitHub caps a label's description at 100 chars; a longer one fails
+    # provisioning with HTTP 422 so vrg-ensure-label --sync cannot deploy it.
+    # (Found by the post-merge-validation dogfood, epic vergil-project/.github#115.)
+    for label in load_labels()["labels"]:
+        length = len(label["description"])
+        assert length <= 100, f"{label['name']} description is {length} chars (max 100)"
+
+
 def test_label_change_is_additive_only() -> None:
     # Convention labels are added additively; retiring default cruft is deferred
     # to the per-repo migration pass (epic #40, Task 9). This task must not

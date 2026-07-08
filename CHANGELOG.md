@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.120] - 2026-07-08
+
+### Bug fixes
+
+- bound the cloud transport so a wedged SSH ControlMaster can't hang forever (#2202) (#2204)
+- keep label descriptions within GitHub's 100-char limit (#2205)
+
 ## [2.1.119] - 2026-07-08
 
 ### Documentation
