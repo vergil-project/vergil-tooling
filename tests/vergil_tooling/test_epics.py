@@ -320,6 +320,21 @@ def test_rollup_closes_finite_epic_when_all_children_closed() -> None:
     assert "40" in mock_run.call_args.args
 
 
+def test_rollup_holds_epic_open_while_validation_child_open() -> None:
+    # A validation task is a normal open child; the rollup must not close the epic
+    # while it is open. This locks in the "validation gates epic closure" guarantee
+    # that the whole post-merge-validation framework depends on.
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic"}),
+        patch("vergil_tooling.lib.epics.all_children_closed", return_value=False),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.rollup(TASK)
+    mock_run.assert_not_called()  # epic stays open — a validation child is still open
+
+
 def test_rollup_skips_adhoc_epic() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
