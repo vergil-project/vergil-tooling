@@ -98,26 +98,27 @@ def epic_drift() -> list[roadmap.EpicSummary]:
 
 
 @dataclass(frozen=True)
-class ValidationStatus:
-    """An epic's outstanding (open) validation children, split runnable vs blocked."""
+class OperationalStatus:
+    """An epic's outstanding (open) operational children, split runnable vs blocked."""
 
     epic: epics.IssueRef
-    runnable: tuple[epics.IssueRef, ...]  # open validation children, all blockers closed
-    blocked: tuple[epics.IssueRef, ...]  # open validation children, a blocker still open
+    runnable: tuple[epics.IssueRef, ...]  # open operational children, all blockers closed
+    blocked: tuple[epics.IssueRef, ...]  # open operational children, a blocker still open
 
     @property
     def pending(self) -> tuple[epics.IssueRef, ...]:
-        """All outstanding validation children (runnable + blocked)."""
+        """All outstanding operational children (runnable + blocked)."""
         return self.runnable + self.blocked
 
 
-def validation_status(epic: epics.IssueRef) -> ValidationStatus:
-    """Classify *epic*'s open validation children as runnable vs blocked.
+def operational_status(epic: epics.IssueRef) -> OperationalStatus:
+    """Classify *epic*'s open operational children as runnable vs blocked.
 
-    A validation child is runnable when every task it is ``Blocked-by`` is
-    closed; otherwise it is blocked. This runnable-vs-blocked split is the honest
-    "what still has to be validated" signal — and the seed of a future automator
-    that runs validations as their dependencies land.
+    An operational child (validation, deployment, …) is runnable when every task
+    it is ``Blocked-by`` is closed; otherwise it is blocked. This
+    runnable-vs-blocked split is the honest "what still has to run" signal — and
+    the seed of a future automator that runs operational tasks as their
+    dependencies land.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
@@ -126,65 +127,69 @@ def validation_status(epic: epics.IssueRef) -> ValidationStatus:
             continue
         target = runnable if epics.all_blockers_closed(child.ref) else blocked
         target.append(child.ref)
-    return ValidationStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
+    return OperationalStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
 
 
-def validation_pending(org: str) -> list[ValidationStatus]:
-    """Open finite epics with outstanding validation children.
+def operational_pending(org: str) -> list[OperationalStatus]:
+    """Open finite epics with outstanding operational children.
 
-    Reports the "code-complete, validation-pending" state that keeps an epic
+    Reports the "code-complete, operation-pending" state that keeps an epic
     honestly not-done: its code tasks may all be merged, but until its
-    validations run the epic is not finished. Only epics with at least one open
-    validation child appear.
+    operational tasks (validations, deployments, …) run the epic is not finished.
+    Only epics with at least one open operational child appear.
     """
-    pending: list[ValidationStatus] = []
+    pending: list[OperationalStatus] = []
     for summary in roadmap.gather(org):
-        status = validation_status(epics.IssueRef(org, ".github", summary.number))
+        status = operational_status(epics.IssueRef(org, ".github", summary.number))
         if status.pending:
             pending.append(status)
     return pending
 
 
-# A validation task records its result as a comment; a PASS is an ``Outcome: PASS``
-# line (bulleting optional). This is the contract the ``issue-validate`` skill
-# writes and this invariant reads — kept narrow so the scaffold's unresolved
-# "Outcome: PASS / FAIL" template line does not read as a pass.
-_VALIDATION_PASS_RE = re.compile(r"^\s*[-*]?\s*Outcome:\s*PASS\s*$", re.MULTILINE | re.IGNORECASE)
+# An operational task records its result as a comment; the current success marker
+# is ``Outcome: PASS`` (unified to SUCCESS in a later task). Kept narrow so the
+# scaffold's unresolved ``Outcome: PASS / FAIL`` template line does not read as a
+# success.
+_OPERATIONAL_SUCCESS_RE = re.compile(
+    r"^\s*[-*]?\s*Outcome:\s*PASS\s*$", re.MULTILINE | re.IGNORECASE
+)
 
 
-def closed_validation_without_pass(org: str) -> list[str]:
-    """Closed validation tasks with no recorded PASS result comment (invariant).
+def closed_operational_without_success(org: str) -> list[str]:
+    """Closed operational tasks with no recorded success comment (invariant).
 
-    A validation task must close only after its checklist runs and *passes*,
-    recorded as a comment. A closed ``validation``-labelled issue whose comments
-    carry no ``Outcome: PASS`` line is drift — most likely closed by hand — and
-    is flagged. Report-only: like the other invariants, this is never auto-acted.
+    An operational task must close only after it runs and *succeeds*, recorded as
+    a comment. A closed operational-labelled issue whose comments carry no success
+    ``Outcome:`` line is drift — most likely closed by hand — and is flagged.
+    Searches every operational label. Report-only: like the other invariants, this
+    is never auto-acted.
     """
-    raw: Any = github.read_json(
-        "search",
-        "issues",
-        "--owner",
-        org,
-        "--label",
-        "validation",
-        "--state",
-        "closed",
-        "--json",
-        "number,repository",
-    )
     violations: list[str] = []
-    for item in raw if isinstance(raw, list) else []:
-        name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
-        if "/" not in name_with_owner:
-            continue
-        number = int(item["number"])
-        detail: Any = github.read_json(
-            "issue", "view", str(number), "--repo", name_with_owner, "--json", "comments"
+    for label in sorted(epics.operational_labels()):
+        raw: Any = github.read_json(
+            "search",
+            "issues",
+            "--owner",
+            org,
+            "--label",
+            label,
+            "--state",
+            "closed",
+            "--json",
+            "number,repository",
         )
-        comments = (detail.get("comments") or []) if isinstance(detail, dict) else []
-        bodies = "\n".join(str((c or {}).get("body", "")) for c in comments)
-        if not _VALIDATION_PASS_RE.search(bodies):
-            violations.append(f"{name_with_owner}#{number}")
+        for item in raw if isinstance(raw, list) else []:
+            name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
+            if "/" not in name_with_owner:
+                continue
+            number = int(item["number"])
+            detail: Any = github.read_json(
+                "issue", "view", str(number), "--repo", name_with_owner, "--json", "comments"
+            )
+            comments = (detail.get("comments") or []) if isinstance(detail, dict) else []
+            bodies = "\n".join(str((c or {}).get("body", "")) for c in comments)
+            if not _OPERATIONAL_SUCCESS_RE.search(bodies):
+                violations.append(f"{name_with_owner}#{number}")
     return violations
 
 
@@ -264,23 +269,24 @@ def render(
     window_days: int,
     epics_outside: list[str] | None = None,
     stray: list[str] | None = None,
-    pending_validation: list[ValidationStatus] | None = None,
-    closed_validation_no_pass: list[str] | None = None,
+    pending_operational: list[OperationalStatus] | None = None,
+    closed_operational_no_success: list[str] | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
 
     The report opens with a banner naming the audited org and window and
     stating the run is read-only, so the output is never mistaken for a list of
     actions the tool took. ``epics_outside`` and ``stray`` are the invariant
-    violations (epic #85). ``pending_validation`` lists epics still gated on
-    post-merge validation (runnable vs blocked); ``closed_validation_no_pass`` is
-    the validation invariant (a validation task closed without a PASS comment).
-    Each section appears only when it has something to report.
+    violations (epic #85). ``pending_operational`` lists epics still gated on
+    operational tasks (validations/deployments, runnable vs blocked);
+    ``closed_operational_no_success`` is the operational invariant (a closed
+    operational task with no recorded success comment). Each section appears only
+    when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
-    pending_validation = pending_validation or []
-    closed_validation_no_pass = closed_validation_no_pass or []
+    pending_operational = pending_operational or []
+    closed_operational_no_success = closed_operational_no_success or []
     banner = (
         f"_Read-only audit of the **{org}** org (merged PRs from the last "
         f"{window_days} days) — this report changes nothing; run `--close` (as "
@@ -288,7 +294,14 @@ def render(
     )
     header = ["# Epic/task drift audit", "", banner, ""]
     if not any(
-        [tasks, epic_summaries, epics_outside, stray, pending_validation, closed_validation_no_pass]
+        [
+            tasks,
+            epic_summaries,
+            epics_outside,
+            stray,
+            pending_operational,
+            closed_operational_no_success,
+        ]
     ):
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
     lines = [*header, "## Task drift (merged PR, task still open)", ""]
@@ -307,13 +320,13 @@ def render(
             )
     else:
         lines.append("- _none_")
-    if pending_validation:
-        lines += ["", "## Validation pending (epic not done until validations run)", ""]
-        for status in sorted(pending_validation, key=lambda s: s.epic.number):
+    if pending_operational:
+        lines += ["", "## Operational tasks pending (epic not done until they run)", ""]
+        for status in sorted(pending_operational, key=lambda s: s.epic.number):
             runnable = ", ".join(ref.slug for ref in status.runnable) or "none"
             blocked = ", ".join(ref.slug for ref in status.blocked) or "none"
             lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
-    if epics_outside or stray or closed_validation_no_pass:
+    if epics_outside or stray or closed_operational_no_success:
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
             lines.append("**Epics outside `.github`** — move each to the org's `.github`:")
@@ -321,9 +334,9 @@ def render(
         if stray:
             lines.append("**Stray `.github` issues** — not an epic, intake, or linked task:")
             lines += [f"- {slug}" for slug in sorted(stray)]
-        if closed_validation_no_pass:
+        if closed_operational_no_success:
             lines.append("**Validation tasks closed without a PASS comment** — re-open and run:")
-            lines += [f"- {slug}" for slug in sorted(closed_validation_no_pass)]
+            lines += [f"- {slug}" for slug in sorted(closed_operational_no_success)]
     lines.append("")
     return "\n".join(lines)
 
