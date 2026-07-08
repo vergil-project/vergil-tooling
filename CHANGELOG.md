@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.118] - 2026-07-08
+
+### Features
+
+- add validation label to the registry (#2190)
+
 ## [2.1.117] - 2026-07-07
 
 ### Bug fixes
