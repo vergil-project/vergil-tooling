@@ -613,3 +613,126 @@ class TestClose:
 
     def test_lima_close_is_noop(self) -> None:
         LimaTransport("vm-x").close()  # no raise, no connection to tear down
+
+
+class TestGuestCommandTimeout:
+    def test_default_when_unset(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, raising=False)
+        assert vm_transport._guest_cmd_timeout() == vm_transport._GUEST_CMD_TIMEOUT_DEFAULT_SECS
+
+    def test_custom_value(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, "45")
+        assert vm_transport._guest_cmd_timeout() == 45.0  # noqa: PLR2004
+
+    def test_invalid_falls_back_to_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, "not-a-number")
+        assert vm_transport._guest_cmd_timeout() == vm_transport._GUEST_CMD_TIMEOUT_DEFAULT_SECS
+
+    @pytest.mark.parametrize("val", ["0", "-1"])
+    def test_non_positive_disables(self, monkeypatch: pytest.MonkeyPatch, val: str) -> None:
+        monkeypatch.setenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, val)
+        assert vm_transport._guest_cmd_timeout() is None
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_default_timeout_passed_to_subprocess(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        assert mock_run.call_args[1]["timeout"] == vm_transport._GUEST_CMD_TIMEOUT_DEFAULT_SECS
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_disabled_timeout_passes_none(
+        self, mock_run: MagicMock, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, "0")
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("true")
+        assert mock_run.call_args[1]["timeout"] is None
+
+
+class TestTransportTimeoutError:
+    @patch("vergil_tooling.lib.vm_transport.time.sleep")
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_timeout_raises_and_is_not_retried(
+        self, mock_run: MagicMock, mock_sleep: MagicMock
+    ) -> None:
+        # A wedged connection must fail loudly, not hang; and a timeout already spent
+        # its budget, so it is NOT retried (unlike a transient exit-255 connect blip).
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["gcloud"], timeout=600.0)
+        with pytest.raises(vm_transport.TransportTimeoutError) as excinfo:
+            IapTransport("inst", "z", "p", "vergil").run("true")
+        assert mock_run.call_count == 1
+        assert not mock_sleep.called
+        msg = str(excinfo.value)
+        assert "VERGIL_VM_DISABLE_SSH_MUX=1" in msg  # actionable recovery hint
+        assert "600s" in msg
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_timeout_carries_real_cmd_and_value(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["ssh"], timeout=42.0)
+        with pytest.raises(vm_transport.TransportTimeoutError) as excinfo:
+            SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("true")
+        assert excinfo.value.timeout == 42.0  # noqa: PLR2004
+        assert excinfo.value.cmd[0] == "ssh"  # the full built argv, not the stub
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_timeout_raises(self, mock_run: MagicMock) -> None:
+        mock_run.side_effect = subprocess.TimeoutExpired(cmd=["gcloud"], timeout=600.0)
+        with pytest.raises(vm_transport.TransportTimeoutError):
+            IapTransport("inst", "z", "p", "vergil").pipe("cat > f", "data")
+
+
+class TestKeepaliveBounding:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_iap_base_carries_keepalive_ssh_flags(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        args = mock_run.call_args[0][0]
+        assert "--ssh-flag=-oConnectTimeout=30" in args
+        assert "--ssh-flag=-oServerAliveInterval=15" in args
+        assert "--ssh-flag=-oServerAliveCountMax=4" in args
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_ssh_base_carries_keepalive_o_flags(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run("true")
+        argv = mock_run.call_args[0][0]
+        assert "ConnectTimeout=30" in argv
+        assert argv[argv.index("ConnectTimeout=30") - 1] == "-o"
+        assert "ServerAliveInterval=15" in argv
+        # bounding options must precede the destination to take effect
+        assert argv.index("ConnectTimeout=30") < argv.index("ubuntu@1.2.3.4")
+
+    @pytest.mark.usefixtures("_disable_mux")
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_keepalive_survives_mux_kill_switch(self, mock_run: MagicMock) -> None:
+        # Disabling multiplexing must NOT disable connection bounding — they are
+        # independent guards.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        args = mock_run.call_args[0][0]
+        assert "--ssh-flag=-oConnectTimeout=30" in args
+        assert not any("Control" in a for a in args)
+
+
+class TestDebugTracing:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_debug_logs_command_when_enabled(
+        self,
+        mock_run: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(vm_transport._DEBUG_ENV, "1")
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("echo", "hi")
+        err = capsys.readouterr().err
+        assert "[vm-transport]" in err
+        assert "echo hi" in err
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_silent_by_default(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        assert "[vm-transport]" not in capsys.readouterr().err
