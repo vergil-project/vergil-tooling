@@ -736,3 +736,58 @@ class TestDebugTracing:
         mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
         IapTransport("inst", "z", "p", "vergil").run("true")
         assert "[vm-transport]" not in capsys.readouterr().err
+
+
+class TestAnnounce:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_announces_by_default(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # #2202: a guest command must never run silently — announce it (host + what +
+        # the bound) BEFORE the potentially-hanging subprocess, with no opt-in flag.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("systemctl", "is-active", "tlshd")
+        err = capsys.readouterr().err
+        assert "inst: systemctl is-active tlshd" in err
+        assert "<=600s" in err  # the default bound is shown
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_pipe_announces_by_default(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").pipe("cat > f", "data")
+        assert "inst: cat > f" in capsys.readouterr().err
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_quiet_suppresses_announce(
+        self, mock_run: MagicMock, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Probe callers (readiness gate) run quiet and own their cadence — no chatter.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true", quiet=True)
+        assert capsys.readouterr().err == ""
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_announce_shows_unbounded_when_timeout_disabled(
+        self,
+        mock_run: MagicMock,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(vm_transport._GUEST_CMD_TIMEOUT_ENV, "0")
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("true")
+        assert "unbounded" in capsys.readouterr().err
+
+
+class TestReapIsBounded:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_close_bounds_the_reap(self, mock_run: MagicMock) -> None:
+        # #2202: reaping a wedged master must never itself hang.
+        transport = IapTransport("inst", "z", "p", "vergil")
+        socket = control_socket_path("inst", str(Path.cwd()))
+        socket.parent.mkdir(parents=True, exist_ok=True)
+        socket.write_text("")
+        transport.close()
+        assert mock_run.call_args[1]["timeout"] == vm_transport._REAP_TIMEOUT_SECS
