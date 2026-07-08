@@ -245,21 +245,21 @@ def _reject_if_epic_link(issue_ref: str) -> None:
         )
 
 
-def _reject_if_validation_task(issue_ref: str) -> None:
-    """Abort if the linkage is a validation task — it is not PR-workable.
+def _reject_if_operational_task(issue_ref: str) -> None:
+    """Abort if the linkage is an operational task — it is not PR-workable.
 
-    A validation task is proven by running its checklist and recording PASS/FAIL
-    as a comment; it has no code PR. Refuse PR construction here so the guard
-    matches the skill boundary (issue-implement redirects to issue-validate).
-    Deciding validation-ness needs the same authenticated ``gh`` call as the epic
-    guard. Self-scoping: plain/legacy tasks are never validation tasks, so they
-    pass.
+    An operational task (validation, deployment, …) is proven by *running* it and
+    recording an ``Outcome:`` comment; it has no code PR. Refuse PR construction
+    here so the guard matches the skill boundary (issue-implement redirects to the
+    task's run skill). Deciding operational-ness needs the same authenticated
+    ``gh`` call as the epic guard. Self-scoping: plain/legacy tasks are never
+    operational, so they pass.
     """
-    if epics.is_validation_task(issue_ref, default_repo=github.current_repo()):
+    if epics.is_operational_task(issue_ref, default_repo=github.current_repo()):
         raise SystemExit(
-            "vrg-submit-pr: --issue is a validation task, which is not "
-            "PR-workable; run the validation and record PASS/FAIL as a comment "
-            "(see the issue-validate skill) instead of opening a PR."
+            "vrg-submit-pr: --issue is an operational task (validation/deployment), "
+            "which is not PR-workable; run it with its run skill (issue-validate / "
+            "issue-deploy) and record the Outcome as a comment instead of opening a PR."
         )
 
 
@@ -313,7 +313,7 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
 
     issue_ref = resolve_issue_ref(args.issue)
     _reject_if_epic_link(issue_ref)
-    _reject_if_validation_task(issue_ref)
+    _reject_if_operational_task(issue_ref)
     linkage = _resolve_linkage(issue_ref, args.linkage)
     branch = git.current_branch()
     target = _target_branch(args.base)
@@ -553,7 +553,7 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
     fields = submission.read_pr_fields(worktree_root)
     issue_ref = resolve_issue_ref(fields["issue"])
     _reject_if_epic_link(issue_ref)
-    _reject_if_validation_task(issue_ref)
+    _reject_if_operational_task(issue_ref)
     branch = git.current_branch()
     target = _target_branch(base_override, fields.get("base"))
     try:

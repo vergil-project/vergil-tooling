@@ -363,26 +363,38 @@ def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
     return is_epic(issue)
 
 
-def is_validation(ref: IssueRef) -> bool:
-    """True if *ref* carries the ``validation`` label (a validation task)."""
-    return "validation" in _labels(ref)
+# Labels marking a not-PR-workable *operational task* — one that is run and whose
+# acceptance is a recorded ``Outcome:`` comment, not a merged PR. Extended as new
+# operational kinds are added (e.g. ``deployment``).
+_OPERATIONAL_LABELS: set[str] = {"validation"}
 
 
-def is_validation_task(ref: str, *, default_repo: str) -> bool:
-    """True if *ref* is a validation task, so PR tooling must refuse it.
+def is_operational(ref: IssueRef) -> bool:
+    """True if *ref* carries any operational label (validation, deployment, …)."""
+    return bool(_labels(ref) & _OPERATIONAL_LABELS)
 
-    Single source of truth for "is this a validation task?", shared by
-    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. A validation task is
-    proven by running its checklist and recording PASS/FAIL as a comment — it has
-    no code PR — so the PR path is refused before any work begins. Self-scoping:
-    an unparseable ref (e.g. a legacy issue with no resolvable repo) is never a
-    validation task and returns False.
+
+def operational_kind(ref: IssueRef) -> str | None:
+    """The operational label on *ref* (``"validation"`` / ``"deployment"``), or None."""
+    kinds = _labels(ref) & _OPERATIONAL_LABELS
+    return next(iter(kinds)) if kinds else None
+
+
+def is_operational_task(ref: str, *, default_repo: str) -> bool:
+    """True if *ref* is an operational task, so PR tooling must refuse it.
+
+    Single source of truth for "is this an operational task?", shared by
+    ``vrg-submit-pr`` and ``vrg-pr-workflow report-ready``. An operational task
+    (validation, deployment, …) is proven by *running* it and recording an
+    ``Outcome:`` comment — it has no code PR — so the PR path is refused before
+    any work begins. Self-scoping: an unparseable ref (e.g. a legacy issue with
+    no resolvable repo) is never operational and returns False.
     """
     try:
         issue = parse_issue_ref(ref, default_repo=default_repo)
     except ValueError:
         return False
-    return is_validation(issue)
+    return is_operational(issue)
 
 
 def rollup(task: IssueRef) -> None:

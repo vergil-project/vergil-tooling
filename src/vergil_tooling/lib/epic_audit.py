@@ -122,7 +122,7 @@ def validation_status(epic: epics.IssueRef) -> ValidationStatus:
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
     for child in epics.child_states(epic):
-        if child.state != "OPEN" or not epics.is_validation(child.ref):
+        if child.state != "OPEN" or not epics.is_operational(child.ref):
             continue
         target = runnable if epics.all_blockers_closed(child.ref) else blocked
         target.append(child.ref)

@@ -322,11 +322,11 @@ def test_validation_status_classifies_runnable_vs_blocked() -> None:
     children = [
         epics.ChildState(val_runnable, "OPEN"),
         epics.ChildState(val_blocked, "OPEN"),
-        epics.ChildState(epics.IssueRef("org", "repo", 5), "OPEN"),  # not a validation task
+        epics.ChildState(epics.IssueRef("org", "repo", 5), "OPEN"),  # not an operational task
         epics.ChildState(epics.IssueRef("org", "repo", 9), "CLOSED"),  # closed -> ignored
     ]
 
-    def is_validation(ref: epics.IssueRef) -> bool:
+    def is_operational(ref: epics.IssueRef) -> bool:
         return ref.number in (7, 8, 9)
 
     def all_blockers_closed(ref: epics.IssueRef) -> bool:
@@ -334,7 +334,7 @@ def test_validation_status_classifies_runnable_vs_blocked() -> None:
 
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
-        patch("vergil_tooling.lib.epics.is_validation", side_effect=is_validation),
+        patch("vergil_tooling.lib.epics.is_operational", side_effect=is_operational),
         patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
     ):
         status = epic_audit.validation_status(epic)
