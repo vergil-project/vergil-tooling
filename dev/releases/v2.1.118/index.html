@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.87/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.85/">
+        <link rel="next" href="../v2.1.117/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.86 - VERGIL Tooling</title>
+        <title>2.1.118 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2186-2026-06-29" class="md-skip">
+        <a href="#release-21118-2026-07-08" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.86
+              2.1.118
             
           </span>
         </div>
@@ -1102,10 +1102,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.118/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.118
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1121,6 +1148,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1998,37 +2056,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.86
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.86/" class="md-nav__link">
         
   
   
@@ -2044,48 +2075,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10789,17 +10778,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10827,15 +10805,17 @@
 
 
 
-<h1 id="release-2186-2026-06-29">Release 2.1.86 (2026-06-29)<a class="headerlink" href="#release-2186-2026-06-29" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>close tasks in the batch finalize path + log closes (#1960)</strong></li>
-</ul>
+<h1 id="release-21118-2026-07-08">Release 2.1.118 (2026-07-08)<a class="headerlink" href="#release-21118-2026-07-08" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>vrg-epic-audit — drift report for slipped tasks/epics (#1962)</strong></li>
+<li><strong>add validation label to the registry (#2190)</strong></li>
+<li>feat(labels): add validation label to the registry</li>
 </ul>
+<p>Marks post-merge validation tasks: never PR-workable, never auto-closed, closed only by a recorded PASS comment. Part of the post-merge validation framework (epic vergil-project/.github#115). Ref #2185.</p>
+<ul>
+<li>test(labels): bump sync label count for validation label</li>
+</ul>
+<p>Adding the validation label bumps the provisioned-label count from 16 to 17. Ref #2185.</p>
 
 
 
