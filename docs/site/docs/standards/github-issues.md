@@ -15,6 +15,9 @@ Applies to all repositories that use GitHub issues and pull requests.
 - Primary issue: The single issue a pull request is intended to close.
 - Sub-issue: A scoped unit of work that contributes to a parent issue but does
   not complete it.
+- Validation task: A task whose acceptance is proven by running a check and
+  recording the result as a comment — not by merging a pull request. See
+  [Validation tasks](#validation-tasks).
 
 ## Core rules
 
@@ -113,3 +116,43 @@ Use `-F` (not `-f`) for `sub_issue_id` — the API requires an integer, and
   the issue manually after merge only when acceptance criteria are satisfied.
 - A closed issue must reflect completed work. If work is deferred, keep the
   issue open or create a follow-up issue and link it explicitly.
+
+## Validation tasks
+
+Some work's acceptance can only be confirmed **after merge** — a cold rebuild, a
+live-environment check, a deploy smoke test. Auto-close would close such a task
+the moment its code lands, so an epic could report "done" before the check ran. A
+**validation task** re-establishes that gate.
+
+- **Acceptance is a recorded result, not a merge.** A validation task is proven
+  by running its checklist and posting `Outcome: PASS` (or `Outcome: FAIL`) as a
+  comment.
+- **It is not PR-workable.** It has no code PR and never auto-closes; the PR
+  tooling (`vrg-submit-pr`, `vrg-pr-workflow report-ready`) refuses it. It is run
+  with the `issue-validate` skill, not implemented.
+- **It closes only on PASS.** On FAIL it stays open — like a pull request that
+  cannot merge — follow-up fix issues are filed, and the parent epic stays open
+  too.
+- **It gates epic closure.** As an open child it holds the epic open until it
+  passes, so an epic's rollup is honest about outstanding validation.
+- **It records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads
+  them to report each validation as *runnable* (dependencies closed) or
+  *blocked*.
+
+Create one with the sanctioned path — never hand-roll the body:
+
+```bash
+vrg-issue-create --epic <org>/.github#N --repo <org>/<repo> --kind validation \
+  --title "Validate: <what>" --blocked-by <org>/<repo>#<TASK>
+```
+
+This stamps the `validation` label and an executable scaffold: an author-defined
+**precondition self-check** (a machine probe or a human-attested statement — no
+mechanism is prescribed; if a precondition is unmet, record `blocked` and stop,
+never fabricating), the **commands**, the **acceptance criteria**, and a
+**PASS/FAIL results template**.
+
+Add a validation task when acceptance needs a cold rebuild, a live check, or a
+deploy smoke test — i.e. the pipeline's own tests cannot prove it. Provisioning
+and infrastructure work carry a cold-rebuild validation by default. Do not add
+one for docs, or code fully covered by pipeline tests, where merge means done.
