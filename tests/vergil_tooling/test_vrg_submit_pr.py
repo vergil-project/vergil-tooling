@@ -12,7 +12,7 @@ import pytest
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
     _reject_if_epic_link,
-    _reject_if_validation_task,
+    _reject_if_operational_task,
     _resolve_linkage,
     _run_submit_batch,
     _select_batch_worktrees,
@@ -42,7 +42,7 @@ def _no_epic_link_check() -> Iterator[None]:
     """
     with (
         patch(_MOD + "._reject_if_epic_link"),
-        patch(_MOD + "._reject_if_validation_task"),
+        patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
     ):
         yield
@@ -1675,25 +1675,25 @@ def test_reject_if_epic_link_passes_for_task() -> None:
     mock_is_epic.assert_called_once_with(epics.IssueRef("org", "repo", 42))
 
 
-# -- _reject_if_validation_task (validation tasks are not PR-workable) --------
+# -- _reject_if_operational_task (operational tasks are not PR-workable) -------
 
 
-def test_reject_if_validation_task_raises_for_validation() -> None:
+def test_reject_if_operational_task_raises_for_operational() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_validation", return_value=True),
-        pytest.raises(SystemExit, match="validation task"),
+        patch(f"{_MOD}.epics.is_operational", return_value=True),
+        pytest.raises(SystemExit, match="operational task"),
     ):
-        _reject_if_validation_task("org/repo#7")
+        _reject_if_operational_task("org/repo#7")
 
 
-def test_reject_if_validation_task_passes_for_plain_task() -> None:
+def test_reject_if_operational_task_passes_for_plain_task() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
-        patch(f"{_MOD}.epics.is_validation", return_value=False) as mock_is_validation,
+        patch(f"{_MOD}.epics.is_operational", return_value=False) as mock_is_operational,
     ):
-        _reject_if_validation_task("#42")
-    mock_is_validation.assert_called_once_with(epics.IssueRef("org", "repo", 42))
+        _reject_if_operational_task("#42")
+    mock_is_operational.assert_called_once_with(epics.IssueRef("org", "repo", 42))
 
 
 # -- _task_linkage (managed tasks auto-close via Closes) ----------------------

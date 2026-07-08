@@ -230,32 +230,43 @@ def test_is_epic_linkage_false_for_unparseable_ref() -> None:
     mock.assert_not_called()
 
 
-def test_is_validation_true_when_labeled() -> None:
+def test_is_operational_true_when_labeled() -> None:
     labels = {"labels": [{"name": "validation"}, {"name": "task"}]}
     with patch("vergil_tooling.lib.github.read_json", return_value=labels):
-        assert epics.is_validation(TASK) is True
+        assert epics.is_operational(TASK) is True
 
 
-def test_is_validation_false_without_label() -> None:
+def test_is_operational_false_without_label() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"labels": [{"name": "task"}]}):
-        assert epics.is_validation(TASK) is False
+        assert epics.is_operational(TASK) is False
 
 
-def test_is_validation_task_true_for_validation() -> None:
-    with patch("vergil_tooling.lib.epics.is_validation", return_value=True) as mock:
-        assert epics.is_validation_task("org/repo#7", default_repo="org/repo") is True
+def test_operational_kind_returns_the_label() -> None:
+    labels = {"labels": [{"name": "validation"}, {"name": "task"}]}
+    with patch("vergil_tooling.lib.github.read_json", return_value=labels):
+        assert epics.operational_kind(TASK) == "validation"
+
+
+def test_operational_kind_none_without_label() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value={"labels": [{"name": "task"}]}):
+        assert epics.operational_kind(TASK) is None
+
+
+def test_is_operational_task_true_for_operational() -> None:
+    with patch("vergil_tooling.lib.epics.is_operational", return_value=True) as mock:
+        assert epics.is_operational_task("org/repo#7", default_repo="org/repo") is True
     mock.assert_called_once_with(IssueRef("org", "repo", 7))
 
 
-def test_is_validation_task_false_for_plain_task() -> None:
-    with patch("vergil_tooling.lib.epics.is_validation", return_value=False):
-        assert epics.is_validation_task("#42", default_repo="org/repo") is False
+def test_is_operational_task_false_for_plain_task() -> None:
+    with patch("vergil_tooling.lib.epics.is_operational", return_value=False):
+        assert epics.is_operational_task("#42", default_repo="org/repo") is False
 
 
-def test_is_validation_task_false_for_unparseable_ref() -> None:
-    # No resolvable default repo -> parse fails -> never a validation task.
-    with patch("vergil_tooling.lib.epics.is_validation") as mock:
-        assert epics.is_validation_task("#42", default_repo="") is False
+def test_is_operational_task_false_for_unparseable_ref() -> None:
+    # No resolvable default repo -> parse fails -> never an operational task.
+    with patch("vergil_tooling.lib.epics.is_operational") as mock:
+        assert epics.is_operational_task("#42", default_repo="") is False
     mock.assert_not_called()
 
 

@@ -52,29 +52,29 @@ def _reject_epic_issue(issue: str) -> None:
         )
 
 
-def _reject_validation_issue(issue: str) -> None:
-    """Refuse a validation-task linkage at report time — it is not PR-workable.
+def _reject_operational_issue(issue: str) -> None:
+    """Refuse an operational-task linkage at report time — it is not PR-workable.
 
     Mirrors vrg-submit-pr's guard so the error surfaces where the value is
-    entered. Best-effort: if validation-ness cannot be determined (no remote, no
+    entered. Best-effort: if operational-ness cannot be determined (no remote, no
     gh auth — e.g. an offline run), defer silently to vrg-submit-pr's
     authoritative check rather than blocking report-ready.
     """
     try:
-        is_validation = epics.is_validation_task(issue, default_repo=github.current_repo())
+        is_operational = epics.is_operational_task(issue, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError):
         return
-    if is_validation:
+    if is_operational:
         raise WorkflowError(
-            f"--issue (#{issue}) is a validation task, which is not PR-workable; "
-            "record the result as a comment (issue-validate skill) instead of "
-            "preparing a PR."
+            f"--issue (#{issue}) is an operational task (validation/deployment), which "
+            "is not PR-workable; record the Outcome as a comment (issue-validate / "
+            "issue-deploy) instead of preparing a PR."
         )
 
 
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     _reject_epic_issue(str(args.issue))
-    _reject_validation_issue(str(args.issue))
+    _reject_operational_issue(str(args.issue))
     try:
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:
