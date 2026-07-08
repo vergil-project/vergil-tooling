@@ -380,6 +380,11 @@ def operational_kind(ref: IssueRef) -> str | None:
     return next(iter(kinds)) if kinds else None
 
 
+def operational_labels() -> frozenset[str]:
+    """The operational label set (validation, deployment, …) — the public view."""
+    return frozenset(_OPERATIONAL_LABELS)
+
+
 def is_operational_task(ref: str, *, default_repo: str) -> bool:
     """True if *ref* is an operational task, so PR tooling must refuse it.
 
