@@ -33,16 +33,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
     parser.add_argument(
         "--kind",
-        choices=("task", "validation"),
+        choices=("task", "validation", "deployment"),
         default="task",
-        help="Issue kind; 'validation' stamps the validation label and executable scaffold",
+        help="Issue kind; an operational kind (validation/deployment) stamps its "
+        "label and executable scaffold",
     )
     parser.add_argument(
         "--blocked-by",
         action="append",
         default=[],
         metavar="REF",
-        help="Dependency ref this validation task is blocked by (repeatable; validation only)",
+        help="Dependency ref this operational task is blocked by "
+        "(repeatable; validation/deployment only)",
     )
     return parser.parse_args(argv)
 
@@ -51,23 +53,30 @@ def _issue_number_from_url(url: str) -> int:
     return int(url.rstrip("/").rsplit("/", 1)[-1])
 
 
-def _render_validation_body(*, intro: str, deps: list[epics.IssueRef]) -> str:
-    """Build a validation-task body from the scaffold template.
+_OPERATIONAL_INTRO = {
+    "validation": "Post-merge validation task.",
+    "deployment": "Deployment task.",
+}
 
-    The scaffold carries the generic precondition self-check, commands,
-    acceptance criteria, and PASS/FAIL results template. *deps* are rendered as
-    machine-parseable ``Blocked-by:`` reflinks under a Dependencies heading (or
-    omitted entirely when there are none).
+
+def _render_operational_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
+    """Build an operational-task body from the *kind*'s scaffold template.
+
+    Each operational kind (validation, deployment) has its own
+    ``<kind>_task_body.md`` scaffold — a precondition self-check, the procedure,
+    acceptance criteria, and a SUCCESS/FAILURE results template. *deps* are
+    rendered as machine-parseable ``Blocked-by:`` reflinks under a Dependencies
+    heading (or omitted entirely when there are none).
     """
     template = (
         resources.files("vergil_tooling.data")
-        .joinpath("validation_task_body.md")
+        .joinpath(f"{kind}_task_body.md")
         .read_text(encoding="utf-8")
     )
     blocked_by = ""
     if deps:
         blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
-    return template.format(intro=intro or "Post-merge validation task.", blocked_by=blocked_by)
+    return template.format(intro=intro or _OPERATIONAL_INTRO[kind], blocked_by=blocked_by)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -92,17 +101,17 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-    # Build the issue body/labels. A validation task stamps the executable
-    # scaffold + the ``validation`` label and renders its Blocked-by reflinks;
-    # a plain task passes the caller's body/labels through unchanged.
+    # Build the issue body/labels. An operational kind (validation/deployment)
+    # stamps its executable scaffold + its label and renders its Blocked-by
+    # reflinks; a plain task passes the caller's body/labels through unchanged.
     labels = list(args.label)
     body = args.body
     body_file = args.body_file
-    if args.kind == "validation":
+    if args.kind in ("validation", "deployment"):
         if args.body_file:
             print(
-                "vrg-issue-create: --body-file is not compatible with --kind validation "
-                "(the validation scaffold defines the body)",
+                f"vrg-issue-create: --body-file is not compatible with --kind {args.kind} "
+                f"(the {args.kind} scaffold defines the body)",
                 file=sys.stderr,
             )
             return 1
@@ -111,8 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(f"vrg-issue-create: invalid --blocked-by ref: {exc}", file=sys.stderr)
             return 1
-        labels.append("validation")
-        body = _render_validation_body(intro=args.body, deps=deps)
+        labels.append(args.kind)
+        body = _render_operational_body(kind=args.kind, intro=args.body, deps=deps)
         body_file = None
 
     # Scope every App-token call below to the issue's owner, not the cwd org.
