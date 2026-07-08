@@ -83,6 +83,10 @@ def _ssh_keepalive_options() -> list[tuple[str, str]]:
 _GUEST_CMD_TIMEOUT_ENV = "VERGIL_VM_CMD_TIMEOUT"
 _GUEST_CMD_TIMEOUT_DEFAULT_SECS = 600.0
 
+# Bound on the best-effort control-master reap so tearing down a wedged master can
+# never itself hang (#2202).
+_REAP_TIMEOUT_SECS = 15.0
+
 
 def _guest_cmd_timeout() -> float | None:
     """Per-command wall-clock bound in seconds, or ``None`` when disabled."""
@@ -111,6 +115,18 @@ def _debug(msg: str) -> None:
     print(f"[vm-transport] {msg}", file=sys.stderr)
 
 
+def _announce(what: str) -> None:
+    """User-facing progress line printed *before* a guest command runs (#2202).
+
+    Always on, unlike :func:`_debug`: a guest command can block on a wedged
+    connection, so it must never run silently — we say what is about to happen and
+    how long we will wait, before the (possibly hanging) subprocess starts.
+    """
+    timeout = _guest_cmd_timeout()
+    bound = f"<={timeout:.0f}s" if timeout is not None else "unbounded"
+    print(f"  -> {what} ({bound})", file=sys.stderr, flush=True)
+
+
 class TransportTimeoutError(RuntimeError):
     """A guest command exceeded its wall-clock bound (#2202).
 
@@ -137,6 +153,7 @@ def _run_checked(
     *,
     quiet: bool,
     input_data: str | None = None,
+    announce: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run *cmd* under the shared off-platform retry/reporting policy.
 
@@ -156,6 +173,8 @@ def _run_checked(
     :class:`TransportTimeoutError` and is *not* retried — a timeout already burned its
     full budget, so another attempt would only burn more.
     """
+    if announce is not None and not quiet:
+        _announce(announce)
     if _debug_enabled():
         _debug(f"run (timeout={_guest_cmd_timeout()}): {shlex.join(cmd)}")
 
@@ -292,12 +311,15 @@ def _shutdown_master(dest: str, control_path: Path) -> None:
     swallowed. The socket file is then removed. ``ControlPersist`` is the final
     backstop for any master this could not reach.
     """
+    # timeout: TimeoutExpired is a SubprocessError, so a wedged master that won't
+    # even service `-O exit` is swallowed here — the reap can never itself hang (#2202).
     with contextlib.suppress(OSError, subprocess.SubprocessError):
         subprocess.run(  # noqa: S603
             ["ssh", "-o", f"ControlPath={control_path}", "-O", "exit", dest],  # noqa: S607
             check=False,
             capture_output=True,
             text=True,
+            timeout=_REAP_TIMEOUT_SECS,
         )
     with contextlib.suppress(OSError):
         control_path.unlink(missing_ok=True)
@@ -446,11 +468,20 @@ class IapTransport:
         self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
     ) -> subprocess.CompletedProcess[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
-        return _run_checked([*self._base(), f"--command={remote}"], quiet=quiet)
+        return _run_checked(
+            [*self._base(), f"--command={remote}"],
+            quiet=quiet,
+            announce=f"{self.host}: {shlex.join(args)}",
+        )
 
     def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
         remote = f"cd {shlex.quote(workdir)} && {cmd}"
-        _run_checked([*self._base(), f"--command={remote}"], quiet=False, input_data=input_data)
+        _run_checked(
+            [*self._base(), f"--command={remote}"],
+            quiet=False,
+            input_data=input_data,
+            announce=f"{self.host}: {cmd}",
+        )
 
     def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
@@ -515,11 +546,18 @@ class SshTransport:
         self, *args: str, workdir: str = _DEFAULT_WORKDIR, quiet: bool = False
     ) -> subprocess.CompletedProcess[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
-        return _run_checked([*self._base(), remote], quiet=quiet)
+        return _run_checked(
+            [*self._base(), remote], quiet=quiet, announce=f"{self.host}: {shlex.join(args)}"
+        )
 
     def pipe(self, cmd: str, input_data: str, *, workdir: str = _DEFAULT_WORKDIR) -> None:
         remote = f"cd {shlex.quote(workdir)} && {cmd}"
-        _run_checked([*self._base(), remote], quiet=False, input_data=input_data)
+        _run_checked(
+            [*self._base(), remote],
+            quiet=False,
+            input_data=input_data,
+            announce=f"{self.host}: {cmd}",
+        )
 
     def popen(self, *args: str, workdir: str = _DEFAULT_WORKDIR) -> subprocess.Popen[str]:
         remote = f"cd {shlex.quote(workdir)} && {shlex.join(args)}"
