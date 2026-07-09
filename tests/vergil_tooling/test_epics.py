@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics
+from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
 EPIC = IssueRef("org", ".github", 40)
@@ -542,3 +542,43 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
 def test_ensure_adhoc_epic_repo_without_owner_raises() -> None:
     with pytest.raises(ValueError, match="cannot resolve repo for ad-hoc epic"):
         epics.ensure_adhoc_epic("tooling")
+
+
+# -- resolve_epic_home (epic #130) -------------------------------------------
+def test_resolve_epic_home_dotgithub_short_circuits() -> None:
+    # A ".github" target never probes visibility.
+    with patch("vergil_tooling.lib.epics.github.is_public") as pub:
+        assert epics.resolve_epic_home("org", ".github") == "org/.github"
+        pub.assert_not_called()
+
+
+def test_resolve_epic_home_public_target_is_central() -> None:
+    with patch("vergil_tooling.lib.epics.github.is_public", return_value=True):
+        assert epics.resolve_epic_home("org", "tooling") == "org/.github"
+
+
+def test_resolve_epic_home_private_target_public_dotgithub_is_self() -> None:
+    def pub(nwo: str) -> bool:
+        return {"org/lab": False, "org/.github": True}[nwo]
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("org", "lab") == "org/lab"
+
+
+def test_resolve_epic_home_private_org_is_central() -> None:
+    def pub(nwo: str) -> bool:
+        return {"org/lab": False, "org/.github": False}[nwo]
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("org", "lab") == "org/.github"
+
+
+def test_resolve_epic_home_fails_loud() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.is_public",
+            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+        ),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics.resolve_epic_home("org", "missing")

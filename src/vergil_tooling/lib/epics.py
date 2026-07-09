@@ -282,6 +282,24 @@ def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     return epic
 
 
+def resolve_epic_home(org: str, target_repo: str) -> str:
+    """Map an explicit *target_repo* (bare name) to its epic home ``"owner/repo"``.
+
+    A public target homes centrally in ``<org>/.github`` (today's behavior). A
+    private target with a public ``.github`` homes its epics in itself
+    (self-contained). A private ``.github`` means the whole org is private, so
+    everything routes to ``.github``. Fail-loud: visibility errors propagate
+    (see :func:`github.repo_visibility`).
+    """
+    if target_repo == ".github":
+        return f"{org}/.github"
+    if github.is_public(f"{org}/{target_repo}"):
+        return f"{org}/.github"
+    if github.is_public(f"{org}/.github"):
+        return f"{org}/{target_repo}"
+    return f"{org}/.github"
+
+
 _ADHOC_EPIC_TITLE_PREFIX = "Epic (ad hoc): "
 _ADHOC_EPIC_LABELS = ("epic", "ad-hoc")
 _ADHOC_EPIC_BODY = (
