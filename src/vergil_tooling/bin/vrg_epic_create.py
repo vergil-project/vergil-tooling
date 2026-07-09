@@ -1,9 +1,13 @@
-"""Create a top-level epic issue in the org's ``.github`` repo.
+"""Create a top-level epic issue in its resolved home repo.
 
-Epics are top-level (no parent) and live in ``<org>/.github`` with the ``epic``
-label. This is the sanctioned path for creating them — ``vrg-gh`` denies raw
-``gh issue create`` — used by the ``epic-create`` and ``migrate-repo`` skills.
-The org is auto-detected from the current repo's remote.
+Epics are top-level (no parent), labelled ``epic``. The *home* — the repo where
+the epic issue physically lives — is derived from the target repo's visibility
+by :func:`vergil_tooling.lib.epics.resolve_epic_home`: a public target homes
+centrally in ``<org>/.github``; a private target (with a public ``.github``)
+homes its epics in itself. The target defaults to the current repo but is named
+explicitly with ``--repo``. This is the sanctioned path for creating epics —
+``vrg-gh`` denies raw ``gh issue create`` — used by the ``epic-create`` and
+``migrate-repo`` skills.
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import epics, github
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -19,18 +23,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="vrg-epic-create",
         description=(
-            "Create a top-level epic in the current repo's GitHub org: an issue "
-            "in <org>/.github labelled 'epic', with no parent. The org is "
-            "auto-detected from this repo's origin remote."
+            "Create a top-level epic labelled 'epic' with no parent. The epic "
+            "home is derived from the target repo's visibility: a public target "
+            "homes in <org>/.github, a private target homes in itself."
         ),
         epilog=(
-            "Run from inside a repo in the target org. Extra --label values are "
-            "added alongside 'epic' (e.g. --label ad-hoc for an ad-hoc epic)."
+            "Extra --label values are added alongside 'epic' (e.g. --label "
+            "ad-hoc for an ad-hoc epic)."
         ),
     )
     parser.add_argument("--title", required=True, help="Epic title")
     parser.add_argument("--body", default="", help="Epic body text")
     parser.add_argument("--body-file", help="Read the epic body from a file")
+    parser.add_argument(
+        "--repo",
+        help=(
+            "Target repo 'owner/repo' the epic is for (default: current repo). "
+            "The epic home is derived from the target's visibility."
+        ),
+    )
     parser.add_argument(
         "--label",
         action="append",
@@ -43,19 +54,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    org = github.detect_org()
-    if org is None:
+    target = args.repo or github.current_repo()  # "owner/repo"; raises if undeterminable
+    if "/" not in target:
         print(
-            "vrg-epic-create: could not determine the GitHub org from this "
-            "repo's 'origin' remote; run it from inside a repo in the org whose "
-            ".github should hold the epic.",
+            f"vrg-epic-create: --repo must be 'owner/repo' (got {target!r})",
             file=sys.stderr,
         )
         return 1
-    repo = f"{org}/.github"
+    owner, bare = target.split("/", 1)
+    home = epics.resolve_epic_home(owner, bare)
+    print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
     labels = list(dict.fromkeys(["epic", *args.label]))
     url = github.create_issue(
-        repo=repo,
+        repo=home,
         title=args.title,
         body=args.body,
         body_file=args.body_file,
