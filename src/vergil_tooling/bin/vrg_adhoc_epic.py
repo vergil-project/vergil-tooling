@@ -1,8 +1,9 @@
 """Ensure a repo's ad-hoc epic exists (create-if-missing), idempotently.
 
-Ad-hoc epics are centralized: the ``Epic (ad hoc): <repo>`` umbrella (labelled
-``epic`` + ``ad-hoc``) lives in the org's ``.github`` repo, one per repo. This
-provisions it before linking pre-existing issues — e.g. ``migrate-repo`` step 1,
+The ``Epic (ad hoc): <repo>`` umbrella (labelled ``epic`` + ``ad-hoc``) lives in
+the repo's resolved epic home — ``<org>/.github`` for a public repo, the repo
+itself when private — one per repo. This provisions it before linking
+pre-existing issues — e.g. ``migrate-repo`` step 1,
 which must ensure the epic exists before it can link ad-hoc tasks to it. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
@@ -22,6 +23,15 @@ from vergil_tooling.lib import epics, github
 
 def cmd_ensure(args: argparse.Namespace) -> int:
     repo = args.repo or github.current_repo()
+    if "/" not in repo:
+        print(
+            f"vrg-adhoc-epic: --repo must be 'owner/repo' (got {repo!r})",
+            file=sys.stderr,
+        )
+        return 1
+    owner, bare = repo.split("/", 1)
+    home = epics.resolve_epic_home(owner, bare)
+    print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
     epic = epics.ensure_adhoc_epic(repo)
     print(f"Ad-hoc epic: {epic.slug}")
     return 0
@@ -33,7 +43,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="vrg-adhoc-epic",
         description=(
             "Manage a repo's ad-hoc epic (Epic (ad hoc): <repo>, labelled "
-            "epic + ad-hoc, located in the org's .github)."
+            "epic + ad-hoc, homed by visibility: <org>/.github for a public "
+            "repo, the repo itself when private)."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
