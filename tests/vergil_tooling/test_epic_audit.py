@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
+
+import pytest
 
 from vergil_tooling.lib import epic_audit, epics, github, roadmap
 from vergil_tooling.lib.epic_audit import TaskDrift
-
-if TYPE_CHECKING:
-    import pytest
 
 
 def test_task_drift_flags_open_task_behind_merged_pr() -> None:
@@ -162,17 +160,45 @@ def test_epic_drift_flags_all_done_open_epics() -> None:
     assert [e.number for e in result] == [40]
 
 
-def test_epic_outside_dotgithub_flags_non_dotgithub_epics() -> None:
+def test_epic_outside_dotgithub_flags_public_non_dotgithub_epics() -> None:
     issues = [
         {"number": 99, "repository": {"nameWithOwner": "vergil-project/vergil-tooling"}},
         {"number": 40, "repository": {"nameWithOwner": "vergil-project/.github"}},  # ok
         {"number": 5, "repository": {}},  # no repo -> skipped
     ]
-    with patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_search,
+        patch("vergil_tooling.lib.github.is_public", return_value=True),
+    ):
         result = epic_audit.epic_outside_dotgithub("vergil-project")
     assert result == ["vergil-project/vergil-tooling#99"]
     args = mock_search.call_args.args
     assert "search" in args and "issues" in args and "epic" in args
+
+
+def test_epic_outside_dotgithub_ignores_private_repo_epic() -> None:
+    # A private repo legitimately self-homes its epics -> not a violation.
+    issues = [{"number": 4, "repository": {"nameWithOwner": "vergil-project/lab"}}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=issues),
+        patch("vergil_tooling.lib.github.is_public", return_value=False),
+    ):
+        assert epic_audit.epic_outside_dotgithub("vergil-project") == []
+
+
+def test_epic_outside_dotgithub_fails_loud_on_probe_error() -> None:
+    # A visibility probe that errors must raise, never silently skip (a genuine
+    # leaked-out public epic would otherwise be masked).
+    issues = [{"number": 4, "repository": {"nameWithOwner": "vergil-project/lab"}}]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=issues),
+        patch(
+            "vergil_tooling.lib.github.is_public",
+            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+        ),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epic_audit.epic_outside_dotgithub("vergil-project")
 
 
 def test_stray_dotgithub_issue_flags_unlinked_non_epic_non_intake() -> None:
