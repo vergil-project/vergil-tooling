@@ -28,8 +28,8 @@ If any precondition is unmet: comment "blocked: preconditions not met —
 
 ## Results
 
-Post the outcome as a comment on this issue, then close only on PASS.
+Post the outcome as a comment on this issue, then close only on SUCCESS.
 
-- Outcome: PASS / FAIL
+- Outcome: SUCCESS / FAILURE
 - Evidence: \<command output / observations\>
-- On FAIL: file follow-on fix task(s); leave this task and the epic open.
+- On FAILURE: file follow-on fix task(s); leave this task and the epic open.

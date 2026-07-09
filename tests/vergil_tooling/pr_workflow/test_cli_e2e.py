@@ -101,15 +101,15 @@ def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixt
     assert "epic" in capsys.readouterr().err.lower()
 
 
-def test_report_ready_rejects_validation_task(
+def test_report_ready_rejects_operational_task(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    # Guard parity with vrg-submit-pr: report-ready refuses a validation task —
+    # Guard parity with vrg-submit-pr: report-ready refuses an operational task —
     # it is not PR-workable (its result is a comment, not a PR).
     with (
         patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
         patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
-        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_validation_task", return_value=True),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=True),
     ):
         rc = vrg_pr_workflow.main(
             [
@@ -127,7 +127,7 @@ def test_report_ready_rejects_validation_task(
             ]
         )
     assert rc == 1
-    assert "validation task" in capsys.readouterr().err.lower()
+    assert "operational task" in capsys.readouterr().err.lower()
 
 
 def test_report_ready_allows_non_epic_task(

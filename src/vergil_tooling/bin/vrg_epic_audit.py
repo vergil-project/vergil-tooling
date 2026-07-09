@@ -105,8 +105,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org)
-    pending_validation = epic_audit.validation_pending(org)
-    closed_validation_no_pass = epic_audit.closed_validation_without_pass(org)
+    pending_operational = epic_audit.operational_pending(org)
+    closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     print(
         epic_audit.render(
             tasks,
@@ -115,8 +115,8 @@ def main(argv: list[str] | None = None) -> int:
             window_days=args.window_days,
             epics_outside=epics_outside,
             stray=stray,
-            pending_validation=pending_validation,
-            closed_validation_no_pass=closed_validation_no_pass,
+            pending_operational=pending_operational,
+            closed_operational_no_success=closed_operational_no_success,
         )
     )
     return 0

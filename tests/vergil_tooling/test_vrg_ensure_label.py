@@ -127,7 +127,7 @@ def test_main_sync_provisions_all_labels() -> None:
     assert result == 0
     # Should have called once per label + once for the delete
     label_calls = [c for c in mock_run.call_args_list if c.args[1] == "create"]
-    assert len(label_calls) == 17  # 16 + validation (epic vergil-project/.github#115)
+    assert len(label_calls) == 18  # 17 + deployment (epic vergil-project/.github#124)
 
 
 def test_main_sync_uses_force_with_color_description() -> None:

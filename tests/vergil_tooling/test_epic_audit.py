@@ -315,54 +315,74 @@ def test_render_closed_empty_says_nothing_to_close() -> None:
 # -- validation-aware rollup/audit (epic vergil-project/.github#115) ----------
 
 
-def test_validation_status_classifies_runnable_vs_blocked() -> None:
+def test_operational_status_classifies_runnable_vs_blocked() -> None:
     epic = epics.IssueRef("org", ".github", 115)
     val_runnable = epics.IssueRef("org", "repo", 7)
     val_blocked = epics.IssueRef("org", "repo", 8)
     children = [
         epics.ChildState(val_runnable, "OPEN"),
         epics.ChildState(val_blocked, "OPEN"),
-        epics.ChildState(epics.IssueRef("org", "repo", 5), "OPEN"),  # not a validation task
+        epics.ChildState(epics.IssueRef("org", "repo", 5), "OPEN"),  # not an operational task
         epics.ChildState(epics.IssueRef("org", "repo", 9), "CLOSED"),  # closed -> ignored
     ]
 
-    def is_validation(ref: epics.IssueRef) -> bool:
-        return ref.number in (7, 8, 9)
+    def kind(ref: epics.IssueRef) -> str | None:
+        return "validation" if ref.number in (7, 8, 9) else None
 
     def all_blockers_closed(ref: epics.IssueRef) -> bool:
         return ref.number == 7  # #7 runnable, #8 still blocked
 
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
-        patch("vergil_tooling.lib.epics.is_validation", side_effect=is_validation),
+        patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
         patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
     ):
-        status = epic_audit.validation_status(epic)
+        status = epic_audit.operational_status(epic)
     assert status.runnable == (val_runnable,)
     assert status.blocked == (val_blocked,)
     assert status.pending == (val_runnable, val_blocked)
 
 
-def test_validation_pending_collects_only_epics_with_open_validations() -> None:
+def test_operational_status_tags_kind() -> None:
+    epic = epics.IssueRef("org", ".github", 124)
+    val = epics.IssueRef("org", "repo", 7)
+    dep = epics.IssueRef("org", "repo", 8)
+    children = [epics.ChildState(val, "OPEN"), epics.ChildState(dep, "OPEN")]
+
+    def kind(ref: epics.IssueRef) -> str | None:
+        return "validation" if ref.number == 7 else "deployment"
+
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
+        patch("vergil_tooling.lib.epics.all_blockers_closed", return_value=True),
+    ):
+        status = epic_audit.operational_status(epic)
+    # keyed by IssueRef (cross-repo safe), not bare number
+    assert status.by_kind[val] == "validation"
+    assert status.by_kind[dep] == "deployment"
+
+
+def test_operational_pending_collects_only_epics_with_open_validations() -> None:
     val = epics.IssueRef("org", "repo", 7)
 
-    def fake_status(epic: epics.IssueRef) -> epic_audit.ValidationStatus:
+    def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
         if epic.number == 115:
-            return epic_audit.ValidationStatus(epic, (val,), ())
-        return epic_audit.ValidationStatus(epic, (), ())  # nothing pending
+            return epic_audit.OperationalStatus(epic, (val,), (), {val: "validation"})
+        return epic_audit.OperationalStatus(epic, (), (), {})  # nothing pending
 
     with (
         patch(
             "vergil_tooling.lib.epic_audit.roadmap.gather",
             return_value=[MagicMock(number=115), MagicMock(number=200)],
         ),
-        patch("vergil_tooling.lib.epic_audit.validation_status", side_effect=fake_status),
+        patch("vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status),
     ):
-        pending = epic_audit.validation_pending("org")
+        pending = epic_audit.operational_pending("org")
     assert [s.epic.number for s in pending] == [115]
 
 
-def test_closed_validation_without_pass_flags_missing_pass() -> None:
+def test_closed_operational_without_success_flags_missing_pass() -> None:
     search = [
         {"number": 120, "repository": {"nameWithOwner": "org/.github"}},  # has PASS -> ok
         {"number": 55, "repository": {"nameWithOwner": "org/repo"}},  # no PASS -> flagged
@@ -371,14 +391,15 @@ def test_closed_validation_without_pass_flags_missing_pass() -> None:
 
     def fake_read_json(*args: str) -> object:
         if args[0] == "search":
-            return search
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
         number = args[2]
         if number == "120":
             return {"comments": [{"body": "ran it\n- Outcome: PASS"}]}
         return {"comments": [{"body": "closed early; no result recorded"}]}
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        result = epic_audit.closed_validation_without_pass("org")
+        result = epic_audit.closed_operational_without_success("org")
     assert result == ["org/repo#55"]
 
 
@@ -388,28 +409,50 @@ def test_closed_validation_pass_marker_excludes_unresolved_template() -> None:
 
     def fake_read_json(*args: str) -> object:
         if args[0] == "search":
-            return search
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
         return {"comments": [{"body": "- Outcome: PASS / FAIL"}]}
 
     with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
-        assert epic_audit.closed_validation_without_pass("org") == ["org/repo#1"]
+        assert epic_audit.closed_operational_without_success("org") == ["org/repo#1"]
 
 
-def test_render_includes_validation_pending_section() -> None:
-    status = epic_audit.ValidationStatus(
+def test_success_marker_accepts_success_and_legacy_pass() -> None:
+    search = [
+        {"number": 1, "repository": {"nameWithOwner": "org/repo"}},  # SUCCESS -> ok
+        {"number": 2, "repository": {"nameWithOwner": "org/repo"}},  # legacy PASS -> ok
+        {"number": 3, "repository": {"nameWithOwner": "org/repo"}},  # neither -> flagged
+    ]
+    bodies = {"1": "- Outcome: SUCCESS", "2": "- Outcome: PASS", "3": "closed early"}
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            # invariant loops each operational label; return the fixture once
+            return search if args[5] == "validation" else []
+        return {"comments": [{"body": bodies[args[2]]}]}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        assert epic_audit.closed_operational_without_success("org") == ["org/repo#3"]
+
+
+def test_render_includes_operational_pending_section() -> None:
+    val = epics.IssueRef("org", "repo", 7)
+    dep = epics.IssueRef("org", "repo", 8)
+    status = epic_audit.OperationalStatus(
         epics.IssueRef("org", ".github", 115),
-        (epics.IssueRef("org", "repo", 7),),
-        (epics.IssueRef("org", "repo", 8),),
+        (val,),
+        (dep,),
+        {val: "validation", dep: "deployment"},
     )
-    out = epic_audit.render([], [], org="org", window_days=30, pending_validation=[status])
-    assert "Validation pending" in out
-    assert "org/repo#7" in out  # runnable
-    assert "org/repo#8" in out  # blocked
+    out = epic_audit.render([], [], org="org", window_days=30, pending_operational=[status])
+    assert "Operational tasks pending" in out
+    assert "org/repo#7 (validation)" in out  # runnable, kind-tagged
+    assert "org/repo#8 (deployment)" in out  # blocked, kind-tagged
 
 
-def test_render_flags_closed_validation_without_pass() -> None:
+def test_render_flags_closed_operational_without_success() -> None:
     out = epic_audit.render(
-        [], [], org="org", window_days=30, closed_validation_no_pass=["org/repo#55"]
+        [], [], org="org", window_days=30, closed_operational_no_success=["org/repo#55"]
     )
     assert "PASS comment" in out
     assert "org/repo#55" in out

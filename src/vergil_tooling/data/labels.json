@@ -16,7 +16,8 @@
     {"name": "triage", "color": "d93f0b", "description": "Uncurated intake; not yet folded into the epic/task model"},
     {"name": "idea", "color": "fef2c0", "description": "Seed to be expanded into an epic"},
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"},
-    {"name": "validation", "color": "006b75", "description": "Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed"}
+    {"name": "validation", "color": "006b75", "description": "Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed"},
+    {"name": "deployment", "color": "0052cc", "description": "Deployment task: install/sync merged changes so they are usable; never auto-closed"}
   ],
   "delete": ["enhancement"]
 }

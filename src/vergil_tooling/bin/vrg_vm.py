@@ -2372,6 +2372,14 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     _warn_cloud_under(target)
 
     transport = backend.transport()
+    # #2202: a previous session can leave a network-dead SSH ControlMaster behind. A
+    # new session that attaches to it as a multiplex *client* hangs — the client has
+    # no connection of its own, so ConnectTimeout/ServerAlive don't apply. Reap any
+    # stale master up front (bounded, best-effort) so this session opens a fresh,
+    # self-healing connection instead of inheriting the wedge. Announced so a slow
+    # reap is never a silent stall.
+    print("  -> resetting any stale SSH connection to the box", file=sys.stderr, flush=True)
+    transport.close()
     # #1999 (Fix A): seed the operator's ~/.claude config (settings.json carries
     # permissions.defaultMode=bypassPermissions) and relink the volume history dirs
     # before the process-replacing exec_session, mirroring the Lima _cmd_session path.
@@ -2380,6 +2388,7 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     claude_dir = Path.home() / ".claude"
     copy_claude_config(transport, claude_dir)
     vm_cloud.link_cloud_claude_dirs(transport)
+    print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
     inner = _session_inner(
