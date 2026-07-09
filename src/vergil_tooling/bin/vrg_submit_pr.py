@@ -230,6 +230,35 @@ def _print_pr_watch(pr_url: str) -> None:
     print(f"    /vergil:pr-watch {pr_url}")
 
 
+def _reject_if_cross_repo(issue_ref: str) -> None:
+    """Abort if --issue names an issue in a different repo than this PR's own.
+
+    A PR can only ``Closes`` an issue in its own repository: GitHub scopes the
+    close keyword to same-repo linkage, and issue numbers are not unique across
+    repos, so a cross-repo close is a genuine mis-close hazard (an unrelated
+    same-numbered issue would be closed), not a cosmetic slip. Refuse here and
+    tell the caller to file the task in this repo and reference the other issue
+    via a comment or a ``Ref`` line. This runs before the epic/operational
+    guards because it is a cheap, local structural check — no authenticated
+    ``gh`` call — and short-circuiting a cross-repo ref avoids an epic-ness
+    lookup against a repo the token may not even cover. A bare ``#N`` resolves to
+    the current repo and always passes; an unparseable ref defers to the
+    downstream validators. The compare is case-insensitive so a differently
+    cased spelling of the current repo is not a false refusal.
+    """
+    current = github.current_repo()
+    try:
+        ref = epics.parse_issue_ref(issue_ref, default_repo=current)
+    except ValueError:
+        return
+    if current and f"{ref.owner}/{ref.repo}".lower() != current.lower():
+        raise SystemExit(
+            f"vrg-submit-pr: --issue ({ref.slug}) is in a different repo than this "
+            f"PR ({current}); a PR can only close an issue in its own repo. File the "
+            "task in this repo and reference the other issue via a comment or a Ref line."
+        )
+
+
 def _reject_if_epic_link(issue_ref: str) -> None:
     """Abort if the linkage points at an epic — PRs link a task, never an epic.
 
@@ -310,8 +339,8 @@ def _run_cli_mode(args: argparse.Namespace) -> int:
     if args.issue is None or args.summary is None or args.title is None:  # pragma: no cover
         msg = "internal error: CLI mode requires --issue, --summary, and --title"
         raise SystemExit(msg)
-
     issue_ref = resolve_issue_ref(args.issue)
+    _reject_if_cross_repo(issue_ref)
     _reject_if_epic_link(issue_ref)
     _reject_if_operational_task(issue_ref)
     linkage = _resolve_linkage(issue_ref, args.linkage)
@@ -552,6 +581,7 @@ def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: b
     """
     fields = submission.read_pr_fields(worktree_root)
     issue_ref = resolve_issue_ref(fields["issue"])
+    _reject_if_cross_repo(issue_ref)
     _reject_if_epic_link(issue_ref)
     _reject_if_operational_task(issue_ref)
     branch = git.current_branch()

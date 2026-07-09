@@ -11,6 +11,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
     _push_branch,
+    _reject_if_cross_repo,
     _reject_if_epic_link,
     _reject_if_operational_task,
     _resolve_linkage,
@@ -41,6 +42,7 @@ def _no_epic_link_check() -> Iterator[None]:
     don't shadow them.
     """
     with (
+        patch(_MOD + "._reject_if_cross_repo"),
         patch(_MOD + "._reject_if_epic_link"),
         patch(_MOD + "._reject_if_operational_task"),
         patch(_MOD + "._task_linkage", side_effect=lambda _ref, requested: (requested, None)),
@@ -1652,6 +1654,47 @@ def test_main_batch_routes_to_run_submit_batch() -> None:
         rc = main(["--all", "--finalize", "--base", "develop"])
     assert rc == 0
     run_batch.assert_called_once()
+
+
+# -- _reject_if_cross_repo (a PR closes only same-repo issues) ----------------
+
+
+def test_reject_if_cross_repo_raises_for_other_repo() -> None:
+    # A cross-repo ref is refused: a PR here cannot Closes an issue elsewhere.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        pytest.raises(SystemExit, match="different repo"),
+    ):
+        _reject_if_cross_repo("org/.github#127")
+
+
+def test_reject_if_cross_repo_passes_for_same_repo_bare_ref() -> None:
+    # A bare #N resolves to the current repo, so it is same-repo and passes.
+    with patch(f"{_MOD}.github.current_repo", return_value="org/repo"):
+        _reject_if_cross_repo("#42")
+
+
+def test_reject_if_cross_repo_passes_for_explicit_same_repo_ref() -> None:
+    with patch(f"{_MOD}.github.current_repo", return_value="org/repo"):
+        _reject_if_cross_repo("org/repo#42")
+
+
+def test_reject_if_cross_repo_passes_for_case_insensitive_match() -> None:
+    # Differently cased spellings of the current repo are not a false refusal.
+    with patch(f"{_MOD}.github.current_repo", return_value="Org/Repo"):
+        _reject_if_cross_repo("org/repo#42")
+
+
+def test_reject_if_cross_repo_noop_when_repo_unresolvable() -> None:
+    # No current repo to compare against: defer to downstream validation.
+    with patch(f"{_MOD}.github.current_repo", return_value=""):
+        _reject_if_cross_repo("org/repo#42")
+
+
+def test_reject_if_cross_repo_noop_for_unparseable_ref() -> None:
+    # A ref with no resolvable repo defers rather than erroring.
+    with patch(f"{_MOD}.github.current_repo", return_value="org/repo"):
+        _reject_if_cross_repo("not-a-ref")
 
 
 # -- _reject_if_epic_link (PRs link tasks, not epics) ------------------------

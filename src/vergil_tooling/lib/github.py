@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
+import functools
 import json
 import logging
 import os
@@ -104,6 +105,30 @@ def detect_org() -> str | None:
             if org:
                 return org
     return None
+
+
+@functools.cache
+def repo_visibility(name_with_owner: str) -> str:
+    """Return *name_with_owner*'s GitHub visibility (``PUBLIC``/``PRIVATE``/``INTERNAL``).
+
+    Fail-loud: a ``gh`` error (missing repo, auth, network) propagates as
+    :class:`GitHubAPIError` from :func:`read_output`; an empty result is also an
+    error. Memoized per process so audit/roadmap sweeps probe each repo once.
+    """
+    data = read_json("repo", "view", name_with_owner, "--json", "visibility")
+    visibility = data.get("visibility") if isinstance(data, dict) else None
+    if not isinstance(visibility, str) or not visibility:
+        raise GitHubAPIError(
+            1,
+            f"gh repo view {name_with_owner} --json visibility",
+            "empty or missing visibility",
+        )
+    return visibility
+
+
+def is_public(name_with_owner: str) -> bool:
+    """True only when *name_with_owner* is ``PUBLIC`` (``INTERNAL`` and ``PRIVATE`` are not)."""
+    return repo_visibility(name_with_owner) == "PUBLIC"
 
 
 def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> Any:

@@ -1656,3 +1656,36 @@ def test_closed_pr_for_branch_none_when_no_closed_pr() -> None:
 def test_closed_pr_for_branch_none_when_payload_not_dict() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
         assert github.closed_pr_for_branch("feature/1445-finalize-cleanup-race") is None
+
+
+# -- repo_visibility / is_public (epic #130) ---------------------------------
+def test_is_public_true_for_public_repo() -> None:
+    github.repo_visibility.cache_clear()
+    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}):
+        assert github.is_public("org/repo") is True
+
+
+def test_is_public_false_for_private_and_internal() -> None:
+    github.repo_visibility.cache_clear()
+    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
+        assert github.is_public("org/priv") is False
+    github.repo_visibility.cache_clear()
+    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "INTERNAL"}):
+        assert github.is_public("org/intern") is False
+
+
+def test_repo_visibility_memoizes_one_probe_per_repo() -> None:
+    github.repo_visibility.cache_clear()
+    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PUBLIC"}) as rj:
+        github.repo_visibility("org/repo")
+        github.repo_visibility("org/repo")
+    assert rj.call_count == 1
+
+
+def test_repo_visibility_fails_loud_on_empty() -> None:
+    github.repo_visibility.cache_clear()
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value={}),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        github.repo_visibility("org/repo")

@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import epics
+from vergil_tooling.lib import epics, github
 from vergil_tooling.lib.epics import ChildState, IssueRef
 
 EPIC = IssueRef("org", ".github", 40)
@@ -455,7 +455,10 @@ def _adhoc_row(number: int, repo_bare: str = "tooling") -> dict:
 
 
 def test_resolve_epic_ref_adhoc_discovers_single_epic() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]) as mock_list:
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]) as mock_list,
+    ):
         assert epics.resolve_epic_ref("adhoc", repo="org/tooling") == IssueRef(
             "org", ".github", 1972
         )
@@ -466,7 +469,10 @@ def test_resolve_epic_ref_adhoc_discovers_single_epic() -> None:
 
 def test_resolve_epic_ref_standing_is_deprecated_alias_for_adhoc() -> None:
     # 'standing' still resolves during the rollout window, routing to .github.
-    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]):
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]),
+    ):
         assert epics.resolve_epic_ref("standing", repo="org/tooling") == IssueRef(
             "org", ".github", 1972
         )
@@ -476,6 +482,7 @@ def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     # When no ad-hoc epic exists, ensure creates it in <org>/.github, by title.
     created = "https://github.com/org/.github/issues/77"
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
@@ -484,6 +491,20 @@ def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     assert mock_create.call_args.kwargs["repo"] == "org/.github"
     assert mock_create.call_args.kwargs["labels"] == ["epic", "ad-hoc"]
     assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): tooling"
+
+
+def test_ensure_adhoc_epic_private_repo_homes_in_self() -> None:
+    # A private target homes its ad-hoc epic in the repo itself, not .github.
+    created = "https://github.com/org/lab/issues/3"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/lab"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        result = epics.ensure_adhoc_epic("org/lab")
+    assert result == IssueRef("org", "lab", 3)
+    assert mock_create.call_args.kwargs["repo"] == "org/lab"
+    assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): lab"
 
 
 def test_ensure_adhoc_epic_for_dotgithub_itself() -> None:
@@ -501,6 +522,7 @@ def test_ensure_adhoc_epic_reuses_existing_by_title() -> None:
     # different repo's ad-hoc epic in the same .github list is ignored.
     rows = [_adhoc_row(1972), {"number": 40, "title": "Epic (ad hoc): actions"}]
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.github.read_json", return_value=rows),
         patch("vergil_tooling.lib.github.create_issue") as mock_create,
     ):
@@ -509,12 +531,16 @@ def test_ensure_adhoc_epic_reuses_existing_by_title() -> None:
 
 
 def test_ensure_standing_epic_is_backward_compatible_alias() -> None:
-    with patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]):
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]),
+    ):
         assert epics.ensure_standing_epic("org/tooling") == IssueRef("org", ".github", 1972)
 
 
 def test_ensure_adhoc_epic_multiple_same_title_raises() -> None:
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch(
             "vergil_tooling.lib.github.read_json",
             return_value=[_adhoc_row(1), _adhoc_row(2)],
@@ -542,3 +568,43 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
 def test_ensure_adhoc_epic_repo_without_owner_raises() -> None:
     with pytest.raises(ValueError, match="cannot resolve repo for ad-hoc epic"):
         epics.ensure_adhoc_epic("tooling")
+
+
+# -- resolve_epic_home (epic #130) -------------------------------------------
+def test_resolve_epic_home_dotgithub_short_circuits() -> None:
+    # A ".github" target never probes visibility.
+    with patch("vergil_tooling.lib.epics.github.is_public") as pub:
+        assert epics.resolve_epic_home("org", ".github") == "org/.github"
+        pub.assert_not_called()
+
+
+def test_resolve_epic_home_public_target_is_central() -> None:
+    with patch("vergil_tooling.lib.epics.github.is_public", return_value=True):
+        assert epics.resolve_epic_home("org", "tooling") == "org/.github"
+
+
+def test_resolve_epic_home_private_target_public_dotgithub_is_self() -> None:
+    def pub(nwo: str) -> bool:
+        return {"org/lab": False, "org/.github": True}[nwo]
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("org", "lab") == "org/lab"
+
+
+def test_resolve_epic_home_private_org_is_central() -> None:
+    def pub(nwo: str) -> bool:
+        return {"org/lab": False, "org/.github": False}[nwo]
+
+    with patch("vergil_tooling.lib.epics.github.is_public", side_effect=pub):
+        assert epics.resolve_epic_home("org", "lab") == "org/.github"
+
+
+def test_resolve_epic_home_fails_loud() -> None:
+    with (
+        patch(
+            "vergil_tooling.lib.epics.github.is_public",
+            side_effect=github.GitHubAPIError(1, "cmd", "boom"),
+        ),
+        pytest.raises(github.GitHubAPIError),
+    ):
+        epics.resolve_epic_home("org", "missing")
