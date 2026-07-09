@@ -15,9 +15,10 @@ Applies to all repositories that use GitHub issues and pull requests.
 - Primary issue: The single issue a pull request is intended to close.
 - Sub-issue: A scoped unit of work that contributes to a parent issue but does
   not complete it.
-- Validation task: A task whose acceptance is proven by running a check and
-  recording the result as a comment — not by merging a pull request. See
-  [Validation tasks](#validation-tasks).
+- Operational task: A not-PR-workable task whose acceptance is proven by
+  *running* something and recording the result as a comment — not by merging a
+  pull request. Two kinds: **validation** (verify) and **deployment** (make
+  merged work usable). See [Operational tasks](#operational-tasks).
 
 ## Core rules
 
@@ -117,42 +118,66 @@ Use `-F` (not `-f`) for `sub_issue_id` — the API requires an integer, and
 - A closed issue must reflect completed work. If work is deferred, keep the
   issue open or create a follow-up issue and link it explicitly.
 
-## Validation tasks
+## Operational tasks
 
-Some work's acceptance can only be confirmed **after merge** — a cold rebuild, a
-live-environment check, a deploy smoke test. Auto-close would close such a task
-the moment its code lands, so an epic could report "done" before the check ran. A
-**validation task** re-establishes that gate.
+Some work is proven not by merging a PR but by *running* something after merge
+and recording the result as a comment. These are **operational tasks** — a
+family of not-PR-workable task types. Two kinds:
 
-- **Acceptance is a recorded result, not a merge.** A validation task is proven
-  by running its checklist and posting `Outcome: PASS` (or `Outcome: FAIL`) as a
+- **Validation** — *verify* prior work is correct (a cold rebuild, a
+  live-environment check, a deploy smoke test). Run with the `issue-validate`
+  skill.
+- **Deployment** — *make merged work usable*: install/sync/deploy it into the
+  environment so the next step can run against it. Run with the `issue-deploy`
+  skill.
+
+They share one mechanism; each kind supplies its own label, scaffold, and run
+skill.
+
+**Merged vs deployed.** An implementation task closes when its PR merges. But the
+next step sometimes needs the change not just *merged* but *deployed and usable*.
+A deployment task makes that explicit, and its closure **is** the "deployed"
+signal — so the common shape of an epic's tail is **implement → deploy →
+validate**, each `Blocked-by` the last.
+
+Shared rules (both kinds):
+
+- **Acceptance is a recorded result, not a merge.** The task is proven by running
+  its procedure and posting `Outcome: SUCCESS` (or `Outcome: FAILURE`) as a
   comment.
-- **It is not PR-workable.** It has no code PR and never auto-closes; the PR
-  tooling (`vrg-submit-pr`, `vrg-pr-workflow report-ready`) refuses it. It is run
-  with the `issue-validate` skill, not implemented.
-- **It closes only on PASS.** On FAIL it stays open — like a pull request that
-  cannot merge — follow-up fix issues are filed, and the parent epic stays open
-  too.
-- **It gates epic closure.** As an open child it holds the epic open until it
-  passes, so an epic's rollup is honest about outstanding validation.
-- **It records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads
-  them to report each validation as *runnable* (dependencies closed) or
-  *blocked*.
+- **Not PR-workable.** It has no code PR and never auto-closes; the PR tooling
+  (`vrg-submit-pr`, `vrg-pr-workflow report-ready`) refuses it.
+- **Closes only on SUCCESS.** On failure it stays open — like a pull request that
+  cannot merge — and the parent epic stays open too. (Validation files a fix
+  issue; deployment retries first, then files a fix issue only for a genuine
+  defect.)
+- **Gates epic closure** by staying open — an open operational child holds the
+  epic until it succeeds, so rollup is honest.
+- **Records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads them
+  to report each as *runnable* (dependencies closed) or *blocked*, tagged by
+  kind.
 
 Create one with the sanctioned path — never hand-roll the body:
 
 ```bash
-vrg-issue-create --epic <org>/.github#N --repo <org>/<repo> --kind validation \
-  --title "Validate: <what>" --blocked-by <org>/<repo>#<TASK>
+vrg-issue-create --epic <org>/.github#N --repo <org>/<repo> \
+  --kind {validation|deployment} --title "<what>" --blocked-by <org>/<repo>#<TASK>
 ```
 
-This stamps the `validation` label and an executable scaffold: an author-defined
+This stamps the kind's label and an executable scaffold: an author-defined
 **precondition self-check** (a machine probe or a human-attested statement — no
 mechanism is prescribed; if a precondition is unmet, record `blocked` and stop,
-never fabricating), the **commands**, the **acceptance criteria**, and a
-**PASS/FAIL results template**.
+never fabricating), the procedure, the acceptance criteria, and a
+**SUCCESS/FAILURE results template**.
 
-Add a validation task when acceptance needs a cold rebuild, a live check, or a
-deploy smoke test — i.e. the pipeline's own tests cannot prove it. Provisioning
-and infrastructure work carry a cold-rebuild validation by default. Do not add
-one for docs, or code fully covered by pipeline tests, where merge means done.
+Add a **validation** task when acceptance needs a check the pipeline's own tests
+cannot do (a cold rebuild, a live check, a deploy smoke test); provisioning and
+infrastructure work carry a cold-rebuild validation by default. Add a
+**deployment** task when the next step needs the change deployed and usable, not
+merely merged.
+
+**Deployment autonomy boundary.** A deployment task owns only the **agent-safe**
+deploy steps (install/sync/restart). Where deploying needs a **release**
+(bump/tag/publish), that release is a **human-gated precondition** — attested,
+never performed by the agent — the same policy that keeps PR submission and merge
+in human hands.
