@@ -1042,6 +1042,8 @@
       
         
       
+        
+      
     
     
     
@@ -1094,6 +1096,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.122/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.122
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9109,10 +9139,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-tasks" class="md-nav__link">
+  <a href="#operational-tasks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation tasks
+        Operational tasks
       
     </span>
   </a>
@@ -11114,10 +11144,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#validation-tasks" class="md-nav__link">
+  <a href="#operational-tasks" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Validation tasks
+        Operational tasks
       
     </span>
   </a>
@@ -11153,9 +11183,10 @@ tracked, reviewable, and auditable.</p>
 <li>Primary issue: The single issue a pull request is intended to close.</li>
 <li>Sub-issue: A scoped unit of work that contributes to a parent issue but does
   not complete it.</li>
-<li>Validation task: A task whose acceptance is proven by running a check and
-  recording the result as a comment — not by merging a pull request. See
-  <a href="#validation-tasks">Validation tasks</a>.</li>
+<li>Operational task: A not-PR-workable task whose acceptance is proven by
+  <em>running</em> something and recording the result as a comment — not by merging a
+  pull request. Two kinds: <strong>validation</strong> (verify) and <strong>deployment</strong> (make
+  merged work usable). See <a href="#operational-tasks">Operational tasks</a>.</li>
 </ul>
 <h2 id="core-rules">Core rules<a class="headerlink" href="#core-rules" title="Permanent link">&para;</a></h2>
 <ul>
@@ -11245,40 +11276,61 @@ capture the required structure.</p>
 <li>A closed issue must reflect completed work. If work is deferred, keep the
   issue open or create a follow-up issue and link it explicitly.</li>
 </ul>
-<h2 id="validation-tasks">Validation tasks<a class="headerlink" href="#validation-tasks" title="Permanent link">&para;</a></h2>
-<p>Some work's acceptance can only be confirmed <strong>after merge</strong> — a cold rebuild, a
-live-environment check, a deploy smoke test. Auto-close would close such a task
-the moment its code lands, so an epic could report "done" before the check ran. A
-<strong>validation task</strong> re-establishes that gate.</p>
+<h2 id="operational-tasks">Operational tasks<a class="headerlink" href="#operational-tasks" title="Permanent link">&para;</a></h2>
+<p>Some work is proven not by merging a PR but by <em>running</em> something after merge
+and recording the result as a comment. These are <strong>operational tasks</strong> — a
+family of not-PR-workable task types. Two kinds:</p>
 <ul>
-<li><strong>Acceptance is a recorded result, not a merge.</strong> A validation task is proven
-  by running its checklist and posting <code>Outcome: PASS</code> (or <code>Outcome: FAIL</code>) as a
+<li><strong>Validation</strong> — <em>verify</em> prior work is correct (a cold rebuild, a
+  live-environment check, a deploy smoke test). Run with the <code>issue-validate</code>
+  skill.</li>
+<li><strong>Deployment</strong> — <em>make merged work usable</em>: install/sync/deploy it into the
+  environment so the next step can run against it. Run with the <code>issue-deploy</code>
+  skill.</li>
+</ul>
+<p>They share one mechanism; each kind supplies its own label, scaffold, and run
+skill.</p>
+<p><strong>Merged vs deployed.</strong> An implementation task closes when its PR merges. But the
+next step sometimes needs the change not just <em>merged</em> but <em>deployed and usable</em>.
+A deployment task makes that explicit, and its closure <strong>is</strong> the "deployed"
+signal — so the common shape of an epic's tail is <strong>implement → deploy →
+validate</strong>, each <code>Blocked-by</code> the last.</p>
+<p>Shared rules (both kinds):</p>
+<ul>
+<li><strong>Acceptance is a recorded result, not a merge.</strong> The task is proven by running
+  its procedure and posting <code>Outcome: SUCCESS</code> (or <code>Outcome: FAILURE</code>) as a
   comment.</li>
-<li><strong>It is not PR-workable.</strong> It has no code PR and never auto-closes; the PR
-  tooling (<code>vrg-submit-pr</code>, <code>vrg-pr-workflow report-ready</code>) refuses it. It is run
-  with the <code>issue-validate</code> skill, not implemented.</li>
-<li><strong>It closes only on PASS.</strong> On FAIL it stays open — like a pull request that
-  cannot merge — follow-up fix issues are filed, and the parent epic stays open
-  too.</li>
-<li><strong>It gates epic closure.</strong> As an open child it holds the epic open until it
-  passes, so an epic's rollup is honest about outstanding validation.</li>
-<li><strong>It records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads
-  them to report each validation as <em>runnable</em> (dependencies closed) or
-  <em>blocked</em>.</li>
+<li><strong>Not PR-workable.</strong> It has no code PR and never auto-closes; the PR tooling
+  (<code>vrg-submit-pr</code>, <code>vrg-pr-workflow report-ready</code>) refuses it.</li>
+<li><strong>Closes only on SUCCESS.</strong> On failure it stays open — like a pull request that
+  cannot merge — and the parent epic stays open too. (Validation files a fix
+  issue; deployment retries first, then files a fix issue only for a genuine
+  defect.)</li>
+<li><strong>Gates epic closure</strong> by staying open — an open operational child holds the
+  epic until it succeeds, so rollup is honest.</li>
+<li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them
+  to report each as <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by
+  kind.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span>--kind<span class="w"> </span>validation<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;Validate: &lt;what&gt;&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;&lt;what&gt;&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
-<p>This stamps the <code>validation</code> label and an executable scaffold: an author-defined
+<p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
 mechanism is prescribed; if a precondition is unmet, record <code>blocked</code> and stop,
-never fabricating), the <strong>commands</strong>, the <strong>acceptance criteria</strong>, and a
-<strong>PASS/FAIL results template</strong>.</p>
-<p>Add a validation task when acceptance needs a cold rebuild, a live check, or a
-deploy smoke test — i.e. the pipeline's own tests cannot prove it. Provisioning
-and infrastructure work carry a cold-rebuild validation by default. Do not add
-one for docs, or code fully covered by pipeline tests, where merge means done.</p>
+never fabricating), the procedure, the acceptance criteria, and a
+<strong>SUCCESS/FAILURE results template</strong>.</p>
+<p>Add a <strong>validation</strong> task when acceptance needs a check the pipeline's own tests
+cannot do (a cold rebuild, a live check, a deploy smoke test); provisioning and
+infrastructure work carry a cold-rebuild validation by default. Add a
+<strong>deployment</strong> task when the next step needs the change deployed and usable, not
+merely merged.</p>
+<p><strong>Deployment autonomy boundary.</strong> A deployment task owns only the <strong>agent-safe</strong>
+deploy steps (install/sync/restart). Where deploying needs a <strong>release</strong>
+(bump/tag/publish), that release is a <strong>human-gated precondition</strong> — attested,
+never performed by the agent — the same policy that keeps PR submission and merge
+in human hands.</p>
 
 
 
