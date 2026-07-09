@@ -220,6 +220,36 @@ def _workspace_org_repo(workspace: str | None) -> tuple[str | None, str | None]:
     return parts[0], parts[1]
 
 
+def _require_instance_selection(
+    identity: str,
+    org: str,
+    repo: str,
+    stanza: VmStanza | None,
+    inst_name: str | None,
+) -> None:
+    """Abort when a repo's role declares named instances but none was selected.
+
+    Such a role's base tier is a shared template, not a bootable box; composing it
+    with no ``--name`` yields a phantom default whose VM was never created, so the
+    caller would only discover the mistake via a misleading 'VM does not exist'
+    error downstream. Fail early and name the available instances instead. This
+    fires for a borrowed lender too — the check runs on the effective (post-borrow)
+    repo (issue #2251).
+    """
+    if inst_name is not None or stanza is None:
+        return
+    role = stanza.roles.get(identity)
+    if role is None or not role.instances:
+        return
+    choices = sorted(role.instances)
+    avail = ", ".join(choices)
+    msg = (
+        f"{org}/{repo} declares named VM instances ({avail}) but none was selected; "
+        f"pass --name <instance> (e.g. --name {choices[0]})"
+    )
+    raise SpecError(msg)
+
+
 def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -> Target:
     """Resolve (identity, optional org/repo) to a base or dedicated VM target.
 
@@ -254,6 +284,8 @@ def _resolve_target(args: argparse.Namespace, *, borrow_allowed: bool = False) -
         eff_org, eff_repo, eff_vm = borrow.org, borrow.repo, borrow.stanza
     else:
         eff_org, eff_repo, eff_vm = org, repo, requested_vm
+
+    _require_instance_selection(name, eff_org, eff_repo, eff_vm, inst_name)
 
     override = identity.overrides.get((eff_org, eff_repo))
     spec = compose_vm_spec(
