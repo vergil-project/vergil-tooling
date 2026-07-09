@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.122] - 2026-07-09
+
+### Bug fixes
+
+- refuse a cross-repo closing issue in submit-pr / report-ready (#2246)
+
+### Documentation
+
+- generalize the validation-task doc to operational tasks (#2240)
+
+### Features
+
+- add visibility-based epic-home resolver (#2239)
+- explicit --repo target, resolver-derived home (#2241)
+- home ad-hoc epics via the resolver (self for private repos) (#2242)
+- flag epics outside .github only for public repos (#2245)
+
 ## [2.1.121] - 2026-07-09
 
 ### Bug fixes
