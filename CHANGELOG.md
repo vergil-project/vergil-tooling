@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.121] - 2026-07-09
+
+### Bug fixes
+
+- reap stale SSH masters + announce guest commands so cloud sessions can't silently hang (#2202) (#2212)
+
+### Documentation
+
+- document the validation task type (#2210)
+
+### Features
+
+- unify operational success marker (SUCCESS, legacy PASS) (#2222)
+- add deployment label to the operational set (#2223)
+- add --kind deployment path + scaffold (#2224)
+- tag operational-pending audit items by kind (#2226)
+
+### Refactoring
+
+- generalize the PR-workability guard to operational tasks (#2220)
+- generalize the validation-aware audit to operational tasks (#2221)
+
 ## [2.1.120] - 2026-07-08
 
 ### Bug fixes
