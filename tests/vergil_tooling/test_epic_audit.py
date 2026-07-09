@@ -326,15 +326,15 @@ def test_operational_status_classifies_runnable_vs_blocked() -> None:
         epics.ChildState(epics.IssueRef("org", "repo", 9), "CLOSED"),  # closed -> ignored
     ]
 
-    def is_operational(ref: epics.IssueRef) -> bool:
-        return ref.number in (7, 8, 9)
+    def kind(ref: epics.IssueRef) -> str | None:
+        return "validation" if ref.number in (7, 8, 9) else None
 
     def all_blockers_closed(ref: epics.IssueRef) -> bool:
         return ref.number == 7  # #7 runnable, #8 still blocked
 
     with (
         patch("vergil_tooling.lib.epics.child_states", return_value=children),
-        patch("vergil_tooling.lib.epics.is_operational", side_effect=is_operational),
+        patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
         patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
     ):
         status = epic_audit.operational_status(epic)
@@ -343,13 +343,33 @@ def test_operational_status_classifies_runnable_vs_blocked() -> None:
     assert status.pending == (val_runnable, val_blocked)
 
 
+def test_operational_status_tags_kind() -> None:
+    epic = epics.IssueRef("org", ".github", 124)
+    val = epics.IssueRef("org", "repo", 7)
+    dep = epics.IssueRef("org", "repo", 8)
+    children = [epics.ChildState(val, "OPEN"), epics.ChildState(dep, "OPEN")]
+
+    def kind(ref: epics.IssueRef) -> str | None:
+        return "validation" if ref.number == 7 else "deployment"
+
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.operational_kind", side_effect=kind),
+        patch("vergil_tooling.lib.epics.all_blockers_closed", return_value=True),
+    ):
+        status = epic_audit.operational_status(epic)
+    # keyed by IssueRef (cross-repo safe), not bare number
+    assert status.by_kind[val] == "validation"
+    assert status.by_kind[dep] == "deployment"
+
+
 def test_operational_pending_collects_only_epics_with_open_validations() -> None:
     val = epics.IssueRef("org", "repo", 7)
 
     def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
         if epic.number == 115:
-            return epic_audit.OperationalStatus(epic, (val,), ())
-        return epic_audit.OperationalStatus(epic, (), ())  # nothing pending
+            return epic_audit.OperationalStatus(epic, (val,), (), {val: "validation"})
+        return epic_audit.OperationalStatus(epic, (), (), {})  # nothing pending
 
     with (
         patch(
@@ -416,15 +436,18 @@ def test_success_marker_accepts_success_and_legacy_pass() -> None:
 
 
 def test_render_includes_operational_pending_section() -> None:
+    val = epics.IssueRef("org", "repo", 7)
+    dep = epics.IssueRef("org", "repo", 8)
     status = epic_audit.OperationalStatus(
         epics.IssueRef("org", ".github", 115),
-        (epics.IssueRef("org", "repo", 7),),
-        (epics.IssueRef("org", "repo", 8),),
+        (val,),
+        (dep,),
+        {val: "validation", dep: "deployment"},
     )
     out = epic_audit.render([], [], org="org", window_days=30, pending_operational=[status])
     assert "Operational tasks pending" in out
-    assert "org/repo#7" in out  # runnable
-    assert "org/repo#8" in out  # blocked
+    assert "org/repo#7 (validation)" in out  # runnable, kind-tagged
+    assert "org/repo#8 (deployment)" in out  # blocked, kind-tagged
 
 
 def test_render_flags_closed_operational_without_success() -> None:

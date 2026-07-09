@@ -104,6 +104,7 @@ class OperationalStatus:
     epic: epics.IssueRef
     runnable: tuple[epics.IssueRef, ...]  # open operational children, all blockers closed
     blocked: tuple[epics.IssueRef, ...]  # open operational children, a blocker still open
+    by_kind: dict[epics.IssueRef, str]  # each pending child -> its kind (validation/deployment)
 
     @property
     def pending(self) -> tuple[epics.IssueRef, ...]:
@@ -112,22 +113,29 @@ class OperationalStatus:
 
 
 def operational_status(epic: epics.IssueRef) -> OperationalStatus:
-    """Classify *epic*'s open operational children as runnable vs blocked.
+    """Classify *epic*'s open operational children as runnable vs blocked, by kind.
 
     An operational child (validation, deployment, …) is runnable when every task
     it is ``Blocked-by`` is closed; otherwise it is blocked. This
-    runnable-vs-blocked split is the honest "what still has to run" signal — and
-    the seed of a future automator that runs operational tasks as their
-    dependencies land.
+    runnable-vs-blocked split, tagged by kind, is the honest "what still has to
+    run" signal — and the seed of a future automator that runs operational tasks
+    as their dependencies land.
     """
     runnable: list[epics.IssueRef] = []
     blocked: list[epics.IssueRef] = []
+    by_kind: dict[epics.IssueRef, str] = {}
     for child in epics.child_states(epic):
-        if child.state != "OPEN" or not epics.is_operational(child.ref):
+        if child.state != "OPEN":
             continue
+        kind = epics.operational_kind(child.ref)
+        if kind is None:
+            continue
+        by_kind[child.ref] = kind
         target = runnable if epics.all_blockers_closed(child.ref) else blocked
         target.append(child.ref)
-    return OperationalStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
+    return OperationalStatus(
+        epic=epic, runnable=tuple(runnable), blocked=tuple(blocked), by_kind=by_kind
+    )
 
 
 def operational_pending(org: str) -> list[OperationalStatus]:
@@ -324,8 +332,14 @@ def render(
     if pending_operational:
         lines += ["", "## Operational tasks pending (epic not done until they run)", ""]
         for status in sorted(pending_operational, key=lambda s: s.epic.number):
-            runnable = ", ".join(ref.slug for ref in status.runnable) or "none"
-            blocked = ", ".join(ref.slug for ref in status.blocked) or "none"
+            runnable = (
+                ", ".join(f"{ref.slug} ({status.by_kind.get(ref, '?')})" for ref in status.runnable)
+                or "none"
+            )
+            blocked = (
+                ", ".join(f"{ref.slug} ({status.by_kind.get(ref, '?')})" for ref in status.blocked)
+                or "none"
+            )
             lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
     if epics_outside or stray or closed_operational_no_success:
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
