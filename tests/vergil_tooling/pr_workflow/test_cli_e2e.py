@@ -130,6 +130,118 @@ def test_report_ready_rejects_operational_task(
     assert "operational task" in capsys.readouterr().err.lower()
 
 
+def test_report_ready_rejects_cross_repo_issue(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Guard parity with vrg-submit-pr: report-ready refuses a cross-repo --issue.
+    # A PR can only close an issue in its own repo, and because issue numbers are
+    # not unique across repos, a cross-repo close is a genuine mis-close hazard.
+    # The check runs first, so no epic/operational gh call hits the foreign repo.
+    with patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "org/.github#127",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 1
+    assert "different repo" in capsys.readouterr().err.lower()
+
+
+def test_report_ready_defers_cross_repo_when_repo_unresolvable(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # If the current repo cannot be resolved (offline), the cross-repo guard
+    # defers rather than blocking; vrg-submit-pr's check still catches it later.
+    with patch(
+        "vergil_tooling.bin.vrg_pr_workflow.github.current_repo",
+        side_effect=subprocess.CalledProcessError(1, "gh"),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "org/.github#127",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+
+
+def test_report_ready_defers_cross_repo_when_repo_empty(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An empty current repo (nothing to compare against) defers rather than
+    # blocking; a bare same-repo issue then proceeds normally.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value=""),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+
+
+def test_report_ready_allows_explicit_same_repo_ref(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An explicit owner/repo#N matching the current repo passes the cross-repo
+    # guard (same repo) and proceeds.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_epic_linkage", return_value=False),
+        patch("vergil_tooling.bin.vrg_pr_workflow.epics.is_operational_task", return_value=False),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "org/repo#42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+
+
 def test_report_ready_allows_non_epic_task(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

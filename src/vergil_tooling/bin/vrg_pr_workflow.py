@@ -32,6 +32,37 @@ def _emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2))
 
 
+def _reject_cross_repo_issue(issue: str) -> None:
+    """Refuse a cross-repo --issue at report time — a PR closes only same-repo issues.
+
+    Mirrors vrg-submit-pr's guard so the error surfaces where the value is entered
+    (report time) rather than later at submit. A PR can only ``Closes`` an issue
+    in its own repo; because issue numbers are not unique across repos, a
+    cross-repo close would shut an unrelated same-numbered issue — a genuine
+    mis-close hazard. Best-effort: if the current repo cannot be resolved (no
+    remote, no gh auth — an offline run), defer silently to vrg-submit-pr's
+    authoritative check. A bare ``#N`` (or a plain number) resolves to the
+    current repo and always passes; the compare is case-insensitive so a
+    differently cased spelling of the current repo is not a false refusal.
+    """
+    try:
+        current = github.current_repo()
+    except (subprocess.CalledProcessError, OSError):
+        return
+    if not current:
+        return
+    try:
+        ref = epics.parse_issue_ref(issue, default_repo=current)
+    except ValueError:
+        return
+    if f"{ref.owner}/{ref.repo}".lower() != current.lower():
+        raise WorkflowError(
+            f"--issue ({ref.slug}) is in a different repo than this PR ({current}); "
+            "a PR can only close an issue in its own repo. File the task in this repo "
+            "and reference the other issue via a comment or a Ref line."
+        )
+
+
 def _reject_epic_issue(issue: str) -> None:
     """Refuse an epic linkage at report time — a PR links a task, not an epic.
 
@@ -73,6 +104,7 @@ def _reject_operational_issue(issue: str) -> None:
 
 
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    _reject_cross_repo_issue(str(args.issue))
     _reject_epic_issue(str(args.issue))
     _reject_operational_issue(str(args.issue))
     try:
