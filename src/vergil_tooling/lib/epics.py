@@ -309,9 +309,11 @@ _ADHOC_EPIC_BODY = (
 
 
 def ensure_adhoc_epic(target_repo: str) -> IssueRef:
-    """Return *target_repo*'s ad-hoc epic in ``<org>/.github``, creating it if absent.
+    """Return *target_repo*'s ad-hoc epic in its resolved epic home, creating it if absent.
 
-    All ad-hoc epics live in the org's ``.github`` repo, one per repo, each
+    The home is derived from *target_repo*'s visibility by
+    :func:`resolve_epic_home`: a public repo homes its ad-hoc epic centrally in
+    ``<org>/.github``; a private repo homes it in itself. One per repo, each
     disambiguated by the title ``Epic (ad hoc): <bare repo name>`` and labelled
     ``epic`` + ``ad-hoc``. Idempotent: an existing epic with that title is
     reused; none means create it; two sharing the title is ambiguous and an
@@ -321,13 +323,14 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     if "/" not in target_repo:
         raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
     owner, bare = target_repo.split("/", 1)
-    dotgithub = f"{owner}/.github"
+    home = resolve_epic_home(owner, bare)
+    home_repo = home.split("/", 1)[1]
     title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
     raw: Any = github.read_json(
         "issue",
         "list",
         "--repo",
-        dotgithub,
+        home,
         "--label",
         "epic",
         "--label",
@@ -345,19 +348,18 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     if len(rows) > 1:
         nums = ", ".join(f"#{r['number']}" for r in rows)
         raise ValueError(
-            f"multiple ad-hoc epics titled {title!r} in {dotgithub} ({nums}) — "
-            "pass an explicit --epic"
+            f"multiple ad-hoc epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
         )
     if rows:
-        return IssueRef(owner=owner, repo=".github", number=int(rows[0]["number"]))
+        return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
     url = github.create_issue(
-        repo=dotgithub,
+        repo=home,
         title=title,
         body=_ADHOC_EPIC_BODY.format(repo=target_repo),
         labels=list(_ADHOC_EPIC_LABELS),
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
-    return IssueRef(owner=owner, repo=".github", number=number)
+    return IssueRef(owner=owner, repo=home_repo, number=number)
 
 
 # Deprecated alias kept for the ad-hoc rollout window (epic #85); callers still
