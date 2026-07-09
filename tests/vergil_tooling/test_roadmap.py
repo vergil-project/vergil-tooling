@@ -177,6 +177,38 @@ def test_render_without_org_uses_generic_source() -> None:
     assert "open epics in the org .github repo" in out
 
 
+def test_gather_reads_from_explicit_private_home() -> None:
+    # A private repo self-homes its epics; gather scopes to that home, not .github.
+    epic_list = [
+        {
+            "number": 2,
+            "title": "Lab epic",
+            "createdAt": "2026-07-09T00:00:00Z",
+            "milestone": None,
+            "labels": [{"name": "epic"}],
+            "url": "u2",
+        }
+    ]
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=epic_list) as mock_read,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]) as mock_children,
+    ):
+        result = roadmap.gather("org", home="org/lab")
+    assert result[0].number == 2
+    # The private home drives both the epic query and the child rollup.
+    assert "org/lab" in mock_read.call_args.args
+    assert (mock_children.call_args.args[0].owner, mock_children.call_args.args[0].repo) == (
+        "org",
+        "lab",
+    )
+
+
+def test_render_uses_explicit_home_source() -> None:
+    summaries = [EpicSummary(2, "Lab", "2026-07-09", None, (), 0, 0, "u2")]
+    out = roadmap.render(summaries, "org", home="org/lab")
+    assert "open epics in org/lab" in out
+
+
 def test_gather_defaults_org_to_current_repo_owner() -> None:
     epic_list = [
         {
