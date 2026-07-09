@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.123] - 2026-07-09
+
+### Bug fixes
+
+- abort when a repo declares named instances but none is selected (#2254)
+
+### Documentation
+
+- add the epic-home visibility-flip runbook (#2253)
+
+### Features
+
+- source epics from the resolved home (self for private repos) (#2250)
+- refuse public task under a private epic (visibility boundary) (#2252)
+- self-contained --repo audit sourced from the resolved home (#2255)
+
 ## [2.1.122] - 2026-07-09
 
 ### Bug fixes
