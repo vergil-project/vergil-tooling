@@ -482,3 +482,50 @@ def test_render_flags_closed_operational_without_success() -> None:
     )
     assert "PASS comment" in out
     assert "org/repo#55" in out
+
+
+# -- self-contained --repo audit (epic #130, home-scoped checks) --------------
+def test_stray_dotgithub_issue_scopes_to_home() -> None:
+    issues = [{"number": 7, "labels": []}]  # unlinked, non-epic, non-intake -> stray
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=issues) as mock_list,
+        patch("vergil_tooling.lib.epics.parent_of", return_value=None),
+    ):
+        result = epic_audit.stray_dotgithub_issue("org", home="org/lab")
+    assert result == ["org/lab#7"]
+    assert "org/lab" in mock_list.call_args.args  # read the home, not <org>/.github
+
+
+def test_operational_pending_scopes_to_home() -> None:
+    captured: list[epics.IssueRef] = []
+
+    def fake_status(epic: epics.IssueRef) -> epic_audit.OperationalStatus:
+        captured.append(epic)
+        return epic_audit.OperationalStatus(epic, (), (), {})
+
+    with (
+        patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[MagicMock(number=5)]),
+        patch("vergil_tooling.lib.epic_audit.operational_status", side_effect=fake_status),
+    ):
+        epic_audit.operational_pending("org", home="org/lab")
+    assert (captured[0].owner, captured[0].repo) == ("org", "lab")
+
+
+def test_close_drift_closes_epics_in_home() -> None:
+    epic_summaries = [roadmap.EpicSummary(5, "Lab", "2026-07-09", None, (), 1, 1, "u5")]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        closed = epic_audit.close_drift([], epic_summaries, org="org", home="org/lab")
+    assert closed == ["org/lab#5"]
+    assert run.call_args.args[:5] == ("issue", "close", "5", "--repo", "org/lab")
+
+
+def test_epic_drift_scopes_to_home() -> None:
+    with patch("vergil_tooling.lib.epic_audit.roadmap.gather", return_value=[]) as gather:
+        epic_audit.epic_drift("org", home="org/lab")
+    assert gather.call_args.kwargs["home"] == "org/lab"
+
+
+def test_render_banner_names_home_when_repo_scoped() -> None:
+    out = epic_audit.render([], [], org="org", window_days=30, home="org/lab")
+    assert "**org/lab**" in out  # banner names the scoped home, not the org

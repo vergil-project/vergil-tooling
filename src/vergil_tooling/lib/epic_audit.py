@@ -92,9 +92,17 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
     return drift
 
 
-def epic_drift() -> list[roadmap.EpicSummary]:
-    """Open, non-perpetual epics whose children are all closed (should roll up)."""
-    return [epic for epic in roadmap.gather() if epic.total > 0 and epic.closed == epic.total]
+def epic_drift(org: str | None = None, *, home: str | None = None) -> list[roadmap.EpicSummary]:
+    """Open, non-perpetual epics whose children are all closed (should roll up).
+
+    Scoped to the resolved epic *home* (default: the org's ``.github``), so a
+    ``--repo``-targeted audit sees only that repo's epics.
+    """
+    return [
+        epic
+        for epic in roadmap.gather(org, home=home)
+        if epic.total > 0 and epic.closed == epic.total
+    ]
 
 
 @dataclass(frozen=True)
@@ -138,17 +146,21 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
     )
 
 
-def operational_pending(org: str) -> list[OperationalStatus]:
+def operational_pending(org: str, *, home: str | None = None) -> list[OperationalStatus]:
     """Open finite epics with outstanding operational children.
 
     Reports the "code-complete, operation-pending" state that keeps an epic
     honestly not-done: its code tasks may all be merged, but until its
     operational tasks (validations, deployments, …) run the epic is not finished.
-    Only epics with at least one open operational child appear.
+    Only epics with at least one open operational child appear. Scoped to the
+    resolved epic *home* (default ``<org>/.github``).
     """
+    if home is None:
+        home = f"{org}/.github"
+    home_owner, home_repo = home.split("/", 1)
     pending: list[OperationalStatus] = []
-    for summary in roadmap.gather(org):
-        status = operational_status(epics.IssueRef(org, ".github", summary.number))
+    for summary in roadmap.gather(org, home=home):
+        status = operational_status(epics.IssueRef(home_owner, home_repo, summary.number))
         if status.pending:
             pending.append(status)
     return pending
@@ -240,22 +252,25 @@ def epic_outside_dotgithub(org: str) -> list[str]:
     return violations
 
 
-def stray_dotgithub_issue(org: str) -> list[str]:
-    """Open ``<org>/.github`` issues that violate invariant 2 (epic #85).
+def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
+    """Open issues in the epic *home* that violate invariant 2 (epic #85).
 
-    ``.github`` holds only epics, intake (``triage``/``idea``/``research``), and
-    managed tasks whose closing PR lands in ``.github`` (a task linked under an
-    epic). An open ``.github`` issue that is none of these — an unlinked,
-    non-epic, non-intake issue — is a stray; returns their slugs. When a
-    candidate's parent cannot be confirmed as an epic it is reported (fail-loud,
-    the human decides).
+    The home holds only epics, intake (``triage``/``idea``/``research``), and
+    managed tasks whose closing PR lands there (a task linked under an epic). An
+    open issue that is none of these — an unlinked, non-epic, non-intake issue —
+    is a stray; returns their slugs. *home* defaults to ``<org>/.github``; a
+    ``--repo``-targeted audit passes the repo's resolved home. When a candidate's
+    parent cannot be confirmed as an epic it is reported (fail-loud, the human
+    decides).
     """
-    dotgithub = f"{org}/.github"
+    if home is None:
+        home = f"{org}/.github"
+    home_owner, home_repo = home.split("/", 1)
     raw: Any = github.read_json(
         "issue",
         "list",
         "--repo",
-        dotgithub,
+        home,
         "--state",
         "open",
         "--limit",
@@ -269,10 +284,10 @@ def stray_dotgithub_issue(org: str) -> list[str]:
         if "epic" in labels or (labels & _INTAKE_LABELS):
             continue
         number = int(item["number"])
-        parent = epics.parent_of(epics.IssueRef(org, ".github", number))
+        parent = epics.parent_of(epics.IssueRef(home_owner, home_repo, number))
         if parent is not None and epics.is_epic(parent):
             continue
-        strays.append(f"{dotgithub}#{number}")
+        strays.append(f"{home}#{number}")
     return strays
 
 
@@ -282,6 +297,7 @@ def render(
     *,
     org: str,
     window_days: int,
+    home: str | None = None,
     epics_outside: list[str] | None = None,
     stray: list[str] | None = None,
     pending_operational: list[OperationalStatus] | None = None,
@@ -302,8 +318,9 @@ def render(
     stray = stray or []
     pending_operational = pending_operational or []
     closed_operational_no_success = closed_operational_no_success or []
+    scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
-        f"_Read-only audit of the **{org}** org (merged PRs from the last "
+        f"_Read-only audit of {scope} (merged PRs from the last "
         f"{window_days} days) — this report changes nothing; run `--close` (as "
         "a human) to close what it lists._"
     )
@@ -377,13 +394,17 @@ def close_drift(
     epics: list[roadmap.EpicSummary],
     *,
     org: str,
+    home: str | None = None,
 ) -> list[str]:
     """Close each drifted task and rolled-up epic, leaving a comment on each.
 
-    Epics live in ``{org}/.github``. Returns the ``owner/repo#n`` slugs closed,
-    in the order acted on. This performs outward-effecting GitHub writes; the
-    caller is responsible for gating it to a human.
+    Epics live in the resolved *home* (default ``{org}/.github``). Returns the
+    ``owner/repo#n`` slugs closed, in the order acted on. This performs
+    outward-effecting GitHub writes; the caller is responsible for gating it to a
+    human.
     """
+    if home is None:
+        home = f"{org}/.github"
     closed: list[str] = []
     for task in sorted(tasks, key=lambda t: (t.repo, t.task)):
         github.run(
@@ -396,7 +417,7 @@ def close_drift(
             _TASK_CLOSE_COMMENT.format(pr=task.pr_number),
         )
         closed.append(f"{task.repo}#{task.task}")
-    epic_repo = f"{org}/.github"
+    epic_repo = home
     for epic in sorted(epics, key=lambda e: e.number):
         github.run(
             "issue",
@@ -411,9 +432,10 @@ def close_drift(
     return closed
 
 
-def render_closed(closed: list[str], *, org: str, window_days: int) -> str:
+def render_closed(closed: list[str], *, org: str, window_days: int, home: str | None = None) -> str:
     """Summarize a ``--close`` run: what was actually closed."""
-    banner = f"_Closed drift on the **{org}** org (merged PRs from the last {window_days} days)._"
+    scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
+    banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
     if not closed:
         return "\n".join([*header, "_No drift — nothing to close._", ""])

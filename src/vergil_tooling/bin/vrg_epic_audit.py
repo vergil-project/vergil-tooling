@@ -11,7 +11,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 
-from vergil_tooling.lib import epic_audit, github, identity_mode
+from vergil_tooling.lib import epic_audit, epics, github, identity_mode
 
 _DEFAULT_WINDOW_DAYS = 30
 
@@ -61,6 +61,15 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(f"How many days back to scan for merged PRs (default: {_DEFAULT_WINDOW_DAYS})."),
     )
     parser.add_argument(
+        "--repo",
+        help=(
+            "Audit a single repo's resolved epic home ('owner/repo') instead of "
+            "the org's .github — a private repo self-homes its epics. The "
+            "home-scoped checks (epic drift, stray issues, operational-pending, "
+            "and --close) then target that repo."
+        ),
+    )
+    parser.add_argument(
         "--close",
         action="store_true",
         help=(
@@ -87,32 +96,44 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
-    org = github.detect_org()
-    if org is None:
-        print(
-            "vrg-epic-audit: could not determine the GitHub org from this "
-            "repo's 'origin' remote; run it from inside a repo in the org you "
-            "want to audit.",
-            file=sys.stderr,
-        )
-        return 1
+    if args.repo:
+        if "/" not in args.repo:
+            print(
+                f"vrg-epic-audit: --repo must be 'owner/repo' (got {args.repo!r})",
+                file=sys.stderr,
+            )
+            return 1
+        owner, bare = args.repo.split("/", 1)
+        org, home = owner, epics.resolve_epic_home(owner, bare)
+    else:
+        org = github.detect_org()
+        if org is None:
+            print(
+                "vrg-epic-audit: could not determine the GitHub org from this "
+                "repo's 'origin' remote; run it from inside a repo in the org you "
+                "want to audit.",
+                file=sys.stderr,
+            )
+            return 1
+        home = f"{org}/.github"
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
-    epics = epic_audit.epic_drift()
+    epics_drift = epic_audit.epic_drift(org, home=home)
     if args.close:
-        closed = epic_audit.close_drift(tasks, epics, org=org)
-        print(epic_audit.render_closed(closed, org=org, window_days=args.window_days))
+        closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
+        print(epic_audit.render_closed(closed, org=org, window_days=args.window_days, home=home))
         return 0
     epics_outside = epic_audit.epic_outside_dotgithub(org)
-    stray = epic_audit.stray_dotgithub_issue(org)
-    pending_operational = epic_audit.operational_pending(org)
+    stray = epic_audit.stray_dotgithub_issue(org, home=home)
+    pending_operational = epic_audit.operational_pending(org, home=home)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
     print(
         epic_audit.render(
             tasks,
-            epics,
+            epics_drift,
             org=org,
             window_days=args.window_days,
+            home=home,
             epics_outside=epics_outside,
             stray=stray,
             pending_operational=pending_operational,
