@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.16/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.14/">
+        <link rel="next" href="../v2.1.121/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.15 - VERGIL Tooling</title>
+        <title>2.1.122 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2115-2026-06-07" class="md-skip">
+        <a href="#release-21122-2026-07-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.15
+              2.1.122
             
           </span>
         </div>
@@ -1110,10 +1110,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.122/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.122
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1129,6 +1156,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4050,37 +4130,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.15
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.15/" class="md-nav__link">
         
   
   
@@ -4096,37 +4149,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10908,6 +10930,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10925,18 +10969,37 @@
 
 
 
-<h1 id="release-2115-2026-06-07">Release 2.1.15 (2026-06-07)<a class="headerlink" href="#release-2115-2026-06-07" title="Permanent link">&para;</a></h1>
+<h1 id="release-21122-2026-07-09">Release 2.1.122 (2026-07-09)<a class="headerlink" href="#release-21122-2026-07-09" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>make wait_for_checks resilient to PR head movement</strong>
-wait_for_checks pinned the head SHA once and validated check registration for that single instant, then handed off to 'gh pr checks --watch', which re-resolves the PR head on every refresh and exits 1 with 'no checks reported' the moment it sees a head with zero registered checks. Any head movement after the guard passed — most commonly update-branch creating a merge commit whose CI run takes ~15s to register — killed the watch (issue 1490, observed on PR 1486).</li>
+<li><strong>refuse a cross-repo closing issue in submit-pr / report-ready (#2246)</strong>
+A PR can only <code>Closes</code> an issue in its own repository: GitHub scopes the close keyword to same-repo linkage, and issue numbers are not unique across repos, so a cross-repo close would shut an unrelated same-numbered issue — a genuine mis-close hazard, not a cosmetic slip. The existing guards covered is-epic, is-operational, and cross-org (single owner), but not cross-repo within an org.</li>
 </ul>
-<p>Replace both duplicated wait loops (lib/github.py and lib/release/subprocess.py) with a shared engine that re-resolves the head SHA on every registration poll and treats a watch death by 'no checks reported' as transient — re-poll registration and restart the watch — bounded by the existing 180s deadline. All other watch failures propagate unchanged.</p>
+<p>Add a fourth guard mirroring the epic/operational rejects: if the resolved --issue names a repo different from the PR's own repo, refuse and direct the caller to file the task in this repo and reference the other issue via a comment or a Ref line. It runs before the epic/operational guards because it is a cheap, local structural check with no authenticated gh call, and short-circuiting a cross-repo ref avoids an epic-ness lookup against a repo the token may not cover. A bare issue number resolves to the current repo and always passes; the compare is case-insensitive to avoid a false refusal on a differently cased spelling. report-ready is best-effort: an unresolvable current repo defers to submit-pr's authoritative check.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>read custom-title naming events and break slot collisions by recency</strong>
-Claude Code (~2.1.16x) renamed the transcript naming event from agent-name/agentName to custom-title/customTitle. The session resolver only parsed the old type, so modern sessions were invisible to transcript-based name resolution, archiving silently no-opped on modern transcripts, and stale pre-rename transcripts squatted on slot names forever — after a VM kill, reconnection resumed the stale session instead of the current one.</li>
+<li><strong>generalize the validation-task doc to operational tasks (#2240)</strong>
+Generalize the GitHub Issue Standards 'Validation tasks' section (and definition) to 'Operational tasks' covering both kinds: validation (verify) and deployment (make usable), the merged-vs-deployed / implement-&gt;deploy-&gt;validate model, the shared not-PR-workable/closes-on-SUCCESS/gates-rollup rules, --kind {validation|deployment} creation, and the deployment autonomy boundary (release is a human-gated precondition). Doc-review bookend for epic vergil-project/.github#124. Ref vergil-project/.github#127.</li>
 </ul>
-<p>Rename _last_agent_name to _last_session_name and parse both event types, last naming event in file order wins. Emit custom-title when archiving so Claude's own resume picker shows the archived label. Break slot-name collisions by liveness first, then last-active recency, so a /clear rotation (which leaves the abandoned session id still claiming the slot name) deterministically resolves to the current id. Ref #1493.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>add visibility-based epic-home resolver (#2239)</strong>
+Add resolve_epic_home(org, target_repo) in lib/epics.py and a memoized, fail-loud repo_visibility/is_public in lib/github.py. A public target homes centrally in <org>/.github (unchanged); a private target with a public .github homes its epics in itself; a private .github routes everything to .github. INTERNAL counts as private. Foundational for epic #130.</p>
+</li>
+<li>
+<p><strong>explicit --repo target, resolver-derived home (#2241)</strong>
+vrg-epic-create takes an explicit --repo owner/repo target (default: current repo) and derives the epic home via epics.resolve_epic_home, echoing the resolved home and its visibility before creating. A public target still homes in <org>/.github; a private target homes in itself. Replaces the detect_org/.github hard-coding. Task of epic #130.</p>
+</li>
+<li>
+<p><strong>home ad-hoc epics via the resolver (self for private repos) (#2242)</strong>
+ensure_adhoc_epic now derives its home from resolve_epic_home: a public repo's ad-hoc epic stays in <org>/.github; a private repo's homes in itself (the returned IssueRef carries the resolved home repo). vrg-adhoc-epic echoes the resolved home + visibility and guards a malformed --repo. Task of epic #130.</p>
+</li>
+<li>
+<p><strong>flag epics outside .github only for public repos (#2245)</strong>
+Generalize invariant 1 (epic_outside_dotgithub) for visibility-based homes: an epic outside <org>/.github is a violation only when its repo is public; a private repo legitimately self-homes its epics. Visibility is probed per repo (memoized) and fail-loud on a probe error, so a genuinely leaked-out public epic is never masked. Render text notes '(public repos)'. Task of epic #130.</p>
+</li>
+</ul>
 
 
 
