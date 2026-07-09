@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.45/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.43/">
+        <link rel="next" href="../v2.1.122/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.44 - VERGIL Tooling</title>
+        <title>2.1.123 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2144-2026-06-19" class="md-skip">
+        <a href="#release-21123-2026-07-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.44
+              2.1.123
             
           </span>
         </div>
@@ -1112,10 +1112,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.123/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.123
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1131,6 +1158,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3324,37 +3404,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.44
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.44/" class="md-nav__link">
         
   
   
@@ -3370,37 +3423,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10938,6 +10960,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -10955,11 +10999,32 @@
 
 
 
-<h1 id="release-2144-2026-06-19">Release 2.1.44 (2026-06-19)<a class="headerlink" href="#release-2144-2026-06-19" title="Permanent link">&para;</a></h1>
+<h1 id="release-21123-2026-07-09">Release 2.1.123 (2026-07-09)<a class="headerlink" href="#release-21123-2026-07-09" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>expand ~ in identity projects_dir at config load (#1711)</strong>
-load_config read projects_dir verbatim, so an identities.toml stanza using a leading ~ (as the credential-less anonymous example documents) reached Lima as a mountPoint, which must be absolute, and reached on-disk vergil.toml lookups as a literal ~ that never resolves — silently dropping the repo's [vm.<identity>] overlay (incl. required nested=true). Expand ~ once at load so every consumer gets an absolute path; preserve empty as empty for the not-configured check. Refs #1705.</li>
+<li><strong>abort when a repo declares named instances but none is selected (#2254)</strong>
+A role that declares [vm.<id>.instances.<name>] overlays uses its base tier as a shared template, not a bootable box. Resolving such a repo with no --name silently composed that base into a phantom default whose VM was never created, so the user only hit a misleading 'VM does not exist — build it with vrg-vm create' error downstream. This was especially confusing through a shared_from borrow: session on the borrower redirected to the lender and demanded a create of a box the user never meant to build, when the working path was simply --name <instance>.</li>
+</ul>
+<p>Guard _resolve_target: when the effective (post-borrow) repo's role declares named instances and no --name was given, raise SpecError listing the available instances and instructing --name. The check runs on the effective repo, so it covers both direct use and borrowed lenders, across every VM-targeting command. compose_vm_spec is unchanged, so default composition (used by list drift-classification and the fingerprint contract) still works.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>add the epic-home visibility-flip runbook (#2253)</strong>
+Document the corner-case procedure for relocating a repo's epics when it flips between public and private (its resolved epic home changes). No dedicated tool: re-create the epic in the new home, re-parent tasks with vrg-epic-move, close the old epic. Covers the cross-visibility caveat (a still-public task can no longer hard-link under a now-private epic; use a soft Blocked-by: from the private side). Task of epic #130.</li>
+</ul>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>source epics from the resolved home (self for private repos) (#2250)</strong>
+roadmap.gather/render now source from a resolved epic home instead of hard-coding <org>/.github: the default resolves to the org's .github (unchanged org-level roadmap), and vrg-roadmap --repo owner/repo scopes to that repo's resolved home so a private repo self-homes its roadmap. --org and --repo are mutually exclusive. Org roadmap omits private epics by design. Task of epic #130.</p>
+</li>
+<li>
+<p><strong>refuse public task under a private epic (visibility boundary) (#2252)</strong>
+Add a visibility-boundary guard to vrg-epic-link: a task may hard-link to an epic only if it is no more publicly visible than the epic's home. A public task under a private epic would leak the private repo's name into a public issue and break cross-boundary roll-up, so it is refused with guidance to reference the public work via a soft Blocked-by: from the private epic's body instead. Binary is_public; fail-loud on a probe error. Task of epic #130.</p>
+</li>
+<li>
+<p><strong>self-contained --repo audit sourced from the resolved home (#2255)</strong>
+vrg-epic-audit --repo <owner>/<repo> audits that repo's resolved epic home (a private repo self-homes its epics). Threads the resolved home through the home-scoped checks — epic_drift, operational_pending, stray_dotgithub_issue, and close_drift — and names the home in the report banner. The org-wide checks (task_drift, epic_outside_dotgithub, closed_operational_without_success) stay org-scoped. Home defaults to <org>/.github, so the default org audit is unchanged. Completes epic #130 (the deferred half of #2234).</p>
+</li>
 </ul>
 
 
