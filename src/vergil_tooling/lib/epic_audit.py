@@ -206,11 +206,15 @@ _INTAKE_LABELS = frozenset({"triage", "idea", "research"})
 
 
 def epic_outside_dotgithub(org: str) -> list[str]:
-    """Open ``epic``-labelled issues living outside ``<org>/.github`` (invariant 1).
+    """Open ``epic``-labelled issues wrongly outside ``<org>/.github`` (invariant 1).
 
-    Invariant 1 (epic #85): all epics live in the org's ``.github``. Any open
-    epic-labelled issue in another repo is a violation; returns their
-    ``owner/repo#n`` slugs.
+    Invariant 1 (epic #85, generalized for visibility-based homes in epic #130):
+    a **public** repo's epics live centrally in the org's ``.github``; a
+    **private** repo legitimately homes its own epics in itself. So an open
+    epic-labelled issue outside ``.github`` is a violation only when its repo is
+    public. Visibility is probed per repo (memoized); a probe error is fail-loud
+    — a genuine leaked-out public epic must never be masked by a silent skip.
+    Returns the ``owner/repo#n`` slugs of violations.
     """
     raw: Any = github.read_json(
         "search",
@@ -230,6 +234,8 @@ def epic_outside_dotgithub(org: str) -> list[str]:
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
         if not name_with_owner or name_with_owner == dotgithub:
             continue
+        if not github.is_public(name_with_owner):
+            continue  # private repo legitimately self-homes its epics (fail-loud on probe error)
         violations.append(f"{name_with_owner}#{item['number']}")
     return violations
 
@@ -344,7 +350,9 @@ def render(
     if epics_outside or stray or closed_operational_no_success:
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
-            lines.append("**Epics outside `.github`** — move each to the org's `.github`:")
+            lines.append(
+                "**Epics outside `.github`** (public repos) — move each to the org's `.github`:"
+            )
             lines += [f"- {slug}" for slug in sorted(epics_outside)]
         if stray:
             lines.append("**Stray `.github` issues** — not an epic, intake, or linked task:")
