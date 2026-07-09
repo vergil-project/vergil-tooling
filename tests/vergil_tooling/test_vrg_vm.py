@@ -48,7 +48,7 @@ from vergil_tooling.bin.vrg_vm import (
 from vergil_tooling.lib import vm_cloud
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_backend import select_backend
-from vergil_tooling.lib.vm_spec import ComposedSpec
+from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
 from vergil_tooling.lib.vm_transport import LimaTransport
 
 
@@ -2611,6 +2611,73 @@ class TestBorrowBlocks:
         result = main(["update", "lmf/tooling", "--config", str(cfg)])
         assert result == 1
         assert "borrows the VM of lmf/lab" in capsys.readouterr().err
+
+
+# A role that declares named instances (a local Lima box + an off-platform cloud
+# box) but no usable default. The base [vm.vergil-user] is a shared template the
+# two instances inherit — it is NOT itself a bootable box.
+_INSTANCES_VM = """
+[vm.vergil-user]
+packages = ["qemu-system-x86"]
+
+[vm.vergil-user.instances.local]
+cpus = 12
+
+[vm.vergil-user.instances.cloud]
+backend = "off-platform"
+provider = "gcp"
+region = "us-central1"
+instance = "n2-standard-8"
+volume = "200GiB"
+"""
+
+
+def _named_args(config: Path, workspace: str, name: str) -> argparse.Namespace:
+    return argparse.Namespace(
+        config=config, identity=None, workspace=workspace, command="session", name=name
+    )
+
+
+class TestNamedInstanceRequiresName:
+    """A repo whose role declares named instances must be addressed with --name.
+
+    Resolving one with no name aborts with a message that lists the instances,
+    instead of silently composing a phantom base-only default that then fails a
+    downstream 'VM does not exist' check (issue #2251).
+    """
+
+    def test_direct_no_name_aborts_listing_instances(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _INSTANCES_VM)
+        cfg = _identities(tmp_path, projects)
+        with pytest.raises(SpecError) as exc:
+            _resolve_target(_args(cfg, "lmf/lab"))
+        msg = str(exc.value)
+        assert "--name" in msg
+        assert "local" in msg
+        assert "cloud" in msg
+
+    def test_borrow_no_name_aborts_listing_instances(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _INSTANCES_VM)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        result = main(["session", "lmf/tooling", "--config", str(cfg)])
+        assert result == 1
+        err = capsys.readouterr().err
+        assert "--name" in err
+        assert "local" in err
+        assert "cloud" in err
+
+    def test_borrow_with_name_resolves_to_lender_instance(self, tmp_path: Path) -> None:
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _INSTANCES_VM)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        cfg = _identities(tmp_path, projects)
+        target = _resolve_target(_named_args(cfg, "lmf/tooling", "cloud"), borrow_allowed=True)
+        assert target.spec.off_platform is True
 
 
 _OFF_PLATFORM_VM = """

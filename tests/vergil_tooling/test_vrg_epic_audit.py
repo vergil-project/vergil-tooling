@@ -12,6 +12,30 @@ from vergil_tooling.bin.vrg_epic_audit import main
 _MOD = "vergil_tooling.bin.vrg_epic_audit"
 
 
+def test_main_repo_scopes_to_resolved_home() -> None:
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as home,
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]) as op,
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]) as ed,
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]) as stray,
+    ):
+        rc = main(["--repo", "org/lab"])
+    assert rc == 0
+    home.assert_called_once_with("org", "lab")
+    assert ed.call_args.kwargs["home"] == "org/lab"
+    assert op.call_args.kwargs["home"] == "org/lab"
+    assert stray.call_args.kwargs["home"] == "org/lab"
+
+
+def test_main_repo_malformed_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    rc = main(["--repo", "noslash"])
+    assert rc == 1
+    assert "owner/repo" in capsys.readouterr().err
+
+
 def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
@@ -120,7 +144,9 @@ def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -
     ):
         rc = main(["--close"])
     assert rc == 0
-    close_drift.assert_called_once_with(["T"], ["E"], org="vergil-project")
+    close_drift.assert_called_once_with(
+        ["T"], ["E"], org="vergil-project", home="vergil-project/.github"
+    )
     assert "o/r#1" in capsys.readouterr().out
 
 
@@ -137,7 +163,9 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
     ):
         rc = main(["--close"])
     assert rc == 0
-    close_drift.assert_called_once_with(["T"], ["E"], org="vergil-project")
+    close_drift.assert_called_once_with(
+        ["T"], ["E"], org="vergil-project", home="vergil-project/.github"
+    )
     out = capsys.readouterr().out
     assert "closed" in out.lower()
     assert "o/r#1" in out

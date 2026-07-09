@@ -50,3 +50,32 @@ def test_main_reports_missing_installation() -> None:
     ):
         rc = main(["--org", "other-org"])
     assert rc == 1
+
+
+def test_main_repo_uses_resolved_home() -> None:
+    with (
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as mock_home,
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.roadmap.gather", return_value=[]) as mock_gather,
+    ):
+        rc = main(["--repo", "org/lab"])
+    assert rc == 0
+    mock_home.assert_called_once_with("org", "lab")
+    mock_scope.assert_called_once_with("org")
+    assert mock_gather.call_args.kwargs["home"] == "org/lab"
+
+
+def test_main_org_and_repo_mutually_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.roadmap.gather") as mock_gather:
+        rc = main(["--org", "x", "--repo", "x/y"])
+    assert rc == 1
+    assert "mutually exclusive" in capsys.readouterr().err
+    mock_gather.assert_not_called()
+
+
+def test_main_malformed_repo_errors(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.roadmap.gather") as mock_gather:
+        rc = main(["--repo", "noslash"])
+    assert rc == 1
+    assert "owner/repo" in capsys.readouterr().err
+    mock_gather.assert_not_called()
