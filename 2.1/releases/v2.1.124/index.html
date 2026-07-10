@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.106/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.104/">
+        <link rel="next" href="../v2.1.123/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.105 - VERGIL Tooling</title>
+        <title>2.1.124 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21105-2026-07-02" class="md-skip">
+        <a href="#release-21124-2026-07-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.105
+              2.1.124
             
           </span>
         </div>
@@ -1114,10 +1114,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.124/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.124
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1133,6 +1160,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1646,37 +1704,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.105
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.105/" class="md-nav__link">
         
   
   
@@ -1692,37 +1723,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10985,12 +10985,13 @@
 
 
 
-<h1 id="release-21105-2026-07-02">Release 2.1.105 (2026-07-02)<a class="headerlink" href="#release-21105-2026-07-02" title="Permanent link">&para;</a></h1>
+<h1 id="release-21124-2026-07-10">Release 2.1.124 (2026-07-10)<a class="headerlink" href="#release-21124-2026-07-10" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>honor cross-repo Refs and skip unresolvable tasks in task_drift (#2112)</strong>
-task_drift extracted only the issue number and looked it up in the PR's own repo, so a cross-repo Ref (owner/repo#N) resolved to the wrong repo, and an unresolvable/inaccessible task raised an uncaught GitHubAPIError that crashed the whole sweep. Use extract_tracking_ref to keep the owner/repo, look the task up in its actual repo, and skip (with a stderr warning) when it can't be resolved from this run (cross-org, private, deleted). close_drift then acts on the task's real repo. Surfaced by the scheduled sweep in logical-minds-foundry/.github choking on a PR that Ref'd vergil-project/vergil-tooling#2105 cross-org. Part of epic vergil-project/.github#80.</li>
+<li><strong>allow the user/agent identity to run 'issue reopen' (#2261)</strong>
+Remove the 'reopen' entry from the issue agent denied-pairs so the user/agent identity may run 'vrg-gh issue reopen'. reopen and close are symmetric and both non-destructive and reversible — an errant reopen is trivially re-closed — so reopen should be agent-runnable, matching the earlier close change. This also lets an agent perform reopen remediation directly.</li>
 </ul>
+<p>Update the adjacent comment and the usage/help text (drop the 'issue reopen' clause), and flip the tests that asserted reopen was denied for the user identity to assert it is allowed, mirroring the existing issue close test. Audit identity stays read-only; nothing else changes.</p>
 
 
 
