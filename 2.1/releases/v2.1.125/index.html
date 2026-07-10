@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.15/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.13/">
+        <link rel="next" href="../v2.1.124/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.14 - VERGIL Tooling</title>
+        <title>2.1.125 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2114-2026-06-07" class="md-skip">
+        <a href="#release-21125-2026-07-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.14
+              2.1.125
             
           </span>
         </div>
@@ -1116,10 +1116,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.125/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.125
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1135,6 +1162,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4168,37 +4226,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.14
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.14/" class="md-nav__link">
         
   
   
@@ -4214,37 +4245,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -10988,10 +10988,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -11015,13 +11015,20 @@
 
 
 
-<h1 id="release-2114-2026-06-07">Release 2.1.14 (2026-06-07)<a class="headerlink" href="#release-2114-2026-06-07" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21125-2026-07-10">Release 2.1.125 (2026-07-10)<a class="headerlink" href="#release-21125-2026-07-10" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>declared GHAS posture with visibility-aware defaults (#1486)</strong></li>
-<li>docs(specs): add declared GHAS posture design</li>
+<li><strong>guard task_drift from closing epics; add closed-epic-with-open-child invariant + reopen remediation (#2265)</strong></li>
+<li>fix(epics): verify reflink child search against the Parent line</li>
 </ul>
-<p>Design for vergil.toml [project] ghas key, GHAS-aware CI gates ruleset, and CI generator catch-up (actions: read grant, upload-sarif: false, v2.1 pins).</p>
+<p>gh search issues is punctuation-blind full-text search across all of GitHub, so _reflink_child_states' bare 'Parent: <slug>' query returned cross-repo false positives — unrelated issues that merely contained the words. Scope the search to the epic's org with --owner and verify each candidate's body actually carries a matching 'Parent: <epic slug>' line (new _body_declares_parent helper) before accepting it, keeping child_states and any reflink-based detection sound on GitHub and forges alike. Fix D of issue #2259.</p>
+<ul>
+<li>fix(epic-audit): never close an epic in task_drift; add closed-epic-with-open-child invariant + reopen</li>
+</ul>
+<p>task_drift closed any open issue a merged PR Ref'd with no is_epic guard, so a PR that legitimately Ref'd an epic caused the sweep to close the epic directly — orphaning its open child tasks under a closed epic and breaking the core invariant that an epic must never be closed while it has open children. No audit check detected the resulting state.</p>
+<p>Fix A (root cause): guard task_drift — fetch labels and skip any epic (and, as hardening, operational and intake issues); epic closure stays owned by epic_drift/rollup, which enforces all_children_closed.</p>
+<p>Fix B (detect): add the closed_epic_open_child invariant — closed epics in the home that still have an open native child, perpetual (ad-hoc/standing) epics skipped — rendered under Invariant violations (report-only in read mode).</p>
+<p>Fix C (remediate): under the human-gated --close path, reopen each such epic (the inverse of epic_drift's close) with an explanatory comment; idempotent since gh issue reopen on an open epic is a no-op.</p>
 
 
 
