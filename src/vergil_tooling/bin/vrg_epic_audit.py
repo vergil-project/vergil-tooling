@@ -73,8 +73,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--close",
         action="store_true",
         help=(
-            "Close the drifted task issues and rolled-up epics (with an "
-            "explanatory comment on each) instead of only reporting them. A "
+            "Close the drifted task issues and rolled-up epics, and reopen any "
+            "epic wrongly closed while a child was still open (with an "
+            "explanatory comment on each), instead of only reporting them. A "
             "human action (or the scheduled reconciliation sweep) — refused in "
             "interactive agent sessions. Default: read-only."
         ),
@@ -119,9 +120,17 @@ def main(argv: list[str] | None = None) -> int:
     since = (datetime.now(UTC) - timedelta(days=args.window_days)).date().isoformat()
     tasks = epic_audit.task_drift(since, org=org)
     epics_drift = epic_audit.epic_drift(org, home=home)
+    closed_epic_open_children = epic_audit.closed_epic_open_child(org, home=home)
     if args.close:
         closed = epic_audit.close_drift(tasks, epics_drift, org=org, home=home)
-        print(epic_audit.render_closed(closed, org=org, window_days=args.window_days, home=home))
+        # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
+        # each epic that was wrongly closed while a child was still open.
+        reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
+        print(
+            epic_audit.render_closed(
+                closed, org=org, window_days=args.window_days, home=home, reopened=reopened
+            )
+        )
         return 0
     epics_outside = epic_audit.epic_outside_dotgithub(org)
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
@@ -138,6 +147,7 @@ def main(argv: list[str] | None = None) -> int:
             stray=stray,
             pending_operational=pending_operational,
             closed_operational_no_success=closed_operational_no_success,
+            closed_epic_open_children=closed_epic_open_children,
         )
     )
     return 0

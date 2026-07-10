@@ -16,6 +16,10 @@ from typing import Any
 
 from vergil_tooling.lib import epics, github, linkage, release, roadmap
 
+# A closed-epic-with-open-child violation (issue #2259): the closed epic paired
+# with the tuple of its still-open children.
+EpicOpenChildViolation = tuple[epics.IssueRef, tuple[epics.IssueRef, ...]]
+
 
 @dataclass(frozen=True)
 class TaskDrift:
@@ -59,8 +63,8 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
         task = int(num)
         task_repo = repo_part or pr_repo
         try:
-            issue = github.read_json(
-                "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body"
+            issue: Any = github.read_json(
+                "issue", "view", str(task), "--repo", task_repo, "--json", "state,title,body,labels"
             )
         except github.GitHubAPIError:
             # The task is in a repo this run can't see (cross-org, private, or
@@ -76,6 +80,20 @@ def task_drift(since: str, *, org: str) -> list[TaskDrift]:
         if not isinstance(issue, dict):
             continue
         if str(issue.get("state") or "").upper() != "OPEN":
+            continue
+        labels = {str((label or {}).get("name", "")) for label in (issue.get("labels") or [])}
+        if "epic" in labels:
+            # A PR may legitimately ``Ref`` an epic (associating the PR with the
+            # epic). That is not a slipped task: epic closure is owned by
+            # epic_drift/rollup, which enforces all_children_closed. Closing an
+            # epic here would bypass that guard and orphan its open children
+            # (issue #2259, Fix A).
+            continue
+        if labels & epics.operational_labels() or labels & _INTAKE_LABELS:
+            # An operational task (validation/deployment) closes on a recorded
+            # ``Outcome:`` comment, and intake issues (triage/idea/research) are
+            # never PR-tracked tasks — a merged PR ``Ref``ing either is not the
+            # slipped-task drift this sweep closes.
             continue
         # A merged release PR Refs its release: X.Y.Z tracking issue, which stays
         # open as vrg-release bookkeeping — not drift. Skip it so the audit does
@@ -291,6 +309,48 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     return strays
 
 
+def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpenChildViolation]:
+    """Closed epics that still have an open child (invariant, issue #2259 Fix B).
+
+    Core invariant: *an epic must never be closed while it has open children*. A
+    PR that legitimately ``Ref``'d an epic once tripped ``task_drift`` into
+    closing the epic directly, orphaning its open tasks — and no audit check
+    caught the result. This is that check. Uses **native children** as the
+    authoritative signal (``child_states``); perpetual (``ad-hoc``/``standing``)
+    epics are skipped — they never roll up, so being closed-with-open-children is
+    not a violation for them. Report-only: like the other invariants it is never
+    auto-acted (remediation is :func:`reopen_epics_with_open_children`, gated to a
+    human). Scoped to the resolved epic *home* (default ``<org>/.github``).
+    """
+    if home is None:
+        home = f"{org}/.github"
+    home_owner, home_repo = home.split("/", 1)
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        "--label",
+        "epic",
+        "--state",
+        "closed",
+        "--limit",
+        "300",
+        "--json",
+        "number,title,labels",
+    )
+    violations: list[EpicOpenChildViolation] = []
+    for item in raw if isinstance(raw, list) else []:
+        labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
+        if labels & {"ad-hoc", "standing"}:
+            continue  # perpetual epics never roll up; closed-with-open-child doesn't apply
+        epic = epics.IssueRef(home_owner, home_repo, int(item["number"]))
+        open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")
+        if open_kids:
+            violations.append((epic, open_kids))
+    return violations
+
+
 def render(
     tasks: list[TaskDrift],
     epic_summaries: list[roadmap.EpicSummary],
@@ -302,6 +362,7 @@ def render(
     stray: list[str] | None = None,
     pending_operational: list[OperationalStatus] | None = None,
     closed_operational_no_success: list[str] | None = None,
+    closed_epic_open_children: list[EpicOpenChildViolation] | None = None,
 ) -> str:
     """Format the drift + invariant report; a clean state says so explicitly.
 
@@ -311,13 +372,15 @@ def render(
     violations (epic #85). ``pending_operational`` lists epics still gated on
     operational tasks (validations/deployments, runnable vs blocked);
     ``closed_operational_no_success`` is the operational invariant (a closed
-    operational task with no recorded success comment). Each section appears only
-    when it has something to report.
+    operational task with no recorded success comment). ``closed_epic_open_children``
+    is the closed-epic-with-open-child invariant (issue #2259). Each section
+    appears only when it has something to report.
     """
     epics_outside = epics_outside or []
     stray = stray or []
     pending_operational = pending_operational or []
     closed_operational_no_success = closed_operational_no_success or []
+    closed_epic_open_children = closed_epic_open_children or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = (
         f"_Read-only audit of {scope} (merged PRs from the last "
@@ -333,6 +396,7 @@ def render(
             stray,
             pending_operational,
             closed_operational_no_success,
+            closed_epic_open_children,
         ]
     ):
         return "\n".join([*header, "_No drift — everything that should be closed is closed._", ""])
@@ -364,7 +428,7 @@ def render(
                 or "none"
             )
             lines.append(f"- {status.epic.slug} — runnable: {runnable}; blocked: {blocked}")
-    if epics_outside or stray or closed_operational_no_success:
+    if epics_outside or stray or closed_operational_no_success or closed_epic_open_children:
         lines += ["", "## Invariant violations (issues in the wrong place)", ""]
         if epics_outside:
             lines.append(
@@ -377,6 +441,18 @@ def render(
         if closed_operational_no_success:
             lines.append("**Validation tasks closed without a PASS comment** — re-open and run:")
             lines += [f"- {slug}" for slug in sorted(closed_operational_no_success)]
+        if closed_epic_open_children:
+            lines.append(
+                "**Closed epics with open children** — an epic must not be closed "
+                "while a child is open; reopen each (`--close` remediates):"
+            )
+            for closed_epic, kids in sorted(
+                closed_epic_open_children, key=lambda v: (v[0].owner, v[0].repo, v[0].number)
+            ):
+                open_kids = ", ".join(
+                    kid.slug for kid in sorted(kids, key=lambda k: (k.owner, k.repo, k.number))
+                )
+                lines.append(f"- {closed_epic.slug} — open children: {open_kids}")
     lines.append("")
     return "\n".join(lines)
 
@@ -387,6 +463,36 @@ _TASK_CLOSE_COMMENT = (
 _EPIC_CLOSE_COMMENT = (
     "Closed by `vrg-epic-audit`: all {total} child tasks are closed; the epic rolled up."
 )
+_EPIC_REOPEN_COMMENT = (
+    "Reopened by `vrg-epic-audit`: the epic was closed while child {child} is still "
+    "open — an epic cannot be closed while it has open children."
+)
+
+
+def reopen_epics_with_open_children(violations: list[EpicOpenChildViolation]) -> list[str]:
+    """Reopen each closed epic that still has an open child (issue #2259 Fix C).
+
+    The inverse of ``epic_drift``'s close: it restores the *an epic must never be
+    closed while it has open children* invariant that ``task_drift`` violated,
+    leaving an explanatory comment naming an open child. *violations* is the
+    output of :func:`closed_epic_open_child` (already closed epics), so every
+    reopen is meaningful; ``gh issue reopen`` on an already-open epic is a no-op,
+    so a repeat run is idempotent. Returns the reopened epic slugs. This performs
+    outward-effecting GitHub writes; the caller gates it to a human.
+    """
+    reopened: list[str] = []
+    for epic, open_kids in sorted(violations, key=lambda v: (v[0].owner, v[0].repo, v[0].number)):
+        github.run(
+            "issue",
+            "reopen",
+            str(epic.number),
+            "--repo",
+            f"{epic.owner}/{epic.repo}",
+            "--comment",
+            _EPIC_REOPEN_COMMENT.format(child=open_kids[0].slug),
+        )
+        reopened.append(epic.slug)
+    return reopened
 
 
 def close_drift(
@@ -432,14 +538,33 @@ def close_drift(
     return closed
 
 
-def render_closed(closed: list[str], *, org: str, window_days: int, home: str | None = None) -> str:
-    """Summarize a ``--close`` run: what was actually closed."""
+def render_closed(
+    closed: list[str],
+    *,
+    org: str,
+    window_days: int,
+    home: str | None = None,
+    reopened: list[str] | None = None,
+) -> str:
+    """Summarize a ``--close`` run: what was closed and what was reopened.
+
+    ``reopened`` is the closed-epic-with-open-child remediation (issue #2259):
+    epics that were wrongly closed while a child was still open, now reopened.
+    """
+    reopened = reopened or []
     scope = f"the **{home}** repo" if home and home != f"{org}/.github" else f"the **{org}** org"
     banner = f"_Closed drift on {scope} (merged PRs from the last {window_days} days)._"
     header = ["# Epic/task drift audit — closed", "", banner, ""]
-    if not closed:
+    if not closed and not reopened:
         return "\n".join([*header, "_No drift — nothing to close._", ""])
-    lines = [*header, "## Closed", ""]
-    lines += [f"- {slug}" for slug in closed]
-    lines.append("")
+    lines = [*header]
+    if closed:
+        lines += ["## Closed", "", *[f"- {slug}" for slug in closed], ""]
+    if reopened:
+        lines += [
+            "## Reopened (epic was closed with an open child)",
+            "",
+            *[f"- {slug}" for slug in reopened],
+            "",
+        ]
     return "\n".join(lines)
