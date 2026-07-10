@@ -125,6 +125,83 @@ def test_task_drift_skips_unresolvable_task(capsys: pytest.CaptureFixture[str]) 
     assert "skipping vergil-project/vergil-tooling#2105" in capsys.readouterr().err
 
 
+def test_task_drift_skips_epic_ref() -> None:
+    # A merged PR may legitimately ``Ref`` an epic; that is not a slipped task.
+    # Closing the epic here would orphan its open children (issue #2259, Fix A).
+    prs = [
+        {
+            "number": 22,
+            "repository": {"nameWithOwner": "logical-minds-foundry/.github"},
+            "url": "u22",
+            "body": "Ref #19",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        return {
+            "state": "open",
+            "title": "Epic: MQ Configuration Guides",
+            "body": "epic body",
+            "labels": [{"name": "epic"}],
+        }
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        assert epic_audit.task_drift("2026-06-01", org="logical-minds-foundry") == []
+
+
+def test_task_drift_skips_operational_and_intake_refs() -> None:
+    # An operational task (closes on an Outcome comment) and an intake issue
+    # (triage/idea/research) are never PR-tracked tasks — a merged PR Ref'ing
+    # either is not slipped-task drift.
+    prs = [
+        {
+            "number": 30,
+            "repository": {"nameWithOwner": "org/repo"},
+            "url": "u30",
+            "body": "Ref #7",
+        },
+        {
+            "number": 31,
+            "repository": {"nameWithOwner": "org/repo"},
+            "url": "u31",
+            "body": "Ref #8",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        label = "validation" if args[2] == "7" else "idea"
+        return {"state": "open", "title": "t", "body": "b", "labels": [{"name": label}]}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        assert epic_audit.task_drift("2026-06-01", org="org") == []
+
+
+def test_task_drift_still_flags_labelled_plain_task() -> None:
+    # The label guard must not over-skip: an ordinary task carrying a non-special
+    # label (e.g. ``bug``) is still drift when its PR merged and it stays open.
+    prs = [
+        {
+            "number": 40,
+            "repository": {"nameWithOwner": "org/repo"},
+            "url": "u40",
+            "body": "Ref #41",
+        },
+    ]
+
+    def fake_read_json(*args: str) -> object:
+        if args[0] == "search":
+            return prs
+        return {"state": "open", "title": "fix: t", "body": "b", "labels": [{"name": "bug"}]}
+
+    with patch("vergil_tooling.lib.github.read_json", side_effect=fake_read_json):
+        result = epic_audit.task_drift("2026-06-01", org="org")
+    assert result == [TaskDrift("org/repo", 41, 40, "u40")]
+
+
 def test_task_drift_returns_empty_on_non_list() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value={"x": 1}):
         assert epic_audit.task_drift("2026-06-01", org="vergil-project") == []
@@ -222,6 +299,95 @@ def test_stray_dotgithub_issue_flags_unlinked_non_epic_non_intake() -> None:
     ):
         result = epic_audit.stray_dotgithub_issue("vergil-project")
     assert result == ["vergil-project/.github#7"]
+
+
+# -- closed-epic-with-open-child invariant + reopen remediation (issue #2259) --
+
+
+def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
+    listing = [
+        {"number": 19, "title": "MQ Guides", "labels": []},  # has an open child -> violation
+        {"number": 15, "title": "Cockpit", "labels": []},  # all children closed -> ok
+        {"number": 99, "title": "Ad hoc", "labels": [{"name": "ad-hoc"}]},  # perpetual -> skipped
+    ]
+
+    def fake_child_states(epic: epics.IssueRef) -> list[epics.ChildState]:
+        if epic.number == 19:
+            return [
+                epics.ChildState(epics.IssueRef("org", "lab", 462), "OPEN"),
+                epics.ChildState(epics.IssueRef("org", "lab", 463), "CLOSED"),
+            ]
+        return [epics.ChildState(epics.IssueRef("org", "lab", 1), "CLOSED")]
+
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=listing),
+        patch("vergil_tooling.lib.epics.child_states", side_effect=fake_child_states),
+    ):
+        result = epic_audit.closed_epic_open_child("org")
+    assert result == [(epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))]
+
+
+def test_closed_epic_open_child_skips_perpetual_before_fetching_children() -> None:
+    # A perpetual (ad-hoc/standing) epic is skipped without a children lookup.
+    listing = [{"number": 99, "title": "Ad hoc", "labels": [{"name": "standing"}]}]
+    child_states = MagicMock()
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=listing),
+        patch("vergil_tooling.lib.epics.child_states", child_states),
+    ):
+        assert epic_audit.closed_epic_open_child("org") == []
+    child_states.assert_not_called()
+
+
+def test_closed_epic_open_child_scopes_to_home() -> None:
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=[]) as mock_list,
+        patch("vergil_tooling.lib.epics.child_states", return_value=[]),
+    ):
+        epic_audit.closed_epic_open_child("org", home="org/lab")
+    assert "org/lab" in mock_list.call_args.args  # lists the home, not <org>/.github
+    assert "closed" in mock_list.call_args.args  # only closed epics
+
+
+def test_reopen_epics_with_open_children_reopens_and_comments() -> None:
+    violations: list[epic_audit.EpicOpenChildViolation] = [
+        (epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))
+    ]
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        reopened = epic_audit.reopen_epics_with_open_children(violations)
+    assert reopened == ["org/.github#19"]
+    assert run.call_args.args[:5] == ("issue", "reopen", "19", "--repo", "org/.github")
+    assert "org/lab#462" in run.call_args.args[-1]
+
+
+def test_reopen_epics_with_open_children_empty_is_noop() -> None:
+    run = MagicMock()
+    with patch("vergil_tooling.lib.github.run", run):
+        assert epic_audit.reopen_epics_with_open_children([]) == []
+    run.assert_not_called()
+
+
+def test_render_flags_closed_epic_with_open_child() -> None:
+    out = epic_audit.render(
+        [],
+        [],
+        org="org",
+        window_days=30,
+        closed_epic_open_children=[
+            (epics.IssueRef("org", ".github", 19), (epics.IssueRef("org", "lab", 462),))
+        ],
+    )
+    assert "Invariant violations" in out
+    assert "Closed epics with open children" in out
+    assert "org/.github#19" in out
+    assert "org/lab#462" in out
+
+
+def test_render_closed_lists_reopened_epics() -> None:
+    out = epic_audit.render_closed([], org="org", window_days=30, reopened=["org/.github#19"])
+    assert "Reopened" in out
+    assert "org/.github#19" in out
 
 
 def test_render_shows_invariant_violations() -> None:

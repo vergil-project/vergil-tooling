@@ -157,15 +157,42 @@ def _native_child_states(epic: IssueRef) -> list[ChildState]:
     return [ChildState(ref=_ref_from_node(n), state=str(n["state"]).upper()) for n in nodes]
 
 
+def _body_declares_parent(body: str, epic: IssueRef) -> bool:
+    """True iff *body* carries a ``Parent:`` line naming exactly *epic*."""
+    return any(
+        match.group(1) == epic.owner
+        and match.group(2) == epic.repo
+        and int(match.group(3)) == epic.number
+        for match in _PARENT_RE.finditer(body)
+    )
+
+
 def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
-    """Portable fallback: issues whose body references this epic as ``Parent:``."""
+    """Portable fallback: issues whose body references this epic as ``Parent:``.
+
+    ``gh search issues`` is punctuation-blind full-text search across *all* of
+    GitHub, so a bare ``Parent: <slug>`` query returns cross-repo false positives
+    — unrelated issues that merely contain those words (issue #2259, Fix D). Two
+    guards keep the fallback sound: scope the search to the epic's org with
+    ``--owner``, and verify each candidate's body actually carries a
+    ``Parent: <epic slug>`` line (via :func:`_body_declares_parent`) before
+    accepting it.
+    """
     results: Any = github.read_json(
-        "search", "issues", f"Parent: {epic.slug}", "--json", "number,state,repository"
+        "search",
+        "issues",
+        f"Parent: {epic.slug}",
+        "--owner",
+        epic.owner,
+        "--json",
+        "number,state,repository,body",
     )
     states: list[ChildState] = []
     for item in results if isinstance(results, list) else []:
         name_with_owner = str((item.get("repository") or {}).get("nameWithOwner", ""))
         if "/" not in name_with_owner:
+            continue
+        if not _body_declares_parent(str(item.get("body") or ""), epic):
             continue
         owner, name = name_with_owner.split("/", 1)
         states.append(

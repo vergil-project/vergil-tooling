@@ -67,7 +67,14 @@ def test_child_states_native() -> None:
 
 def test_child_states_reflink_fallback_when_native_empty() -> None:
     empty = {"node": {"subIssues": {"nodes": []}}}
-    search = [{"number": 41, "state": "OPEN", "repository": {"nameWithOwner": "org/.github"}}]
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        }
+    ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
         patch("vergil_tooling.lib.github.graphql", return_value=empty),
@@ -75,8 +82,10 @@ def test_child_states_reflink_fallback_when_native_empty() -> None:
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
-    # the fallback searches for the epic's Parent: marker
+    # the fallback searches for the epic's Parent: marker, scoped to the org
     assert "Parent: org/.github#40" in mock_search.call_args.args
+    assert "--owner" in mock_search.call_args.args
+    assert "org" in mock_search.call_args.args
 
 
 # -- parent_of ---------------------------------------------------------------
@@ -183,8 +192,49 @@ def test_issue_state_uppercases() -> None:
 
 def test_reflink_skips_results_without_repo() -> None:
     search = [
-        {"number": 41, "state": "OPEN", "repository": {"nameWithOwner": "org/.github"}},
-        {"number": 99, "state": "OPEN", "repository": {}},  # malformed -> skipped
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        },
+        {"number": 99, "state": "OPEN", "repository": {}, "body": "Parent: org/.github#40"},
+    ]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch(
+            "vergil_tooling.lib.github.graphql",
+            return_value={"node": {"subIssues": {"nodes": []}}},
+        ),
+        patch("vergil_tooling.lib.github.read_json", return_value=search),
+    ):
+        result = epics.child_states(EPIC)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN")]
+
+
+def test_reflink_rejects_full_text_false_positive() -> None:
+    # gh search issues is punctuation-blind full-text search: a foreign issue can
+    # match on words alone. Without a real ``Parent: <epic slug>`` line in its
+    # body it must not be treated as a child (issue #2259, Fix D).
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",  # genuine child
+        },
+        {
+            "number": 3465,
+            "state": "OPEN",
+            "repository": {"nameWithOwner": "org/unrelated"},
+            "body": "mentions Parent and org/.github#40 in prose but no real reflink line",
+        },
+        {
+            "number": 77,
+            "state": "CLOSED",
+            "repository": {"nameWithOwner": "org/other"},
+            "body": "Parent: org/.github#41",  # references a DIFFERENT epic
+        },
     ]
     with (
         patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
