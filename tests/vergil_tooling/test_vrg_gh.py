@@ -466,7 +466,6 @@ class TestAgentDenials:
     @pytest.mark.parametrize(
         ("top", "sub"),
         [
-            ("issue", "reopen"),
             ("pr", "edit"),
             ("pr", "merge"),
         ],
@@ -508,12 +507,22 @@ class TestAgentDenials:
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "close"]
 
-    def test_issue_reopen_still_says_human_maintainer(
-        self, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        main(["issue", "reopen", "42"])
-        err = capsys.readouterr().err
-        assert "human maintainer" in err.lower()
+    def test_issue_reopen_allowed_for_user_agent(self) -> None:
+        # Re-allowed for USER: reopen is non-destructive and reversible
+        # (an errant reopen is trivially re-closed), mirroring `close`. This
+        # lets an agent run reopen remediation directly (issue #2260).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "reopen", "42"])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args[:3] == ["gh", "issue", "reopen"]
 
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
