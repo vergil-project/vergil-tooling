@@ -52,16 +52,13 @@ _DENIED_AGENT: dict[str, dict[str, str]] = {
         "edit": "PR edit requires a human maintainer.",
         "merge": "PR merge requires a human maintainer.",
     },
-    "issue": {
-        # `issue close` is intentionally NOT denied here: closing is now
-        # automated (vrg-finalize-pr closes tasks, rollup closes epics) and
-        # documented as mechanical, so a manual USER close is safe and is the
-        # one genuinely useful case (repo migration). AUDIT stays barred from
-        # closing because `issue` is not in its allowlist at all (least
-        # privilege). `reopen` stays denied for agents — the lib path covers
-        # reopen-on-late-child. See issue #1966.
-        "reopen": "Issue reopen requires a human maintainer.",
-    },
+    # `issue` has no agent-denied pairs: `close` and `reopen` are both
+    # non-destructive and reversible, so both are allowed for the USER agent
+    # (closing is automated/mechanical; reopening is trivially re-closed and
+    # lets an agent run reopen remediation directly). AUDIT stays barred from
+    # both because `issue` is not in its allowlist at all (least privilege).
+    # See issues #1966 (original close/reopen split) and #2260 (un-denying
+    # reopen).
 }
 
 _DENIED_HUMAN: dict[str, dict[str, str]] = {
@@ -226,7 +223,7 @@ def _print_help() -> None:
         "What it enforces:\n"
         f"  - Allowed (human/user): {allowed}.\n"
         "    The audit identity is narrower (read-only pr actions); agents are\n"
-        "    barred from pr create/edit/merge and issue reopen.\n"
+        "    barred from pr create/edit/merge.\n"
         "  - Denied outright: gh auth, pr close, repo edit/create/delete.\n"
         "  - gh api is gated by identity: human full, audit read-only GET, user\n"
         "    denied.\n"
