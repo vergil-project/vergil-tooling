@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.125] - 2026-07-10
+
+### Bug fixes
+
+- guard task_drift from closing epics; add closed-epic-with-open-child invariant + reopen remediation (#2265)
+
 ## [2.1.124] - 2026-07-10
 
 ### Bug fixes
