@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.93/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.91/">
+        <link rel="next" href="../v2.1.125/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.92 - VERGIL Tooling</title>
+        <title>2.1.126 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2192-2026-07-01" class="md-skip">
+        <a href="#release-21126-2026-07-11" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.92
+              2.1.126
             
           </span>
         </div>
@@ -1118,10 +1118,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.126/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.126
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1137,6 +1164,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2070,37 +2128,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.92
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.92/" class="md-nav__link">
         
   
   
@@ -2116,48 +2147,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11029,17 +11018,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11067,25 +11045,19 @@
 
 
 
-<h1 id="release-2192-2026-07-01">Release 2.1.92 (2026-07-01)<a class="headerlink" href="#release-2192-2026-07-01" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>install enabled plugins, not just update (marketplace reconcile) (#2010)</strong>
-update_plugins ran marketplace-update + plugin-list + plugin-update <enabled>, but never installed. Since Claude Code v2.1.195 a plugin declared in enabledPlugins no longer auto-installs, so a box whose enabled set was never installed ends up with zero plugins (confirmed live: installed_plugins.json empty while marketplaces were cloned).</li>
-</ul>
-<p>Reconcile instead: read the declared-enabled set from the guest settings.json enabledPlugins, install any that are missing (user scope), and update those already installed (their own scope). Best-effort across the set; unreadable/malformed settings degrade to refreshing the installed-enabled set rather than crashing. Backend-agnostic — fixes Lima and off-platform.</p>
-<p>Part of epic vergil-project/.github#69 (Fix C).</p>
-<ul>
-<li><strong>persist ~/.claude/plugins on the /vergil volume (#2011)</strong>
-Off-platform boxes symlinked only projects and todos onto /vergil/claude; ~/.claude/plugins (marketplace clones + installed plugins) sat on the ephemeral boot disk and was wiped on every rebuild, forcing a full reinstall on each cold boot. Add plugins to the cloud share set so it persists on the volume. Safe on ext4 — the EXDEV atomic-rename problem that keeps Lima plugins VM-local does not arise on a real block device; the Fix A merge-safe linker handles an existing real plugins dir. Credentials still stay ephemeral.</li>
-</ul>
-<p>Part of epic vergil-project/.github#69 (Fix B).</p>
+<h1 id="release-21126-2026-07-11">Release 2.1.126 (2026-07-11)<a class="headerlink" href="#release-21126-2026-07-11" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>warn when run off the macOS host (#2012)</strong>
-vrg-vm is a macOS host tool: it reads the operator's ~/.claude and drives Lima / cloud from the laptop. Run from inside a VM or container it silently seeds the wrong config. Add a sanity check that warns (never blocks) when platform.system() is not Darwin, mirroring the pure-core + wrapper pattern of nested_virt_unsupported_reason. A warning rather than a refusal keeps read-only edge cases working while giving a clear signal.</li>
+<li><strong>allow the agent to run 'issue transfer' for finite-epic relocation (#2271)</strong>
+Add "transfer" to the issue allowlist in vrg_gh.py so human and user
+identities can relocate a finite epic's issues to another repository via
+gh issue transfer. The audit identity stays read-only because <code>issue</code>
+is absent from its allowlist; no denied-pair entry is added since
+transfer is a non-destructive repository move.</li>
 </ul>
-<p>Part of epic vergil-project/.github#69 (Fix D).</p>
+<p>The _print_help() output is derived from _ALLOWED, so it reflects the
+new action automatically. Tests add the (issue, transfer) allowed pair
+and a USER-agent test asserting the call is forwarded to gh.</p>
 
 
 
