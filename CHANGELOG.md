@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.127] - 2026-07-11
+
+### Refactoring
+
+- retire the deprecated standing alias (#2275)
+
 ## [2.1.126] - 2026-07-11
 
 ### Features
