@@ -52,6 +52,7 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("issue", "edit"),
     ("issue", "list"),
     ("issue", "comment"),
+    ("issue", "transfer"),
     ("pr", "view"),
     ("pr", "checks"),
     ("pr", "list"),
@@ -523,6 +524,24 @@ class TestAgentDenials:
         assert rc == 0
         args = mock_run.call_args[0][0]
         assert args[:3] == ["gh", "issue", "reopen"]
+
+    def test_issue_transfer_allowed_for_user_agent(self) -> None:
+        # Allowed for USER: transferring a finite epic's issues into a
+        # relocation target is a mechanical repository move, and the
+        # audit identity stays barred because `issue` is absent from its
+        # allowlist (issue #2270).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+                return_value=None,
+            ),
+            patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = _completed()
+            rc = main(["issue", "transfer", "42", "vergil-project/other-repo"])
+        assert rc == 0
+        args = mock_run.call_args[0][0]
+        assert args[:3] == ["gh", "issue", "transfer"]
 
     def test_pr_merge_denied_unconditionally_for_agent(
         self, capsys: pytest.CaptureFixture[str]
