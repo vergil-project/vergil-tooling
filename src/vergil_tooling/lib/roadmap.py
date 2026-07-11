@@ -47,10 +47,10 @@ def _open_epics(home: str) -> list[Any]:
 
 
 def _is_perpetual(epic: Any) -> bool:
-    """True if the epic is a perpetual ad-hoc bucket (``ad-hoc``, or its
-    deprecated ``standing`` alias) — excluded from the strategic roadmap."""
+    """True if the epic is a perpetual ``ad-hoc`` bucket — excluded from the
+    strategic roadmap."""
     names = {(label or {}).get("name") for label in (epic.get("labels") or [])}
-    return bool(names & {"ad-hoc", "standing"})
+    return "ad-hoc" in names
 
 
 def gather(org: str | None = None, *, home: str | None = None) -> list[EpicSummary]:

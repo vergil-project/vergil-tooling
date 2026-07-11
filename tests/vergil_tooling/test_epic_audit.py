@@ -328,8 +328,8 @@ def test_closed_epic_open_child_flags_closed_epic_with_open_child() -> None:
 
 
 def test_closed_epic_open_child_skips_perpetual_before_fetching_children() -> None:
-    # A perpetual (ad-hoc/standing) epic is skipped without a children lookup.
-    listing = [{"number": 99, "title": "Ad hoc", "labels": [{"name": "standing"}]}]
+    # A perpetual (ad-hoc) epic is skipped without a children lookup.
+    listing = [{"number": 99, "title": "Ad hoc", "labels": [{"name": "ad-hoc"}]}]
     child_states = MagicMock()
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=listing),

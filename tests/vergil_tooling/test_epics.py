@@ -416,19 +416,6 @@ def test_rollup_skips_adhoc_epic() -> None:
     mock_run.assert_not_called()
 
 
-def test_rollup_skips_standing_epic_alias() -> None:
-    # 'standing' remains perpetual during the rollout window (deprecated alias).
-    with (
-        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
-        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "standing"}),
-        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        epics.rollup(TASK)
-    mock_run.assert_not_called()
-
-
 def test_rollup_skips_when_children_remain_open() -> None:
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
@@ -517,17 +504,6 @@ def test_resolve_epic_ref_adhoc_discovers_single_epic() -> None:
     assert "org/.github" in args and "epic" in args and "ad-hoc" in args
 
 
-def test_resolve_epic_ref_standing_is_deprecated_alias_for_adhoc() -> None:
-    # 'standing' still resolves during the rollout window, routing to .github.
-    with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]),
-    ):
-        assert epics.resolve_epic_ref("standing", repo="org/tooling") == IssueRef(
-            "org", ".github", 1972
-        )
-
-
 def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     # When no ad-hoc epic exists, ensure creates it in <org>/.github, by title.
     created = "https://github.com/org/.github/issues/77"
@@ -578,14 +554,6 @@ def test_ensure_adhoc_epic_reuses_existing_by_title() -> None:
     ):
         assert epics.ensure_adhoc_epic("org/tooling") == IssueRef("org", ".github", 1972)
     mock_create.assert_not_called()
-
-
-def test_ensure_standing_epic_is_backward_compatible_alias() -> None:
-    with (
-        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
-        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]),
-    ):
-        assert epics.ensure_standing_epic("org/tooling") == IssueRef("org", ".github", 1972)
 
 
 def test_ensure_adhoc_epic_multiple_same_title_raises() -> None:

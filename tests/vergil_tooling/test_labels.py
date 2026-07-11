@@ -63,11 +63,10 @@ def test_delete_list_is_strings() -> None:
 
 def test_registry_includes_convention_labels() -> None:
     # epic/task convention (epic #40, #85): Role (epic, ad-hoc), Stage (triage),
-    # Kind (idea, research), Exception (hotfix). "standing" is retained during the
-    # ad-hoc rollout window as a deprecated alias (removed in epic #85, Task 11).
-    # The remaining Kind axis reuses the existing conventional-commit labels.
+    # Kind (idea, research), Exception (hotfix). The remaining Kind axis reuses
+    # the existing conventional-commit labels.
     names = {label["name"] for label in load_labels()["labels"]}
-    for required in {"epic", "ad-hoc", "standing", "triage", "idea", "research", "hotfix"}:
+    for required in {"epic", "ad-hoc", "triage", "idea", "research", "hotfix"}:
         assert required in names, f"convention label missing: {required}"
 
 
@@ -104,8 +103,9 @@ def test_label_descriptions_within_github_limit() -> None:
         assert length <= 100, f"{label['name']} description is {length} chars (max 100)"
 
 
-def test_label_change_is_additive_only() -> None:
-    # Convention labels are added additively; retiring default cruft is deferred
-    # to the per-repo migration pass (epic #40, Task 9). This task must not
-    # enqueue any new deletions beyond the pre-existing one.
-    assert load_labels()["delete"] == ["enhancement"]
+def test_delete_list_retires_deprecated_labels() -> None:
+    # The delete list retires default cruft (``enhancement``) and the deprecated
+    # ``standing`` alias, removed once the ad-hoc migration completed (epic #85,
+    # retire-standing task): no live ``standing`` epics remain, so a sync must
+    # de-provision the label.
+    assert load_labels()["delete"] == ["enhancement", "standing"]
