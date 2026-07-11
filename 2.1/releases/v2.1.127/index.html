@@ -11,28 +11,28 @@
       
       
       
-        <link rel="prev" href="../type-hints/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../testing-and-coverage/">
+        <link rel="next" href="../v2.1.126/">
       
       
         
       
       
-      <link rel="icon" href="../../../../assets/images/favicon.png">
+      <link rel="icon" href="../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
     
     
       
-        <title>Import-Time Side Effects - VERGIL Tooling</title>
+        <title>2.1.127 - VERGIL Tooling</title>
       
     
     
-      <link rel="stylesheet" href="../../../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
       
         
-        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.ab4e12ef.min.css">
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
       
       
 
@@ -51,9 +51,9 @@
       
     
     
-      <link rel="stylesheet" href="../../../../stylesheets/extra.css">
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
-    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#python-import-time-side-effects" class="md-skip">
+        <a href="#release-21127-2026-07-11" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
 
 <header class="md-header" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../../../.." title="VERGIL Tooling" class="md-header__button md-logo" aria-label="VERGIL Tooling" data-md-component="logo">
+    <a href="../.." title="VERGIL Tooling" class="md-header__button md-logo" aria-label="VERGIL Tooling" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Import-Time Side Effects
+              2.1.127
             
           </span>
         </div>
@@ -229,7 +229,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../.." class="md-tabs__link">
+      <a href="../.." class="md-tabs__link">
         
   
   
@@ -246,11 +246,13 @@
   
   
   
+    
+  
   
     
     
-      <li class="md-tabs__item">
-        <a href="../../../../changelog/" class="md-tabs__link">
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../changelog/" class="md-tabs__link">
           
   
   
@@ -270,7 +272,7 @@
   
   
     <li class="md-tabs__item">
-      <a href="../../../../getting-started/" class="md-tabs__link">
+      <a href="../../getting-started/" class="md-tabs__link">
         
   
   
@@ -291,7 +293,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../reference/" class="md-tabs__link">
+        <a href="../../reference/" class="md-tabs__link">
           
   
   
@@ -309,8 +311,6 @@
   
   
   
-    
-  
   
     
     
@@ -318,13 +318,11 @@
   
   
   
-    
-  
   
     
     
-      <li class="md-tabs__item md-tabs__item--active">
-        <a href="../../../markdown-authoring/" class="md-tabs__link">
+      <li class="md-tabs__item">
+        <a href="../../standards/markdown-authoring/" class="md-tabs__link">
           
   
   
@@ -349,7 +347,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../guides/identity-architecture/" class="md-tabs__link">
+        <a href="../../guides/identity-architecture/" class="md-tabs__link">
           
   
   
@@ -371,7 +369,7 @@
     
     
       <li class="md-tabs__item">
-        <a href="../../../../guides/git-workflow/" class="md-tabs__link">
+        <a href="../../guides/git-workflow/" class="md-tabs__link">
           
   
   
@@ -407,7 +405,7 @@
 
 <nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../../../.." title="VERGIL Tooling" class="md-nav__button md-logo" aria-label="VERGIL Tooling" data-md-component="logo">
+    <a href="../.." title="VERGIL Tooling" class="md-nav__button md-logo" aria-label="VERGIL Tooling" data-md-component="logo">
       
   
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
@@ -437,7 +435,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../.." class="md-nav__link">
+      <a href="../.." class="md-nav__link">
         
   
   
@@ -461,8 +459,10 @@
       
   
   
+    
   
   
+  
     
     
       
@@ -474,19 +474,22 @@
     
     
       
+        
+        
+      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
         
           
-          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
             
   
   
@@ -504,7 +507,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -522,7 +525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../changelog/" class="md-nav__link">
+      <a href="../../changelog/" class="md-nav__link">
         
   
   
@@ -547,6 +550,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1060,18 +1065,21 @@
       
       
         
+          
+          
+        
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_2" checked>
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../releases/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   
@@ -1089,13 +1097,13 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_2_2" id="__nav_2_2_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_2_2" id="__nav_2_2_label" tabindex="">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_2_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_2_2">
             <span class="md-nav__icon md-icon"></span>
             
@@ -1112,10 +1120,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.127/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.127
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1131,6 +1166,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1143,7 +1209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.126/" class="md-nav__link">
+      <a href="../v2.1.126/" class="md-nav__link">
         
   
   
@@ -1171,7 +1237,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.125/" class="md-nav__link">
+      <a href="../v2.1.125/" class="md-nav__link">
         
   
   
@@ -1199,7 +1265,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.124/" class="md-nav__link">
+      <a href="../v2.1.124/" class="md-nav__link">
         
   
   
@@ -1227,7 +1293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.123/" class="md-nav__link">
+      <a href="../v2.1.123/" class="md-nav__link">
         
   
   
@@ -1255,7 +1321,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.122/" class="md-nav__link">
+      <a href="../v2.1.122/" class="md-nav__link">
         
   
   
@@ -1283,7 +1349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.121/" class="md-nav__link">
+      <a href="../v2.1.121/" class="md-nav__link">
         
   
   
@@ -1311,7 +1377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.120/" class="md-nav__link">
+      <a href="../v2.1.120/" class="md-nav__link">
         
   
   
@@ -1339,7 +1405,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.119/" class="md-nav__link">
+      <a href="../v2.1.119/" class="md-nav__link">
         
   
   
@@ -1367,7 +1433,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.118/" class="md-nav__link">
+      <a href="../v2.1.118/" class="md-nav__link">
         
   
   
@@ -1395,7 +1461,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.117/" class="md-nav__link">
+      <a href="../v2.1.117/" class="md-nav__link">
         
   
   
@@ -1423,7 +1489,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.116/" class="md-nav__link">
+      <a href="../v2.1.116/" class="md-nav__link">
         
   
   
@@ -1451,7 +1517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.115/" class="md-nav__link">
+      <a href="../v2.1.115/" class="md-nav__link">
         
   
   
@@ -1479,7 +1545,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.114/" class="md-nav__link">
+      <a href="../v2.1.114/" class="md-nav__link">
         
   
   
@@ -1507,7 +1573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.113/" class="md-nav__link">
+      <a href="../v2.1.113/" class="md-nav__link">
         
   
   
@@ -1535,7 +1601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.112/" class="md-nav__link">
+      <a href="../v2.1.112/" class="md-nav__link">
         
   
   
@@ -1563,7 +1629,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.111/" class="md-nav__link">
+      <a href="../v2.1.111/" class="md-nav__link">
         
   
   
@@ -1591,7 +1657,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.110/" class="md-nav__link">
+      <a href="../v2.1.110/" class="md-nav__link">
         
   
   
@@ -1619,7 +1685,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.109/" class="md-nav__link">
+      <a href="../v2.1.109/" class="md-nav__link">
         
   
   
@@ -1647,7 +1713,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.108/" class="md-nav__link">
+      <a href="../v2.1.108/" class="md-nav__link">
         
   
   
@@ -1675,7 +1741,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.107/" class="md-nav__link">
+      <a href="../v2.1.107/" class="md-nav__link">
         
   
   
@@ -1703,7 +1769,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.106/" class="md-nav__link">
+      <a href="../v2.1.106/" class="md-nav__link">
         
   
   
@@ -1731,7 +1797,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.105/" class="md-nav__link">
+      <a href="../v2.1.105/" class="md-nav__link">
         
   
   
@@ -1759,7 +1825,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.104/" class="md-nav__link">
+      <a href="../v2.1.104/" class="md-nav__link">
         
   
   
@@ -1787,7 +1853,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.103/" class="md-nav__link">
+      <a href="../v2.1.103/" class="md-nav__link">
         
   
   
@@ -1815,7 +1881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.102/" class="md-nav__link">
+      <a href="../v2.1.102/" class="md-nav__link">
         
   
   
@@ -1843,7 +1909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.101/" class="md-nav__link">
+      <a href="../v2.1.101/" class="md-nav__link">
         
   
   
@@ -1871,7 +1937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.100/" class="md-nav__link">
+      <a href="../v2.1.100/" class="md-nav__link">
         
   
   
@@ -1899,7 +1965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.99/" class="md-nav__link">
+      <a href="../v2.1.99/" class="md-nav__link">
         
   
   
@@ -1927,7 +1993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.98/" class="md-nav__link">
+      <a href="../v2.1.98/" class="md-nav__link">
         
   
   
@@ -1955,7 +2021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.97/" class="md-nav__link">
+      <a href="../v2.1.97/" class="md-nav__link">
         
   
   
@@ -1983,7 +2049,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.96/" class="md-nav__link">
+      <a href="../v2.1.96/" class="md-nav__link">
         
   
   
@@ -2011,7 +2077,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.95/" class="md-nav__link">
+      <a href="../v2.1.95/" class="md-nav__link">
         
   
   
@@ -2039,7 +2105,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.94/" class="md-nav__link">
+      <a href="../v2.1.94/" class="md-nav__link">
         
   
   
@@ -2067,7 +2133,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.93/" class="md-nav__link">
+      <a href="../v2.1.93/" class="md-nav__link">
         
   
   
@@ -2095,7 +2161,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.92/" class="md-nav__link">
+      <a href="../v2.1.92/" class="md-nav__link">
         
   
   
@@ -2123,7 +2189,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.91/" class="md-nav__link">
+      <a href="../v2.1.91/" class="md-nav__link">
         
   
   
@@ -2151,7 +2217,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.90/" class="md-nav__link">
+      <a href="../v2.1.90/" class="md-nav__link">
         
   
   
@@ -2179,7 +2245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.89/" class="md-nav__link">
+      <a href="../v2.1.89/" class="md-nav__link">
         
   
   
@@ -2207,7 +2273,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.88/" class="md-nav__link">
+      <a href="../v2.1.88/" class="md-nav__link">
         
   
   
@@ -2235,7 +2301,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.87/" class="md-nav__link">
+      <a href="../v2.1.87/" class="md-nav__link">
         
   
   
@@ -2263,7 +2329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.86/" class="md-nav__link">
+      <a href="../v2.1.86/" class="md-nav__link">
         
   
   
@@ -2291,7 +2357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.85/" class="md-nav__link">
+      <a href="../v2.1.85/" class="md-nav__link">
         
   
   
@@ -2319,7 +2385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.84/" class="md-nav__link">
+      <a href="../v2.1.84/" class="md-nav__link">
         
   
   
@@ -2347,7 +2413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.83/" class="md-nav__link">
+      <a href="../v2.1.83/" class="md-nav__link">
         
   
   
@@ -2375,7 +2441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.82/" class="md-nav__link">
+      <a href="../v2.1.82/" class="md-nav__link">
         
   
   
@@ -2403,7 +2469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.81/" class="md-nav__link">
+      <a href="../v2.1.81/" class="md-nav__link">
         
   
   
@@ -2431,7 +2497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.80/" class="md-nav__link">
+      <a href="../v2.1.80/" class="md-nav__link">
         
   
   
@@ -2459,7 +2525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.79/" class="md-nav__link">
+      <a href="../v2.1.79/" class="md-nav__link">
         
   
   
@@ -2487,7 +2553,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.78/" class="md-nav__link">
+      <a href="../v2.1.78/" class="md-nav__link">
         
   
   
@@ -2515,7 +2581,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.77/" class="md-nav__link">
+      <a href="../v2.1.77/" class="md-nav__link">
         
   
   
@@ -2543,7 +2609,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.76/" class="md-nav__link">
+      <a href="../v2.1.76/" class="md-nav__link">
         
   
   
@@ -2571,7 +2637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.75/" class="md-nav__link">
+      <a href="../v2.1.75/" class="md-nav__link">
         
   
   
@@ -2599,7 +2665,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.74/" class="md-nav__link">
+      <a href="../v2.1.74/" class="md-nav__link">
         
   
   
@@ -2627,7 +2693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.73/" class="md-nav__link">
+      <a href="../v2.1.73/" class="md-nav__link">
         
   
   
@@ -2655,7 +2721,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.72/" class="md-nav__link">
+      <a href="../v2.1.72/" class="md-nav__link">
         
   
   
@@ -2683,7 +2749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.71/" class="md-nav__link">
+      <a href="../v2.1.71/" class="md-nav__link">
         
   
   
@@ -2711,7 +2777,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.70/" class="md-nav__link">
+      <a href="../v2.1.70/" class="md-nav__link">
         
   
   
@@ -2739,7 +2805,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.69/" class="md-nav__link">
+      <a href="../v2.1.69/" class="md-nav__link">
         
   
   
@@ -2767,7 +2833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.68/" class="md-nav__link">
+      <a href="../v2.1.68/" class="md-nav__link">
         
   
   
@@ -2795,7 +2861,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.67/" class="md-nav__link">
+      <a href="../v2.1.67/" class="md-nav__link">
         
   
   
@@ -2823,7 +2889,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.66/" class="md-nav__link">
+      <a href="../v2.1.66/" class="md-nav__link">
         
   
   
@@ -2851,7 +2917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.65/" class="md-nav__link">
+      <a href="../v2.1.65/" class="md-nav__link">
         
   
   
@@ -2879,7 +2945,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.64/" class="md-nav__link">
+      <a href="../v2.1.64/" class="md-nav__link">
         
   
   
@@ -2907,7 +2973,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.63/" class="md-nav__link">
+      <a href="../v2.1.63/" class="md-nav__link">
         
   
   
@@ -2935,7 +3001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.62/" class="md-nav__link">
+      <a href="../v2.1.62/" class="md-nav__link">
         
   
   
@@ -2963,7 +3029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.61/" class="md-nav__link">
+      <a href="../v2.1.61/" class="md-nav__link">
         
   
   
@@ -2991,7 +3057,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.60/" class="md-nav__link">
+      <a href="../v2.1.60/" class="md-nav__link">
         
   
   
@@ -3019,7 +3085,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.59/" class="md-nav__link">
+      <a href="../v2.1.59/" class="md-nav__link">
         
   
   
@@ -3047,7 +3113,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.58/" class="md-nav__link">
+      <a href="../v2.1.58/" class="md-nav__link">
         
   
   
@@ -3075,7 +3141,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.57/" class="md-nav__link">
+      <a href="../v2.1.57/" class="md-nav__link">
         
   
   
@@ -3103,7 +3169,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.56/" class="md-nav__link">
+      <a href="../v2.1.56/" class="md-nav__link">
         
   
   
@@ -3131,7 +3197,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.55/" class="md-nav__link">
+      <a href="../v2.1.55/" class="md-nav__link">
         
   
   
@@ -3159,7 +3225,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.54/" class="md-nav__link">
+      <a href="../v2.1.54/" class="md-nav__link">
         
   
   
@@ -3187,7 +3253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.53/" class="md-nav__link">
+      <a href="../v2.1.53/" class="md-nav__link">
         
   
   
@@ -3215,7 +3281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.52/" class="md-nav__link">
+      <a href="../v2.1.52/" class="md-nav__link">
         
   
   
@@ -3243,7 +3309,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.51/" class="md-nav__link">
+      <a href="../v2.1.51/" class="md-nav__link">
         
   
   
@@ -3271,7 +3337,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.50/" class="md-nav__link">
+      <a href="../v2.1.50/" class="md-nav__link">
         
   
   
@@ -3299,7 +3365,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.49/" class="md-nav__link">
+      <a href="../v2.1.49/" class="md-nav__link">
         
   
   
@@ -3327,7 +3393,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.48/" class="md-nav__link">
+      <a href="../v2.1.48/" class="md-nav__link">
         
   
   
@@ -3355,7 +3421,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.47/" class="md-nav__link">
+      <a href="../v2.1.47/" class="md-nav__link">
         
   
   
@@ -3383,7 +3449,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.46/" class="md-nav__link">
+      <a href="../v2.1.46/" class="md-nav__link">
         
   
   
@@ -3411,7 +3477,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.45/" class="md-nav__link">
+      <a href="../v2.1.45/" class="md-nav__link">
         
   
   
@@ -3439,7 +3505,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.44/" class="md-nav__link">
+      <a href="../v2.1.44/" class="md-nav__link">
         
   
   
@@ -3467,7 +3533,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.43/" class="md-nav__link">
+      <a href="../v2.1.43/" class="md-nav__link">
         
   
   
@@ -3495,7 +3561,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.42/" class="md-nav__link">
+      <a href="../v2.1.42/" class="md-nav__link">
         
   
   
@@ -3523,7 +3589,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.41/" class="md-nav__link">
+      <a href="../v2.1.41/" class="md-nav__link">
         
   
   
@@ -3551,7 +3617,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.40/" class="md-nav__link">
+      <a href="../v2.1.40/" class="md-nav__link">
         
   
   
@@ -3579,7 +3645,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.39/" class="md-nav__link">
+      <a href="../v2.1.39/" class="md-nav__link">
         
   
   
@@ -3607,7 +3673,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.38/" class="md-nav__link">
+      <a href="../v2.1.38/" class="md-nav__link">
         
   
   
@@ -3635,7 +3701,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.37/" class="md-nav__link">
+      <a href="../v2.1.37/" class="md-nav__link">
         
   
   
@@ -3663,7 +3729,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.36/" class="md-nav__link">
+      <a href="../v2.1.36/" class="md-nav__link">
         
   
   
@@ -3691,7 +3757,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.35/" class="md-nav__link">
+      <a href="../v2.1.35/" class="md-nav__link">
         
   
   
@@ -3719,7 +3785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.34/" class="md-nav__link">
+      <a href="../v2.1.34/" class="md-nav__link">
         
   
   
@@ -3747,7 +3813,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.33/" class="md-nav__link">
+      <a href="../v2.1.33/" class="md-nav__link">
         
   
   
@@ -3775,7 +3841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.32/" class="md-nav__link">
+      <a href="../v2.1.32/" class="md-nav__link">
         
   
   
@@ -3803,7 +3869,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.31/" class="md-nav__link">
+      <a href="../v2.1.31/" class="md-nav__link">
         
   
   
@@ -3831,7 +3897,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.30/" class="md-nav__link">
+      <a href="../v2.1.30/" class="md-nav__link">
         
   
   
@@ -3859,7 +3925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.27/" class="md-nav__link">
+      <a href="../v2.1.27/" class="md-nav__link">
         
   
   
@@ -3887,7 +3953,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.26/" class="md-nav__link">
+      <a href="../v2.1.26/" class="md-nav__link">
         
   
   
@@ -3915,7 +3981,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.25/" class="md-nav__link">
+      <a href="../v2.1.25/" class="md-nav__link">
         
   
   
@@ -3943,7 +4009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.24/" class="md-nav__link">
+      <a href="../v2.1.24/" class="md-nav__link">
         
   
   
@@ -3971,7 +4037,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.23/" class="md-nav__link">
+      <a href="../v2.1.23/" class="md-nav__link">
         
   
   
@@ -3999,7 +4065,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.22/" class="md-nav__link">
+      <a href="../v2.1.22/" class="md-nav__link">
         
   
   
@@ -4027,7 +4093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.21/" class="md-nav__link">
+      <a href="../v2.1.21/" class="md-nav__link">
         
   
   
@@ -4055,7 +4121,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.20/" class="md-nav__link">
+      <a href="../v2.1.20/" class="md-nav__link">
         
   
   
@@ -4083,7 +4149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.19/" class="md-nav__link">
+      <a href="../v2.1.19/" class="md-nav__link">
         
   
   
@@ -4111,7 +4177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.18/" class="md-nav__link">
+      <a href="../v2.1.18/" class="md-nav__link">
         
   
   
@@ -4139,7 +4205,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.17/" class="md-nav__link">
+      <a href="../v2.1.17/" class="md-nav__link">
         
   
   
@@ -4167,7 +4233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.16/" class="md-nav__link">
+      <a href="../v2.1.16/" class="md-nav__link">
         
   
   
@@ -4195,7 +4261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.15/" class="md-nav__link">
+      <a href="../v2.1.15/" class="md-nav__link">
         
   
   
@@ -4223,7 +4289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.14/" class="md-nav__link">
+      <a href="../v2.1.14/" class="md-nav__link">
         
   
   
@@ -4251,7 +4317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.13/" class="md-nav__link">
+      <a href="../v2.1.13/" class="md-nav__link">
         
   
   
@@ -4279,7 +4345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.12/" class="md-nav__link">
+      <a href="../v2.1.12/" class="md-nav__link">
         
   
   
@@ -4307,7 +4373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.11/" class="md-nav__link">
+      <a href="../v2.1.11/" class="md-nav__link">
         
   
   
@@ -4335,7 +4401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.10/" class="md-nav__link">
+      <a href="../v2.1.10/" class="md-nav__link">
         
   
   
@@ -4363,7 +4429,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.9/" class="md-nav__link">
+      <a href="../v2.1.9/" class="md-nav__link">
         
   
   
@@ -4391,7 +4457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.8/" class="md-nav__link">
+      <a href="../v2.1.8/" class="md-nav__link">
         
   
   
@@ -4419,7 +4485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.7/" class="md-nav__link">
+      <a href="../v2.1.7/" class="md-nav__link">
         
   
   
@@ -4447,7 +4513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.6/" class="md-nav__link">
+      <a href="../v2.1.6/" class="md-nav__link">
         
   
   
@@ -4475,7 +4541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.5/" class="md-nav__link">
+      <a href="../v2.1.5/" class="md-nav__link">
         
   
   
@@ -4503,7 +4569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.4/" class="md-nav__link">
+      <a href="../v2.1.4/" class="md-nav__link">
         
   
   
@@ -4531,7 +4597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.3/" class="md-nav__link">
+      <a href="../v2.1.3/" class="md-nav__link">
         
   
   
@@ -4559,7 +4625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.2/" class="md-nav__link">
+      <a href="../v2.1.2/" class="md-nav__link">
         
   
   
@@ -4587,7 +4653,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.1/" class="md-nav__link">
+      <a href="../v2.1.1/" class="md-nav__link">
         
   
   
@@ -4615,7 +4681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.1.0/" class="md-nav__link">
+      <a href="../v2.1.0/" class="md-nav__link">
         
   
   
@@ -4643,7 +4709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.80/" class="md-nav__link">
+      <a href="../v2.0.80/" class="md-nav__link">
         
   
   
@@ -4671,7 +4737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.79/" class="md-nav__link">
+      <a href="../v2.0.79/" class="md-nav__link">
         
   
   
@@ -4699,7 +4765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.78/" class="md-nav__link">
+      <a href="../v2.0.78/" class="md-nav__link">
         
   
   
@@ -4727,7 +4793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.77/" class="md-nav__link">
+      <a href="../v2.0.77/" class="md-nav__link">
         
   
   
@@ -4755,7 +4821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.76/" class="md-nav__link">
+      <a href="../v2.0.76/" class="md-nav__link">
         
   
   
@@ -4783,7 +4849,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.75/" class="md-nav__link">
+      <a href="../v2.0.75/" class="md-nav__link">
         
   
   
@@ -4811,7 +4877,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.74/" class="md-nav__link">
+      <a href="../v2.0.74/" class="md-nav__link">
         
   
   
@@ -4839,7 +4905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.73/" class="md-nav__link">
+      <a href="../v2.0.73/" class="md-nav__link">
         
   
   
@@ -4867,7 +4933,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.72/" class="md-nav__link">
+      <a href="../v2.0.72/" class="md-nav__link">
         
   
   
@@ -4895,7 +4961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.71/" class="md-nav__link">
+      <a href="../v2.0.71/" class="md-nav__link">
         
   
   
@@ -4923,7 +4989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.70/" class="md-nav__link">
+      <a href="../v2.0.70/" class="md-nav__link">
         
   
   
@@ -4951,7 +5017,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.69/" class="md-nav__link">
+      <a href="../v2.0.69/" class="md-nav__link">
         
   
   
@@ -4979,7 +5045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.68/" class="md-nav__link">
+      <a href="../v2.0.68/" class="md-nav__link">
         
   
   
@@ -5007,7 +5073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.67/" class="md-nav__link">
+      <a href="../v2.0.67/" class="md-nav__link">
         
   
   
@@ -5035,7 +5101,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.66/" class="md-nav__link">
+      <a href="../v2.0.66/" class="md-nav__link">
         
   
   
@@ -5063,7 +5129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.65/" class="md-nav__link">
+      <a href="../v2.0.65/" class="md-nav__link">
         
   
   
@@ -5091,7 +5157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.64/" class="md-nav__link">
+      <a href="../v2.0.64/" class="md-nav__link">
         
   
   
@@ -5119,7 +5185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.63/" class="md-nav__link">
+      <a href="../v2.0.63/" class="md-nav__link">
         
   
   
@@ -5147,7 +5213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.62/" class="md-nav__link">
+      <a href="../v2.0.62/" class="md-nav__link">
         
   
   
@@ -5175,7 +5241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.61/" class="md-nav__link">
+      <a href="../v2.0.61/" class="md-nav__link">
         
   
   
@@ -5203,7 +5269,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.60/" class="md-nav__link">
+      <a href="../v2.0.60/" class="md-nav__link">
         
   
   
@@ -5231,7 +5297,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.59/" class="md-nav__link">
+      <a href="../v2.0.59/" class="md-nav__link">
         
   
   
@@ -5259,7 +5325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.58/" class="md-nav__link">
+      <a href="../v2.0.58/" class="md-nav__link">
         
   
   
@@ -5287,7 +5353,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.57/" class="md-nav__link">
+      <a href="../v2.0.57/" class="md-nav__link">
         
   
   
@@ -5315,7 +5381,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.56/" class="md-nav__link">
+      <a href="../v2.0.56/" class="md-nav__link">
         
   
   
@@ -5343,7 +5409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.54/" class="md-nav__link">
+      <a href="../v2.0.54/" class="md-nav__link">
         
   
   
@@ -5371,7 +5437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.53/" class="md-nav__link">
+      <a href="../v2.0.53/" class="md-nav__link">
         
   
   
@@ -5399,7 +5465,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.52/" class="md-nav__link">
+      <a href="../v2.0.52/" class="md-nav__link">
         
   
   
@@ -5427,7 +5493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.51/" class="md-nav__link">
+      <a href="../v2.0.51/" class="md-nav__link">
         
   
   
@@ -5455,7 +5521,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.50/" class="md-nav__link">
+      <a href="../v2.0.50/" class="md-nav__link">
         
   
   
@@ -5483,7 +5549,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.49/" class="md-nav__link">
+      <a href="../v2.0.49/" class="md-nav__link">
         
   
   
@@ -5511,7 +5577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.47/" class="md-nav__link">
+      <a href="../v2.0.47/" class="md-nav__link">
         
   
   
@@ -5539,7 +5605,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.46/" class="md-nav__link">
+      <a href="../v2.0.46/" class="md-nav__link">
         
   
   
@@ -5567,7 +5633,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.45/" class="md-nav__link">
+      <a href="../v2.0.45/" class="md-nav__link">
         
   
   
@@ -5595,7 +5661,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.44/" class="md-nav__link">
+      <a href="../v2.0.44/" class="md-nav__link">
         
   
   
@@ -5623,7 +5689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.43/" class="md-nav__link">
+      <a href="../v2.0.43/" class="md-nav__link">
         
   
   
@@ -5651,7 +5717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.42/" class="md-nav__link">
+      <a href="../v2.0.42/" class="md-nav__link">
         
   
   
@@ -5679,7 +5745,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.41/" class="md-nav__link">
+      <a href="../v2.0.41/" class="md-nav__link">
         
   
   
@@ -5707,7 +5773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.40/" class="md-nav__link">
+      <a href="../v2.0.40/" class="md-nav__link">
         
   
   
@@ -5735,7 +5801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.39/" class="md-nav__link">
+      <a href="../v2.0.39/" class="md-nav__link">
         
   
   
@@ -5763,7 +5829,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.38/" class="md-nav__link">
+      <a href="../v2.0.38/" class="md-nav__link">
         
   
   
@@ -5791,7 +5857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.37/" class="md-nav__link">
+      <a href="../v2.0.37/" class="md-nav__link">
         
   
   
@@ -5819,7 +5885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.36/" class="md-nav__link">
+      <a href="../v2.0.36/" class="md-nav__link">
         
   
   
@@ -5847,7 +5913,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.35/" class="md-nav__link">
+      <a href="../v2.0.35/" class="md-nav__link">
         
   
   
@@ -5875,7 +5941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.34/" class="md-nav__link">
+      <a href="../v2.0.34/" class="md-nav__link">
         
   
   
@@ -5903,7 +5969,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.33/" class="md-nav__link">
+      <a href="../v2.0.33/" class="md-nav__link">
         
   
   
@@ -5931,7 +5997,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.32/" class="md-nav__link">
+      <a href="../v2.0.32/" class="md-nav__link">
         
   
   
@@ -5959,7 +6025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.31/" class="md-nav__link">
+      <a href="../v2.0.31/" class="md-nav__link">
         
   
   
@@ -5987,7 +6053,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.30/" class="md-nav__link">
+      <a href="../v2.0.30/" class="md-nav__link">
         
   
   
@@ -6015,7 +6081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.29/" class="md-nav__link">
+      <a href="../v2.0.29/" class="md-nav__link">
         
   
   
@@ -6043,7 +6109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.28/" class="md-nav__link">
+      <a href="../v2.0.28/" class="md-nav__link">
         
   
   
@@ -6071,7 +6137,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.27/" class="md-nav__link">
+      <a href="../v2.0.27/" class="md-nav__link">
         
   
   
@@ -6099,7 +6165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.26/" class="md-nav__link">
+      <a href="../v2.0.26/" class="md-nav__link">
         
   
   
@@ -6127,7 +6193,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.25/" class="md-nav__link">
+      <a href="../v2.0.25/" class="md-nav__link">
         
   
   
@@ -6155,7 +6221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.24/" class="md-nav__link">
+      <a href="../v2.0.24/" class="md-nav__link">
         
   
   
@@ -6183,7 +6249,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.23/" class="md-nav__link">
+      <a href="../v2.0.23/" class="md-nav__link">
         
   
   
@@ -6211,7 +6277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.22/" class="md-nav__link">
+      <a href="../v2.0.22/" class="md-nav__link">
         
   
   
@@ -6239,7 +6305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.21/" class="md-nav__link">
+      <a href="../v2.0.21/" class="md-nav__link">
         
   
   
@@ -6267,7 +6333,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.20/" class="md-nav__link">
+      <a href="../v2.0.20/" class="md-nav__link">
         
   
   
@@ -6295,7 +6361,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.19/" class="md-nav__link">
+      <a href="../v2.0.19/" class="md-nav__link">
         
   
   
@@ -6323,7 +6389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.18/" class="md-nav__link">
+      <a href="../v2.0.18/" class="md-nav__link">
         
   
   
@@ -6351,7 +6417,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.17/" class="md-nav__link">
+      <a href="../v2.0.17/" class="md-nav__link">
         
   
   
@@ -6379,7 +6445,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.16/" class="md-nav__link">
+      <a href="../v2.0.16/" class="md-nav__link">
         
   
   
@@ -6407,7 +6473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.15/" class="md-nav__link">
+      <a href="../v2.0.15/" class="md-nav__link">
         
   
   
@@ -6435,7 +6501,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.14/" class="md-nav__link">
+      <a href="../v2.0.14/" class="md-nav__link">
         
   
   
@@ -6463,7 +6529,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.13/" class="md-nav__link">
+      <a href="../v2.0.13/" class="md-nav__link">
         
   
   
@@ -6491,7 +6557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.12/" class="md-nav__link">
+      <a href="../v2.0.12/" class="md-nav__link">
         
   
   
@@ -6519,7 +6585,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.11/" class="md-nav__link">
+      <a href="../v2.0.11/" class="md-nav__link">
         
   
   
@@ -6547,7 +6613,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.10/" class="md-nav__link">
+      <a href="../v2.0.10/" class="md-nav__link">
         
   
   
@@ -6575,7 +6641,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.9/" class="md-nav__link">
+      <a href="../v2.0.9/" class="md-nav__link">
         
   
   
@@ -6603,7 +6669,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.8/" class="md-nav__link">
+      <a href="../v2.0.8/" class="md-nav__link">
         
   
   
@@ -6631,7 +6697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.7/" class="md-nav__link">
+      <a href="../v2.0.7/" class="md-nav__link">
         
   
   
@@ -6659,7 +6725,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.6/" class="md-nav__link">
+      <a href="../v2.0.6/" class="md-nav__link">
         
   
   
@@ -6687,7 +6753,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.5/" class="md-nav__link">
+      <a href="../v2.0.5/" class="md-nav__link">
         
   
   
@@ -6715,7 +6781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.4/" class="md-nav__link">
+      <a href="../v2.0.4/" class="md-nav__link">
         
   
   
@@ -6743,7 +6809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v2.0.2/" class="md-nav__link">
+      <a href="../v2.0.2/" class="md-nav__link">
         
   
   
@@ -6771,7 +6837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.36/" class="md-nav__link">
+      <a href="../v1.4.36/" class="md-nav__link">
         
   
   
@@ -6799,7 +6865,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.35/" class="md-nav__link">
+      <a href="../v1.4.35/" class="md-nav__link">
         
   
   
@@ -6827,7 +6893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.34/" class="md-nav__link">
+      <a href="../v1.4.34/" class="md-nav__link">
         
   
   
@@ -6855,7 +6921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.33/" class="md-nav__link">
+      <a href="../v1.4.33/" class="md-nav__link">
         
   
   
@@ -6883,7 +6949,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.32/" class="md-nav__link">
+      <a href="../v1.4.32/" class="md-nav__link">
         
   
   
@@ -6911,7 +6977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.31/" class="md-nav__link">
+      <a href="../v1.4.31/" class="md-nav__link">
         
   
   
@@ -6939,7 +7005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.30/" class="md-nav__link">
+      <a href="../v1.4.30/" class="md-nav__link">
         
   
   
@@ -6967,7 +7033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.29/" class="md-nav__link">
+      <a href="../v1.4.29/" class="md-nav__link">
         
   
   
@@ -6995,7 +7061,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.28/" class="md-nav__link">
+      <a href="../v1.4.28/" class="md-nav__link">
         
   
   
@@ -7023,7 +7089,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.27/" class="md-nav__link">
+      <a href="../v1.4.27/" class="md-nav__link">
         
   
   
@@ -7051,7 +7117,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.26/" class="md-nav__link">
+      <a href="../v1.4.26/" class="md-nav__link">
         
   
   
@@ -7079,7 +7145,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.24/" class="md-nav__link">
+      <a href="../v1.4.24/" class="md-nav__link">
         
   
   
@@ -7107,7 +7173,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.23/" class="md-nav__link">
+      <a href="../v1.4.23/" class="md-nav__link">
         
   
   
@@ -7135,7 +7201,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.22/" class="md-nav__link">
+      <a href="../v1.4.22/" class="md-nav__link">
         
   
   
@@ -7163,7 +7229,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.21/" class="md-nav__link">
+      <a href="../v1.4.21/" class="md-nav__link">
         
   
   
@@ -7191,7 +7257,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.20/" class="md-nav__link">
+      <a href="../v1.4.20/" class="md-nav__link">
         
   
   
@@ -7219,7 +7285,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.19/" class="md-nav__link">
+      <a href="../v1.4.19/" class="md-nav__link">
         
   
   
@@ -7247,7 +7313,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.18/" class="md-nav__link">
+      <a href="../v1.4.18/" class="md-nav__link">
         
   
   
@@ -7275,7 +7341,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.17/" class="md-nav__link">
+      <a href="../v1.4.17/" class="md-nav__link">
         
   
   
@@ -7303,7 +7369,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.16/" class="md-nav__link">
+      <a href="../v1.4.16/" class="md-nav__link">
         
   
   
@@ -7331,7 +7397,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.15/" class="md-nav__link">
+      <a href="../v1.4.15/" class="md-nav__link">
         
   
   
@@ -7359,7 +7425,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.14/" class="md-nav__link">
+      <a href="../v1.4.14/" class="md-nav__link">
         
   
   
@@ -7387,7 +7453,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.13/" class="md-nav__link">
+      <a href="../v1.4.13/" class="md-nav__link">
         
   
   
@@ -7415,7 +7481,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.12/" class="md-nav__link">
+      <a href="../v1.4.12/" class="md-nav__link">
         
   
   
@@ -7443,7 +7509,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.11/" class="md-nav__link">
+      <a href="../v1.4.11/" class="md-nav__link">
         
   
   
@@ -7471,7 +7537,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.10/" class="md-nav__link">
+      <a href="../v1.4.10/" class="md-nav__link">
         
   
   
@@ -7499,7 +7565,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.9/" class="md-nav__link">
+      <a href="../v1.4.9/" class="md-nav__link">
         
   
   
@@ -7527,7 +7593,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.8/" class="md-nav__link">
+      <a href="../v1.4.8/" class="md-nav__link">
         
   
   
@@ -7555,7 +7621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.7/" class="md-nav__link">
+      <a href="../v1.4.7/" class="md-nav__link">
         
   
   
@@ -7583,7 +7649,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.6/" class="md-nav__link">
+      <a href="../v1.4.6/" class="md-nav__link">
         
   
   
@@ -7611,7 +7677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.5/" class="md-nav__link">
+      <a href="../v1.4.5/" class="md-nav__link">
         
   
   
@@ -7639,7 +7705,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.4/" class="md-nav__link">
+      <a href="../v1.4.4/" class="md-nav__link">
         
   
   
@@ -7667,7 +7733,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.3/" class="md-nav__link">
+      <a href="../v1.4.3/" class="md-nav__link">
         
   
   
@@ -7695,7 +7761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.2/" class="md-nav__link">
+      <a href="../v1.4.2/" class="md-nav__link">
         
   
   
@@ -7723,7 +7789,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.1/" class="md-nav__link">
+      <a href="../v1.4.1/" class="md-nav__link">
         
   
   
@@ -7751,7 +7817,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.4.0/" class="md-nav__link">
+      <a href="../v1.4.0/" class="md-nav__link">
         
   
   
@@ -7779,7 +7845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.3.4/" class="md-nav__link">
+      <a href="../v1.3.4/" class="md-nav__link">
         
   
   
@@ -7807,7 +7873,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.3.3/" class="md-nav__link">
+      <a href="../v1.3.3/" class="md-nav__link">
         
   
   
@@ -7835,7 +7901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.3.2/" class="md-nav__link">
+      <a href="../v1.3.2/" class="md-nav__link">
         
   
   
@@ -7863,7 +7929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.3.1/" class="md-nav__link">
+      <a href="../v1.3.1/" class="md-nav__link">
         
   
   
@@ -7891,7 +7957,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.3.0/" class="md-nav__link">
+      <a href="../v1.3.0/" class="md-nav__link">
         
   
   
@@ -7919,7 +7985,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.2.2/" class="md-nav__link">
+      <a href="../v1.2.2/" class="md-nav__link">
         
   
   
@@ -7947,7 +8013,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../v1.2.0/" class="md-nav__link">
         
   
   
@@ -7975,7 +8041,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../v1.2.1/" class="md-nav__link">
         
   
   
@@ -8003,7 +8069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.1.4/" class="md-nav__link">
+      <a href="../v1.1.4/" class="md-nav__link">
         
   
   
@@ -8031,7 +8097,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.1.3/" class="md-nav__link">
+      <a href="../v1.1.3/" class="md-nav__link">
         
   
   
@@ -8059,7 +8125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../releases/v1.1.2/" class="md-nav__link">
+      <a href="../v1.1.2/" class="md-nav__link">
         
   
   
@@ -8102,7 +8168,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../getting-started/" class="md-nav__link">
+      <a href="../../getting-started/" class="md-nav__link">
         
   
   
@@ -8162,7 +8228,7 @@
         
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../../../reference/" class="md-nav__link ">
+            <a href="../../reference/" class="md-nav__link ">
               
   
   
@@ -8206,7 +8272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/cli-tools-overview/" class="md-nav__link">
+      <a href="../../reference/cli-tools-overview/" class="md-nav__link">
         
   
   
@@ -8234,7 +8300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/vm-spec/" class="md-nav__link">
+      <a href="../../reference/vm-spec/" class="md-nav__link">
         
   
   
@@ -8318,7 +8384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/hooks/pre-commit/" class="md-nav__link">
+      <a href="../../reference/hooks/pre-commit/" class="md-nav__link">
         
   
   
@@ -8412,7 +8478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/lint/repo-profile/" class="md-nav__link">
+      <a href="../../reference/lint/repo-profile/" class="md-nav__link">
         
   
   
@@ -8440,7 +8506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/lint/markdown-standards/" class="md-nav__link">
+      <a href="../../reference/lint/markdown-standards/" class="md-nav__link">
         
   
   
@@ -8540,7 +8606,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/commit/" class="md-nav__link">
+      <a href="../../reference/dev/commit/" class="md-nav__link">
         
   
   
@@ -8568,7 +8634,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/submit-pr/" class="md-nav__link">
+      <a href="../../reference/dev/submit-pr/" class="md-nav__link">
         
   
   
@@ -8596,7 +8662,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/pr-fix-body/" class="md-nav__link">
+      <a href="../../reference/dev/pr-fix-body/" class="md-nav__link">
         
   
   
@@ -8624,7 +8690,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/prepare-release/" class="md-nav__link">
+      <a href="../../reference/dev/prepare-release/" class="md-nav__link">
         
   
   
@@ -8652,7 +8718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../reference/dev/finalize-pr/" class="md-nav__link">
+      <a href="../../reference/dev/finalize-pr/" class="md-nav__link">
         
   
   
@@ -8692,10 +8758,8 @@
       
   
   
-    
   
   
-  
     
     
       
@@ -8713,22 +8777,19 @@
     
     
       
-        
-        
-      
       
         
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
             
   
   
@@ -8746,7 +8807,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -8776,20 +8837,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_1" >
         
           
-          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5_1" id="__nav_5_1_label" tabindex="0">
             
   
   
@@ -8825,7 +8883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../markdown-authoring/" class="md-nav__link">
+      <a href="../../standards/markdown-authoring/" class="md-nav__link">
         
   
   
@@ -8853,7 +8911,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../architecture/" class="md-nav__link">
+      <a href="../../standards/architecture/" class="md-nav__link">
         
   
   
@@ -8901,20 +8959,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_2" >
         
           
-          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5_2" id="__nav_5_2_label" tabindex="0">
             
   
   
@@ -8950,7 +9005,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../repository-structure/" class="md-nav__link">
+      <a href="../../standards/repository-structure/" class="md-nav__link">
         
   
   
@@ -8978,7 +9033,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../dependency-anchor-records/" class="md-nav__link">
+      <a href="../../standards/dependency-anchor-records/" class="md-nav__link">
         
   
   
@@ -9034,20 +9089,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
             
   
   
@@ -9083,7 +9135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../source-control-guidelines/" class="md-nav__link">
+      <a href="../../standards/source-control-guidelines/" class="md-nav__link">
         
   
   
@@ -9111,7 +9163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../github-issues/" class="md-nav__link">
+      <a href="../../standards/github-issues/" class="md-nav__link">
         
   
   
@@ -9139,7 +9191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../branching-application/" class="md-nav__link">
+      <a href="../../standards/branching-application/" class="md-nav__link">
         
   
   
@@ -9167,7 +9219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../branching-documentation/" class="md-nav__link">
+      <a href="../../standards/branching-documentation/" class="md-nav__link">
         
   
   
@@ -9195,7 +9247,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../hotfix-policy/" class="md-nav__link">
+      <a href="../../standards/hotfix-policy/" class="md-nav__link">
         
   
   
@@ -9223,7 +9275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../versioning-application/" class="md-nav__link">
+      <a href="../../standards/versioning-application/" class="md-nav__link">
         
   
   
@@ -9256,10 +9308,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -9288,21 +9338,18 @@
     
       
       
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
         
           
-          
-        
-      
-    
-    
-    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-      
-        
-        
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" checked>
-        
-          
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
             
   
   
@@ -9320,7 +9367,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5_4">
             <span class="md-nav__icon md-icon"></span>
             
@@ -9338,7 +9385,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../environment-and-tooling/" class="md-nav__link">
+      <a href="../../standards/development/environment-and-tooling/" class="md-nav__link">
         
   
   
@@ -9366,7 +9413,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../runtime-version-support-policy/" class="md-nav__link">
+      <a href="../../standards/development/runtime-version-support-policy/" class="md-nav__link">
         
   
   
@@ -9394,7 +9441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../deprecation-warnings/" class="md-nav__link">
+      <a href="../../standards/development/deprecation-warnings/" class="md-nav__link">
         
   
   
@@ -9422,7 +9469,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../cli-help-convention/" class="md-nav__link">
+      <a href="../../standards/development/cli-help-convention/" class="md-nav__link">
         
   
   
@@ -9447,10 +9494,8 @@
                 
   
   
-    
   
   
-  
     
     
       
@@ -9481,11 +9526,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4_5" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4_5" >
         
           
           <label class="md-nav__link" for="__nav_5_4_5" id="__nav_5_4_5_label" tabindex="0">
@@ -9506,7 +9551,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_4_5_label" aria-expanded="true">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_4_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5_4_5">
             <span class="md-nav__icon md-icon"></span>
             
@@ -9524,7 +9569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../overview/" class="md-nav__link">
+      <a href="../../standards/development/python/overview/" class="md-nav__link">
         
   
   
@@ -9552,7 +9597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../naming-conventions/" class="md-nav__link">
+      <a href="../../standards/development/python/naming-conventions/" class="md-nav__link">
         
   
   
@@ -9580,7 +9625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../type-hints/" class="md-nav__link">
+      <a href="../../standards/development/python/type-hints/" class="md-nav__link">
         
   
   
@@ -9605,37 +9650,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Import-Time Side Effects
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../../standards/development/python/import-time-side-effects/" class="md-nav__link">
         
   
   
@@ -9651,59 +9669,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#rule" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Rule
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#allowed-exceptions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Allowed Exceptions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#forbidden-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Forbidden Examples
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -9716,7 +9681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../testing-and-coverage/" class="md-nav__link">
+      <a href="../../standards/development/python/testing-and-coverage/" class="md-nav__link">
         
   
   
@@ -9744,7 +9709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../dependency-management/" class="md-nav__link">
+      <a href="../../standards/development/python/dependency-management/" class="md-nav__link">
         
   
   
@@ -9772,7 +9737,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../local-validation-scripts/" class="md-nav__link">
+      <a href="../../standards/development/python/local-validation-scripts/" class="md-nav__link">
         
   
   
@@ -9800,7 +9765,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../version-management/" class="md-nav__link">
+      <a href="../../standards/development/python/version-management/" class="md-nav__link">
         
   
   
@@ -9828,7 +9793,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../ty-migration-plan/" class="md-nav__link">
+      <a href="../../standards/development/python/ty-migration-plan/" class="md-nav__link">
         
   
   
@@ -9922,7 +9887,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../go/overview/" class="md-nav__link">
+      <a href="../../standards/development/go/overview/" class="md-nav__link">
         
   
   
@@ -9950,7 +9915,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../go/naming-conventions/" class="md-nav__link">
+      <a href="../../standards/development/go/naming-conventions/" class="md-nav__link">
         
   
   
@@ -10044,7 +10009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../java/overview/" class="md-nav__link">
+      <a href="../../standards/development/java/overview/" class="md-nav__link">
         
   
   
@@ -10072,7 +10037,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../java/naming-conventions/" class="md-nav__link">
+      <a href="../../standards/development/java/naming-conventions/" class="md-nav__link">
         
   
   
@@ -10166,7 +10131,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rust/overview/" class="md-nav__link">
+      <a href="../../standards/development/rust/overview/" class="md-nav__link">
         
   
   
@@ -10194,7 +10159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../rust/naming-conventions/" class="md-nav__link">
+      <a href="../../standards/development/rust/naming-conventions/" class="md-nav__link">
         
   
   
@@ -10288,7 +10253,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../shell/overview/" class="md-nav__link">
+      <a href="../../standards/development/shell/overview/" class="md-nav__link">
         
   
   
@@ -10316,7 +10281,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../shell/naming-conventions/" class="md-nav__link">
+      <a href="../../standards/development/shell/naming-conventions/" class="md-nav__link">
         
   
   
@@ -10410,7 +10375,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../database/overview/" class="md-nav__link">
+      <a href="../../standards/development/database/overview/" class="md-nav__link">
         
   
   
@@ -10438,7 +10403,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../database/conventions/" class="md-nav__link">
+      <a href="../../standards/development/database/conventions/" class="md-nav__link">
         
   
   
@@ -10496,20 +10461,17 @@
       
       
         
-          
-          
-        
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" >
         
           
-          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
             
   
   
@@ -10545,7 +10507,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../ai-code-review-guidelines/" class="md-nav__link">
+      <a href="../../standards/ai-code-review-guidelines/" class="md-nav__link">
         
   
   
@@ -10573,7 +10535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interaction-contract/" class="md-nav__link">
+      <a href="../../standards/interaction-contract/" class="md-nav__link">
         
   
   
@@ -10601,7 +10563,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../interaction-contract-brief/" class="md-nav__link">
+      <a href="../../standards/interaction-contract-brief/" class="md-nav__link">
         
   
   
@@ -10708,7 +10670,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/identity-architecture/" class="md-nav__link">
+      <a href="../../guides/identity-architecture/" class="md-nav__link">
         
   
   
@@ -10736,7 +10698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/credential-management/" class="md-nav__link">
+      <a href="../../guides/credential-management/" class="md-nav__link">
         
   
   
@@ -10764,7 +10726,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/permission-model/" class="md-nav__link">
+      <a href="../../guides/permission-model/" class="md-nav__link">
         
   
   
@@ -10792,7 +10754,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/account-setup/" class="md-nav__link">
+      <a href="../../guides/account-setup/" class="md-nav__link">
         
   
   
@@ -10820,7 +10782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/agent-vm-claude-share-set/" class="md-nav__link">
+      <a href="../../guides/agent-vm-claude-share-set/" class="md-nav__link">
         
   
   
@@ -10919,7 +10881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/git-workflow/" class="md-nav__link">
+      <a href="../../guides/git-workflow/" class="md-nav__link">
         
   
   
@@ -10947,7 +10909,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/consuming-repo-setup/" class="md-nav__link">
+      <a href="../../guides/consuming-repo-setup/" class="md-nav__link">
         
   
   
@@ -10975,7 +10937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/ci-architecture/" class="md-nav__link">
+      <a href="../../guides/ci-architecture/" class="md-nav__link">
         
   
   
@@ -11003,7 +10965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/validation-matrix/" class="md-nav__link">
+      <a href="../../guides/validation-matrix/" class="md-nav__link">
         
   
   
@@ -11031,7 +10993,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../../guides/releasing/" class="md-nav__link">
+      <a href="../../guides/releasing/" class="md-nav__link">
         
   
   
@@ -11086,32 +11048,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#rule" class="md-nav__link">
+  <a href="#refactoring" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Rule
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#allowed-exceptions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Allowed Exceptions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#forbidden-examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Forbidden Examples
+        Refactoring
       
     </span>
   </a>
@@ -11135,28 +11075,19 @@
 
 
 
-<h1 id="python-import-time-side-effects">Python Import-Time Side Effects<a class="headerlink" href="#python-import-time-side-effects" title="Permanent link">&para;</a></h1>
-<h2 id="rule">Rule<a class="headerlink" href="#rule" title="Permanent link">&para;</a></h2>
-<p>No implicit state or side effects at import time.</p>
-<h2 id="allowed-exceptions">Allowed Exceptions<a class="headerlink" href="#allowed-exceptions" title="Permanent link">&para;</a></h2>
-<p>Framework-standard registration mechanisms are permitted when required by the
-framework. Examples include:</p>
+<h1 id="release-21127-2026-07-11">Release 2.1.127 (2026-07-11)<a class="headerlink" href="#release-21127-2026-07-11" title="Permanent link">&para;</a></h1>
+<h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
 <ul>
-<li>SQLAlchemy ORM model declarations (including <code>Table</code> definitions and
-  declarative class registration in <code>Base.metadata</code>)</li>
-<li>FastAPI router definitions (<code>APIRouter()</code> creation and decorator-based route
-  registration)</li>
+<li><strong>retire the deprecated standing alias (#2275)</strong>
+The 'standing' epic model was superseded by 'ad-hoc'; all active orgs have been migrated and no live 'standing' epics remain, so the deprecated alias can be removed.</li>
 </ul>
-<p>These are allowed only because the frameworks require import-time registration.
-All other side effects remain forbidden.</p>
-<h2 id="forbidden-examples">Forbidden Examples<a class="headerlink" href="#forbidden-examples" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Engine or session creation</li>
-<li>Settings loading or environment mutation</li>
-<li>Network calls</li>
-<li>File system writes</li>
-<li>Global mutable state initialization</li>
-</ul>
+<p>Remove the 'standing' alias/sentinel/label across the epic model:
+- epics.py: drop the ensure_standing_epic = ensure_adhoc_epic alias, the 'standing' acceptance in resolve_epic_ref, and 'standing' from the rollup perpetual-label check (keep 'ad-hoc').
+- Callers vrg_epic_move / vrg_issue_create: drop 'standing' from the cross-org sentinel guard (keep 'adhoc'); refresh docstrings/comments in vrg_epic_rollup and vrg_adhoc_epic.
+- roadmap.py and epic_audit.py: drop 'standing' from the perpetual-epic label checks (keep 'ad-hoc').
+- pyproject.toml: remove the vrg-standing-epic console-script alias.
+- labels.json: remove the 'standing' registry entry and add it to the delete list so a sync de-provisions it.</p>
+<p>Update affected tests to cover ad-hoc behavior only; remove the deprecated-alias tests. The one-shot adhoc_migrate module is left untouched — it legitimately operates on historical standing epics and is not the deprecated alias.</p>
 
 
 
@@ -11212,10 +11143,10 @@ All other side effects remain forbidden.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../../../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
       
     
   </body>
