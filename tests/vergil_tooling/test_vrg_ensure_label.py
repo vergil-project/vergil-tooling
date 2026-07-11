@@ -127,7 +127,8 @@ def test_main_sync_provisions_all_labels() -> None:
     assert result == 0
     # Should have called once per label + once for the delete
     label_calls = [c for c in mock_run.call_args_list if c.args[1] == "create"]
-    assert len(label_calls) == 18  # 17 + deployment (epic vergil-project/.github#124)
+    # 18 before retiring the deprecated 'standing' alias (retire-standing task).
+    assert len(label_calls) == 17
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
@@ -144,8 +145,9 @@ def test_main_sync_deletes_deprecated_labels() -> None:
     with patch("vergil_tooling.bin.vrg_ensure_label.github.run") as mock_run:
         main(["--repo", "o/r", "--sync"])
     delete_calls = [c for c in mock_run.call_args_list if c.args[1] == "delete"]
-    assert len(delete_calls) == 1
-    assert "enhancement" in delete_calls[0].args
+    assert len(delete_calls) == 2
+    deleted = {c.args[2] for c in delete_calls}
+    assert deleted == {"enhancement", "standing"}
 
 
 def test_main_sync_delete_ignores_missing_label() -> None:

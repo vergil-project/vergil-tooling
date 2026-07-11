@@ -2,9 +2,9 @@
 
 Every issue must be born linked to an epic (a native sub-issue), so this is the
 only sanctioned issue-creation path: ``vrg-gh`` denies raw ``gh issue create``
-and redirects here. ``--epic`` is required — pass ``--epic adhoc`` (or the
-deprecated alias ``standing``) to target the repo's ad-hoc epic in ``.github``,
-or an explicit ``owner/repo#N`` / ``#N`` epic ref.
+and redirects here. ``--epic`` is required — pass ``--epic adhoc`` to target the
+repo's ad-hoc epic in ``.github``, or an explicit ``owner/repo#N`` / ``#N`` epic
+ref.
 
 If the issue is created but the link fails, the created issue's URL is reported
 so it is never a silent orphan; recover with ``vrg-epic-move``.
@@ -84,10 +84,10 @@ def main(argv: list[str] | None = None) -> int:
     repo = args.repo or github.current_repo()
     owner, name = repo.split("/", 1)
     # Pre-network cross-org guard: the issue and its epic must share an owner so
-    # one App-installation token reaches both (#2070). The 'adhoc' sentinel (and
-    # its deprecated 'standing' alias) resolves within *repo*'s org (.github), so
-    # only an explicit epic ref can diverge.
-    if args.epic not in ("standing", "adhoc"):
+    # one App-installation token reaches both (#2070). The 'adhoc' sentinel
+    # resolves within *repo*'s org (.github), so only an explicit epic ref can
+    # diverge.
+    if args.epic != "adhoc":
         try:
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=repo).owner
         except ValueError as exc:
