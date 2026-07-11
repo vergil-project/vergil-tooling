@@ -11,7 +11,6 @@
     {"name": "rtfm", "color": "f9d0c4", "description": "Resolved by reading existing docs"},
     {"name": "observability", "color": "1d76db", "description": "Monitoring, reporting, health checks"},
     {"name": "epic", "color": "6f42c1", "description": "Umbrella issue; finite epics close when all sub-issues close"},
-    {"name": "standing", "color": "5319e7", "description": "Deprecated alias for ad-hoc; retired after the ad-hoc migration (epic #85)"},
     {"name": "ad-hoc", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
     {"name": "triage", "color": "d93f0b", "description": "Uncurated intake; not yet folded into the epic/task model"},
     {"name": "idea", "color": "fef2c0", "description": "Seed to be expanded into an epic"},
@@ -19,5 +18,5 @@
     {"name": "validation", "color": "006b75", "description": "Post-merge validation: run the checklist, record PASS/FAIL as a comment; never auto-closed"},
     {"name": "deployment", "color": "0052cc", "description": "Deployment task: install/sync merged changes so they are usable; never auto-closed"}
   ],
-  "delete": ["enhancement"]
+  "delete": ["enhancement", "standing"]
 }

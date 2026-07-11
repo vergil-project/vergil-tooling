@@ -12,7 +12,7 @@ def _child(owner: str, repo: str, number: int, state: str) -> epics.ChildState:
     return epics.ChildState(epics.IssueRef(owner, repo, number), state)
 
 
-def test_gather_summarizes_open_epics_and_skips_standing() -> None:
+def test_gather_summarizes_open_epics_and_skips_adhoc() -> None:
     epic_list = [
         {
             "number": 40,
@@ -27,7 +27,7 @@ def test_gather_summarizes_open_epics_and_skips_standing() -> None:
             "title": "Ad-hoc",
             "createdAt": "2026-01-01T00:00:00Z",
             "milestone": None,
-            "labels": [{"name": "epic"}, {"name": "standing"}],  # standing -> skipped
+            "labels": [{"name": "epic"}, {"name": "ad-hoc"}],  # ad-hoc -> skipped
             "url": "u5",
         },
     ]
@@ -53,8 +53,7 @@ def test_gather_summarizes_open_epics_and_skips_standing() -> None:
 
 
 def test_gather_skips_adhoc_epic() -> None:
-    # The ad-hoc bucket is perpetual and excluded from the strategic roadmap,
-    # just like the deprecated 'standing' alias (epic #85).
+    # The ad-hoc bucket is perpetual and excluded from the strategic roadmap.
     epic_list = [
         {
             "number": 40,

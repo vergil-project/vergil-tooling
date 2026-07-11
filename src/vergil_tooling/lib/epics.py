@@ -296,12 +296,12 @@ def is_epic(ref: IssueRef) -> bool:
 def resolve_epic_ref(ref: str, *, repo: str) -> IssueRef:
     """Resolve an epic ref, accepting the ``"adhoc"`` sentinel.
 
-    ``"adhoc"`` (and the deprecated alias ``"standing"``) ensures *repo*'s ad-hoc
-    epic exists in ``<org>/.github`` — creating it if absent and reusing it
-    otherwise — via :func:`ensure_adhoc_epic`. Any other ref is parsed with
+    ``"adhoc"`` ensures *repo*'s ad-hoc epic exists in ``<org>/.github`` —
+    creating it if absent and reusing it otherwise — via
+    :func:`ensure_adhoc_epic`. Any other ref is parsed with
     :func:`parse_issue_ref` and validated to carry the ``epic`` label.
     """
-    if ref in ("adhoc", "standing"):
+    if ref == "adhoc":
         return ensure_adhoc_epic(repo)
     epic = parse_issue_ref(ref, default_repo=repo)
     if not is_epic(epic):
@@ -389,12 +389,6 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     return IssueRef(owner=owner, repo=home_repo, number=number)
 
 
-# Deprecated alias kept for the ad-hoc rollout window (epic #85); callers still
-# importing ``ensure_standing_epic`` keep working. Removed in the retire-standing
-# task once the migration is complete.
-ensure_standing_epic = ensure_adhoc_epic
-
-
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
     """True if *ref* points at an epic, so it must not be linked as a PR's task.
 
@@ -454,13 +448,12 @@ def rollup(task: IssueRef) -> None:
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
     legacy issues have no epic parent, so finalize never rolls them up. An
-    ``ad-hoc`` epic (or its deprecated ``standing`` alias) is perpetual and never
-    auto-closes.
+    ``ad-hoc`` epic is perpetual and never auto-closes.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
-    if _labels(parent) & {"ad-hoc", "standing"}:
+    if "ad-hoc" in _labels(parent):
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

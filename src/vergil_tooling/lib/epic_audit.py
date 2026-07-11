@@ -316,8 +316,8 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
     PR that legitimately ``Ref``'d an epic once tripped ``task_drift`` into
     closing the epic directly, orphaning its open tasks — and no audit check
     caught the result. This is that check. Uses **native children** as the
-    authoritative signal (``child_states``); perpetual (``ad-hoc``/``standing``)
-    epics are skipped — they never roll up, so being closed-with-open-children is
+    authoritative signal (``child_states``); perpetual (``ad-hoc``) epics are
+    skipped — they never roll up, so being closed-with-open-children is
     not a violation for them. Report-only: like the other invariants it is never
     auto-acted (remediation is :func:`reopen_epics_with_open_children`, gated to a
     human). Scoped to the resolved epic *home* (default ``<org>/.github``).
@@ -342,7 +342,7 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
     violations: list[EpicOpenChildViolation] = []
     for item in raw if isinstance(raw, list) else []:
         labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
-        if labels & {"ad-hoc", "standing"}:
+        if "ad-hoc" in labels:
             continue  # perpetual epics never roll up; closed-with-open-child doesn't apply
         epic = epics.IssueRef(home_owner, home_repo, int(item["number"]))
         open_kids = tuple(cs.ref for cs in epics.child_states(epic) if cs.state == "OPEN")

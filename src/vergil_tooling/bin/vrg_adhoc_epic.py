@@ -7,10 +7,6 @@ pre-existing issues — e.g. ``migrate-repo`` step 1,
 which must ensure the epic exists before it can link ad-hoc tasks to it. Routing
 work to ``adhoc`` (``vrg-issue-create``/``vrg-epic-move --epic adhoc``) also
 ensures it via the same path.
-
-``vrg-standing-epic`` remains as a deprecated alias for this command during the
-ad-hoc rollout (epic vergil-project/.github#85); it is removed once the
-migration is complete.
 """
 
 from __future__ import annotations

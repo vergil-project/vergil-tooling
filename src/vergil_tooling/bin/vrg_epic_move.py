@@ -2,8 +2,8 @@
 
 GitHub sub-issues allow only one parent, so re-parenting is unlink-then-link.
 The target epic is resolved via :func:`epics.resolve_epic_ref` (accepting the
-``adhoc`` sentinel and its deprecated ``standing`` alias, and validating
-epic-ness); moving a task already under the target epic is a no-op.
+``adhoc`` sentinel and validating epic-ness); moving a task already under the
+target epic is a no-op.
 """
 
 from __future__ import annotations
@@ -28,11 +28,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         task = epics.parse_issue_ref(args.task, default_repo=default_repo)
         # Scope the App token to the task's owner (#2070). The epic must live in
-        # the same org — the 'adhoc' sentinel (and its deprecated 'standing'
-        # alias) resolves within the task's org (.github), so only an explicit
-        # ref can diverge; guard that before any network call so a cross-org
-        # mistake is a clear message, not a cwd-scoped 403.
-        if args.epic not in ("standing", "adhoc"):
+        # the same org — the 'adhoc' sentinel resolves within the task's org
+        # (.github), so only an explicit ref can diverge; guard that before any
+        # network call so a cross-org mistake is a clear message, not a
+        # cwd-scoped 403.
+        if args.epic != "adhoc":
             epic_owner = epics.parse_issue_ref(args.epic, default_repo=default_repo).owner
             if epic_owner != task.owner:
                 raise ValueError(

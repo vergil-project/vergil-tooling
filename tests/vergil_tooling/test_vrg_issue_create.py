@@ -26,7 +26,7 @@ def test_parse_args_requires_epic() -> None:
 
 def test_parse_args_requires_title() -> None:
     with pytest.raises(SystemExit):
-        parse_args(["--epic", "standing"])  # missing --title
+        parse_args(["--epic", "adhoc"])  # missing --title
 
 
 def test_main_creates_issue_and_links_under_epic() -> None:
@@ -36,9 +36,9 @@ def test_main_creates_issue_and_links_under_epic() -> None:
         patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
         patch(f"{_MOD}.epics.add_child") as mock_add,
     ):
-        rc = main(["--epic", "standing", "--title", "T", "--body", "B", "--label", "bug"])
+        rc = main(["--epic", "adhoc", "--title", "T", "--body", "B", "--label", "bug"])
     assert rc == 0
-    mock_resolve.assert_called_once_with("standing", repo="org/repo")
+    mock_resolve.assert_called_once_with("adhoc", repo="org/repo")
     assert mock_create.call_args.kwargs["title"] == "T"
     assert mock_create.call_args.kwargs["labels"] == ["bug"]
     mock_add.assert_called_once_with(EPIC, epics.IssueRef("org", "repo", 123))
@@ -165,8 +165,8 @@ def test_kind_defaults_to_task_without_validation_label() -> None:
 
 
 def test_main_adhoc_sentinel_skips_cross_org_guard() -> None:
-    # 'adhoc' (like the deprecated 'standing') resolves within the repo's org
-    # (.github), so it must skip the explicit-ref cross-org guard and link.
+    # 'adhoc' resolves within the repo's org (.github), so it must skip the
+    # explicit-ref cross-org guard and link.
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC) as mock_resolve,
@@ -184,11 +184,11 @@ def test_main_epic_resolution_failure_creates_nothing() -> None:
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
         patch(
             f"{_MOD}.epics.resolve_epic_ref",
-            side_effect=ValueError("multiple standing epics in org/repo — pass an explicit --epic"),
+            side_effect=ValueError("multiple ad-hoc epics in org/repo — pass an explicit --epic"),
         ),
         patch(f"{_MOD}.github.create_issue") as mock_create,
     ):
-        rc = main(["--epic", "standing", "--title", "T"])
+        rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 1
     mock_create.assert_not_called()
 
@@ -200,7 +200,7 @@ def test_main_link_failure_reports_created_issue(capsys: pytest.CaptureFixture[s
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
         patch(f"{_MOD}.epics.add_child", side_effect=RuntimeError("link failed")),
     ):
-        rc = main(["--epic", "standing", "--title", "T"])
+        rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 1
     err = capsys.readouterr().err
     assert "123" in err  # orphan-safe: the created issue is surfaced
@@ -214,7 +214,7 @@ def test_main_scopes_token_to_repo_owner() -> None:
         patch(f"{_MOD}.github.create_issue", return_value=_URL),
         patch(f"{_MOD}.epics.add_child"),
     ):
-        rc = main(["--repo", "other-org/repo", "--epic", "standing", "--title", "T"])
+        rc = main(["--repo", "other-org/repo", "--epic", "adhoc", "--title", "T"])
     assert rc == 0
     mock_scope.assert_called_once_with("other-org")
 
@@ -261,6 +261,6 @@ def test_main_reports_missing_installation() -> None:
         ),
         patch(f"{_MOD}.github.create_issue") as mock_create,
     ):
-        rc = main(["--epic", "standing", "--title", "T"])
+        rc = main(["--epic", "adhoc", "--title", "T"])
     assert rc == 1
     mock_create.assert_not_called()
