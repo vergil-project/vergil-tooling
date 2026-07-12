@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.126/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.124/">
+        <link rel="next" href="../v2.1.127/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.125 - VERGIL Tooling</title>
+        <title>2.1.128 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21125-2026-07-10" class="md-skip">
+        <a href="#release-21128-2026-07-12" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.125
+              2.1.128
             
           </span>
         </div>
@@ -1122,10 +1122,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.128/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.128
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1141,6 +1168,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1206,37 +1275,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.125
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.125/" class="md-nav__link">
         
   
   
@@ -1252,37 +1294,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11108,10 +11119,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
       
     </span>
   </a>
@@ -11135,20 +11157,32 @@
 
 
 
-<h1 id="release-21125-2026-07-10">Release 2.1.125 (2026-07-10)<a class="headerlink" href="#release-21125-2026-07-10" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21128-2026-07-12">Release 2.1.128 (2026-07-12)<a class="headerlink" href="#release-21128-2026-07-12" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>guard task_drift from closing epics; add closed-epic-with-open-child invariant + reopen remediation (#2265)</strong></li>
-<li>fix(epics): verify reflink child search against the Parent line</li>
+<li><strong>document the epic model, compliance invariants, and finite-epic relocation (#2281)</strong>
+Add an Epics section to the github-issues standard (epic label; finite vs perpetual/ad-hoc epics; the <org>/.github home rule; the retired standing alias; managed task -&gt; Closes -&gt; rollup; the vrg-epic-audit invariants) and rewrite the stale sub-issue linking section to use vrg-issue-create and vrg-epic-link since raw gh api is blocked for agents.</li>
 </ul>
-<p>gh search issues is punctuation-blind full-text search across all of GitHub, so _reflink_child_states' bare 'Parent: <slug>' query returned cross-repo false positives — unrelated issues that merely contained the words. Scope the search to the epic's org with --owner and verify each candidate's body actually carries a matching 'Parent: <epic slug>' line (new _body_declares_parent helper) before accepting it, keeping child_states and any reflink-based detection sound on GitHub and forges alike. Fix D of issue #2259.</p>
+<p>Add issue transfer to the documented vrg-gh issue allowlist in the permission model, and rewrite the epic-home visibility-flip runbook to relocate a finite epic via intra-org vrg-gh issue transfer (pinning the source with -R), relinking reflink-only children with vrg-epic-link and verifying with vrg-epic-audit.</p>
 <ul>
-<li>fix(epic-audit): never close an epic in task_drift; add closed-epic-with-open-child invariant + reopen</li>
+<li>
+<p><strong>document intake queues, epic bookends, and epic-create workflow (#2284)</strong>
+Fill the epic/task model coverage gaps from epic vergil-project/.github#85 in the versioned site docs (standards/github-issues.md):</p>
+</li>
+<li>
+<p>Add an Intake queues section: the three input shapes (triage/idea/research), their .github routing, and vrg-triage-create --kind; add an Intake item definition.</p>
+</li>
+<li>Add a Creating an epic subsection describing the epic-create orchestrator workflow and its four-stage interaction doctrine (interactive brainstorming/pushback/alignment; automated writing-plans).</li>
+<li>Add The bookend convention subsection: docs-first opening bookend, documentation-review + follow-on-brainstorm closing bookends, every epic &gt;= 2 tasks, closure gated by the review task via the existing rollup.</li>
+<li>Mention vrg-adhoc-epic ensure alongside the --epic adhoc sentinel.</li>
 </ul>
-<p>task_drift closed any open issue a merged PR Ref'd with no is_epic guard, so a PR that legitimately Ref'd an epic caused the sweep to close the epic directly — orphaning its open child tasks under a closed epic and breaking the core invariant that an epic must never be closed while it has open children. No audit check detected the resulting state.</p>
-<p>Fix A (root cause): guard task_drift — fetch labels and skip any epic (and, as hardening, operational and intake issues); epic closure stays owned by epic_drift/rollup, which enforces all_children_closed.</p>
-<p>Fix B (detect): add the closed_epic_open_child invariant — closed epics in the home that still have an open native child, perpetual (ad-hoc/standing) epics skipped — rendered under Invariant violations (report-only in read mode).</p>
-<p>Fix C (remediate): under the human-gated --close path, reopen each such epic (the inverse of epic_drift's close) with an explanatory comment; idempotent since gh issue reopen on an open epic is a no-op.</p>
+<p>Also link the orphaned epic-home-visibility-flip guide into the mkdocs nav.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>resume a VM session by exact name (--resume NAME) (#2285)</strong>
+Add '--resume NAME' to 'vrg-vm session', resolving a session by its exact display name instead of a slot number. Epic-renamed titles (e.g. 'epic-85-centralize-epics-adhoc') do not fit the '<identity>:<NN>:<path>' slot scheme and fall out of the slot map, so name-based resume is the only way to reconnect to them directly — pasting the name shown on screen after a VM rebuild lands straight back in that session.</li>
+</ul>
+<p>The host flag is mutually exclusive with --slot/--fork/--fresh and threads to the in-VM resolver as --resume-name; a new pure-logic select_by_name() does an exact-name lookup, reusing the module's existing liveness-then-recency collision rule for the /clear-rotation case where two session ids share a title. No match refuses; no staleness sweep or prompt runs on an explicitly named resume.</p>
 
 
 
