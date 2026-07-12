@@ -34,6 +34,7 @@ from vergil_tooling.lib.session import (
     parse_archived,
     parse_name,
     plan_session,
+    select_by_name,
 )
 
 
@@ -407,9 +408,18 @@ def resolve(
     extra: list[str],
     stale_days: int,
     archive_days: int,
+    resume_name: str | None = None,
 ) -> int:
-    """Plan, auto-archive stale cold slots, then exec Claude for one identity + path."""
+    """Plan, auto-archive stale cold slots, then exec Claude for one identity + path.
+
+    ``resume_name`` short-circuits the slot machinery: it resumes the session with
+    that exact display name (an epic-renamed title that does not fit the slot
+    scheme), with no staleness sweep or prompt — the caller named the session
+    explicitly, so it is resumed as-is.
+    """
     names, active, last_active = _read_state(_project_slug(str(Path.cwd())))
+    if resume_name is not None:
+        return _execute(path, select_by_name(resume_name, names, active, last_active), extra, names)
     slots = build_slots(identity, path, names, active, last_active)
     plan = plan_session(
         identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
@@ -470,6 +480,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--slot", type=int)
     parser.add_argument("--fork", action="store_true")
     parser.add_argument("--fresh", action="store_true")
+    parser.add_argument("--resume-name", dest="resume_name", default=None)
     parser.add_argument("--stale-days", type=int, default=7, dest="stale_days")
     parser.add_argument("--archive-days", type=int, default=14, dest="archive_days")
     parser.add_argument("--list-json", action="store_true", dest="list_json")
@@ -495,6 +506,7 @@ def main(argv: list[str] | None = None) -> int:
         extra,
         args.stale_days,
         args.archive_days,
+        args.resume_name,
     )
 
 

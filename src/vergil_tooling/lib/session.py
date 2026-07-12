@@ -303,6 +303,39 @@ def _select_fork(identity: str, path: str, slots: dict[int, Slot], slot: int | N
     return Fork(info.session_id, make_name(identity, free, path))
 
 
+def select_by_name(
+    requested_name: str,
+    name_by_session: dict[str, str],
+    active_sessions: set[str],
+    last_active: dict[str, float] | None = None,
+) -> Decision:
+    """Resume the session whose current name equals ``requested_name`` exactly.
+
+    Sessions renamed to a human-facing title — e.g. an epic session renamed to
+    ``epic-85-centralize-epics-adhoc`` — do not fit the ``<identity>:<NN>:<path>``
+    slot scheme and so fall out of the slot map entirely; the only way to address
+    them is by their exact display name. ``name_by_session`` maps session id to
+    its current name (see the resolver's state read); the match is exact, so an
+    ``archived@…`` label never collides with a live title.
+
+    A name may be held by more than one session id — a ``/clear`` rotation leaves
+    the abandoned id still carrying the title in its transcript — so ties resolve
+    by the module's standard collision rule (:func:`_displaces`): a live session
+    beats a dead one, then the more recently active wins. No match refuses.
+    """
+    la = last_active or {}
+    best: tuple[str, bool, float | None] | None = None
+    for session_id, name in name_by_session.items():
+        if name != requested_name:
+            continue
+        active = session_id in active_sessions
+        if best is None or _displaces(best[1], best[2], active, la.get(session_id)):
+            best = (session_id, active, la.get(session_id))
+    if best is None:
+        return Refuse(f"no session named {requested_name!r} for this workspace")
+    return Resume(best[0])
+
+
 @dataclass(frozen=True)
 class PromptStale:
     """Warn-band: the resolver must prompt resume/fresh/cancel, then act."""
