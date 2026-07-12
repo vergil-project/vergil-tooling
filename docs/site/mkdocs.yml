@@ -133,6 +133,7 @@ nav:
       - Agent VM Claude Share Set: guides/agent-vm-claude-share-set.md
   - Guides:
       - Git Workflow: guides/git-workflow.md
+      - Epic Home Visibility Flips: guides/epic-home-visibility-flip.md
       - Consuming Repo Setup: guides/consuming-repo-setup.md
       - CI Architecture: guides/ci-architecture.md
       - Validation Matrix: guides/validation-matrix.md
