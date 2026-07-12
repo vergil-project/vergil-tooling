@@ -11061,43 +11061,49 @@ the runbook for when it happens.</p>
 <ul>
 <li><strong>Epics move.</strong> A public→private flip moves the repo's epics from
   <code>&lt;org&gt;/.github</code> into the repo itself; a private→public flip moves them
-  the other way.</li>
+  the other way. The epic issue is <strong>transferred</strong> (not re-created), so
+  its history and comments follow it. It gets a new number in the
+  destination repo.</li>
 <li><strong>Tasks do not move.</strong> A task always lives in its member repo (1:1 with
-  its PR), independent of visibility. Only the epic issue relocates, and
-  each task's parent link is re-pointed at the epic's new location.</li>
+  its PR), independent of visibility. Only the epic issue relocates.</li>
 </ul>
-<p>There is <strong>no dedicated relocation tool</strong> — the procedure composes the
-existing commands. (A convenience <code>--to-home</code> wrapper is deliberately
-deferred unless the manual procedure proves painful in practice.)</p>
+<p>There is <strong>no dedicated relocation wrapper</strong> — the procedure composes
+<code>vrg-gh issue transfer</code> (an intra-org issue move) with <code>vrg-epic-link</code>.</p>
 <h2 id="procedure">Procedure<a class="headerlink" href="#procedure" title="Permanent link">&para;</a></h2>
-<p>Do the following once per epic that the flipped repo owns. <code>vrg-epic-move</code>
-re-parents a <em>task</em> under a different epic; it does not transfer an epic
-between repos, so the relocation is re-create + re-parent + close.</p>
+<p>Do the following once per epic that the flipped repo owns.</p>
 <ol>
 <li>
-<p><strong>Confirm the new home.</strong> Run <code>vrg-epic-create --repo &lt;owner&gt;/&lt;repo&gt;</code>
+<p><strong>Confirm the new home.</strong> Run <code>vrg-epic-create --repo &lt;org&gt;/&lt;repo&gt;</code>
    (or check the table above) — it echoes the resolved home and its
-   visibility, e.g. <code>-&gt; epic home: &lt;owner&gt;/&lt;repo&gt; [PRIVATE]</code>.</p>
+   visibility, e.g. <code>-&gt; epic home: &lt;org&gt;/&lt;repo&gt; [PRIVATE]</code>.</p>
 </li>
 <li>
-<p><strong>Re-create the epic in the new home.</strong> Copy the old epic's title,
-   body, and labels:</p>
+<p><strong>Transfer the epic into its new home.</strong> An intra-org <code>issue transfer</code>
+   moves the epic between repos under the same org, carrying its history
+   with it:</p>
 </li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-epic-create<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;Epic: &lt;same title&gt;&quot;</span><span class="w"> </span>--body-file<span class="w"> </span>&lt;copied-body.md&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-gh<span class="w"> </span>issue<span class="w"> </span>transfer<span class="w"> </span>&lt;n&gt;<span class="w"> </span>&lt;org&gt;/.github<span class="w"> </span>-R<span class="w"> </span>&lt;org&gt;/&lt;src-repo&gt;
 </code></pre></div>
-<p>Note the new epic's number <code>&lt;NEW&gt;</code>.</p>
+<p><strong>Always pin the source with <code>-R</code>.</strong> The <code>-R</code>/<code>--repo</code> owner selects
+   the GitHub App installation and names the source repo unambiguously;
+   <code>&lt;n&gt;</code> is the epic's number <em>in that source repo</em> and the trailing
+   <code>&lt;org&gt;/.github</code> is the destination. (For a public→private flip the
+   destination is the member repo instead.) The transfer is intra-org —
+   one installation token cannot reach two owners. GitHub assigns the
+   epic a new number in the destination.</p>
 <ol>
-<li><strong>Re-parent each child task</strong> from the old epic to the new one:</li>
+<li><strong>Relink reflink-only children.</strong> Children linked as <strong>native
+   sub-issues</strong> ride the transfer — their parent link is preserved
+   automatically. Children linked only by a portable <code>Parent:</code> body
+   reflink still point at the epic's old location, so re-point each with:</li>
 </ol>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-epic-move<span class="w"> </span>--task<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;#&lt;TASK&gt;<span class="w"> </span>--epic<span class="w"> </span>&lt;new-home&gt;#&lt;NEW&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>vrg-epic-link<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#&lt;NEW&gt;<span class="w"> </span>--task<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
-<p>List the old epic's children first with the audit/roadmap tooling if
-   you need the full set.</p>
 <ol>
-<li><strong>Close the old epic</strong> with a comment pointing at the replacement, so
-   the drift audit does not re-surface it.</li>
+<li><strong>Verify.</strong> Run <code>vrg-epic-audit</code> and confirm no invariant violation
+   remains — no epic outside <code>.github</code> for a public repo, no stray
+   <code>.github</code> issue, no closed epic with an open child.</li>
 </ol>
 <h2 id="cross-visibility-caveat">Cross-visibility caveat<a class="headerlink" href="#cross-visibility-caveat" title="Permanent link">&para;</a></h2>
 <p>After a <strong>public→private</strong> flip, the epic is now private. Any child task
