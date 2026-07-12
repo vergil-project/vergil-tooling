@@ -396,7 +396,7 @@ def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 DAY = 86400.0
 
 
-def _resolve(identity: str, path: str, **kw: object) -> int:
+def _resolve(identity: str, path: str, resume_name: str | None = None, **kw: object) -> int:
     defaults: dict[str, object] = {
         "requested_slot": None,
         "fork": False,
@@ -406,7 +406,7 @@ def _resolve(identity: str, path: str, **kw: object) -> int:
         "archive_days": 14,
     }
     defaults.update(kw)
-    return r.resolve(identity, path, **defaults)  # type: ignore[arg-type]
+    return r.resolve(identity, path, resume_name=resume_name, **defaults)  # type: ignore[arg-type]
 
 
 def test_resolve_create(
@@ -430,6 +430,28 @@ def test_resolve_resume(
     # -n is re-asserted on resume so Claude restores the prompt-box title.
     assert capture_exec == [["claude", "--resume", "s1", "-n", "id:01:p"]]
     assert "Resuming session id:01:p" in capsys.readouterr().err
+
+
+def test_resolve_by_name_resumes_named_session(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        r, "_read_state", lambda *_a: ({"s1": "epic-85-adhoc", "s2": "id:01:p"}, set(), {})
+    )
+    assert _resolve("id", "p", resume_name="epic-85-adhoc") == 0
+    # Resume-by-name bypasses the slot machinery; -n restores the title.
+    assert capture_exec == [["claude", "--resume", "s1", "-n", "epic-85-adhoc"]]
+    assert "Resuming session epic-85-adhoc" in capsys.readouterr().err
+
+
+def test_resolve_by_name_refuses_unknown_name(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
+    assert _resolve("id", "p", resume_name="ghost") == 1
+    assert "no session named 'ghost'" in capsys.readouterr().err
 
 
 def test_resolve_fork(
@@ -686,8 +708,19 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     assert code == 0
-    # args order: identity, path, slot, fork, fresh, extra, stale_days, archive_days
-    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14)
+    # args order: identity, path, slot, fork, fresh, extra, stale_days,
+    # archive_days, resume_name
+    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14, None)
+
+
+def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(r, "resolve", lambda *args: seen.update(args=args) or 0)
+    r.main(["--identity", "id", "--path", "p", "--resume-name", "epic-85-adhoc"])
+    # resume_name is the final positional arg.
+    passed = seen["args"]
+    assert isinstance(passed, tuple)
+    assert passed[-1] == "epic-85-adhoc"
 
 
 def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:

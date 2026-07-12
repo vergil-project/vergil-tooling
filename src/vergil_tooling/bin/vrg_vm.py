@@ -2379,6 +2379,8 @@ def _session_inner(
         "--path",
         rel_path,
     ]
+    if args.resume is not None:
+        resolve_cmd += ["--resume-name", args.resume]
     if args.slot is not None:
         resolve_cmd += ["--slot", str(args.slot)]
     if args.fork:
@@ -2437,6 +2439,13 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
+    if args.resume is not None and (args.slot is not None or args.fork or args.fresh):
+        print(
+            "ERROR: --resume selects a session by name and cannot be combined with "
+            "--slot/--fork/--fresh (which select by slot).",
+            file=sys.stderr,
+        )
+        return 1
     target = _resolve_target(args, borrow_allowed=True)
     name, identity, config = target.identity_name, target.identity, target.config
 
@@ -2774,6 +2783,16 @@ def main(argv: list[str] | None = None) -> int:
         "--slot",
         type=int,
         help="Session slot number (1-99); default picks the lowest idle/free slot",
+    )
+    p_session.add_argument(
+        "--resume",
+        default=None,
+        metavar="NAME",
+        help=(
+            "Resume the session with this exact display name (e.g. an epic "
+            "session's renamed title, 'epic-85-centralize-epics-adhoc'), instead "
+            "of selecting by slot. Mutually exclusive with --slot/--fork/--fresh."
+        ),
     )
     p_session.add_argument(
         "--fork",

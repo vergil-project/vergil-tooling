@@ -20,6 +20,7 @@ from vergil_tooling.lib.session import (
     parse_name,
     plan_session,
     select,
+    select_by_name,
 )
 
 
@@ -475,3 +476,42 @@ def test_plan_all_slots_active_refused() -> None:
     slots = {n: _slot(n, f"s{n}", active=True) for n in range(1, SLOT_MAX + 1)}
     plan = _plan(slots)
     assert isinstance(plan.action, Refuse)
+
+
+# --- select_by_name (resume a session by its exact display name) ---
+
+
+def test_select_by_name_resumes_exact_match() -> None:
+    names = {"s1": "epic-85-centralize-epics-adhoc", "s2": "vergil:01:p"}
+    assert select_by_name("epic-85-centralize-epics-adhoc", names, set()) == Resume("s1")
+
+
+def test_select_by_name_refuses_when_no_match() -> None:
+    result = select_by_name("no-such-session", {"s1": "vergil:01:p"}, set())
+    assert isinstance(result, Refuse)
+    assert "no-such-session" in result.message
+
+
+def test_select_by_name_live_beats_dead_on_collision() -> None:
+    # A /clear rotation leaves the abandoned id still carrying the title; the
+    # live claimant of the same name wins.
+    names = {"dead": "epic-85", "live": "epic-85"}
+    assert select_by_name("epic-85", names, {"live"}) == Resume("live")
+
+
+def test_select_by_name_recency_breaks_tie_between_idle() -> None:
+    names = {"old": "epic-85", "new": "epic-85"}
+    last_active = {"old": 100.0, "new": 200.0}
+    assert select_by_name("epic-85", names, set(), last_active) == Resume("new")
+
+
+def test_select_by_name_keeps_incumbent_when_later_does_not_displace() -> None:
+    # The live incumbent is seen first; a later dead session sharing the name
+    # must not displace it (the _displaces-returns-False path).
+    names = {"live": "epic-85", "dead": "epic-85"}
+    assert select_by_name("epic-85", names, {"live"}) == Resume("live")
+
+
+def test_select_by_name_match_is_exact_not_substring() -> None:
+    result = select_by_name("epic-85", {"s1": "epic-850-other"}, set())
+    assert isinstance(result, Refuse)

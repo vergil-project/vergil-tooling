@@ -2241,6 +2241,19 @@ class TestSession:
         assert "--fork" in inner
         assert "--slot 2" in inner
 
+    def test_session_resume_passed_to_resolver(
+        self,
+        _age: MagicMock,
+        _copy: MagicMock,
+        _link: MagicMock,
+        mock_exec: MagicMock,
+        config_file: Path,
+    ) -> None:
+        main(
+            ["session", "--config", str(config_file), "--resume", "epic-85-adhoc", "vergil-tooling"]
+        )
+        assert "--resume-name epic-85-adhoc" in self._inner(mock_exec)
+
     def test_session_no_model_no_flag(
         self,
         _age: MagicMock,
@@ -2305,7 +2318,7 @@ def test_session_inner_strips_leading_double_dash() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False)
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "", 7, 14)
     assert "exec bash" in inner
     assert "vrg-vm-resolve-session" not in inner
@@ -2316,7 +2329,7 @@ def test_session_inner_raw_override_ignores_model() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False)
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "opus", 7, 14)
     assert "exec bash" in inner
     assert "--model" not in inner
@@ -2327,7 +2340,7 @@ def test_session_inner_includes_thresholds() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False)
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "", 5, 30)
     assert "--stale-days 5" in inner
     assert "--archive-days 30" in inner
@@ -2338,9 +2351,37 @@ def test_session_inner_fresh_flag() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=True)
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=True, resume=None)
     inner = _session_inner(ns, "vergil", "p", "", 7, 14)
     assert "--fresh" in inner
+
+
+def test_session_inner_resume_name() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume="epic-85-adhoc")
+    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    assert "--resume-name epic-85-adhoc" in inner
+
+
+def test_cmd_session_rejects_resume_with_slot() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume="epic-85", slot=3, fork=False, fresh=False)
+    assert _cmd_session(ns) == 1
+
+
+def test_cmd_session_rejects_resume_with_fork() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume="epic-85", slot=None, fork=True, fresh=False)
+    assert _cmd_session(ns) == 1
 
 
 def test_format_age() -> None:
