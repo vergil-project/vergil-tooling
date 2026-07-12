@@ -133,6 +133,7 @@ second-level subcommands as a pair.
 | `issue edit` | Updating metadata |
 | `issue list` | Read-only |
 | `issue comment` | Adding comments |
+| `issue transfer` | Intra-org issue move (finite-epic relocation) |
 | `pr view` | Read-only |
 | `pr checks` | CI status |
 | `pr list` | Read-only |
