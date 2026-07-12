@@ -19,6 +19,9 @@ Applies to all repositories that use GitHub issues and pull requests.
   *running* something and recording the result as a comment — not by merging a
   pull request. Two kinds: **validation** (verify) and **deployment** (make
   merged work usable). See [Operational tasks](#operational-tasks).
+- Intake item: An uncurated capture — `triage`, `idea`, or `research` — that is
+  not yet a task, held in a queue until it is groomed into the epic/task model.
+  See [Intake queues](#intake-queues).
 
 ## Core rules
 
@@ -123,6 +126,58 @@ cross-forge fallback.
   repo. Titled `Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`, one per repo,
   and it **never auto-closes**. Target it with `vrg-issue-create --epic adhoc`.
   (The older `standing` alias is **retired** — only `ad-hoc` remains.)
+  `vrg-adhoc-epic ensure --repo <owner>/<repo>` creates a repo's ad-hoc epic
+  on demand (idempotent).
+
+### Creating an epic (the `epic-create` workflow)
+
+Non-trivial work starts with the `epic-create` workflow — the **default entry
+point**, since a solution worth designing is worth tracking rather than
+brainstorming and walking away. `epic-create` is the **outer** orchestrator: it
+runs the whole design pipeline and seeds the two bookend tasks (below) at
+defined handoffs:
+
+1. `superpowers:brainstorming` — explore intent, one question at a time
+   (**interactive**).
+2. Initialize the epic in its [home](#epic-home-the-orggithub-rule) and seed the
+   docs-first and review-last bookend tasks.
+3. Write `spec.md`, then `paad:pushback` on it (**interactive**).
+4. Human review.
+5. `superpowers:writing-plans` → `plan.md` (**automated** — no gating).
+6. `paad:alignment` — reconcile the plan against the spec (**interactive**).
+7. One docs PR (spec + plan) that closes the docs-first task.
+8. File the implementation tasks and link them under the epic.
+
+The **four-stage interaction doctrine** governs the pipeline: `brainstorming`,
+`pushback`, and `alignment` are interactive while `writing-plans` is automated,
+and every interactive stage gates **only** on judgment calls that materially
+affect the outcome — minor, obvious corrections are batched into a single
+end-of-stage "correct me if I'm wrong" review rather than gating each one. The
+goal is to front-load analysis so implementation runs near-automated. If the
+design collapses to a single-PR change, it drops onto the target repo's ad-hoc
+epic instead of minting a finite epic. The full doctrine lives in the
+`epic-create` skill (`vergil-claude-plugin`).
+
+### The bookend convention
+
+**An epic is never closed until you have decided what comes next.** Almost no
+real problem is fully resolved by one epic — you deliver a completed subset and
+acknowledge the follow-on. So **every epic carries at least two tasks**, and
+its first and last are fixed bookends:
+
+- **Opening bookend — documentation.** A docs-first task carrying the epic's
+  spec and plan, born from planning; it lands before the implementation tasks.
+- **Closing bookend — review + follow-on.** A documentation-review task (verify
+  the shipped work is fully reflected in the docs) plus a follow-on-brainstorm
+  task that reviews what shipped — successes, failures, mid-flight changes,
+  newly found problems and opportunities — and files the follow-on epic(s). If
+  the answer is the rare "nothing further," the epic is done; you always ask.
+
+The bookend needs no new closing mechanism — it rides the existing rollup. A
+finite epic rolls up only when every child is closed, so the closing review
+task **naturally gates closure**. The convention is mechanized as prose in the
+`epic-create` skill, not in rigid tooling, because choosing the right follow-on
+is an inherently agentic judgment.
 
 ### Epic home (the `<org>/.github` rule)
 
@@ -150,6 +205,36 @@ relocating epics when a repo's visibility changes.
 - **An epic is never closed while a child is open.** A closed finite epic with an
   open child is a violation (perpetual `ad-hoc` epics are exempt — they never
   roll up).
+
+## Intake queues
+
+Not every capture is ready to be a task. Three **intake queues** hold uncurated
+work until it is groomed into the epic/task model. Each is a label, and all
+three route to the org's `.github` **by default**, so the entire org-wide intake
+backlog is one filtered view beside the epic roster:
+
+| Kind | Captures | Graduates into |
+|---|---|---|
+| `triage` | A problem or bug not yet understood — needs diagnosis | an epic (or a task) |
+| `idea` | A spark — "what if we did this" | a feature or epic |
+| `research` | An investigation that yields a **reproducible** result | an epic with tooling PRs and a report |
+
+A result worth having is worth reproducing, so **research is not ad-hoc work** —
+it graduates into a proper finite epic with automated tooling, never a hand-run
+one-off.
+
+Create an intake item with the sanctioned tool. `--kind` selects the shape and
+stamps its label (default `triage`); the target defaults to the org's `.github`:
+
+```bash
+vrg-triage-create --kind {triage|idea|research} --title "<what>"
+```
+
+Intake lives in `.github`, never in a member repo — an intake item is not yet a
+single-PR task, so the "member repos hold only single-PR tasks" invariant
+requires it to sit with the epic roster instead. (This `.github` default
+supersedes the earlier current-repo default for `vrg-triage-create`.) Grooming
+an intake item into an epic or a task is a separate, periodic review step.
 
 ## Closing behavior
 
