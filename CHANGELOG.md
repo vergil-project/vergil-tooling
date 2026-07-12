@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.128] - 2026-07-12
+
+### Documentation
+
+- document the epic model, compliance invariants, and finite-epic relocation (#2281)
+- document intake queues, epic bookends, and epic-create workflow (#2284)
+
+### Features
+
+- resume a VM session by exact name (--resume NAME) (#2285)
+
 ## [2.1.127] - 2026-07-11
 
 ### Refactoring
