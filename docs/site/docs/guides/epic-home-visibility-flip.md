@@ -19,46 +19,51 @@ the runbook for when it happens.
 
 - **Epics move.** A public→private flip moves the repo's epics from
   `<org>/.github` into the repo itself; a private→public flip moves them
-  the other way.
+  the other way. The epic issue is **transferred** (not re-created), so
+  its history and comments follow it. It gets a new number in the
+  destination repo.
 - **Tasks do not move.** A task always lives in its member repo (1:1 with
-  its PR), independent of visibility. Only the epic issue relocates, and
-  each task's parent link is re-pointed at the epic's new location.
+  its PR), independent of visibility. Only the epic issue relocates.
 
-There is **no dedicated relocation tool** — the procedure composes the
-existing commands. (A convenience `--to-home` wrapper is deliberately
-deferred unless the manual procedure proves painful in practice.)
+There is **no dedicated relocation wrapper** — the procedure composes
+`vrg-gh issue transfer` (an intra-org issue move) with `vrg-epic-link`.
 
 ## Procedure
 
-Do the following once per epic that the flipped repo owns. `vrg-epic-move`
-re-parents a *task* under a different epic; it does not transfer an epic
-between repos, so the relocation is re-create + re-parent + close.
+Do the following once per epic that the flipped repo owns.
 
-1. **Confirm the new home.** Run `vrg-epic-create --repo <owner>/<repo>`
+1. **Confirm the new home.** Run `vrg-epic-create --repo <org>/<repo>`
    (or check the table above) — it echoes the resolved home and its
-   visibility, e.g. `-> epic home: <owner>/<repo> [PRIVATE]`.
+   visibility, e.g. `-> epic home: <org>/<repo> [PRIVATE]`.
 
-2. **Re-create the epic in the new home.** Copy the old epic's title,
-   body, and labels:
-
-   ```bash
-   vrg-epic-create --repo <owner>/<repo> \
-     --title "Epic: <same title>" --body-file <copied-body.md>
-   ```
-
-   Note the new epic's number `<NEW>`.
-
-3. **Re-parent each child task** from the old epic to the new one:
+2. **Transfer the epic into its new home.** An intra-org `issue transfer`
+   moves the epic between repos under the same org, carrying its history
+   with it:
 
    ```bash
-   vrg-epic-move --task <owner>/<repo>#<TASK> --epic <new-home>#<NEW>
+   vrg-gh issue transfer <n> <org>/.github -R <org>/<src-repo>
    ```
 
-   List the old epic's children first with the audit/roadmap tooling if
-   you need the full set.
+   **Always pin the source with `-R`.** The `-R`/`--repo` owner selects
+   the GitHub App installation and names the source repo unambiguously;
+   `<n>` is the epic's number *in that source repo* and the trailing
+   `<org>/.github` is the destination. (For a public→private flip the
+   destination is the member repo instead.) The transfer is intra-org —
+   one installation token cannot reach two owners. GitHub assigns the
+   epic a new number in the destination.
 
-4. **Close the old epic** with a comment pointing at the replacement, so
-   the drift audit does not re-surface it.
+3. **Relink reflink-only children.** Children linked as **native
+   sub-issues** ride the transfer — their parent link is preserved
+   automatically. Children linked only by a portable `Parent:` body
+   reflink still point at the epic's old location, so re-point each with:
+
+   ```bash
+   vrg-epic-link --epic <org>/.github#<NEW> --task <org>/<repo>#<TASK>
+   ```
+
+4. **Verify.** Run `vrg-epic-audit` and confirm no invariant violation
+   remains — no epic outside `.github` for a public repo, no stray
+   `.github` issue, no closed epic with an open child.
 
 ## Cross-visibility caveat
 

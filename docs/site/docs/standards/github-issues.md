@@ -82,30 +82,74 @@ Create a sub-issue when:
 
 Sub-issue rules:
 
-- Link each sub-issue to its parent using the sub-issues API (see below).
+- Link each sub-issue to its parent with the sanctioned tooling (see below).
 - The PR should close the sub-issue, not the parent, unless the PR completes
   the parent's full scope.
 
-### Linking a sub-issue via the API
+### Linking a sub-issue
 
-Creating a sub-issue relationship is a two-step process:
+Raw `gh api` is blocked for agents, so sub-issue links are created through the
+sanctioned tools. Both establish the same native GitHub sub-issue relationship
+(with a portable `Parent:` body reflink as the cross-forge fallback) that the
+rollup reads — never hand-roll the link.
 
-1. **Get the child issue's database ID** (this is the numeric ID, not the
-   issue number):
+- **A new task under its parent** — create it already linked:
 
-   ```bash
-   gh api repos/{owner}/{repo}/issues/{child_number} --jq '.id'
-   ```
+  ```bash
+  vrg-issue-create --epic <owner>/<repo>#<parent> --repo <owner>/<repo> \
+    --title "<what>"
+  ```
 
-2. **Link the child to the parent**:
+- **An existing task** — link it (or backfill a reflink-only child):
 
-   ```bash
-   gh api repos/{owner}/{repo}/issues/{parent_number}/sub_issues \
-     --method POST -F sub_issue_id={database_id}
-   ```
+  ```bash
+  vrg-epic-link --epic <owner>/<repo>#<parent> --task <owner>/<repo>#<child>
+  ```
 
-Use `-F` (not `-f`) for `sub_issue_id` — the API requires an integer, and
-`-f` sends a string.
+## Epics
+
+An **epic** is an umbrella issue — carrying the `epic` label — over the *task*
+issues that deliver it. Tasks may live in other repos in the same org; the link
+is a native GitHub sub-issue, with a portable `Parent:` body reflink as the
+cross-forge fallback.
+
+### Finite vs perpetual epics
+
+- **Finite epic** — a bounded initiative with a definite end. It **rolls up**:
+  once every child task is closed, `vrg-finalize-pr` closes the epic. A *managed
+  task* (an issue with an `epic`-labelled parent) links its PR with `Closes`, so
+  the task auto-closes on merge and the final close rolls its epic up.
+- **Perpetual (ad-hoc) epic** — a standing umbrella for unplanned work in one
+  repo. Titled `Epic (ad hoc): <repo>`, labelled `epic` + `ad-hoc`, one per repo,
+  and it **never auto-closes**. Target it with `vrg-issue-create --epic adhoc`.
+  (The older `standing` alias is **retired** — only `ad-hoc` remains.)
+
+### Epic home (the `<org>/.github` rule)
+
+An epic's home repo is derived from repository visibility:
+
+- A **public** repo homes its epics centrally in the org's `.github`.
+- A **private** repo (with a public `.github`) homes its epics **in itself**.
+- A **private** `.github` means the whole org is private, so everything homes in
+  `.github`.
+
+Ad-hoc epics follow the same rule — `Epic (ad hoc): <repo>` lives in the repo's
+resolved home. See
+[Epic home visibility flips](../guides/epic-home-visibility-flip.md) for
+relocating epics when a repo's visibility changes.
+
+### Compliance invariants
+
+`vrg-epic-audit` reports (read-only) any drift from the model:
+
+- **Epics live in `.github`.** An open `epic`-labelled issue outside `.github` in
+  a *public* repo is a violation (a private repo self-homes legitimately).
+- **No stray `.github` issues.** The epic home holds only epics, intake
+  (`triage`/`idea`/`research`), and tasks linked under an epic; any other open
+  issue there is a stray.
+- **An epic is never closed while a child is open.** A closed finite epic with an
+  open child is a violation (perpetual `ad-hoc` epics are exempt — they never
+  roll up).
 
 ## Closing behavior
 
