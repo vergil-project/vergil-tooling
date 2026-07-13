@@ -15,6 +15,8 @@ from vergil_tooling.lib.ci_evidence import (
     assemble_bundle,
     build_manifest,
     copy_sbom,
+    evidence_asset_name,
+    evidence_manifest_name,
     sha256_file,
     validate_completeness,
     write_checks_json,
@@ -25,6 +27,14 @@ from vergil_tooling.lib.github_config import EvidenceGate
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+class TestEvidenceAssetNames:
+    def test_asset_name(self) -> None:
+        assert evidence_asset_name("v2.1.129") == "v2.1.129-ci-evidence.tar.gz"
+
+    def test_manifest_name(self) -> None:
+        assert evidence_manifest_name("v2.1.129") == "v2.1.129-ci-evidence-manifest.json"
 
 
 def _stage_one_gate(tmp_path: Path) -> Path:

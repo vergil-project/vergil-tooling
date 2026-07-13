@@ -34,6 +34,22 @@ if TYPE_CHECKING:
 # Schema version of the manifest object (spec §8).
 SCHEMA_VERSION = "1.0"
 
+
+def evidence_asset_name(tag: str) -> str:
+    """Return the CI-evidence tarball asset name for a release *tag*.
+
+    The single source of truth for the bundle's published filename: both the
+    harvester (which writes and uploads the asset) and the doc-site link (which
+    points at it) derive the name here, so they cannot drift apart.
+    """
+    return f"{tag}-ci-evidence.tar.gz"
+
+
+def evidence_manifest_name(tag: str) -> str:
+    """Return the CI-evidence standalone-manifest asset name for a release *tag*."""
+    return f"{tag}-ci-evidence-manifest.json"
+
+
 # Fixed human-orientation text written into ``evidence/README.md``. A module
 # constant (not inline) so the archive's README is defined in exactly one place.
 _README_TEXT = """\
