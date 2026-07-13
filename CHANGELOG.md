@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.135] - 2026-07-13
+
+### Bug fixes
+
+- batch CI-evidence asset lookups into a single releases API call (#2326)
+
 ## [2.1.134] - 2026-07-13
 
 ### Bug fixes
