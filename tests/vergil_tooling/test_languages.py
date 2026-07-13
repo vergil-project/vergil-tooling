@@ -5,6 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from vergil_tooling.lib.languages import (
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    LICENSES_REPORT,
+    PIP_AUDIT_REPORT,
+    PYTHON_REPORT_FILES,
     CheckKind,
     EcosystemInfo,
     ecosystem_metadata,
@@ -43,20 +48,68 @@ def test_python_test_commands() -> None:
     assert any("--cov=src" in c for c in joined)
 
 
+def test_python_test_enforcement_flag_intact() -> None:
+    """The coverage gate (``--cov-fail-under=100``) must survive report wiring."""
+    cmds = language_commands("python", CheckKind.TEST)
+    pytest_cmd = [c for c in cmds if c[0] == "pytest"]
+    assert len(pytest_cmd) == 1
+    assert "--cov-fail-under=100" in pytest_cmd[0]
+
+
+def test_python_test_emits_coverage_xml() -> None:
+    cmds = language_commands("python", CheckKind.TEST)
+    pytest_cmd = [c for c in cmds if c[0] == "pytest"][0]
+    assert f"--cov-report=xml:{COVERAGE_REPORT}" in pytest_cmd
+
+
+def test_python_test_emits_junit_xml() -> None:
+    cmds = language_commands("python", CheckKind.TEST)
+    pytest_cmd = [c for c in cmds if c[0] == "pytest"][0]
+    assert f"--junitxml={JUNIT_REPORT}" in pytest_cmd
+
+
 def test_python_audit_commands() -> None:
     joined = _joined(language_commands("python", CheckKind.AUDIT))
     assert any("uv sync --check" in c for c in joined)
     assert any("uv lock --check" in c for c in joined)
-    assert "pip-audit" in joined
+    assert any(c.startswith("pip-audit") for c in joined)
     assert any("pip-licenses" in c for c in joined)
+
+
+def test_python_audit_pip_audit_emits_json_report() -> None:
+    cmds = language_commands("python", CheckKind.AUDIT)
+    pip_audit_cmd = [c for c in cmds if c[0] == "pip-audit"]
+    assert len(pip_audit_cmd) == 1
+    assert "--format=json" in pip_audit_cmd[0]
+    assert f"--output={PIP_AUDIT_REPORT}" in pip_audit_cmd[0]
 
 
 def test_python_audit_pip_licenses_allowlist_intact() -> None:
     cmds = language_commands("python", CheckKind.AUDIT)
     pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"]
     assert len(pip_licenses_cmd) == 1
-    assert len(pip_licenses_cmd[0]) == 2
-    assert pip_licenses_cmd[0][1].startswith("--allow-only=")
+    assert any(arg.startswith("--allow-only=") for arg in pip_licenses_cmd[0])
+
+
+def test_python_audit_pip_licenses_emits_json_report() -> None:
+    cmds = language_commands("python", CheckKind.AUDIT)
+    pip_licenses_cmd = [c for c in cmds if c[0] == "pip-licenses"][0]
+    assert "--format=json" in pip_licenses_cmd
+    assert f"--output-file={LICENSES_REPORT}" in pip_licenses_cmd
+
+
+def test_python_report_files_contract() -> None:
+    """The shared report-path constants match the T8 path contract."""
+    assert PYTHON_REPORT_FILES == (
+        "coverage.xml",
+        "junit.xml",
+        "pip-audit.json",
+        "licenses.json",
+    )
+    assert COVERAGE_REPORT == "coverage.xml"
+    assert JUNIT_REPORT == "junit.xml"
+    assert PIP_AUDIT_REPORT == "pip-audit.json"
+    assert LICENSES_REPORT == "licenses.json"
 
 
 # -- Go ----------------------------------------------------------------------

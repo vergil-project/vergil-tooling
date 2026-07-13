@@ -17,6 +17,13 @@ src/standard_tooling.egg-info/
 dist/
 build/
 .coverage
+# Machine-readable gate reports emitted at the workspace root by the check
+# registry (see src/vergil_tooling/lib/languages.py). Consumed by the T8
+# evidence-producer composite; never committed.
+coverage.xml
+junit.xml
+pip-audit.json
+licenses.json
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
