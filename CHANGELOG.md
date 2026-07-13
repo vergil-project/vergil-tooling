@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.129] - 2026-07-13
+
+### Features
+
+- derive required evidence-gate set from branch-protection config (#2292)
+- add manifest builder, bundle assembler, and metadata files (#2293)
+
 ## [2.1.128] - 2026-07-12
 
 ### Documentation
