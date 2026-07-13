@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.136] - 2026-07-13
+
+### Refactoring
+
+- split vrg-ci-evidence into harvest + assemble subcommands (#2331)
+
 ## [2.1.135] - 2026-07-13
 
 ### Bug fixes
