@@ -18,6 +18,7 @@ from vergil_tooling.lib.ci_evidence import (
     sha256_file,
     validate_completeness,
     write_checks_json,
+    write_manifest,
     write_readme,
 )
 from vergil_tooling.lib.github_config import EvidenceGate
@@ -133,6 +134,18 @@ def test_write_checks_json(tmp_path: Path) -> None:
     p = write_checks_json({"test / unit / 3.14": "success"}, staging)
     assert p == staging / "evidence" / "checks.json"
     assert json.loads(p.read_text())["test / unit / 3.14"] == "success"
+
+
+def test_write_manifest(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    (staging / "evidence").mkdir(parents=True)
+    p = write_manifest({"schema_version": "1.0", "beta": 2, "alpha": 1}, staging)
+    assert p == staging / "evidence" / "manifest.json"
+    data = json.loads(p.read_text())
+    assert data["schema_version"] == "1.0"
+    text = p.read_text()
+    # sort_keys -> deterministic key order in the on-disk bytes.
+    assert text.index('"alpha"') < text.index('"beta"')
 
 
 def test_write_readme(tmp_path: Path) -> None:
