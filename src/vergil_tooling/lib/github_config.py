@@ -329,6 +329,93 @@ def desired_ci_gates_ruleset(
     )
 
 
+# ---------------------------------------------------------------------------
+# Evidence-gate derivation (issue #2289)
+# ---------------------------------------------------------------------------
+#
+# The set of gates a repo MUST emit CI evidence for is derived from the *same*
+# required-status-check computation that drives branch protection
+# (``desired_ci_gates_ruleset``). This makes the enforced gates and the
+# evidence-required gates provably identical — no hand-maintained list, no drift.
+
+
+@dataclass(frozen=True)
+class EvidenceGate:
+    """An evidence-producing gate and the required checks classified under it."""
+
+    name: str  # "security" | "test" | "audit" | "quality"
+    checks: tuple[str, ...]  # required check names classified under this gate
+
+
+# GHAS check-run names that carry no ``<gate> /`` prefix but still belong to the
+# security gate (created by the GitHub Advanced Security app, not the workflow).
+_EVIDENCE_GATE_LITERALS: dict[str, str] = {
+    "Trivy": "security",
+    "Semgrep OSS": "security",
+    "CodeQL": "security",
+}
+
+# Ordered prefix table: a required check whose name starts with the prefix maps
+# to the gate. ``version /`` is non-evidence-producing (``None``): the version
+# bump check is a policy assertion, not a durable-output gate.
+_EVIDENCE_GATE_PREFIXES: tuple[tuple[str, str | None], ...] = (
+    ("security /", "security"),
+    ("test /", "test"),
+    ("audit /", "audit"),
+    ("quality /", "quality"),
+    ("version /", None),
+)
+
+# Canonical output order for grouped evidence gates (deterministic tuple order).
+_EVIDENCE_GATE_ORDER: tuple[str, ...] = ("security", "test", "audit", "quality")
+
+
+def classify_evidence_gate(check_name: str) -> str | None:
+    """Map a required status-check name to its evidence gate.
+
+    Returns the gate name (``security``/``test``/``audit``/``quality``) or
+    ``None`` when the check is non-evidence-producing (e.g. ``version /
+    version-bump``, or any name matching no known prefix/literal).
+    """
+    literal = _EVIDENCE_GATE_LITERALS.get(check_name)
+    if literal is not None:
+        return literal
+    for prefix, gate in _EVIDENCE_GATE_PREFIXES:
+        if check_name.startswith(prefix):
+            return gate
+    return None
+
+
+def required_evidence_gates(
+    project: ProjectConfig,
+    ci: CiConfig,
+    *,
+    ghas: bool,
+) -> tuple[EvidenceGate, ...]:
+    """The evidence-producing gates this repo MUST emit.
+
+    Derived from the same required-status-check computation that drives branch
+    protection (:func:`desired_ci_gates_ruleset`), so the enforced gates and the
+    evidence-required gates cannot drift apart.
+    """
+    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas)
+    checks = _extract_status_checks(ruleset.rules) or []
+
+    grouped: dict[str, list[str]] = {}
+    for check in checks:
+        name = str(check.get("context", ""))
+        gate = classify_evidence_gate(name)
+        if gate is None:
+            continue
+        grouped.setdefault(gate, []).append(name)
+
+    return tuple(
+        EvidenceGate(name=gate, checks=tuple(grouped[gate]))
+        for gate in _EVIDENCE_GATE_ORDER
+        if gate in grouped
+    )
+
+
 def compute_desired_state(
     config: VergilConfig, *, visibility: str, is_org: bool, app_mode: bool = False
 ) -> DesiredState:

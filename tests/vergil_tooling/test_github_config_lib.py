@@ -21,6 +21,7 @@ from vergil_tooling.lib.config import (
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.github_config import (
     DesiredRuleset,
+    EvidenceGate,
     FetchResult,
     _apply_actions_permissions,
     _apply_repo_settings,
@@ -33,6 +34,7 @@ from vergil_tooling.lib.github_config import (
     _normalize_rules,
     _ruleset_body,
     apply_desired_state,
+    classify_evidence_gate,
     compute_desired_state,
     compute_diff,
     desired_actions_permissions,
@@ -44,6 +46,7 @@ from vergil_tooling.lib.github_config import (
     fetch_actual_state,
     format_rules_delta,
     ghas_available,
+    required_evidence_gates,
 )
 
 
@@ -1838,3 +1841,76 @@ def test_ruleset_body_none_bypass_actors_becomes_empty_list() -> None:
     )
     body = _ruleset_body(ruleset)
     assert body["bypass_actors"] == []
+
+
+# ---------------------------------------------------------------------------
+# Evidence-gate derivation (issue #2289)
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyEvidenceGate:
+    def test_quality_prefix(self) -> None:
+        assert classify_evidence_gate("quality / lint / 3.14") == "quality"
+
+    def test_quality_common_prefix(self) -> None:
+        assert classify_evidence_gate("quality / common") == "quality"
+
+    def test_test_prefix(self) -> None:
+        assert classify_evidence_gate("test / unit / 3.14") == "test"
+
+    def test_audit_prefix(self) -> None:
+        assert classify_evidence_gate("audit / dependencies / 3.14") == "audit"
+
+    def test_security_prefixed(self) -> None:
+        assert classify_evidence_gate("security / codeql") == "security"
+
+    def test_security_ghas_literal(self) -> None:
+        assert classify_evidence_gate("CodeQL") == "security"
+        assert classify_evidence_gate("Trivy") == "security"
+        assert classify_evidence_gate("Semgrep OSS") == "security"
+
+    def test_version_is_non_evidence(self) -> None:
+        assert classify_evidence_gate("version / version-bump") is None
+
+    def test_unknown_is_non_evidence(self) -> None:
+        assert classify_evidence_gate("something / else") is None
+
+
+class TestRequiredEvidenceGates:
+    def test_groups_checks_by_gate(self) -> None:
+        gates = required_evidence_gates(_project(), _ci(), ghas=True)
+        names = {g.name for g in gates}
+        assert names == {"security", "test", "audit", "quality"}
+
+    def test_gate_carries_its_classified_checks(self) -> None:
+        gates = {g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=True)}
+        assert "test / unit / 3.14" in gates["test"].checks
+        assert "audit / dependencies / 3.14" in gates["audit"].checks
+        assert "quality / common" in gates["quality"].checks
+        assert "security / trivy" in gates["security"].checks
+
+    def test_no_ghas_drops_codeql_from_security(self) -> None:
+        gates = {g.name: g for g in required_evidence_gates(_project(), _ci(), ghas=False)}
+        assert not any("CodeQL" in c for c in gates["security"].checks)
+
+    def test_version_check_is_never_an_evidence_gate(self) -> None:
+        gates = {g.name for g in required_evidence_gates(_project(), _ci(), ghas=True)}
+        assert "version" not in gates
+
+    def test_gate_absent_when_no_required_check(self) -> None:
+        # A project with no primary language emits neither ``test / unit`` nor
+        # ``audit / dependencies`` checks, so those evidence gates are absent —
+        # the evidence-required set tracks the enforced set exactly.
+        gates = {
+            g.name
+            for g in required_evidence_gates(
+                _project(language=None), _ci(versions=["latest"]), ghas=False
+            )
+        }
+        assert "test" not in gates
+        assert "audit" not in gates
+
+    def test_evidence_gate_carries_name_and_checks(self) -> None:
+        gate = EvidenceGate(name="test", checks=("test / unit / 3.14",))
+        assert gate.name == "test"
+        assert gate.checks == ("test / unit / 3.14",)
