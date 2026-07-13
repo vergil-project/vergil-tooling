@@ -71,8 +71,8 @@ def evidence_link_line(repo: str, tag: str, *, has_asset: bool) -> str | None:
     """Return the CI-evidence download line for a release page, or ``None``.
 
     Pure: the asset lookup is done by the caller (which passes ``has_asset`` —
-    typically one ``gh release view`` per release at docs-build time), so this
-    function stays trivially testable. The asset filename is shared with the
+    resolved once from a single batched releases listing, not per release), so
+    this function stays trivially testable. The asset filename is shared with the
     harvester via :func:`~vergil_tooling.lib.ci_evidence.evidence_asset_name`,
     so the linked name cannot drift from the published one.
     """
