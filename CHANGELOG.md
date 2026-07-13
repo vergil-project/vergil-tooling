@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.131] - 2026-07-13
+
+### Features
+
+- add GitHub harvest layer (PR resolve, run select, download) (#2302)
+
 ## [2.1.130] - 2026-07-13
 
 ### Features
