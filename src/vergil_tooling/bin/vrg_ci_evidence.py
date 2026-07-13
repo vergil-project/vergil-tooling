@@ -1,91 +1,84 @@
 """``vrg-ci-evidence`` — the CI-evidence harvester CLI.
 
-A thin orchestrator over :mod:`vergil_tooling.lib.ci_evidence`: every stage is a
-call into the library, the CLI only wires them together and maps the two
-substantive failures (:class:`~vergil_tooling.lib.ci_evidence.IncompleteEvidenceError`,
+A thin orchestrator over :mod:`vergil_tooling.lib.ci_evidence`: every subcommand
+maps to one library orchestrator, and the CLI only wires argparse to it and maps
+the two substantive failures
+(:class:`~vergil_tooling.lib.ci_evidence.IncompleteEvidenceError`,
 :class:`~vergil_tooling.lib.ci_evidence.NoQualifyingRunError`) to a non-zero exit
 via :func:`~vergil_tooling.lib.output.emit_error`.
 
+The atomic flow is split into two subcommands so a release harvests its evidence
+exactly once (issue #2330):
+
+- ``harvest`` — resolve → select run → download → validate; persist the
+  harvested tree + a JSON state file into a staging dir (the pre-publish gate).
+- ``assemble`` — consume the persisted harvest → build the manifest, tar the
+  tree, drop a standalone manifest (the post-release attach; no network).
+- ``bundle`` — ``harvest`` then ``assemble`` composed through a temp staging dir
+  (back-compat + local dogfooding).
+
 ``--generated-at`` is caller-injected (CD supplies the release timestamp), so the
-harvest stays a pure function of its inputs and the bundle is byte-reproducible.
+assemble stays a pure function of its inputs and the bundle is byte-reproducible.
 """
 
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import ci_evidence, git, github
+from vergil_tooling.lib import ci_evidence
 from vergil_tooling.lib.ci_evidence import (
-    HarvestContext,
     IncompleteEvidenceError,
     NoQualifyingRunError,
 )
 from vergil_tooling.lib.output import emit_error
 
 
-def cmd_bundle(args: argparse.Namespace) -> int:
-    """Harvest the release's CI evidence and assemble the bundle + manifest.
+def cmd_harvest(args: argparse.Namespace) -> int:
+    """Harvest the release's CI evidence into a staging dir (pre-publish gate).
 
-    Each line is one library stage: resolve the release PR, its validated head
-    SHA and the qualifying CI run; derive the required gates and the check-run
-    conclusions; download and parse the evidence artifacts; enforce completeness
-    (raises before anything is written on a missing gate); stage the metadata,
-    build and write the manifest, tar the tree, and drop a standalone manifest
-    next to the tarball.
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_harvest`, which
+    resolves the release PR, selects the qualifying CI run, downloads the
+    evidence artifacts, enforces completeness, and persists the harvested tree
+    plus a state file into ``--out-dir`` for a later network-free assemble.
     """
-    repo: str = args.repo
-    version: str = args.version
-    tag = f"v{version}"
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    ci_evidence.run_harvest(args.repo, args.merge_sha, Path(args.out_dir))
+    return 0
 
-    release_pr = ci_evidence.resolve_release_pr(repo, args.merge_sha)
-    head_sha = github.head_sha(str(release_pr))
-    run = ci_evidence.select_ci_run(repo, head_sha)
 
-    required = ci_evidence.resolve_required_gates(repo, git.repo_root())
-    conclusions = ci_evidence.read_gate_conclusions(repo, head_sha)
+def cmd_assemble(args: argparse.Namespace) -> int:
+    """Assemble the bundle from a persisted harvest (post-release attach).
 
-    with tempfile.TemporaryDirectory() as tmp:
-        staging = Path(tmp)
-        gates_dest = staging / "evidence" / "gates"
-        gates_dest.mkdir(parents=True, exist_ok=True)
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_assemble`, which
+    reads the persisted state + tree from ``--staging`` and writes the tarball +
+    standalone manifest into ``--out-dir``. No network.
+    """
+    ci_evidence.run_assemble(
+        Path(args.staging),
+        version=args.version,
+        generated_at=args.generated_at,
+        out_dir=Path(args.out_dir),
+        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
+    )
+    return 0
 
-        gate_dirs = ci_evidence.download_evidence_artifacts(repo, int(run["id"]), gates_dest)
-        harvested = ci_evidence.load_harvested_gates(gate_dirs, required, conclusions)
-        ci_evidence.validate_completeness(required, harvested)
 
-        ci_evidence.write_checks_json(conclusions, staging)
-        ci_evidence.write_readme(staging)
-        if args.sbom_file:
-            ci_evidence.copy_sbom(Path(args.sbom_file), staging)
+def cmd_bundle(args: argparse.Namespace) -> int:
+    """Harvest then assemble in one shot (back-compat + local dogfooding).
 
-        ctx = HarvestContext(
-            repo=repo,
-            version=version,
-            tag=tag,
-            released_commit=args.merge_sha,
-            release_pr=release_pr,
-            validated_head_sha=head_sha,
-            ci_run_urls=(str(run["html_url"]),),
-        )
-        manifest = ci_evidence.build_manifest(
-            ctx,
-            list(harvested.values()),
-            generated_at=args.generated_at,
-            missing_gates=[],
-            staging_dir=staging,
-        )
-        manifest_path = ci_evidence.write_manifest(manifest, staging)
-
-        tarball = out_dir / ci_evidence.evidence_asset_name(tag)
-        ci_evidence.assemble_bundle(staging, tarball)
-        shutil.copyfile(manifest_path, out_dir / ci_evidence.evidence_manifest_name(tag))
-
+    Delegates to :func:`~vergil_tooling.lib.ci_evidence.run_bundle`, which
+    composes ``harvest`` and ``assemble`` over a throwaway staging directory —
+    the original atomic behaviour.
+    """
+    ci_evidence.run_bundle(
+        args.repo,
+        version=args.version,
+        merge_sha=args.merge_sha,
+        generated_at=args.generated_at,
+        out_dir=Path(args.out_dir),
+        sbom_file=Path(args.sbom_file) if args.sbom_file else None,
+    )
     return 0
 
 
@@ -96,7 +89,31 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_bundle = sub.add_parser("bundle", help="Assemble the CI-evidence bundle for a release.")
+    p_harvest = sub.add_parser(
+        "harvest", help="Harvest a release's CI evidence into a staging dir (gate)."
+    )
+    p_harvest.add_argument("--repo", required=True, help="owner/name of the release repo")
+    p_harvest.add_argument("--merge-sha", required=True, help="release merge commit SHA")
+    p_harvest.add_argument(
+        "--out-dir", required=True, help="staging directory for the harvested tree + state"
+    )
+    p_harvest.set_defaults(func=cmd_harvest)
+
+    p_assemble = sub.add_parser(
+        "assemble", help="Assemble the bundle from a persisted harvest (no network)."
+    )
+    p_assemble.add_argument(
+        "--staging", required=True, help="staging directory a prior harvest wrote"
+    )
+    p_assemble.add_argument("--version", required=True, help="release version, e.g. 2.1.129")
+    p_assemble.add_argument(
+        "--generated-at", required=True, help="ISO-8601 timestamp (caller-injected)"
+    )
+    p_assemble.add_argument("--out-dir", required=True, help="directory for the bundle + manifest")
+    p_assemble.add_argument("--sbom-file", default=None, help="optional pre-built SBOM to include")
+    p_assemble.set_defaults(func=cmd_assemble)
+
+    p_bundle = sub.add_parser("bundle", help="Harvest + assemble in one shot (back-compat).")
     p_bundle.add_argument("--repo", required=True, help="owner/name of the release repo")
     p_bundle.add_argument("--version", required=True, help="release version, e.g. 2.1.129")
     p_bundle.add_argument("--merge-sha", required=True, help="release merge commit SHA")

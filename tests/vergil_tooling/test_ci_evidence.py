@@ -11,15 +11,19 @@ import pytest
 from vergil_tooling.lib.ci_evidence import (
     GateEvidence,
     HarvestContext,
+    HarvestState,
     IncompleteEvidenceError,
     assemble_bundle,
     build_manifest,
     copy_sbom,
     evidence_asset_name,
     evidence_manifest_name,
+    load_harvested_gates_from_state,
+    read_harvest_state,
     sha256_file,
     validate_completeness,
     write_checks_json,
+    write_harvest_state,
     write_manifest,
     write_readme,
 )
@@ -204,3 +208,80 @@ def test_validate_completeness_missing_required_raises() -> None:
             {"test": _gate_evidence("test")},
         )
     assert excinfo.value.missing == ["security"]
+
+
+# --- Persisted harvest state (issue #2330) ------------------------------
+
+
+def _state() -> HarvestState:
+    return HarvestState(
+        repo="o/r",
+        released_commit="deadbeef",
+        release_pr=2281,
+        validated_head_sha="cafef00d",
+        ci_run_urls=(
+            "https://github.com/o/r/actions/runs/1",
+            "https://github.com/o/r/actions/runs/2",
+        ),
+        checks={"CodeQL": "success", "test / unit": "success"},
+        gate_conclusions={"security": "success", "test": "success"},
+    )
+
+
+def test_write_read_harvest_state_roundtrip(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    state = _state()
+    path = write_harvest_state(state, staging)
+    assert path == staging / "harvest-state.json"
+    # Written at the staging root, a sibling of evidence/, so it is never tarred.
+    assert path.parent == staging
+    assert read_harvest_state(staging) == state
+
+
+def test_harvest_state_bytes_are_deterministic(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    first = write_harvest_state(_state(), staging).read_text()
+    second = write_harvest_state(_state(), staging).read_text()
+    assert first == second
+    # sort_keys -> stable key order in the on-disk bytes.
+    assert first.index('"ci_run_urls"') < first.index('"repo"')
+
+
+def test_read_harvest_state_rejects_unknown_schema(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    staging.mkdir()
+    (staging / "harvest-state.json").write_text(
+        json.dumps({"schema_version": "9.9"}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="unsupported harvest-state schema"):
+        read_harvest_state(staging)
+
+
+def test_load_harvested_gates_from_state_rebuilds_sorted_gates(tmp_path: Path) -> None:
+    staging = tmp_path / "s"
+    for gate in ("test", "security"):
+        gate_dir = staging / "evidence" / "gates" / gate
+        gate_dir.mkdir(parents=True)
+        (gate_dir / "evidence.json").write_text(
+            json.dumps({"tools": [{"name": gate}], "metrics": {"n": 1}}), encoding="utf-8"
+        )
+        (gate_dir / f"{gate}.report").write_text("report", encoding="utf-8")
+    state = HarvestState(
+        repo="o/r",
+        released_commit="deadbeef",
+        release_pr=1,
+        validated_head_sha="c",
+        ci_run_urls=("u",),
+        checks={},
+        gate_conclusions={"test": "success", "security": "failure"},
+    )
+
+    gates = load_harvested_gates_from_state(state, staging)
+
+    # Sorted by name to match load_harvested_gates -> byte-reproducible manifest.
+    assert [gate.name for gate in gates] == ["security", "test"]
+    assert gates[0].conclusion == "failure"  # conclusion comes from the state
+    assert gates[1].conclusion == "success"
+    assert gates[1].tools == ({"name": "test"},)  # tools/files come from the tree
