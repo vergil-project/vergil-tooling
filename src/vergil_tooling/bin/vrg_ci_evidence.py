@@ -82,9 +82,9 @@ def cmd_bundle(args: argparse.Namespace) -> int:
         )
         manifest_path = ci_evidence.write_manifest(manifest, staging)
 
-        tarball = out_dir / f"{tag}-ci-evidence.tar.gz"
+        tarball = out_dir / ci_evidence.evidence_asset_name(tag)
         ci_evidence.assemble_bundle(staging, tarball)
-        shutil.copyfile(manifest_path, out_dir / f"{tag}-ci-evidence-manifest.json")
+        shutil.copyfile(manifest_path, out_dir / ci_evidence.evidence_manifest_name(tag))
 
     return 0
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from vergil_tooling.lib.docs import (
     ReleaseEntry,
     collect_releases,
+    evidence_link_line,
     generate_release_index,
     patch_nav,
     semver_key,
@@ -88,6 +89,18 @@ class TestGenerateReleaseIndex:
         assert "No releases yet." in content
 
 
+class TestEvidenceLinkLine:
+    def test_present(self) -> None:
+        line = evidence_link_line("o/r", "v2.1.129", has_asset=True)
+        assert line is not None
+        assert "All gates passed" in line
+        assert "v2.1.129-ci-evidence.tar.gz" in line
+        assert "https://github.com/o/r/releases/download/v2.1.129/" in line
+
+    def test_absent(self) -> None:
+        assert evidence_link_line("o/r", "v1.0.0", has_asset=False) is None
+
+
 class TestStageDocs:
     def test_stages_changelog_and_releases(self, tmp_path: Path) -> None:
         docs_dir = tmp_path / "docs"
@@ -122,6 +135,49 @@ class TestStageDocs:
         assert count == 0
         index = (docs_dir / "releases" / "index.md").read_text()
         assert "No releases yet." in index
+
+    def test_appends_evidence_line_when_asset_present(self, tmp_path: Path) -> None:
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        releases = tmp_path / "releases"
+        releases.mkdir()
+        (releases / "v2.1.129.md").write_text("# Release 2.1.129 (2026-07-01)\n")
+        stage_docs(
+            docs_dir=docs_dir,
+            releases_dir=releases,
+            changelog=None,
+            repo="o/r",
+            has_evidence_asset=lambda tag: True,
+        )
+        staged = (docs_dir / "releases" / "v2.1.129.md").read_text()
+        assert "**CI Evidence:**" in staged
+        assert "v2.1.129-ci-evidence.tar.gz" in staged
+
+    def test_no_evidence_line_when_asset_absent(self, tmp_path: Path) -> None:
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        releases = tmp_path / "releases"
+        releases.mkdir()
+        (releases / "v2.1.129.md").write_text("# Release 2.1.129 (2026-07-01)\n")
+        stage_docs(
+            docs_dir=docs_dir,
+            releases_dir=releases,
+            changelog=None,
+            repo="o/r",
+            has_evidence_asset=lambda tag: False,
+        )
+        staged = (docs_dir / "releases" / "v2.1.129.md").read_text()
+        assert "CI Evidence" not in staged
+
+    def test_no_evidence_linking_without_resolver(self, tmp_path: Path) -> None:
+        docs_dir = tmp_path / "docs"
+        docs_dir.mkdir()
+        releases = tmp_path / "releases"
+        releases.mkdir()
+        (releases / "v2.1.129.md").write_text("# Release 2.1.129 (2026-07-01)\n")
+        stage_docs(docs_dir=docs_dir, releases_dir=releases, changelog=None)
+        staged = (docs_dir / "releases" / "v2.1.129.md").read_text()
+        assert "CI Evidence" not in staged
 
 
 _NAV_TEMPLATE = """\

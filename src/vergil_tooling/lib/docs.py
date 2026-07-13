@@ -7,7 +7,10 @@ import shutil
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib.ci_evidence import evidence_asset_name
+
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 _SEMVER_RE = re.compile(r"v?(\d+)\.(\d+)\.(\d+)")
@@ -64,15 +67,37 @@ def generate_release_index(entries: list[ReleaseEntry]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def evidence_link_line(repo: str, tag: str, *, has_asset: bool) -> str | None:
+    """Return the CI-evidence download line for a release page, or ``None``.
+
+    Pure: the asset lookup is done by the caller (which passes ``has_asset`` —
+    typically one ``gh release view`` per release at docs-build time), so this
+    function stays trivially testable. The asset filename is shared with the
+    harvester via :func:`~vergil_tooling.lib.ci_evidence.evidence_asset_name`,
+    so the linked name cannot drift from the published one.
+    """
+    if not has_asset:
+        return None
+    asset = evidence_asset_name(tag)
+    url = f"https://github.com/{repo}/releases/download/{tag}/{asset}"
+    return f"**CI Evidence:** All gates passed — full audit bundle available. [Download →]({url})"
+
+
 def stage_docs(
     *,
     docs_dir: Path,
     releases_dir: Path,
     changelog: Path | None,
+    repo: str | None = None,
+    has_evidence_asset: Callable[[str], bool] | None = None,
 ) -> int:
     """Stage changelog and release notes into the docs build directory.
 
-    Returns the number of release notes staged.
+    When both *repo* and *has_evidence_asset* are given, each staged release
+    page gets a CI-evidence download line appended (via
+    :func:`evidence_link_line`) if the release carries the evidence asset —
+    ``has_evidence_asset(tag)`` resolves that (the impure ``gh`` lookup lives in
+    the caller). Returns the number of release notes staged.
     """
     docs_releases = docs_dir / "releases"
     docs_releases.mkdir(parents=True, exist_ok=True)
@@ -83,7 +108,14 @@ def stage_docs(
     entries = collect_releases(releases_dir)
     for entry in entries:
         src = releases_dir / entry.filename
-        shutil.copy2(src, docs_releases / entry.filename)
+        dst = docs_releases / entry.filename
+        shutil.copy2(src, dst)
+        if repo is not None and has_evidence_asset is not None:
+            tag = dst.stem
+            line = evidence_link_line(repo, tag, has_asset=has_evidence_asset(tag))
+            if line is not None:
+                with dst.open("a", encoding="utf-8") as fh:
+                    fh.write(f"\n{line}\n")
 
     index_content = generate_release_index(entries)
     (docs_releases / "index.md").write_text(index_content, encoding="utf-8")
