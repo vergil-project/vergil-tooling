@@ -6,16 +6,21 @@ import json
 import tarfile
 from typing import TYPE_CHECKING
 
+import pytest
+
 from vergil_tooling.lib.ci_evidence import (
     GateEvidence,
     HarvestContext,
+    IncompleteEvidenceError,
     assemble_bundle,
     build_manifest,
     copy_sbom,
     sha256_file,
+    validate_completeness,
     write_checks_json,
     write_readme,
 )
+from vergil_tooling.lib.github_config import EvidenceGate
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -146,3 +151,33 @@ def test_copy_sbom(tmp_path: Path) -> None:
     out = copy_sbom(sbom, staging)
     assert out == staging / "evidence" / "gates" / "sbom" / "sbom.cdx.json"
     assert out.read_text() == "{}"
+
+
+def _gate_evidence(name: str) -> GateEvidence:
+    """A minimal GateEvidence for completeness tests (files unused here)."""
+    return GateEvidence(
+        name=name,
+        conclusion="success",
+        tools=(),
+        metrics={},
+        files=(),
+    )
+
+
+def test_validate_completeness_all_present_ok() -> None:
+    validate_completeness(
+        [EvidenceGate("test", ("test / unit / 3.14",))],
+        {"test": _gate_evidence("test")},
+    )  # no raise
+
+
+def test_validate_completeness_missing_required_raises() -> None:
+    with pytest.raises(IncompleteEvidenceError) as excinfo:
+        validate_completeness(
+            [
+                EvidenceGate("security", ("Trivy",)),
+                EvidenceGate("test", ("test / unit / 3.14",)),
+            ],
+            {"test": _gate_evidence("test")},
+        )
+    assert excinfo.value.missing == ["security"]
