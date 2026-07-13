@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.134] - 2026-07-13
+
+### Bug fixes
+
+- grant actions:read so CD starts with cd-release@v2.1 (#2322)
+
+### Documentation
+
+- document the CI evidence convention and bundle format (#2321)
+
+### Features
+
+- link CI evidence bundle from release pages (#2318)
+
 ## [2.1.133] - 2026-07-13
 
 ### Features
