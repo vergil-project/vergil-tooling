@@ -191,6 +191,47 @@ def test_select_ci_run_none_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     assert exc.value.head_sha == "deadbeef"
 
 
+def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The runs query must reach ``GET /actions/runs`` — never a POST (issue #2335).
+
+    ``gh api`` switches to POST the instant any ``-f``/``-F`` field is present,
+    and ``GET /actions/runs`` is GET-only, so a ``-f head_sha=…`` field produced
+    an HTTP 404 that silently sank the whole harvest. This asserts the *call
+    shape* — no ``-f``/``-F`` fields (unless paired with an explicit ``-X GET``)
+    and the filter carried in the URL — so the regression cannot recur behind a
+    mocked return value.
+    """
+    seen: dict[str, tuple[str, ...]] = {}
+
+    def _record(*args: str, **_kwargs: Any) -> list[Any]:
+        seen["args"] = args
+        return [
+            {
+                "name": "CI",
+                "status": "completed",
+                "conclusion": "success",
+                "run_started_at": "t",
+                "id": 5,
+            },
+        ]
+
+    monkeypatch.setattr(github, "read_json", _record)
+    assert select_ci_run("o/r", "abc")["id"] == 5
+
+    args = seen["args"]
+    field_flags = {"-f", "-F", "--field", "--raw-field"}
+    uses_field = any(flag in field_flags for flag in args)
+    forces_get = any(
+        flag in ("-X", "--method") and args[i + 1].upper() == "GET"
+        for i, flag in enumerate(args[:-1])
+    )
+    assert not uses_field or forces_get, (
+        f"select_ci_run must not POST to a GET-only endpoint: {args!r}"
+    )
+    # The head_sha filter must ride the URL, otherwise it was dropped entirely.
+    assert any("head_sha=abc" in str(arg) for arg in args), args
+
+
 # --- download_evidence_artifacts ----------------------------------------
 
 
