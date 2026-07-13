@@ -20,16 +20,16 @@ from __future__ import annotations
 
 import argparse
 import contextlib
-import re
 import subprocess
 import sys
 from typing import cast
 
 from vergil_tooling.lib import git, github
-from vergil_tooling.lib.linkage import extract_tracking_issue
+from vergil_tooling.lib.linkage import extract_merge_pr, extract_tracking_issue
 
-_MERGE_PR_RE = re.compile(r"^Merge pull request #(\d+) from ")
-_SQUASH_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
+# Backward-compatible alias: the merge/squash subject → PR-number extraction now
+# lives in ``lib.linkage`` (shared with the CI-evidence harvest layer).
+_extract_pr_number = extract_merge_pr
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -48,16 +48,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="PR number (bypasses commit parsing)",
     )
     return parser.parse_args(argv)
-
-
-def _extract_pr_number(subject: str) -> int | None:
-    m = _MERGE_PR_RE.match(subject)
-    if m:
-        return int(m.group(1))
-    m = _SQUASH_PR_RE.search(subject)
-    if m:
-        return int(m.group(1))
-    return None
 
 
 def _pr_from_api(commit: str) -> int | None:

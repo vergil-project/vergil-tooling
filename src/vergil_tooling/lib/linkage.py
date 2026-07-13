@@ -127,6 +127,31 @@ def freetext_linkage_error(found: str, primary_issue: str) -> str:
     )
 
 
+# Merge-commit subject patterns for recovering the PR a commit closed, when the
+# GitHub ``/commits/{sha}/pulls`` API is unavailable. ``Merge pull request #N
+# from ...`` is the merge-commit subject; ``... (#N)`` is the squash-merge
+# subject. Shared by ``vrg-resolve-tracking-issue`` and the CI-evidence harvest
+# layer so merge→PR recovery is recognized identically in both.
+_MERGE_PR_RE = re.compile(r"^Merge pull request #(\d+) from ")
+_SQUASH_PR_RE = re.compile(r"\(#(\d+)\)\s*$")
+
+
+def extract_merge_pr(subject: str) -> int | None:
+    """Return the PR number a merge/squash commit *subject* closed, or None.
+
+    Recognizes the merge-commit subject (``Merge pull request #N from ...``)
+    and the squash-merge subject (``... (#N)``). The fallback used when the
+    ``/commits/{sha}/pulls`` API returns no PR.
+    """
+    m = _MERGE_PR_RE.match(subject)
+    if m:
+        return int(m.group(1))
+    m = _SQUASH_PR_RE.search(subject)
+    if m:
+        return int(m.group(1))
+    return None
+
+
 def extract_tracking_issue(text: str) -> int | None:
     """Return the tracking issue number from a ``Ref #N`` / ``Closes #N`` match.
 
