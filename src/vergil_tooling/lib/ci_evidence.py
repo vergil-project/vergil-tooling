@@ -27,6 +27,8 @@ if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
     from pathlib import Path
 
+    from vergil_tooling.lib.github_config import EvidenceGate
+
 # Schema version of the manifest object (spec §8).
 SCHEMA_VERSION = "1.0"
 
@@ -185,6 +187,41 @@ def assemble_bundle(staging_dir: Path, out_tarball: Path) -> Path:
         for member in members:
             tar.add(member, arcname=member.relative_to(staging_dir).as_posix())
     return out_tarball
+
+
+# --- Completeness validation ---------------------------------------------
+#
+# The publish invariant, as a pure function: cross-check the required
+# evidence-gate set (derived from branch protection, T1) against what was
+# actually harvested (T3). A required gate with no harvested evidence is a
+# substantive failure — terminal in enforcing mode (spec §9.2).
+
+
+class IncompleteEvidenceError(Exception):
+    """A required evidence gate produced no harvested evidence.
+
+    Thin, data-carrying: ``.missing`` lists every required gate name with no
+    evidence. The message format is defined here once so the CLI (T5) can reuse
+    it via ``emit_error``. Substantive failure — terminal in enforcing mode.
+    """
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = missing
+        super().__init__(f"missing evidence for required gates: {missing}")
+
+
+def validate_completeness(
+    required: Sequence[EvidenceGate],
+    harvested: Mapping[str, GateEvidence],
+) -> None:
+    """Raise :class:`IncompleteEvidenceError` for required gates lacking evidence.
+
+    A pure set-difference of required gate names against harvested keys. The
+    ``missing`` list preserves ``required`` order for a stable, readable report.
+    """
+    missing = [gate.name for gate in required if gate.name not in harvested]
+    if missing:
+        raise IncompleteEvidenceError(missing)
 
 
 # --- GitHub harvest layer ------------------------------------------------
