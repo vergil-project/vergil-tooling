@@ -37,6 +37,29 @@ class Language:
     ecosystem: EcosystemInfo
 
 
+# -- Machine-readable report paths --------------------------------------------
+#
+# Evidence-producing gate commands write these machine-readable reports at the
+# workspace root. The filenames form the path contract shared with the T8
+# evidence-producer composite (epic vergil-project/.github#140): the composite
+# globs these exact names to bundle real report data instead of empty
+# envelopes. Keep this list in sync with the T8 composite glob.
+COVERAGE_REPORT = "coverage.xml"
+JUNIT_REPORT = "junit.xml"
+PIP_AUDIT_REPORT = "pip-audit.json"
+LICENSES_REPORT = "licenses.json"
+
+# The workspace-root report files the Python gate commands emit. Exposed as a
+# single source of truth so consumers (and tests) can assert the contract
+# without re-deriving the individual filenames.
+PYTHON_REPORT_FILES = (
+    COVERAGE_REPORT,
+    JUNIT_REPORT,
+    PIP_AUDIT_REPORT,
+    LICENSES_REPORT,
+)
+
+
 # -- License allowlists (unchanged from validate_commands) --------------------
 
 _PIP_LICENSES_ALLOWLIST = ";".join(
@@ -100,13 +123,26 @@ _REGISTRY: dict[str, Language] = {
             ],
             CheckKind.TYPECHECK: [["mypy", "src/"], ["ty", "check", "src", "tests"]],
             CheckKind.TEST: [
-                ["pytest", "--cov=src", "--cov-branch", "--cov-fail-under=100"],
+                [
+                    "pytest",
+                    "--cov=src",
+                    "--cov-branch",
+                    "--cov-fail-under=100",
+                    "--cov-report=term-missing",
+                    f"--cov-report=xml:{COVERAGE_REPORT}",
+                    f"--junitxml={JUNIT_REPORT}",
+                ],
             ],
             CheckKind.AUDIT: [
                 ["uv", "sync", "--check", "--frozen", "--group", "dev"],
                 ["uv", "lock", "--check"],
-                ["pip-audit"],
-                ["pip-licenses", f"--allow-only={_PIP_LICENSES_ALLOWLIST}"],
+                ["pip-audit", "--format=json", f"--output={PIP_AUDIT_REPORT}"],
+                [
+                    "pip-licenses",
+                    f"--allow-only={_PIP_LICENSES_ALLOWLIST}",
+                    "--format=json",
+                    f"--output-file={LICENSES_REPORT}",
+                ],
             ],
         },
         ecosystem=EcosystemInfo(
