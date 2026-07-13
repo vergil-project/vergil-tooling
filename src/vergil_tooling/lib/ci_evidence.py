@@ -18,7 +18,10 @@ import json
 import shutil
 import tarfile
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
+
+from vergil_tooling.lib import github
+from vergil_tooling.lib.linkage import extract_merge_pr
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -182,3 +185,139 @@ def assemble_bundle(staging_dir: Path, out_tarball: Path) -> Path:
         for member in members:
             tar.add(member, arcname=member.relative_to(staging_dir).as_posix())
     return out_tarball
+
+
+# --- GitHub harvest layer ------------------------------------------------
+#
+# All GitHub I/O for the evidence bundle, isolated behind mockable functions so
+# the CLI and the bundle core stay network-free. Every call routes through
+# ``vergil_tooling.lib.github``, whose ``_run_with_retry`` already retries
+# transient API failures — no bespoke retry loop is needed here.
+
+# Prefix a gate workflow uploads its evidence artifact under
+# (``ci-evidence-<gate>``); the producer convention that decouples gate
+# workflows from this harvester (spec §7).
+_EVIDENCE_ARTIFACT_PREFIX = "ci-evidence-"
+
+
+class NoQualifyingRunError(Exception):
+    """No COMPLETED + SUCCESS CI run exists for the release head SHA.
+
+    The one substantive-failure boundary of the harvest layer (spec §5.2):
+    unlike a transient API error, it means the release commit was never
+    validated by a green CI run, so no evidence can be harvested.
+    """
+
+    def __init__(self, head_sha: str) -> None:
+        super().__init__(f"no completed+success CI run for head SHA {head_sha}")
+        self.head_sha = head_sha
+
+
+def _pr_from_commit_api(repo: str, merge_sha: str) -> int | None:
+    """Return the PR number ``merge_sha`` closed, via ``/commits/{sha}/pulls``.
+
+    Prefers a merged PR; falls back to the first associated PR. Returns None
+    when the API associates no PR with the commit.
+    """
+    raw = github.read_json("api", f"repos/{repo}/commits/{merge_sha}/pulls")
+    prs = cast("list[dict[str, Any]]", raw) if isinstance(raw, list) else []
+    merged = [pr for pr in prs if pr.get("merged_at")]
+    chosen = merged or prs
+    if not chosen:
+        return None
+    return int(chosen[0]["number"])
+
+
+def resolve_release_pr(repo: str, merge_sha: str) -> int:
+    """Resolve the release PR a merge commit closed.
+
+    Primary: the ``/commits/{sha}/pulls`` API. Fallback: the merge/squash
+    commit subject (:func:`~vergil_tooling.lib.linkage.extract_merge_pr`) when
+    the API associates no PR. Raises ``ValueError`` when neither resolves a PR.
+    """
+    pr = _pr_from_commit_api(repo, merge_sha)
+    if pr is not None:
+        return pr
+    message = github.read_output(
+        "api", f"repos/{repo}/commits/{merge_sha}", "--jq", ".commit.message"
+    )
+    subject = message.splitlines()[0] if message else ""
+    pr = extract_merge_pr(subject)
+    if pr is not None:
+        return pr
+    msg = f"cannot resolve release PR for {merge_sha} in {repo}"
+    raise ValueError(msg)
+
+
+def _is_qualifying_run(run: Mapping[str, Any], workflow: str) -> bool:
+    """True when *run* is the named workflow, COMPLETED, and SUCCESS (spec §5.2).
+
+    Cancelled and in-progress runs are excluded: only a run that completed
+    successfully attests the release commit.
+    """
+    return (
+        run.get("name") == workflow
+        and run.get("status") == "completed"
+        and run.get("conclusion") == "success"
+    )
+
+
+def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str, Any]:
+    """Return the latest COMPLETED + SUCCESS *workflow* run for ``head_sha``.
+
+    Cancelled and in-progress runs are ignored. Raises
+    :class:`NoQualifyingRunError` when no run qualifies (spec §5.2).
+    """
+    raw = github.read_json(
+        "api",
+        f"repos/{repo}/actions/runs",
+        "-f",
+        f"head_sha={head_sha}",
+        "--jq",
+        ".workflow_runs",
+    )
+    runs = cast("list[dict[str, Any]]", raw)
+    qualifying = [run for run in runs if _is_qualifying_run(run, workflow)]
+    if not qualifying:
+        raise NoQualifyingRunError(head_sha)
+    return max(qualifying, key=lambda run: run["run_started_at"])
+
+
+def download_evidence_artifacts(repo: str, run_id: int, dest: Path) -> list[Path]:
+    """Download every ``ci-evidence-*`` artifact of *run_id* into ``dest/<gate>/``.
+
+    Non-evidence artifacts are ignored. The gate name is the artifact name with
+    the ``ci-evidence-`` prefix stripped; each is downloaded into its own gate
+    directory. Returns the created gate directories, sorted for determinism.
+    """
+    raw = github.read_json(
+        "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts"
+    )
+    artifacts = cast("list[dict[str, Any]]", raw)
+    gate_dirs: list[Path] = []
+    for artifact in artifacts:
+        name = str(artifact.get("name", ""))
+        if not name.startswith(_EVIDENCE_ARTIFACT_PREFIX):
+            continue
+        gate = name[len(_EVIDENCE_ARTIFACT_PREFIX) :]
+        gate_dir = dest / gate
+        gate_dir.mkdir(parents=True, exist_ok=True)
+        github.run(
+            "run", "download", str(run_id), "--repo", repo, "--name", name, "--dir", str(gate_dir)
+        )
+        gate_dirs.append(gate_dir)
+    return sorted(gate_dirs)
+
+
+def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
+    """Return a check-run name → conclusion map for ``head_sha``.
+
+    Feeds both the manifest's ``checks.json`` snapshot and completeness
+    validation. A null conclusion (e.g. a still-neutral check) maps to the
+    empty string.
+    """
+    raw = github.read_json(
+        "api", f"repos/{repo}/commits/{head_sha}/check-runs", "--jq", ".check_runs"
+    )
+    check_runs = cast("list[dict[str, Any]]", raw)
+    return {str(run["name"]): str(run.get("conclusion") or "") for run in check_runs}
