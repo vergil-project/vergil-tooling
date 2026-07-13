@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.config import read_config
+from vergil_tooling.lib.github_config import ghas_available, required_evidence_gates
 from vergil_tooling.lib.linkage import extract_merge_pr
 
 if TYPE_CHECKING:
@@ -164,6 +166,21 @@ def write_readme(staging_dir: Path) -> Path:
     """Write the fixed human-orientation README to ``evidence/README.md``."""
     path = _evidence_root(staging_dir) / "README.md"
     path.write_text(_README_TEXT, encoding="utf-8")
+    return path
+
+
+def write_manifest(manifest: Mapping[str, Any], staging_dir: Path) -> Path:
+    """Write the manifest object to ``evidence/manifest.json`` (schema §8).
+
+    The manifest is the archive's top-level index, so it is staged inside the
+    ``evidence/`` tree (and thus tarred into the bundle). ``sort_keys`` keeps the
+    on-disk bytes deterministic for a byte-reproducible archive.
+    """
+    path = _evidence_root(staging_dir) / "manifest.json"
+    path.write_text(
+        json.dumps(dict(manifest), indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -358,3 +375,73 @@ def read_gate_conclusions(repo: str, head_sha: str) -> dict[str, str]:
     )
     check_runs = cast("list[dict[str, Any]]", raw)
     return {str(run["name"]): str(run.get("conclusion") or "") for run in check_runs}
+
+
+def resolve_required_gates(repo: str, repo_root: Path) -> tuple[EvidenceGate, ...]:
+    """Derive the evidence gates *repo* MUST emit, from its ``vergil.toml``.
+
+    Reads the repo's config and resolves its GHAS posture (a declared
+    ``[project].ghas`` wins, else it is inferred from repo visibility via the
+    GitHub API), then defers to
+    :func:`~vergil_tooling.lib.github_config.required_evidence_gates` — the same
+    required-status-check computation that drives branch protection, so the
+    enforced gates and the evidence-required gates cannot drift apart.
+    """
+    config = read_config(repo_root)
+    ghas = ghas_available(config, visibility=github.repo_visibility(repo))
+    return required_evidence_gates(config.project, config.ci, ghas=ghas)
+
+
+def _gate_conclusion(checks: Sequence[str], conclusions: Mapping[str, str]) -> str:
+    """Aggregate a gate's required-check conclusions into one gate conclusion.
+
+    Reports ``success`` only when every required check succeeded; otherwise the
+    first non-``success`` conclusion, so a failed check surfaces rather than
+    being silently rolled up as success. A null/absent conclusion reports as
+    ``unknown``.
+    """
+    for name in checks:
+        result = conclusions.get(name, "")
+        if result != "success":
+            return result or "unknown"
+    return "success"
+
+
+def load_gate_evidence(gate_dir: Path, *, conclusion: str) -> GateEvidence:
+    """Parse ``gate_dir/evidence.json`` into a :class:`GateEvidence`.
+
+    The gate name is the directory name (the ``ci-evidence-`` prefix already
+    stripped by :func:`download_evidence_artifacts`). ``tools`` and ``metrics``
+    come from the fragment (spec §7); ``conclusion`` is injected by the caller
+    (derived from the check-runs API, not the fragment); ``files`` is every
+    staged file in the gate directory, sorted for a deterministic manifest.
+    """
+    fragment = json.loads((gate_dir / "evidence.json").read_text(encoding="utf-8"))
+    files = tuple(sorted(path for path in gate_dir.rglob("*") if path.is_file()))
+    return GateEvidence(
+        name=gate_dir.name,
+        conclusion=conclusion,
+        tools=tuple(dict(tool) for tool in fragment.get("tools", [])),
+        metrics=dict(fragment.get("metrics", {})),
+        files=files,
+    )
+
+
+def load_harvested_gates(
+    gate_dirs: Sequence[Path],
+    required: Sequence[EvidenceGate],
+    conclusions: Mapping[str, str],
+) -> dict[str, GateEvidence]:
+    """Parse each downloaded gate directory into a name → :class:`GateEvidence` map.
+
+    Each gate's conclusion is derived from its required checks' conclusions
+    (:func:`_gate_conclusion`); a downloaded gate with no matching required gate
+    derives from an empty check set (``success``) rather than being dropped.
+    """
+    checks_by_gate = {gate.name: gate.checks for gate in required}
+    harvested: dict[str, GateEvidence] = {}
+    for gate_dir in gate_dirs:
+        conclusion = _gate_conclusion(checks_by_gate.get(gate_dir.name, ()), conclusions)
+        evidence = load_gate_evidence(gate_dir, conclusion=conclusion)
+        harvested[evidence.name] = evidence
+    return harvested
