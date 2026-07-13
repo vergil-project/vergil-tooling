@@ -8,6 +8,7 @@ wrappers, so the tests assert the selection/filter logic, never the network.
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -255,3 +256,120 @@ def test_qualifying_run_predicate_is_reusable() -> None:
     run: dict[str, Any] = {"name": "CI", "status": "completed", "conclusion": "success"}
     assert ci_evidence._is_qualifying_run(run, "CI")
     assert not ci_evidence._is_qualifying_run({**run, "conclusion": "cancelled"}, "CI")
+
+
+# --- resolve_required_gates ---------------------------------------------
+
+
+def test_resolve_required_gates_wires_config_ghas_and_derivation(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from types import SimpleNamespace
+
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    cfg = SimpleNamespace(project="PROJECT", ci="CI")
+    monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
+    monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
+
+    captured: dict[str, Any] = {}
+
+    def fake_ghas(config: Any, *, visibility: str) -> bool:
+        captured["ghas_config"] = config
+        captured["visibility"] = visibility
+        return True
+
+    monkeypatch.setattr(ci_evidence, "ghas_available", fake_ghas)
+
+    sentinel = (EvidenceGate(name="test", checks=("test / unit",)),)
+
+    def fake_required(project: Any, ci: Any, *, ghas: bool) -> Any:
+        captured["derivation_args"] = (project, ci, ghas)
+        return sentinel
+
+    monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
+
+    result = ci_evidence.resolve_required_gates("o/r", tmp_path)
+
+    assert result is sentinel
+    assert captured["ghas_config"] is cfg
+    assert captured["visibility"] == "public"
+    assert captured["derivation_args"] == ("PROJECT", "CI", True)
+
+
+# --- _gate_conclusion ---------------------------------------------------
+
+
+def test_gate_conclusion_all_success() -> None:
+    assert ci_evidence._gate_conclusion(("a", "b"), {"a": "success", "b": "success"}) == "success"
+
+
+def test_gate_conclusion_reports_first_non_success() -> None:
+    assert ci_evidence._gate_conclusion(("a", "b"), {"a": "success", "b": "failure"}) == "failure"
+
+
+def test_gate_conclusion_null_conclusion_is_unknown() -> None:
+    assert ci_evidence._gate_conclusion(("a",), {"a": ""}) == "unknown"
+
+
+def test_gate_conclusion_no_checks_is_success() -> None:
+    assert ci_evidence._gate_conclusion((), {}) == "success"
+
+
+# --- load_gate_evidence / load_harvested_gates --------------------------
+
+
+def _write_gate_dir(parent: Path, gate: str, fragment: dict[str, Any]) -> Path:
+    gate_dir = parent / gate
+    gate_dir.mkdir(parents=True)
+    (gate_dir / "evidence.json").write_text(json.dumps(fragment), encoding="utf-8")
+    (gate_dir / f"{gate}.report").write_text("report-data", encoding="utf-8")
+    return gate_dir
+
+
+def test_load_gate_evidence_parses_fragment_and_files(tmp_path: Path) -> None:
+    gate_dir = _write_gate_dir(
+        tmp_path,
+        "security",
+        {"gate": "security", "tools": [{"name": "codeql", "version": "1"}], "metrics": {"high": 0}},
+    )
+    evidence = ci_evidence.load_gate_evidence(gate_dir, conclusion="success")
+
+    assert evidence.name == "security"
+    assert evidence.conclusion == "success"
+    assert evidence.tools == ({"name": "codeql", "version": "1"},)
+    assert evidence.metrics == {"high": 0}
+    assert {path.name for path in evidence.files} == {"evidence.json", "security.report"}
+
+
+def test_load_gate_evidence_defaults_absent_tools_and_metrics(tmp_path: Path) -> None:
+    gate_dir = _write_gate_dir(tmp_path, "quality", {"gate": "quality"})
+    evidence = ci_evidence.load_gate_evidence(gate_dir, conclusion="success")
+
+    assert evidence.tools == ()
+    assert evidence.metrics == {}
+
+
+def test_load_harvested_gates_derives_conclusions_and_maps_by_name(tmp_path: Path) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    test_dir = _write_gate_dir(tmp_path, "test", {"gate": "test"})
+    security_dir = _write_gate_dir(tmp_path, "security", {"gate": "security"})
+    extra_dir = _write_gate_dir(tmp_path, "extra", {"gate": "extra"})
+
+    required = (
+        EvidenceGate(name="test", checks=("test / unit",)),
+        EvidenceGate(name="security", checks=("CodeQL",)),
+    )
+    conclusions = {"test / unit": "success", "CodeQL": "failure"}
+
+    result = ci_evidence.load_harvested_gates(
+        [test_dir, security_dir, extra_dir], required, conclusions
+    )
+
+    assert set(result) == {"test", "security", "extra"}
+    assert result["test"].conclusion == "success"
+    assert result["security"].conclusion == "failure"
+    # a downloaded gate with no matching required gate falls back to an empty
+    # check set -> success (not dropped).
+    assert result["extra"].conclusion == "success"
