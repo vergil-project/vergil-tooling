@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from vergil_tooling.lib import github
 from vergil_tooling.lib.ci_evidence import evidence_asset_name
@@ -13,26 +13,61 @@ from vergil_tooling.lib.docs import stage_docs
 from vergil_tooling.lib.github import GitHubAPIError
 from vergil_tooling.lib.output import emit_error, write_output
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
-def _has_evidence_asset(repo: str, tag: str) -> bool:
-    """Return whether release *tag* carries the CI-evidence bundle asset.
 
-    One cheap ``gh release view`` per release at docs-build time. A release that
-    does not exist yet (404) legitimately has no asset, so that is reported as
-    ``False``; any other ``gh`` failure propagates rather than being silently
-    swallowed as "no evidence".
+def _evidence_asset_tags(repo: str) -> frozenset[str]:
+    """Return the set of release tags that carry the CI-evidence bundle asset.
+
+    A **single** paginated ``gh api`` call lists every release and its assets, so
+    membership is resolved with one network round-trip regardless of release
+    count — replacing the old one-``gh release view``-per-release lookup, whose
+    N calls multiplied GitHub's flakiness into the docs build. A tag whose
+    release does not exist simply never appears in the listing (reported as
+    no-evidence), so no per-tag 404 handling is needed. Any genuine ``gh``
+    failure propagates rather than being swallowed as "no evidence".
     """
-    try:
-        data = github.read_json("release", "view", tag, "--repo", repo, "--json", "assets")
-    except GitHubAPIError as exc:
-        stderr = (exc.stderr or "").lower()
-        if "not found" in stderr or "404" in stderr:
-            return False
-        raise
-    raw_assets = data.get("assets") if isinstance(data, dict) else None
-    assets = cast("list[dict[str, Any]]", raw_assets) if isinstance(raw_assets, list) else []
-    asset_name = evidence_asset_name(tag)
-    return any(asset.get("name") == asset_name for asset in assets)
+    data = github.read_json("api", f"repos/{repo}/releases", "--paginate")
+    releases = data if isinstance(data, list) else []
+    tags: set[str] = set()
+    for item in releases:
+        if not isinstance(item, dict):
+            continue
+        release = cast("dict[str, Any]", item)
+        tag = release.get("tag_name")
+        if not isinstance(tag, str):
+            continue
+        raw_assets = release.get("assets")
+        assets = raw_assets if isinstance(raw_assets, list) else []
+        wanted = evidence_asset_name(tag)
+        if any(isinstance(asset, dict) and asset.get("name") == wanted for asset in assets):
+            tags.add(tag)
+    return frozenset(tags)
+
+
+def _evidence_resolver(repo: str) -> Callable[[str], bool]:
+    """Build a ``tag -> has-evidence-asset`` resolver backed by one API call.
+
+    The batched releases listing is fetched lazily on first use and cached, so a
+    docs build with no release pages makes zero calls and any build with one or
+    more makes exactly one, no matter how many releases exist.
+    """
+    tags: frozenset[str] | None = None
+
+    def resolve(tag: str) -> bool:
+        nonlocal tags
+        if tags is None:
+            tags = _evidence_asset_tags(repo)
+        return tag in tags
+
+    return resolve
+
+
+def _is_auth_error(exc: GitHubAPIError) -> bool:
+    """Return whether *exc* looks like an unauthenticated ``gh`` invocation."""
+    text = (exc.stderr or "").lower()
+    return "gh_token" in text or "gh auth login" in text
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -72,13 +107,19 @@ def main(argv: list[str] | None = None) -> int:
 
     changelog = args.changelog if args.changelog.is_file() else None
     repo = args.repo or github.current_repo()
-    count = stage_docs(
-        docs_dir=args.docs_dir,
-        releases_dir=args.releases_dir,
-        changelog=changelog,
-        repo=repo,
-        has_evidence_asset=lambda tag: _has_evidence_asset(repo, tag),
-    )
+    try:
+        count = stage_docs(
+            docs_dir=args.docs_dir,
+            releases_dir=args.releases_dir,
+            changelog=changelog,
+            repo=repo,
+            has_evidence_asset=_evidence_resolver(repo),
+        )
+    except GitHubAPIError as exc:
+        if _is_auth_error(exc):
+            emit_error("GH_TOKEN required for evidence linking; gh is not authenticated")
+            return 1
+        raise
     write_output("releases_staged", str(count))
     return 0
 
