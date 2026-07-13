@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.130] - 2026-07-13
+
+### Features
+
+- emit machine-readable gate reports from the check registry (#2297)
+
 ## [2.1.129] - 2026-07-13
 
 ### Features
