@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read # cd-release@v2.1 evidence harvest downloads the release PR's ci-evidence artifacts
   attestations: write
   contents: write
   id-token: write
