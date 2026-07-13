@@ -6,7 +6,22 @@ build the ``manifest.json`` index (schema 1.0, spec §8), write the raw
 already-built SBOM into the tree, and tar the ``evidence/`` tree into the
 release asset.
 
-Determinism: every function is a pure function of its inputs. Timestamps
+The end-to-end flow is split into two orchestrators so a release harvests its
+evidence exactly once (issue #2330):
+
+- :func:`run_harvest` — the network + validation half. Resolve the release PR,
+  select the qualifying CI run, download the ``ci-evidence-*`` artifacts, read
+  the gate conclusions, and enforce completeness; persist the harvested tree
+  plus a small JSON state file (:class:`HarvestState`) into a staging directory
+  so a later assemble needs no network.
+- :func:`run_assemble` — the network-free half. Read the persisted harvest and
+  state, write ``checks.json`` / ``README.md`` / the SBOM, build and write the
+  manifest, and tar the tree into the release asset + a standalone manifest.
+
+:func:`run_bundle` composes the two (a temp staging dir) so the original atomic
+``bundle`` behaviour is preserved for local dogfooding and back-compat.
+
+Determinism: every pure function is a pure function of its inputs. Timestamps
 (``generated_at``) are injected by the caller, never read from the clock here,
 so the logic stays unit-testable and byte-reproducible.
 """
@@ -17,17 +32,18 @@ import hashlib
 import json
 import shutil
 import tarfile
+import tempfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import git, github
 from vergil_tooling.lib.config import read_config
 from vergil_tooling.lib.github_config import ghas_available, required_evidence_gates
 from vergil_tooling.lib.linkage import extract_merge_pr
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
-    from pathlib import Path
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
@@ -97,6 +113,51 @@ class HarvestContext:
     release_pr: int
     validated_head_sha: str
     ci_run_urls: tuple[str, ...]
+
+
+# --- Persisted harvest state (harvest → assemble hand-off, issue #2330) --
+#
+# ``run_harvest`` writes a small JSON state file next to the harvested
+# ``evidence/`` tree so a later ``run_assemble`` can rebuild the manifest with
+# no network. The schema is a stable interface: cd-release (vergil-actions)
+# persists it across two workflow steps, and other callers may read it, so it
+# is versioned and only extended in a backward-compatible way.
+
+# Filename of the persisted state, written at the staging-dir root (a sibling
+# of ``evidence/``, so it is never tarred into the bundle).
+HARVEST_STATE_FILENAME = "harvest-state.json"
+
+# Schema version of the persisted state object. Bump only on a
+# backward-incompatible change; ``read_harvest_state`` refuses an unknown major.
+HARVEST_STATE_SCHEMA_VERSION = "1.0"
+
+
+@dataclass(frozen=True)
+class HarvestState:
+    """The network-derived facts a harvest persists for a later assemble.
+
+    Everything :func:`run_assemble` needs that it cannot re-derive from the
+    on-disk ``evidence/`` tree, and nothing that assemble supplies itself
+    (``version``, ``generated_at``, the SBOM). Serialised to
+    ``<staging>/harvest-state.json`` (schema
+    :data:`HARVEST_STATE_SCHEMA_VERSION`).
+
+    - ``repo`` / ``released_commit`` — release identity for the manifest.
+    - ``release_pr`` / ``validated_head_sha`` / ``ci_run_urls`` — provenance.
+    - ``checks`` — the raw check-run name → conclusion snapshot, reproducing
+      ``checks.json`` at assemble time without a second API call.
+    - ``gate_conclusions`` — per-gate name → aggregated conclusion, injected
+      into each rebuilt :class:`GateEvidence` (the gate's tools/metrics/files
+      come from the persisted tree).
+    """
+
+    repo: str
+    released_commit: str
+    release_pr: int
+    validated_head_sha: str
+    ci_run_urls: tuple[str, ...]
+    checks: dict[str, str]
+    gate_conclusions: dict[str, str]
 
 
 def _evidence_root(staging_dir: Path) -> Path:
@@ -198,6 +259,55 @@ def write_manifest(manifest: Mapping[str, Any], staging_dir: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def write_harvest_state(state: HarvestState, staging_dir: Path) -> Path:
+    """Serialise *state* to ``<staging_dir>/harvest-state.json`` (schema §2330).
+
+    Written at the staging-dir root — a sibling of ``evidence/`` — so it rides
+    the job filesystem between the harvest and assemble steps without being
+    tarred into the bundle. ``sort_keys`` keeps the bytes deterministic.
+    """
+    path = staging_dir / HARVEST_STATE_FILENAME
+    payload = {
+        "schema_version": HARVEST_STATE_SCHEMA_VERSION,
+        "repo": state.repo,
+        "released_commit": state.released_commit,
+        "release_pr": state.release_pr,
+        "validated_head_sha": state.validated_head_sha,
+        "ci_run_urls": list(state.ci_run_urls),
+        "checks": dict(state.checks),
+        "gate_conclusions": dict(state.gate_conclusions),
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def read_harvest_state(staging_dir: Path) -> HarvestState:
+    """Load the :class:`HarvestState` persisted at ``<staging_dir>``.
+
+    Raises :class:`ValueError` on an unknown ``schema_version`` — an assemble
+    against an incompatible harvest is a hard failure, never a silent
+    best-effort read.
+    """
+    path = staging_dir / HARVEST_STATE_FILENAME
+    data = json.loads(path.read_text(encoding="utf-8"))
+    schema = data.get("schema_version")
+    if schema != HARVEST_STATE_SCHEMA_VERSION:
+        msg = (
+            f"unsupported harvest-state schema {schema!r} at {path} "
+            f"(expected {HARVEST_STATE_SCHEMA_VERSION!r})"
+        )
+        raise ValueError(msg)
+    return HarvestState(
+        repo=str(data["repo"]),
+        released_commit=str(data["released_commit"]),
+        release_pr=int(data["release_pr"]),
+        validated_head_sha=str(data["validated_head_sha"]),
+        ci_run_urls=tuple(str(url) for url in data["ci_run_urls"]),
+        checks={str(k): str(v) for k, v in data["checks"].items()},
+        gate_conclusions={str(k): str(v) for k, v in data["gate_conclusions"].items()},
+    )
 
 
 def copy_sbom(sbom_file: Path, staging_dir: Path) -> Path:
@@ -461,3 +571,139 @@ def load_harvested_gates(
         evidence = load_gate_evidence(gate_dir, conclusion=conclusion)
         harvested[evidence.name] = evidence
     return harvested
+
+
+def load_harvested_gates_from_state(state: HarvestState, staging_dir: Path) -> list[GateEvidence]:
+    """Rebuild the harvested gates from a persisted state + on-disk tree.
+
+    The network-free counterpart of :func:`load_harvested_gates`: the per-gate
+    conclusion comes from ``state.gate_conclusions`` (already aggregated at
+    harvest time) and the tools/metrics/files come from the persisted
+    ``evidence/gates/<gate>/`` tree. Gates are returned in sorted-name order to
+    match :func:`load_harvested_gates`, so the manifest stays byte-reproducible.
+    """
+    gates_root = _evidence_root(staging_dir) / "gates"
+    return [
+        load_gate_evidence(gates_root / name, conclusion=conclusion)
+        for name, conclusion in sorted(state.gate_conclusions.items())
+    ]
+
+
+# --- End-to-end orchestrators (issue #2330) ------------------------------
+#
+# The two halves of a release's CI-evidence flow, split so the harvest runs
+# exactly once. ``run_harvest`` is the network + validation gate; ``run_assemble``
+# is the network-free attach; ``run_bundle`` composes them for back-compat.
+
+
+def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
+    """Harvest a release's CI evidence into ``staging_dir`` (the pre-publish gate).
+
+    Each line is one library stage: resolve the release PR, its validated head
+    SHA and the qualifying CI run; derive the required gates and the check-run
+    conclusions; download and parse the evidence artifacts; enforce completeness
+    (raises :class:`IncompleteEvidenceError` before any state is persisted on a
+    missing gate). The harvested ``evidence/gates/`` tree and a
+    :class:`HarvestState` file are written into ``staging_dir`` so a later
+    :func:`run_assemble` needs no network. Returns the persisted state.
+    """
+    gates_dest = _evidence_root(staging_dir) / "gates"
+    gates_dest.mkdir(parents=True, exist_ok=True)
+
+    release_pr = resolve_release_pr(repo, merge_sha)
+    head_sha = github.head_sha(str(release_pr))
+    run = select_ci_run(repo, head_sha)
+
+    required = resolve_required_gates(repo, git.repo_root())
+    conclusions = read_gate_conclusions(repo, head_sha)
+
+    gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest)
+    harvested = load_harvested_gates(gate_dirs, required, conclusions)
+    validate_completeness(required, harvested)
+
+    state = HarvestState(
+        repo=repo,
+        released_commit=merge_sha,
+        release_pr=release_pr,
+        validated_head_sha=head_sha,
+        ci_run_urls=(str(run["html_url"]),),
+        checks=dict(conclusions),
+        gate_conclusions={name: gate.conclusion for name, gate in harvested.items()},
+    )
+    write_harvest_state(state, staging_dir)
+    return state
+
+
+def run_assemble(
+    staging_dir: Path,
+    *,
+    version: str,
+    generated_at: str,
+    out_dir: Path,
+    sbom_file: Path | None = None,
+) -> tuple[Path, Path]:
+    """Assemble the bundle from a persisted harvest (the post-release attach).
+
+    Network-free: read the :class:`HarvestState` and the on-disk ``evidence/``
+    tree, write ``checks.json`` / ``README.md`` / the optional SBOM, build and
+    write the manifest, tar the tree, and drop a standalone manifest next to the
+    tarball. Returns ``(tarball, standalone_manifest)`` in ``out_dir``.
+    """
+    state = read_harvest_state(staging_dir)
+    tag = f"v{version}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    write_checks_json(state.checks, staging_dir)
+    write_readme(staging_dir)
+    if sbom_file is not None:
+        copy_sbom(sbom_file, staging_dir)
+
+    gates = load_harvested_gates_from_state(state, staging_dir)
+    ctx = HarvestContext(
+        repo=state.repo,
+        version=version,
+        tag=tag,
+        released_commit=state.released_commit,
+        release_pr=state.release_pr,
+        validated_head_sha=state.validated_head_sha,
+        ci_run_urls=state.ci_run_urls,
+    )
+    manifest = build_manifest(
+        ctx, gates, generated_at=generated_at, missing_gates=[], staging_dir=staging_dir
+    )
+    manifest_path = write_manifest(manifest, staging_dir)
+
+    tarball = out_dir / evidence_asset_name(tag)
+    assemble_bundle(staging_dir, tarball)
+    standalone = out_dir / evidence_manifest_name(tag)
+    shutil.copyfile(manifest_path, standalone)
+    return tarball, standalone
+
+
+def run_bundle(
+    repo: str,
+    *,
+    version: str,
+    merge_sha: str,
+    generated_at: str,
+    out_dir: Path,
+    sbom_file: Path | None = None,
+) -> tuple[Path, Path]:
+    """Harvest then assemble in one shot, through a throwaway staging dir.
+
+    The original atomic ``bundle`` behaviour: :func:`run_harvest` followed by
+    :func:`run_assemble` over the same staging directory, so local dogfooding
+    and back-compat callers keep a single command. A release that runs the two
+    steps separately (cd-release) persists one shared staging dir instead and so
+    harvests only once.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp)
+        run_harvest(repo, merge_sha, staging)
+        return run_assemble(
+            staging,
+            version=version,
+            generated_at=generated_at,
+            out_dir=out_dir,
+            sbom_file=sbom_file,
+        )
