@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.1/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.3.4/">
+        <link rel="next" href="../v2.1.135/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.0 - VERGIL Tooling</title>
+        <title>2.1.136 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-140-2026-04-28" class="md-skip">
+        <a href="#release-21136-2026-07-13" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.0
+              2.1.136
             
           </span>
         </div>
@@ -1138,10 +1138,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.136/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.136
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1157,6 +1184,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -8026,37 +8084,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.0
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.0/" class="md-nav__link">
         
   
   
@@ -8072,48 +8103,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11389,21 +11378,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#refactoring" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
+        Refactoring
       
     </span>
   </a>
@@ -11427,62 +11405,19 @@
 
 
 
-<h1 id="release-140-2026-04-28">Release 1.4.0 (2026-04-28)<a class="headerlink" href="#release-140-2026-04-28" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21136-2026-07-13">Release 2.1.136 (2026-07-13)<a class="headerlink" href="#release-21136-2026-07-13" title="Permanent link">&para;</a></h1>
+<h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>replace docker info with docker version for daemon reachability check</strong>
-docker info queries full daemon state (storage drivers, plugins, container
-counts) and can fail or time out even when the daemon is reachable — producing
-false-positive 'Docker is not available' errors during st-finalize-repo
-post-finalization validation.</li>
+<li><strong>split vrg-ci-evidence into harvest + assemble subcommands (#2331)</strong>
+The atomic <code>vrg-ci-evidence bundle</code> re-harvests on every call (resolve PR, select CI run, download ci-evidence-* artifacts). cd-release runs it twice per release (gate + attach), doubling the artifact downloads and the failure surface for no benefit (#2330).</li>
 </ul>
-<p>docker version performs a lightweight API version handshake and is the
-standard reachability check. Also bumps the timeout from 10s to 15s to
-accommodate slower Docker Desktop VM wake-ups on macOS.</p>
-<p>Applied to both assert_docker_available() in lib/docker.py and the
-parallel _docker_is_available() in docker_test.py.</p>
+<p>Split the flow into two subcommands backed by lib orchestrators:</p>
 <ul>
-<li><strong>auto-chdir to main worktree instead of erroring from a secondary worktree</strong>
-st-finalize-repo errored when run from inside a .worktrees/ secondary
-worktree, telling the user to cd to the main worktree manually. This is a
-trivially correctable situation — the main worktree path is always discoverable
-via git rev-parse --git-common-dir.</li>
+<li><code>harvest --repo --merge-sha --out-dir &lt;staging&gt;</code>: resolve -&gt; select run -&gt; download -&gt; read conclusions -&gt; validate_completeness; persist the harvested evidence/ tree plus a versioned harvest-state.json (PR number, validated head SHA, run URLs, raw check conclusions, per-gate conclusions) into the staging dir. The pre-publish gate.</li>
+<li><code>assemble --staging &lt;dir&gt; --version --generated-at --out-dir [--sbom-file]</code>: read the persisted harvest -&gt; checks.json/README/SBOM -&gt; build + write manifest -&gt; tarball + standalone manifest. No network.</li>
+<li><code>bundle</code>: recomposed as harvest + assemble over a temp staging dir, byte-for-byte identical to the prior atomic behaviour (back-compat + local dogfooding).</li>
 </ul>
-<p>Now detects the secondary worktree, resolves the main worktree root via the
-new git.main_worktree_root() helper, chdirs there, and continues with a
-one-line note.</p>
-<ul>
-<li><strong>skip --delete-branch when running from a secondary worktree</strong>
-gh pr merge --delete-branch attempts to switch the local checkout back
-to the default branch after deleting the remote branch. This fails when the
-default branch is already checked out in the main worktree, causing a non-zero
-exit even though the merge itself succeeded.</li>
-</ul>
-<p>When running from a secondary worktree, skip --delete-branch and let
-st-finalize-repo handle branch and worktree cleanup as usual.</p>
-<ul>
-<li>
-<p><strong>bump stale standard-actions pins from @v1.1 to @v1.3</strong>
-Three standard-actions references were still pinned to @v1.1 while the
-rest of the fleet is on @v1.3: version-divergence in ci.yml, tag-and-release
-and version-bump-pr in publish.yml. Bumped all three to @v1.3.</p>
-</li>
-<li>
-<p><strong>support --help and -h as program options</strong></p>
-</li>
-</ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add post-publish workflow to verify dev container images carry the released version</strong>
-After publish.yml completes, a new verify-docker-images workflow polls
-dev-base:latest for up to ~25 minutes (13 attempts, 2-minute intervals) to
-confirm it carries the just-released standard-tooling version.</li>
-</ul>
-<p>If the image still carries a stale version after the wait window, the workflow
-fails and opens (or comments on) a bug issue with next-step instructions.</p>
-<p>This catches the silent-staleness scenario from standard-tooling-docker#67
-where the fleet ran a 6-week-old standard-tooling version because the image
-rebuild failed without anyone noticing.</p>
+<p>The harvest-state.json schema (HARVEST_STATE_SCHEMA_VERSION) is a stable interface so cd-release can persist one harvest across its two workflow steps. main stays a thin orchestrator; shared logic lives in lib.ci_evidence. Deterministic (generated_at injected). Full unit coverage for each subcommand plus a harvest-then-assemble == bundle equivalence test; 100% line coverage.</p>
 
 
 
