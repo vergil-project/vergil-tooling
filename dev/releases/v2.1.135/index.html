@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.36/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.34/">
+        <link rel="next" href="../v2.1.134/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.35 - VERGIL Tooling</title>
+        <title>2.1.135 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1435-2026-05-10" class="md-skip">
+        <a href="#release-21135-2026-07-13" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.35
+              2.1.135
             
           </span>
         </div>
@@ -1136,10 +1136,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.135/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.135
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1155,6 +1182,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -7044,37 +7102,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.35
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.35/" class="md-nav__link">
         
   
   
@@ -7090,48 +7121,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11359,21 +11348,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
+        Bug fixes
       
     </span>
   </a>
@@ -11397,15 +11375,13 @@
 
 
 
-<h1 id="release-1435-2026-05-10">Release 1.4.35 (2026-05-10)<a class="headerlink" href="#release-1435-2026-05-10" title="Permanent link">&para;</a></h1>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
+<h1 id="release-21135-2026-07-13">Release 2.1.135 (2026-07-13)<a class="headerlink" href="#release-21135-2026-07-13" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>bump version to 1.4.35</strong></li>
+<li><strong>batch CI-evidence asset lookups into a single releases API call (#2326)</strong>
+Replace the per-release _has_evidence_asset(repo, tag) lookup (one gh release view per staged release) with a single paginated 'gh api repos/{owner}/{repo}/releases' call that builds a {tag -&gt; has-evidence-asset} set once. Docs-build API calls drop from N (one per release) to at most one regardless of release count, shrinking GitHub's flakiness surface.</li>
 </ul>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add spec and plan for post-publish tag verification (#664)</strong></li>
-</ul>
+<p>The resolver is lazy and cached: zero release pages make zero calls, one or more make exactly one. No-silent-failure is preserved -- a genuine gh error still propagates; an unauthenticated gh now surfaces a clean 'GH_TOKEN required' error instead of a raw traceback (still failing loudly). The evidence_asset_name helper stays the single source of the asset name, and stage_docs' pure Callable[[str], bool] interface is unchanged.</p>
 
 
 
