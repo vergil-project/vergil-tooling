@@ -61,7 +61,7 @@ followed by the usual sweep, pull, and prune.
 ```bash
 vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
                 [--strategy {merge,squash,rebase}]
-                [--allow-provenance-violation] [--dry-run]
+                [--allow-provenance-violation] [--clean-dirty] [--dry-run]
 ```
 
 ## Arguments
@@ -73,6 +73,7 @@ vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
 | `--target-branch` | Branch to switch to (default: `develop`) |
 | `--strategy` | Merge strategy when a PR is given (default: `squash`) |
 | `--allow-provenance-violation` | Proceed despite provenance violations (conscious human override) |
+| `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Show what would be done without making changes |
 
 ## Behavior
@@ -128,6 +129,40 @@ target's tip as merged:
 Both guards gate the worktree removal as strictly as the branch
 deletion. The explicit-target cleanup (step 1a) is unaffected — the
 just-merged PR branch has merge evidence by construction.
+
+#### Stuck merged worktrees are surfaced, not buried
+
+A merged/closed worktree the sweep cannot remove — its tree is dirty,
+or its branch name was reused after a same-named PR merged
+(issue #1719) — is neither live work nor removable cruft. Rather than leaving
+the skip reason inside the collapsed progress-stage log (where a clean
+`✓ cleanup` summary hides it), finalize reports every such worktree
+**prominently after the pipeline**, with the reason, so finishing with
+stuck worktrees is impossible to miss (issue #2348).
+
+#### `--clean-dirty`: guarded clear of untracked-only dirt
+
+The common Mac case is a merged worktree whose only "dirt" is
+un-gitignored build or validation output. `--clean-dirty` offers an
+opt-in path to clear exactly that, after the pipeline, on real stdio:
+
+- Only a **merged/closed** worktree whose **every** uncommitted path is
+  **untracked** is a candidate. A reused-branch straggler classifies as
+  `no-pr`/`draft` (its merged verdict withheld, issue #1719), so it is
+  never in a clearable state and its unmerged commits are never at risk.
+- A worktree with **modified tracked files** is refused — those are
+  never discarded — and left surfaced as needing attention.
+- Each removal **shows exactly what will be deleted** (the untracked
+  paths) and **requires confirmation** before `git worktree remove
+  --force` discards the output and deletes the branch.
+
+The default guards are unchanged: without `--clean-dirty`, anything with
+tracked modifications or unmerged commits is protected, as before.
+
+> **Tip:** the cleaner fix is to gitignore your validation output so the
+> worktree is never dirtied in the first place — then it sweeps
+> automatically with no `--clean-dirty` needed. That is repo-specific
+> configuration, out of scope for finalize itself.
 
 Eternal branches are protected based on the `branching_model`:
 
