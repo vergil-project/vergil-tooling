@@ -53,7 +53,9 @@ def _wire_github_stages(
 def _full_download(gates: tuple[str, ...]) -> Any:
     """A download fixture that stages ``evidence.json`` + a report for each gate."""
 
-    def _download(_repo: str, _run_id: int, dest: Path) -> list[Path]:
+    def _download(
+        _repo: str, _run_id: int, dest: Path, _required: tuple[EvidenceGate, ...]
+    ) -> list[Path]:
         gate_dirs: list[Path] = []
         for gate in gates:
             gate_dir = dest / gate
