@@ -132,7 +132,6 @@ full flag list.
 vrg-submit-pr \
   --issue 42 \
   --summary "Add LRU cache to pipeline" \
-  --linkage Fixes \
   --notes "$(cat /tmp/pr-notes.txt)"
 ```
 
@@ -154,6 +153,18 @@ vrg-submit-pr \
     [vergil-tooling#268](https://github.com/vergil-project/vergil-tooling/issues/268).
 
 See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
+
+!!! note "Agent handoff and the post-report-ready freeze"
+    In an agent session, submission is a **human** action. The agent
+    instead runs `vrg-pr-workflow report-ready` to record the PR
+    metadata in `.vergil/pr-workflow.json`, then stops; the human runs
+    `vrg-submit-pr`. Recording ready **freezes the branch**: `vrg-commit`
+    and the `vrg-git` push path refuse further commits/pushes on it,
+    because a task is exactly one PR and more work is a new follow-up
+    issue. Correcting the PR prose (re-running `report-ready`) is still
+    allowed; deliberately reopening the branch needs
+    `vrg-pr-workflow unfreeze`. See the tool's entry in the
+    [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
 ### 4. Wait for review, merge manually
 
@@ -179,6 +190,15 @@ This:
 Run this immediately after the PR merges. A Stop hook in the plugin
 will remind you if you try to end the session with an unsubmitted
 or unfinalized PR still dangling.
+
+A merged worktree the sweep cannot remove (a dirty tree, or a reused
+branch name with unmerged commits) is not deleted silently —
+`vrg-finalize-pr` surfaces it **prominently after the pipeline** so it
+is impossible to miss, and `vrg-worktree-status` counts it under
+**needs-attention** rather than hiding it as active. When the only dirt
+is un-gitignored build/validation output, `--clean-dirty` clears it
+after confirmation; better still, gitignore that output so the worktree
+sweeps automatically.
 
 See the [vrg-finalize-pr reference](../reference/dev/finalize-pr.md).
 

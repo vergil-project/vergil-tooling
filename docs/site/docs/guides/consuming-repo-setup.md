@@ -251,6 +251,15 @@ Add `.worktrees/` to your `.gitignore`:
 echo '.worktrees/' >> .gitignore
 ```
 
+!!! tip "Gitignore your validation/build output too"
+    Also keep validation and build artifacts (coverage reports, compiled
+    output, cache dirs, temporary venvs) out of the tree via `.gitignore`.
+    Un-gitignored output dirties a worktree, and a *merged* worktree left
+    dirty is one `vrg-finalize-pr` cannot auto-remove — it surfaces as
+    **needs-attention** in `vrg-worktree-status` and requires the opt-in
+    `--clean-dirty` (or a manual clean) to clear. Gitignoring the output
+    up front means merged worktrees sweep automatically.
+
 Add a `## Parallel AI agent development` section to your
 `CLAUDE.md`. Every managed repo has one you can copy — they differ
 only in the repo name and example issue number. The canonical text
