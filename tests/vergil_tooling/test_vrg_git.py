@@ -564,6 +564,66 @@ def test_push_normal_allowed() -> None:
     assert rc == 0
 
 
+def test_push_refused_when_frozen(capsys: pytest.CaptureFixture[str], tmp_path: Path) -> None:
+    # A branch reported ready is frozen; an agent push is refused before any
+    # git push runs (#2346).
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with (
+        patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_git.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=True, message="branch FROZEN; unfreeze first"),
+        ),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        rc = main(["push", "origin", "feature/42-x"])
+    assert rc == 1
+    assert "FROZEN" in capsys.readouterr().err
+    mock_run.assert_not_called()
+
+
+def test_push_warns_but_proceeds_on_freeze_read_error(
+    capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    # A corrupt PR-workflow state must not hard-block a push; it warns and
+    # proceeds rather than silently swallowing the read error (#2346).
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with (
+        patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_git.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=False, read_error="bad json"),
+        ),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="", stderr=""
+        )
+        rc = main(["push", "origin", "feature/42-x"])
+    assert rc == 0
+    assert "could not read PR-workflow state" in capsys.readouterr().err
+
+
+def test_push_allowed_when_not_frozen(tmp_path: Path) -> None:
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with (
+        patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_git.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=False),
+        ),
+        patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "push"], returncode=0, stdout="", stderr=""
+        )
+        rc = main(["push", "origin", "feature/42-x"])
+    assert rc == 0
+
+
 def test_checkout_dot_denied(capsys: pytest.CaptureFixture[str]) -> None:
     assert main(["checkout", "--", "."]) != 0
 

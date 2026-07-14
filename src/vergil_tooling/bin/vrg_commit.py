@@ -20,6 +20,7 @@ from vergil_tooling.lib.commit_message import (
     build_commit_message,
     contains_autoclose,
 )
+from vergil_tooling.lib.pr_workflow import freeze
 
 _PROTECTED_BRANCHES = {"develop", "release", "main"}
 
@@ -168,6 +169,20 @@ def main(argv: list[str] | None = None) -> int:
     rc = _validate_commit_context(root, branching_model)
     if rc != 0:
         return rc
+
+    # Freeze gate: once this branch was reported ready, a new commit would move
+    # its tip past the reported/merged commit and strand the worktree
+    # (issue #1719). Reopening requires the deliberate `vrg-pr-workflow unfreeze`.
+    freeze_check = freeze.check_worktree(root, action="add a commit")
+    if freeze_check.read_error is not None:
+        print(
+            f"WARNING: could not read PR-workflow state ({freeze_check.read_error}); "
+            "proceeding without a freeze check.",
+            file=sys.stderr,
+        )
+    if freeze_check.frozen:
+        print(freeze_check.message, file=sys.stderr)
+        return 1
 
     if args.body and contains_autoclose(args.body):
         return _reject(
