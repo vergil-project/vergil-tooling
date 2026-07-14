@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.137] - 2026-07-14
+
+### Bug fixes
+
+- force GET on the actions/runs harvest query (#2335) (#2336)
+
 ## [2.1.136] - 2026-07-13
 
 ### Refactoring
