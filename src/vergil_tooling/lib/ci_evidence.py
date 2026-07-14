@@ -448,11 +448,14 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     Cancelled and in-progress runs are ignored. Raises
     :class:`NoQualifyingRunError` when no run qualifies (spec §5.2).
     """
+    # The query string MUST be in the endpoint path, not a ``-f head_sha=…``
+    # field: ``gh api`` switches to POST the moment any ``-f``/``-F`` field is
+    # present, and ``GET /actions/runs`` is GET-only, so a POST returns HTTP 404
+    # and silently sinks the whole harvest (issue #2335). Keeping the filter in
+    # the URL preserves the GET verb.
     raw = github.read_json(
         "api",
-        f"repos/{repo}/actions/runs",
-        "-f",
-        f"head_sha={head_sha}",
+        f"repos/{repo}/actions/runs?head_sha={head_sha}",
         "--jq",
         ".workflow_runs",
     )
