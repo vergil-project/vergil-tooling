@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.139] - 2026-07-14
+
+### Bug fixes
+
+- keep interactive cloud sessions off the shared SSH control master (#2345) (#2350)
+- freeze a branch after report-ready — refuse post-ready commits/pushes (#2351)
+- surface merged-but-dirty worktrees as needs-attention (#2352)
+
 ## [2.1.138] - 2026-07-14
 
 ### Bug fixes
