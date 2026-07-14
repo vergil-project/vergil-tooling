@@ -16,6 +16,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
     _check_cd_workflow_status,
+    _dirt_is_untracked_only,
     _parse_pr_list,
     _resolve_open_prs,
     _resolve_strategy,
@@ -1646,6 +1647,236 @@ def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
     assert result == 0
     gather.assert_not_called()
     deleter.assert_not_called()
+
+
+# -- surface + guarded clear of stuck merged worktrees (issue #2348) ----------
+
+
+def _stuck_status(
+    tmp_path: Path,
+    *,
+    branch: str = "feature/9-x",
+    state: WorktreeState = WorktreeState.MERGED,
+    detail: str | None = "merged PR #9 but worktree is dirty — 1 uncommitted path(s): out.log.",
+) -> WorktreeStatus:
+    """A merged/closed-but-stuck worktree status: dirty, not removable, and
+    flagged needs_attention (what gather_worktree_status returns for the
+    build-turd case, issue #2347)."""
+    wt = Worktree(path=tmp_path / ".worktrees" / "issue-9-x", branch=branch)
+    return WorktreeStatus(
+        worktree=wt,
+        state=state,
+        pr_number=9,
+        ahead=1,
+        dirty=True,
+        detail=detail,
+        needs_attention=True,
+    )
+
+
+@contextmanager
+def _sweep_with_stuck(tmp_path: Path, status: WorktreeStatus) -> Iterator[list[tuple[str, ...]]]:
+    """Drive a cleanup-only run whose single worktree classifies as *status*.
+
+    Yields the captured git.run call list so a test can assert on (or against)
+    the deletion commands. gather_worktree_status is stubbed to *status*, so
+    the worktree arm records it as stuck (issue #2348).
+    """
+    calls: list[tuple[str, ...]] = []
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run", side_effect=lambda *a: calls.append(a)),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[status.worktree]),
+        patch(_MOD + ".worktrees.gather_worktree_status", return_value=status),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        yield calls
+
+
+def test_parse_args_clean_dirty_defaults_false() -> None:
+    assert parse_args([]).clean_dirty is False
+
+
+def test_parse_args_clean_dirty_flag() -> None:
+    assert parse_args(["--clean-dirty"]).clean_dirty is True
+
+
+def test_dirt_is_untracked_only_true_for_all_untracked() -> None:
+    assert _dirt_is_untracked_only("?? out.log\n?? .coverage\n") is True
+
+
+def test_dirt_is_untracked_only_false_for_modified_tracked() -> None:
+    assert _dirt_is_untracked_only(" M src/app.py\n") is False
+    assert _dirt_is_untracked_only("M  src/app.py\n") is False
+    assert _dirt_is_untracked_only("A  new.py\n") is False
+
+
+def test_dirt_is_untracked_only_false_when_mixed() -> None:
+    assert _dirt_is_untracked_only("?? out.log\n M src/app.py\n") is False
+
+
+def test_dirt_is_untracked_only_false_when_empty() -> None:
+    assert _dirt_is_untracked_only("") is False
+    assert _dirt_is_untracked_only("\n  \n") is False
+
+
+def test_stuck_merged_worktree_is_surfaced_not_buried(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A merged-but-dirty worktree the sweep leaves behind is reported
+    prominently after the pipeline, with its reason — not just in the
+    collapsed stage log (issue #2348)."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path)
+    with _sweep_with_stuck(tmp_path, status) as calls:
+        rc = main(["--cleanup-only"])
+    assert rc == 0
+    # Default (no --clean-dirty): never deletes.
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert not any(c[:2] == ("branch", "-D") for c in calls)
+    out = capsys.readouterr().out
+    assert "needs attention" in out
+    assert "feature/9-x" in out
+    assert "worktree is dirty" in out
+    assert "--clean-dirty" in out  # points at the opt-in remedy
+
+
+def test_clean_dirty_clears_untracked_only_worktree(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--clean-dirty force-removes a merged worktree dirtied only by untracked
+    build output, after confirmation."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path)
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + "._worktree_porcelain", return_value="?? out.log\n?? .coverage\n"),
+        patch(_MOD + ".confirm", return_value=True) as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    confirm.assert_called_once()
+    assert ("worktree", "remove", "--force", str(status.worktree.path)) in calls
+    assert ("branch", "-D", "feature/9-x") in calls
+    out = capsys.readouterr().out
+    assert "untracked: out.log" in out
+    # Cleared → not re-surfaced as needing attention.
+    assert "needs attention" not in out
+
+
+def test_clean_dirty_refuses_modified_tracked_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--clean-dirty never discards modified tracked files: the worktree is
+    refused (no deletion) and surfaced as still needing attention."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path)
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + "._worktree_porcelain", return_value=" M src/app.py\n?? out.log\n"),
+        patch(_MOD + ".confirm") as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    confirm.assert_not_called()
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert not any(c[:2] == ("branch", "-D") for c in calls)
+    out = capsys.readouterr().out
+    assert "refusing feature/9-x" in out
+    assert "modified tracked files" in out
+    assert "needs attention" in out
+
+
+def test_clean_dirty_refuses_reused_branch_straggler(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Issue #1719: a reused branch name classifies as NO_PR (its merged
+    verdict withheld). --clean-dirty must never clear it — its current commits
+    are unmerged — so the porcelain is not even inspected."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(
+        tmp_path,
+        branch="feature/286-reused",
+        state=WorktreeState.NO_PR,
+        detail="closed PR #293 head 0ldd0cs does not match branch tip — reused (issue #1719)",
+    )
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + "._worktree_porcelain") as porcelain,
+        patch(_MOD + ".confirm") as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    porcelain.assert_not_called()  # state guard decides before reading dirt
+    confirm.assert_not_called()
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    assert not any(c[:2] == ("branch", "-D") for c in calls)
+    out = capsys.readouterr().out
+    assert "refusing feature/286-reused" in out
+    assert "reused" in out
+
+
+def test_clean_dirty_decline_leaves_worktree_and_surfaces(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Declining the confirmation leaves the worktree untouched and still
+    surfaced as needing attention. This status carries no detail, exercising
+    the fallback description in the surfaced report."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path, detail=None)
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + "._worktree_porcelain", return_value="?? out.log\n"),
+        patch(_MOD + ".confirm", return_value=False),
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty"])
+    assert rc == 0
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    out = capsys.readouterr().out
+    assert "left feature/9-x in place" in out
+    assert "needs attention" in out
+    assert "merged, not removable" in out  # detail=None → fallback
+
+
+def test_clean_dirty_dry_run_shows_plan_without_removing(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--clean-dirty --dry-run shows what would be deleted and neither prompts
+    nor removes anything."""
+    _make_profile(tmp_path, "library-release")
+    status = _stuck_status(tmp_path)
+    with (
+        _sweep_with_stuck(tmp_path, status) as calls,
+        patch(_MOD + "._worktree_porcelain", return_value="?? out.log\n"),
+        patch(_MOD + ".confirm") as confirm,
+    ):
+        rc = main(["--cleanup-only", "--clean-dirty", "--dry-run"])
+    assert rc == 0
+    confirm.assert_not_called()
+    assert not any(c[:1] == ("worktree",) for c in calls)
+    out = capsys.readouterr().out
+    assert "would remove the worktree and:" in out
+    assert "[dry-run] git worktree remove --force" in out
+
+
+def test_clean_dirty_reads_porcelain_from_worktree_path() -> None:
+    """_worktree_porcelain shells git into the worktree and returns its
+    porcelain; a git failure yields '' so the caller refuses (safe default)."""
+    from vergil_tooling.bin.vrg_finalize_pr import _worktree_porcelain
+
+    with patch(
+        _MOD + ".subprocess.run",
+        return_value=CompletedProcess(args=(), returncode=0, stdout="?? out.log\n"),
+    ):
+        assert _worktree_porcelain(Path("/wt")) == "?? out.log\n"
+    with patch(
+        _MOD + ".subprocess.run",
+        return_value=CompletedProcess(args=(), returncode=128, stdout=""),
+    ):
+        assert _worktree_porcelain(Path("/wt")) == ""
 
 
 # -- --release: chain into vrg-release after a clean finalize (issue #1634) ----
