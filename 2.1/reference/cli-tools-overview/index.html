@@ -1078,6 +1078,8 @@
       
         
       
+        
+      
     
     
     
@@ -1130,6 +1132,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.141/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.141
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -8704,6 +8734,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-when-green" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -11813,6 +11854,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-pr-workflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-pr-workflow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-merge-when-green" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12125,7 +12177,7 @@ and opens a PR with a populated template body.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Fixes), <code>--notes</code>, <code>--title</code>, <code>--dry-run</code></td>
+<td><code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>, <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -12178,6 +12230,52 @@ standards failures during the pr-watch reconcile loop (denied to the
 <tr>
 <td>Exit codes</td>
 <td>0 success, 1 rejection or error</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-pr-workflow">vrg-pr-workflow<a class="headerlink" href="#vrg-pr-workflow" title="Permanent link">&para;</a></h3>
+<p>Record and manage the PR handoff state in <code>.vergil/pr-workflow.json</code> —
+the oracle <code>vrg-submit-pr</code> reads. <code>report-ready</code> writes the PR metadata
+(<code>--issue/--title/--summary/--notes</code>, optional <code>--linkage</code>) and marks the
+branch <strong>ready</strong>; it is idempotent — re-running overwrites the recorded
+prose (correcting the title/summary/notes is always allowed). Reaching
+<strong>ready</strong> <em>freezes</em> the branch: <code>vrg-commit</code> and the <code>vrg-git</code> push path
+then refuse further commits/pushes, because a task is exactly one PR and
+more work is a new follow-up issue (epic #146). <code>unfreeze</code> is the only
+sanctioned way to reopen a still-unsubmitted branch — it drops the state
+back to <code>implementing</code> while keeping the metadata; an already-submitted
+branch cannot be unfrozen. <code>status</code> prints the current state.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_pr_workflow</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>report-ready</code> (<code>--issue</code>, <code>--title</code>, <code>--summary</code>, <code>--notes</code> required; <code>--linkage</code> default Ref), <code>unfreeze</code>, <code>status</code>; global <code>--base</code> (default: origin/develop)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Git repo; run from the worktree whose branch is being staged</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>WorkflowError</code> on stderr (e.g. unfreeze after submit, or nothing to unfreeze)</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>
@@ -12266,7 +12364,13 @@ Claude plugin, VERSION file) to find the version.</p>
 it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
 the target branch, fast-forward pulls, deletes merged local branches
 (auto-removing worktrees inside <code>.worktrees/</code> when necessary), prunes
-remotes, runs validation, and checks the CD workflow status.</p>
+remotes, runs validation, and checks the CD workflow status. A
+merged/closed worktree the sweep cannot remove — a dirty tree, or a
+reused branch name with unmerged commits (issue #1719) — is surfaced
+<strong>prominently after the pipeline</strong> rather than buried in the stage log;
+<code>--clean-dirty</code> opt-in clears one whose only dirt is untracked
+build/validation output, after showing the paths and confirming
+(issue #2348).</p>
 <table>
 <thead>
 <tr>
@@ -12281,7 +12385,7 @@ remotes, runs validation, and checks the CD workflow status.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash), <code>--allow-provenance-violation</code>, <code>--dry-run</code></td>
+<td><code>PR</code> (optional), <code>--target-branch</code> (default: develop), <code>--strategy</code> (default: squash), <code>--allow-provenance-violation</code>, <code>--clean-dirty</code>, <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
@@ -12307,7 +12411,13 @@ state, so removable cruft (merged/closed PRs whose worktree was never
 cleaned up) is distinguishable from in-flight work at a glance.
 Read-only — cleanup stays <code>vrg-finalize-pr</code>'s job. PR state is queried
 from GitHub per worktree; a failed lookup shows as <code>unknown</code> with the
-reason rather than being silently downgraded.</p>
+reason rather than being silently downgraded. The summary counts fall
+into disjoint buckets — <strong>active</strong>, <strong>needs-attention</strong>, <strong>stalled
+(no-pr)</strong>, and <strong>cruft (removable)</strong>. A finished-but-stuck worktree
+(merged/closed but not removable: dirty, or a reused branch name whose
+merged verdict was withheld, issue #1719) is counted under
+<strong>needs-attention</strong> with an actionable note, never miscounted as active
+behind a "0 cruft" message (issue #2347).</p>
 <table>
 <thead>
 <tr>

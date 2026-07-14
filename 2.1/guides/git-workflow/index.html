@@ -1078,6 +1078,8 @@
       
         
       
+        
+      
     
     
     
@@ -1130,6 +1132,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.141/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.141
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12177,8 +12207,7 @@ full flag list.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add LRU cache to pipeline&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--linkage<span class="w"> </span>Fixes<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span>--notes<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/pr-notes.txt<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--notes<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/pr-notes.txt<span class="k">)</span><span class="s2">&quot;</span>
 </code></pre></div>
 <p><code>vrg-submit-pr</code>:</p>
 <ul>
@@ -12199,6 +12228,19 @@ merge. Removing that call is tracked in
 <a href="https://github.com/vergil-project/vergil-tooling/issues/268">vergil-tooling#268</a>.</p>
 </div>
 <p>See the <a href="../../reference/dev/submit-pr/">vrg-submit-pr reference</a>.</p>
+<div class="admonition note">
+<p class="admonition-title">Agent handoff and the post-report-ready freeze</p>
+<p>In an agent session, submission is a <strong>human</strong> action. The agent
+instead runs <code>vrg-pr-workflow report-ready</code> to record the PR
+metadata in <code>.vergil/pr-workflow.json</code>, then stops; the human runs
+<code>vrg-submit-pr</code>. Recording ready <strong>freezes the branch</strong>: <code>vrg-commit</code>
+and the <code>vrg-git</code> push path refuse further commits/pushes on it,
+because a task is exactly one PR and more work is a new follow-up
+issue. Correcting the PR prose (re-running <code>report-ready</code>) is still
+allowed; deliberately reopening the branch needs
+<code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
+<a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
+</div>
 <h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
 <p>Once CI is green and a reviewer approves, merge through the GitHub
 UI (squash merge for feature PRs). No automated merge will happen.</p>
@@ -12218,6 +12260,14 @@ UI (squash merge for feature PRs). No automated merge will happen.</p>
 <p>Run this immediately after the PR merges. A Stop hook in the plugin
 will remind you if you try to end the session with an unsubmitted
 or unfinalized PR still dangling.</p>
+<p>A merged worktree the sweep cannot remove (a dirty tree, or a reused
+branch name with unmerged commits) is not deleted silently —
+<code>vrg-finalize-pr</code> surfaces it <strong>prominently after the pipeline</strong> so it
+is impossible to miss, and <code>vrg-worktree-status</code> counts it under
+<strong>needs-attention</strong> rather than hiding it as active. When the only dirt
+is un-gitignored build/validation output, <code>--clean-dirty</code> clears it
+after confirmation; better still, gitignore that output so the worktree
+sweeps automatically.</p>
 <p>See the <a href="../../reference/dev/finalize-pr/">vrg-finalize-pr reference</a>.</p>
 <h2 id="parallel-work-with-worktrees">Parallel work with worktrees<a class="headerlink" href="#parallel-work-with-worktrees" title="Permanent link">&para;</a></h2>
 <p>Use the worktree convention when running <strong>more than one agent in

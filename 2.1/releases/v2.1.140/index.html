@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.141/">
       
       
         <link rel="next" href="../v2.1.139/">
@@ -1085,6 +1085,8 @@
       
         
       
+        
+      
     
     
     
@@ -1140,6 +1142,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.141/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.141
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11533,6 +11563,7 @@ The finalize sweep printed the skip reason for a merged/closed worktree it could
 </ul>
 <p>Change 1 (surface, do not bury): _stage_cleanup collects any needs_attention worktree (reusing the issue #2347 classification) into the context, and after the pipeline tears down its live display, reports them prominently with the reason so finishing with stuck worktrees is impossible to miss.</p>
 <p>Change 2 (guarded clear): the opt-in --clean-dirty flag clears a merged/closed worktree whose every uncommitted path is untracked, after showing exactly what will be deleted and confirming. It refuses modified tracked files and reused-branch stragglers via a state guard, reusing _delete_branch_and_worktree with a new force flag. The default guards are unweakened.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.140/v2.1.140-ci-evidence.tar.gz">Download →</a></p>
 
 
 

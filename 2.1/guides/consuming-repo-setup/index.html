@@ -1078,6 +1078,8 @@
       
         
       
+        
+      
     
     
     
@@ -1130,6 +1132,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.141/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.141
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12021,6 +12051,16 @@ tiny changes:</p>
 <p>Add <code>.worktrees/</code> to your <code>.gitignore</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nb">echo</span><span class="w"> </span><span class="s1">&#39;.worktrees/&#39;</span><span class="w"> </span>&gt;&gt;<span class="w"> </span>.gitignore
 </code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Gitignore your validation/build output too</p>
+<p>Also keep validation and build artifacts (coverage reports, compiled
+output, cache dirs, temporary venvs) out of the tree via <code>.gitignore</code>.
+Un-gitignored output dirties a worktree, and a <em>merged</em> worktree left
+dirty is one <code>vrg-finalize-pr</code> cannot auto-remove — it surfaces as
+<strong>needs-attention</strong> in <code>vrg-worktree-status</code> and requires the opt-in
+<code>--clean-dirty</code> (or a manual clean) to clear. Gitignoring the output
+up front means merged worktrees sweep automatically.</p>
+</div>
 <p>Add a <code>## Parallel AI agent development</code> section to your
 <code>CLAUDE.md</code>. Every managed repo has one you can copy — they differ
 only in the repo name and example issue number. The canonical text
