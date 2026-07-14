@@ -94,6 +94,42 @@ def test_apply_submitted_records_marker() -> None:
     }
 
 
+def test_apply_unfreeze_reopens_and_keeps_metadata() -> None:
+    state = _fresh()
+    engine.apply_report_ready(
+        state,
+        title="t",
+        summary="s",
+        notes="n",
+        linkage="Ref",
+        head_sha="ccc",
+        now="2026-06-25T01:00:00Z",
+    )
+    engine.apply_unfreeze(state, now="2026-06-25T02:00:00Z")
+    assert state.status == "implementing"
+    # Metadata is retained so a later report-ready refreshes rather than re-inits.
+    assert state.pr_metadata == {"title": "t", "summary": "s", "notes": "n", "linkage": "Ref"}
+    assert state.updated_at == "2026-06-25T02:00:00Z"
+
+
+def test_apply_unfreeze_refuses_after_submit() -> None:
+    state = _fresh()
+    engine.apply_report_ready(
+        state,
+        title="t",
+        summary="s",
+        notes="n",
+        linkage="Ref",
+        head_sha="ccc",
+        now="2026-06-25T01:00:00Z",
+    )
+    engine.apply_submitted(
+        state, pr_url="https://github.com/o/r/pull/7", pr_number=7, now="2026-06-25T02:00:00Z"
+    )
+    with pytest.raises(WorkflowError, match="already been submitted"):
+        engine.apply_unfreeze(state, now="2026-06-25T03:00:00Z")
+
+
 def test_reject_autoclose_skips_none_values() -> None:
     """_reject_autoclose must not crash when a field value is None."""
     # Access via the module to exercise the None-skip branch (line coverage).

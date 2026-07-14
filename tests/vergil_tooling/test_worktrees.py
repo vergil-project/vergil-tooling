@@ -265,6 +265,48 @@ def test_classify_merged_head_match_remains_removable() -> None:
     assert status.removable is True
 
 
+# -- needs_attention (issue #2347) -------------------------------------------
+
+
+def test_classify_merged_dirty_needs_attention() -> None:
+    """Issue #2347: a merged PR whose tree is dirty is finished-but-stuck —
+    not removable, not live work — and must be flagged needs_attention."""
+    status = _classify(pr_number=11, pr_state="MERGED", ahead=2, dirty=True)
+    assert status.state is WorktreeState.MERGED
+    assert status.removable is False
+    assert status.needs_attention is True
+
+
+def test_classify_closed_dirty_needs_attention() -> None:
+    status = _classify(pr_number=12, pr_state="CLOSED", ahead=1, dirty=True)
+    assert status.state is WorktreeState.CLOSED
+    assert status.removable is False
+    assert status.needs_attention is True
+
+
+def test_classify_merged_clean_is_not_needs_attention() -> None:
+    """Removable cruft (merged + clean + matching tip) is not needs_attention;
+    it stays plain cleanup, never the attention bucket."""
+    status = _classify(pr_number=11, pr_state="MERGED", ahead=2)
+    assert status.removable is True
+    assert status.needs_attention is False
+
+
+def test_classify_reused_branch_needs_attention() -> None:
+    """A reused branch name withholds the merged verdict (issue #1719); the
+    worktree is still finished-but-stuck, so it is flagged needs_attention."""
+    status = _classify(pr_number=293, pr_state="MERGED", ahead=9, merged_head_matches_tip=False)
+    assert status.state is WorktreeState.NO_PR
+    assert status.removable is False
+    assert status.needs_attention is True
+
+
+def test_classify_live_work_is_not_needs_attention() -> None:
+    assert _classify(pr_number=10, pr_state="OPEN", ahead=2).needs_attention is False
+    assert _classify(ahead=1).needs_attention is False  # NO_PR stalled
+    assert _classify(pr_lookup_failed=True).needs_attention is False
+
+
 # -- gather_worktree_status (I/O wrapper) ------------------------------------
 
 
@@ -320,6 +362,72 @@ def test_gather_dirty_overlay_blocks_removal() -> None:
     assert status.removable is False
 
 
+def test_gather_merged_dirty_flags_attention_with_dirt_detail() -> None:
+    """Issue #2347: reproduce the real Mac scenario — a merged worktree left
+    dirty by build output. It must be flagged needs_attention (not removable,
+    not live work) with an actionable note naming the offending paths."""
+    porcelain = " M dist/app.js\n?? build/out.log\n?? coverage/\n"
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=2),
+        patch(_MOD + ".git.read_output", return_value=porcelain),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.state is WorktreeState.MERGED
+    assert status.dirty is True
+    assert status.removable is False
+    assert status.needs_attention is True
+    assert status.detail is not None
+    assert "merged PR #11" in status.detail
+    assert "dirty" in status.detail
+    assert "3 uncommitted path(s)" in status.detail
+    assert "dist/app.js" in status.detail
+    assert "vrg-finalize-pr" in status.detail
+
+
+def test_gather_merged_dirt_detail_truncates_long_lists() -> None:
+    porcelain = "".join(f"?? file{i}.tmp\n" for i in range(8))
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=0),
+        patch(_MOD + ".git.read_output", return_value=porcelain),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.detail is not None
+    assert "8 uncommitted path(s)" in status.detail
+    assert "(+3 more)" in status.detail
+
+
+def test_gather_merged_clean_has_no_attention_or_dirt_detail() -> None:
+    with (
+        patch(_MOD + ".git.commits_ahead", return_value=1),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.commit_sha", return_value="cafef00d"),
+        patch(_MOD + ".github.pr_for_branch", return_value=None),
+        patch(
+            _MOD + ".github.closed_pr_for_branch",
+            return_value={"number": "11", "url": "", "title": "t", "headRefOid": "cafef00d"},
+        ),
+        patch(_MOD + ".github.pr_state", return_value="MERGED"),
+    ):
+        status = gather_worktree_status(_SAMPLE_WT, target="develop")
+    assert status.removable is True
+    assert status.needs_attention is False
+    assert status.detail is None
+
+
 def test_gather_reused_branch_name_is_not_removable() -> None:
     """Issue #1719: a branch name reused after a same-named PR merged must
     not be classified MERGED — its current tip carries unmerged work."""
@@ -338,6 +446,7 @@ def test_gather_reused_branch_name_is_not_removable() -> None:
         status = gather_worktree_status(_SAMPLE_WT, target="develop")
     assert status.state is WorktreeState.NO_PR
     assert status.removable is False
+    assert status.needs_attention is True
     assert status.detail is not None
     assert "#293" in status.detail
     assert "reused" in status.detail
