@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.140/">
       
       
         <link rel="next" href="../v2.1.138/">
@@ -1083,6 +1083,8 @@
       
         
       
+        
+      
     
     
     
@@ -1138,6 +1140,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.140/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.140
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11514,6 +11544,7 @@ Interactive off-platform (IAP/ssh) sessions dropped frequently with "Shared conn
 A merged/closed PR whose worktree is not removable (dirty tree, or a reused branch name that withheld the merged verdict per #1719) was miscounted into 'active' by _summary and hidden behind a '0 cruft' message. A real Mac run showed four stuck merged worktrees reported as '4 active ... 0 cruft'.</li>
 </ul>
 <p>Add a needs_attention flag to WorktreeStatus, set in classify_worktree when the PR is merged/closed but the worktree is not removable. _summary now counts these in a dedicated needs-attention bucket, never as active or stalled, and prints a pointer to the notes. gather_worktree_status emits an actionable note for the merged-but-dirty case showing the count and offending paths so the human can see it is just build output.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.139/v2.1.139-ci-evidence.tar.gz">Download →</a></p>
 
 
 
