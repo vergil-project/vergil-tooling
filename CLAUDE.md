@@ -152,6 +152,39 @@ finalization are human actions. The PR handoff is:
    state file, previews the PR, and submits after confirmation.
 3. The human merges and runs post-merge cleanup (`vrg-finalize-pr`).
 
+**Once you run `report-ready`, the branch is frozen.** `report-ready`
+records the branch as the single, finished deliverable for its issue, so
+until the human submits it must not change. Enforcement is at two
+chokepoints — `vrg-commit` refuses a further commit and the `vrg-git`
+push path refuses a further push — both printing an actionable refusal
+(and a loud DRIFT warning if HEAD has already advanced past the reported
+commit, the reused-branch straggler of epic #146 / issue #1719). The rule
+follows directly from "a task is exactly one PR": more work is a **new
+follow-up issue**, never a change to this branch. Two things stay allowed:
+
+- **Correcting the PR prose** — re-running `report-ready` overwrites the
+  recorded title/summary/notes. That is metadata, not code, so it is not
+  frozen.
+- **Deliberately reopening the branch** — `vrg-pr-workflow unfreeze` drops
+  the workflow back to `implementing` (keeping the recorded metadata) so
+  commits/pushes are allowed again. This is the *only* sanctioned way to
+  lift the freeze; it is a distinct, explicit action precisely so
+  reopening a branch is never a silent side effect. An **already-submitted**
+  branch cannot be unfrozen — its PR exists, so further work is a new
+  follow-up issue, full stop.
+
+When the human finalizes, `vrg-finalize-pr` will not silently strand a
+merged worktree it cannot remove (dirty tree, or a reused branch name with
+unmerged commits): it surfaces every such worktree **prominently after the
+pipeline** with the reason. For the common Mac case — a merged worktree
+dirtied only by un-gitignored build/validation output — `--clean-dirty` is
+an opt-in that clears exactly that after showing the untracked paths and
+confirming; it never touches modified tracked files or a reused-branch
+straggler's unmerged commits. The cleaner fix is to gitignore that output
+in the first place, so the worktree is never dirtied and sweeps
+automatically — consuming repos should keep validation/build artifacts out
+of the tree.
+
 ### Cloud session prompt contract (off-platform VMs)
 
 The PR handoff above assumes the agent and the human share one

@@ -34,7 +34,7 @@ and opens a PR with a populated template body.
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
-| Args | `--issue` (required), `--summary` (required), `--linkage` (default: Fixes), `--notes`, `--title`, `--dry-run` |
+| Args | `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`, `--dry-run` |
 | Preconditions | Git repo, `gh` CLI on PATH |
 | Failure mode | Subprocess error from `git push` or `gh pr create` |
 | Exit codes | 0 success |
@@ -55,6 +55,29 @@ standards failures during the pr-watch reconcile loop (denied to the
 | Preconditions | Git repo, `gh` CLI on PATH, PR open, agent identities on the PR's head branch |
 | Failure mode | `SystemExit`/diagnostic on identity, scope, or state rejection |
 | Exit codes | 0 success, 1 rejection or error |
+| Status | Active |
+
+### vrg-pr-workflow
+
+Record and manage the PR handoff state in `.vergil/pr-workflow.json` —
+the oracle `vrg-submit-pr` reads. `report-ready` writes the PR metadata
+(`--issue/--title/--summary/--notes`, optional `--linkage`) and marks the
+branch **ready**; it is idempotent — re-running overwrites the recorded
+prose (correcting the title/summary/notes is always allowed). Reaching
+**ready** *freezes* the branch: `vrg-commit` and the `vrg-git` push path
+then refuse further commits/pushes, because a task is exactly one PR and
+more work is a new follow-up issue (epic #146). `unfreeze` is the only
+sanctioned way to reopen a still-unsubmitted branch — it drops the state
+back to `implementing` while keeping the metadata; an already-submitted
+branch cannot be unfrozen. `status` prints the current state.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_pr_workflow` |
+| Args | `report-ready` (`--issue`, `--title`, `--summary`, `--notes` required; `--linkage` default Ref), `unfreeze`, `status`; global `--base` (default: origin/develop) |
+| Preconditions | Git repo; run from the worktree whose branch is being staged |
+| Failure mode | `WorkflowError` on stderr (e.g. unfreeze after submit, or nothing to unfreeze) |
+| Exit codes | 0 success, 1 error |
 | Status | Active |
 
 ### vrg-merge-when-green
@@ -93,12 +116,18 @@ Finalize a pull request. Given a PR, runs the provenance check, merges
 it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
 the target branch, fast-forward pulls, deletes merged local branches
 (auto-removing worktrees inside `.worktrees/` when necessary), prunes
-remotes, runs validation, and checks the CD workflow status.
+remotes, runs validation, and checks the CD workflow status. A
+merged/closed worktree the sweep cannot remove — a dirty tree, or a
+reused branch name with unmerged commits (issue #1719) — is surfaced
+**prominently after the pipeline** rather than buried in the stage log;
+`--clean-dirty` opt-in clears one whose only dirt is untracked
+build/validation output, after showing the paths and confirming
+(issue #2348).
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_finalize_pr` |
-| Args | `PR` (optional), `--target-branch` (default: develop), `--strategy` (default: squash), `--allow-provenance-violation`, `--dry-run` |
+| Args | `PR` (optional), `--target-branch` (default: develop), `--strategy` (default: squash), `--allow-provenance-violation`, `--clean-dirty`, `--dry-run` |
 | Preconditions | Must run from the main worktree, `vrg-container-run` on PATH |
 | Failure mode | Provenance violations, a dirty working tree, validation failures, or a failed CD run all return exit 1 |
 | Exit codes | 0 success, 1 provenance/worktree/validation/CD failure or unrecognized branching model |
@@ -111,7 +140,13 @@ state, so removable cruft (merged/closed PRs whose worktree was never
 cleaned up) is distinguishable from in-flight work at a glance.
 Read-only — cleanup stays `vrg-finalize-pr`'s job. PR state is queried
 from GitHub per worktree; a failed lookup shows as `unknown` with the
-reason rather than being silently downgraded.
+reason rather than being silently downgraded. The summary counts fall
+into disjoint buckets — **active**, **needs-attention**, **stalled
+(no-pr)**, and **cruft (removable)**. A finished-but-stuck worktree
+(merged/closed but not removable: dirty, or a reused branch name whose
+merged verdict was withheld, issue #1719) is counted under
+**needs-attention** with an actionable note, never miscounted as active
+behind a "0 cruft" message (issue #2347).
 
 | Attribute | Value |
 |---|---|

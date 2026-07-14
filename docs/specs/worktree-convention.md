@@ -184,8 +184,12 @@ vrg-finalize-pr                                # handles branch delete,
 
 `vrg-finalize-pr` removes the worktree for each merged branch when that
 worktree lives under the canonical `.worktrees/` directory (skipping any
-with uncommitted changes). If you need to remove one by hand, the raw
-git procedure is:
+with uncommitted changes). A merged worktree it cannot remove — dirty, or
+a reused branch name with unmerged commits — is not dropped silently: it
+is surfaced prominently after the pipeline and counted under
+`needs-attention` by `vrg-worktree-status`, and `--clean-dirty` can clear
+one dirtied only by untracked build output (issues #2347, #2348). If you
+need to remove one by hand, the raw git procedure is:
 
 ```bash
 cd ~/dev/github/<project>
