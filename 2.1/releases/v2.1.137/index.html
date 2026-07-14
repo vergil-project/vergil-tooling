@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.105/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.103/">
+        <link rel="next" href="../v2.1.136/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.104 - VERGIL Tooling</title>
+        <title>2.1.137 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21104-2026-07-02" class="md-skip">
+        <a href="#release-21137-2026-07-14" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.104
+              2.1.137
             
           </span>
         </div>
@@ -1140,10 +1140,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.137/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.137
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1159,6 +1186,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2064,37 +2122,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.104
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.104/" class="md-nav__link">
         
   
   
@@ -2110,37 +2141,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11408,10 +11408,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -11435,12 +11435,15 @@
 
 
 
-<h1 id="release-21104-2026-07-02">Release 2.1.104 (2026-07-02)<a class="headerlink" href="#release-21104-2026-07-02" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21137-2026-07-14">Release 2.1.137 (2026-07-14)<a class="headerlink" href="#release-21137-2026-07-14" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>authorize --close for the scheduled reconciliation sweep (#2106)</strong>
-vrg-epic-audit --close was human-only (refused for any non-human identity). The scheduled reconciliation sweep (ops-epic-sweep) runs in CI as the automation app, not a human, so it needs an explicit trusted path. Allow --close when VRG_EPIC_SWEEP=1 (set only by the sweep workflow) in addition to a human; interactive agent sessions still can't close. The sweep only closes provably-complete drift, so authorizing it is safe. Part of epic vergil-project/.github#80 (automated reconciliation sweep).</li>
+<li><strong>force GET on the actions/runs harvest query (#2335) (#2336)</strong>
+select_ci_run passed the head_sha filter as a <code>-f head_sha=</code> field. gh api switches to POST the instant any -f/-F field is present, and GET /actions/runs is GET-only, so the call returned HTTP 404. As the first network call in run_harvest, it silently sank the entire evidence gate and bundle — every warning-mode release baked a zero.</li>
 </ul>
+<p>Move the head_sha filter into the endpoint URL query string so the call stays a GET. Audited every other gh api call in the harvest path; all the rest were already field-free GETs, so this was the sole offender.</p>
+<p>Add a call-shape test that asserts the constructed gh argument list issues a GET (no -f/-F field unless paired with an explicit -X GET) with the filter carried in the URL, closing the gap where the prior tests mocked read_json and never exercised the GET-vs-POST behavior.</p>
+<p>This is the first bake finding for the CI-evidence bundle; further downstream integration bugs may surface as the harvest now proceeds past this point.</p>
 
 
 
