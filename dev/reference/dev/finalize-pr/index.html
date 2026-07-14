@@ -9194,6 +9194,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4. Delete Merged Branches and Worktrees">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stuck-merged-worktrees-are-surfaced-not-buried" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stuck merged worktrees are surfaced, not buried
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-clean-dirty-guarded-clear-of-untracked-only-dirt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --clean-dirty: guarded clear of untracked-only dirt
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -11753,6 +11781,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="4. Delete Merged Branches and Worktrees">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#stuck-merged-worktrees-are-surfaced-not-buried" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Stuck merged worktrees are surfaced, not buried
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#-clean-dirty-guarded-clear-of-untracked-only-dirt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        --clean-dirty: guarded clear of untracked-only dirt
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -11897,7 +11953,7 @@ followed by the usual sweep, pull, and prune.</p>
 <h2 id="usage">Usage<a class="headerlink" href="#usage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--clean-dirty<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -11927,6 +11983,10 @@ followed by the usual sweep, pull, and prune.</p>
 <tr>
 <td><code>--allow-provenance-violation</code></td>
 <td>Proceed despite provenance violations (conscious human override)</td>
+</tr>
+<tr>
+<td><code>--clean-dirty</code></td>
+<td>Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348).</td>
 </tr>
 <tr>
 <td><code>--dry-run</code></td>
@@ -11976,6 +12036,37 @@ target's tip as merged:</p>
 <p>Both guards gate the worktree removal as strictly as the branch
 deletion. The explicit-target cleanup (step 1a) is unaffected — the
 just-merged PR branch has merge evidence by construction.</p>
+<h4 id="stuck-merged-worktrees-are-surfaced-not-buried">Stuck merged worktrees are surfaced, not buried<a class="headerlink" href="#stuck-merged-worktrees-are-surfaced-not-buried" title="Permanent link">&para;</a></h4>
+<p>A merged/closed worktree the sweep cannot remove — its tree is dirty,
+or its branch name was reused after a same-named PR merged
+(issue #1719) — is neither live work nor removable cruft. Rather than leaving
+the skip reason inside the collapsed progress-stage log (where a clean
+<code>✓ cleanup</code> summary hides it), finalize reports every such worktree
+<strong>prominently after the pipeline</strong>, with the reason, so finishing with
+stuck worktrees is impossible to miss (issue #2348).</p>
+<h4 id="-clean-dirty-guarded-clear-of-untracked-only-dirt"><code>--clean-dirty</code>: guarded clear of untracked-only dirt<a class="headerlink" href="#-clean-dirty-guarded-clear-of-untracked-only-dirt" title="Permanent link">&para;</a></h4>
+<p>The common Mac case is a merged worktree whose only "dirt" is
+un-gitignored build or validation output. <code>--clean-dirty</code> offers an
+opt-in path to clear exactly that, after the pipeline, on real stdio:</p>
+<ul>
+<li>Only a <strong>merged/closed</strong> worktree whose <strong>every</strong> uncommitted path is
+  <strong>untracked</strong> is a candidate. A reused-branch straggler classifies as
+  <code>no-pr</code>/<code>draft</code> (its merged verdict withheld, issue #1719), so it is
+  never in a clearable state and its unmerged commits are never at risk.</li>
+<li>A worktree with <strong>modified tracked files</strong> is refused — those are
+  never discarded — and left surfaced as needing attention.</li>
+<li>Each removal <strong>shows exactly what will be deleted</strong> (the untracked
+  paths) and <strong>requires confirmation</strong> before <code>git worktree remove
+  --force</code> discards the output and deletes the branch.</li>
+</ul>
+<p>The default guards are unchanged: without <code>--clean-dirty</code>, anything with
+tracked modifications or unmerged commits is protected, as before.</p>
+<blockquote>
+<p><strong>Tip:</strong> the cleaner fix is to gitignore your validation output so the
+worktree is never dirtied in the first place — then it sweeps
+automatically with no <code>--clean-dirty</code> needed. That is repo-specific
+configuration, out of scope for finalize itself.</p>
+</blockquote>
 <p>Eternal branches are protected based on the <code>branching_model</code>:</p>
 <table>
 <thead>
