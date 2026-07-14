@@ -10,7 +10,7 @@ The end-to-end flow is split into two orchestrators so a release harvests its
 evidence exactly once (issue #2330):
 
 - :func:`run_harvest` — the network + validation half. Resolve the release PR,
-  select the qualifying CI run, download the ``ci-evidence-*`` artifacts, read
+  select the qualifying CI run, download the required gates' evidence artifacts, read
   the gate conclusions, and enforce completeness; persist the harvested tree
   plus a small JSON state file (:class:`HarvestState`) into a staging directory
   so a later assemble needs no network.
@@ -466,27 +466,44 @@ def select_ci_run(repo: str, head_sha: str, *, workflow: str = "CI") -> dict[str
     return max(qualifying, key=lambda run: run["run_started_at"])
 
 
-def download_evidence_artifacts(repo: str, run_id: int, dest: Path) -> list[Path]:
-    """Download every ``ci-evidence-*`` artifact of *run_id* into ``dest/<gate>/``.
+def download_evidence_artifacts(
+    repo: str, run_id: int, dest: Path, required: Sequence[EvidenceGate]
+) -> list[Path]:
+    """Download *run_id*'s evidence artifacts for the *required* gates only.
 
-    Non-evidence artifacts are ignored. The gate name is the artifact name with
-    the ``ci-evidence-`` prefix stripped; each is downloaded into its own gate
-    directory. Returns the created gate directories, sorted for determinism.
+    Only the **exact** ``ci-evidence-<gate>`` artifact of each required gate is
+    consumed, each into its own ``dest/<gate>/`` directory. The security gate
+    also uploads SARIF *partials* (``ci-evidence-security-part-codeql`` and
+    friends) that carry no ``evidence.json``; scoping to the exact required-gate
+    names ignores those partials — and any other non-matching artifact — rather
+    than mis-parsing them as gates (issue #2340). A required gate whose artifact
+    is genuinely absent from the run is simply not downloaded, surfacing as a
+    substantive :class:`IncompleteEvidenceError` at completeness validation
+    rather than being silently skipped. Returns the created gate directories,
+    sorted for determinism.
     """
+    wanted = {f"{_EVIDENCE_ARTIFACT_PREFIX}{gate.name}": gate.name for gate in required}
     raw = github.read_json(
         "api", f"repos/{repo}/actions/runs/{run_id}/artifacts", "--jq", ".artifacts"
     )
     artifacts = cast("list[dict[str, Any]]", raw)
     gate_dirs: list[Path] = []
     for artifact in artifacts:
-        name = str(artifact.get("name", ""))
-        if not name.startswith(_EVIDENCE_ARTIFACT_PREFIX):
+        gate = wanted.get(str(artifact.get("name", "")))
+        if gate is None:
             continue
-        gate = name[len(_EVIDENCE_ARTIFACT_PREFIX) :]
         gate_dir = dest / gate
         gate_dir.mkdir(parents=True, exist_ok=True)
         github.run(
-            "run", "download", str(run_id), "--repo", repo, "--name", name, "--dir", str(gate_dir)
+            "run",
+            "download",
+            str(run_id),
+            "--repo",
+            repo,
+            "--name",
+            f"{_EVIDENCE_ARTIFACT_PREFIX}{gate}",
+            "--dir",
+            str(gate_dir),
         )
         gate_dirs.append(gate_dir)
     return sorted(gate_dirs)
@@ -620,7 +637,7 @@ def run_harvest(repo: str, merge_sha: str, staging_dir: Path) -> HarvestState:
     required = resolve_required_gates(repo, git.repo_root())
     conclusions = read_gate_conclusions(repo, head_sha)
 
-    gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest)
+    gate_dirs = download_evidence_artifacts(repo, int(run["id"]), gates_dest, required)
     harvested = load_harvested_gates(gate_dirs, required, conclusions)
     validate_completeness(required, harvested)
 

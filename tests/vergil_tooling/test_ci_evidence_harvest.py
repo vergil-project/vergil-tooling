@@ -238,6 +238,8 @@ def test_select_ci_run_issues_a_get_not_a_post(monkeypatch: pytest.MonkeyPatch) 
 def test_download_evidence_artifacts_filters_prefix(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
     monkeypatch.setattr(
         github,
         "read_json",
@@ -254,8 +256,12 @@ def test_download_evidence_artifacts_filters_prefix(
 
     monkeypatch.setattr(github, "run", _record_run)
 
+    required = (
+        EvidenceGate(name="test", checks=("test / unit",)),
+        EvidenceGate(name="security", checks=("CodeQL",)),
+    )
     dest = tmp_path / "artifacts"
-    result = download_evidence_artifacts("o/r", 99, dest)
+    result = download_evidence_artifacts("o/r", 99, dest, required)
 
     assert result == [dest / "security", dest / "test"]
     assert (dest / "test").is_dir()
@@ -267,12 +273,80 @@ def test_download_evidence_artifacts_filters_prefix(
     assert all("99" in a and "o/r" in a for a in calls)
 
 
+def test_download_evidence_artifacts_ignores_security_sarif_partials(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The security gate's SARIF partials (no ``evidence.json``) must be skipped.
+
+    Regression for issue #2340: the harvest previously globbed ``ci-evidence-*``
+    and treated ``ci-evidence-security-part-codeql`` as a gate, crashing on the
+    absent ``gates/security-part-codeql/evidence.json``. Scoping to the exact
+    required-gate names consumes only the consolidated ``ci-evidence-security``.
+    """
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(
+        github,
+        "read_json",
+        lambda *a, **k: [
+            {"name": "ci-evidence-security"},
+            {"name": "ci-evidence-security-part-codeql"},
+            {"name": "ci-evidence-security-part-trivy"},
+            {"name": "ci-evidence-security-part-semgrep"},
+        ],
+    )
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(github, "run", lambda *a: calls.append(a))
+
+    required = (EvidenceGate(name="security", checks=("CodeQL",)),)
+    dest = tmp_path / "artifacts"
+    result = download_evidence_artifacts("o/r", 99, dest, required)
+
+    # Only the consolidated gate directory is created; no partial is materialized.
+    assert result == [dest / "security"]
+    assert not (dest / "security-part-codeql").exists()
+    assert not (dest / "security-part-trivy").exists()
+    assert not (dest / "security-part-semgrep").exists()
+    downloaded_names = {a[a.index("--name") + 1] for a in calls}
+    assert downloaded_names == {"ci-evidence-security"}
+
+
+def test_download_evidence_artifacts_omits_genuinely_absent_gate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A required gate with no artifact is left out — never fabricated or skipped.
+
+    Its absence surfaces downstream as an :class:`IncompleteEvidenceError` at
+    completeness validation (issue #2340), not a silent pass.
+    """
+    from vergil_tooling.lib.github_config import EvidenceGate
+
+    monkeypatch.setattr(github, "read_json", lambda *a, **k: [{"name": "ci-evidence-security"}])
+    monkeypatch.setattr(github, "run", lambda *a: None)
+
+    required = (
+        EvidenceGate(name="security", checks=("CodeQL",)),
+        EvidenceGate(name="test", checks=("test / unit",)),  # no artifact in the run
+    )
+    result = download_evidence_artifacts("o/r", 1, tmp_path, required)
+
+    assert result == [tmp_path / "security"]
+    with pytest.raises(ci_evidence.IncompleteEvidenceError, match="test"):
+        ci_evidence.validate_completeness(
+            required,
+            {"security": ci_evidence.GateEvidence("security", "success", (), {}, ())},
+        )
+
+
 def test_download_evidence_artifacts_none_matching(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from vergil_tooling.lib.github_config import EvidenceGate
+
     monkeypatch.setattr(github, "read_json", lambda *a, **k: [{"name": "coverage"}])
     monkeypatch.setattr(github, "run", lambda *a: None)
-    assert download_evidence_artifacts("o/r", 1, tmp_path) == []
+    required = (EvidenceGate(name="test", checks=("test / unit",)),)
+    assert download_evidence_artifacts("o/r", 1, tmp_path, required) == []
 
 
 # --- read_gate_conclusions ----------------------------------------------
