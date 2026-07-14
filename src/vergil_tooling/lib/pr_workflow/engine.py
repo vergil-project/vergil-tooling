@@ -83,6 +83,26 @@ def apply_report_ready(
     return state
 
 
+def apply_unfreeze(state: WorkflowState, *, now: str) -> WorkflowState:
+    """Deliberately reopen a reported-ready branch for more commits.
+
+    Drops ``status`` back to ``implementing`` — which lifts the post-report-ready
+    freeze (see ``lib/pr_workflow/freeze``) — while keeping the recorded PR
+    metadata, so a later ``report-ready`` refreshes it rather than initializing
+    afresh. This is the ONLY sanctioned way to lift the freeze and must be an
+    explicit action, never a silent default. An already-submitted worktree
+    cannot be unfrozen: its PR exists, so further work is a new follow-up issue,
+    not a mutation of the merged branch."""
+    if state.submitted is not None:
+        raise WorkflowError(
+            "cannot unfreeze: this branch's PR has already been submitted. "
+            "Further work is a new follow-up issue, not a change to this branch."
+        )
+    state.status = "implementing"
+    state.updated_at = now
+    return state
+
+
 def apply_submitted(
     state: WorkflowState, *, pr_url: str, pr_number: int | None, now: str
 ) -> WorkflowState:

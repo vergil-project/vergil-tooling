@@ -374,6 +374,64 @@ def test_report_ready_rejects_stale_issue(
     assert rc == 1  # stale workflow file guard
 
 
+def _report_ready(issue: str = "42", title: str = "t") -> None:
+    vrg_pr_workflow.main(
+        [
+            "--base",
+            "develop",
+            "report-ready",
+            "--issue",
+            issue,
+            "--title",
+            title,
+            "--summary",
+            "s",
+            "--notes",
+            "n",
+        ]
+    )
+
+
+def test_unfreeze_reopens_after_report_ready(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # After report-ready the worktree is frozen (status ready); unfreeze drops it
+    # back to implementing so commits are allowed again, retaining the metadata.
+    _report_ready()
+    capsys.readouterr()
+    rc = vrg_pr_workflow.main(["--base", "develop", "unfreeze"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "implementing"}
+
+    vrg_pr_workflow.main(["--base", "develop", "status"])
+    state = json.loads(capsys.readouterr().out)
+    assert state["status"] == "implementing"
+    assert state["pr_metadata"]["title"] == "t"
+
+
+def test_unfreeze_with_no_file_errors(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rc = vrg_pr_workflow.main(["--base", "develop", "unfreeze"])
+    assert rc == 1
+    assert "no workflow file" in capsys.readouterr().err.lower()
+
+
+def test_report_ready_after_unfreeze_refreezes(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The full deliberate-unfreeze round trip: ready -> unfreeze -> report-ready
+    # refreshes the metadata and re-freezes (status ready).
+    _report_ready(title="t1")
+    vrg_pr_workflow.main(["--base", "develop", "unfreeze"])
+    _report_ready(title="t2")
+    capsys.readouterr()
+    vrg_pr_workflow.main(["--base", "develop", "status"])
+    state = json.loads(capsys.readouterr().out)
+    assert state["status"] == "ready"
+    assert state["pr_metadata"]["title"] == "t2"
+
+
 def test_status_with_no_file(in_git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     rc = vrg_pr_workflow.main(["--base", "develop", "status"])
     assert rc == 0

@@ -147,6 +147,24 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
     return 0
 
 
+def cmd_unfreeze(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
+    """Deliberately reopen a frozen (reported-ready) branch for more commits.
+
+    The sanctioned escape hatch from the post-report-ready freeze: it is a
+    distinct, explicit subcommand precisely so reopening a branch is never a
+    silent side effect of another action.
+    """
+    state = transport.read()
+    if state is None:
+        raise WorkflowError(
+            "no workflow file to unfreeze; run report-ready first (there is nothing frozen here)."
+        )
+    engine.apply_unfreeze(state, now=_now())
+    transport.write(state)
+    _emit({"ok": True, "status": state.status})
+    return 0
+
+
 def cmd_status(_args: argparse.Namespace, transport: LocalFileTransport) -> int:
     state = transport.read()
     if state is None:
@@ -168,6 +186,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p_ready.add_argument("--notes", required=True)
     p_ready.add_argument("--linkage", default="Ref")
     p_ready.set_defaults(func=cmd_report_ready)
+
+    p_unfreeze = sub.add_parser(
+        "unfreeze",
+        help="Deliberately reopen a frozen (reported-ready) branch for more commits",
+    )
+    p_unfreeze.set_defaults(func=cmd_unfreeze)
 
     p_status = sub.add_parser("status", help="Print the current workflow state")
     p_status.set_defaults(func=cmd_status)
