@@ -50,6 +50,13 @@ class WorktreeStatus:
     ahead: int
     dirty: bool
     detail: str | None = None
+    # True when the PR is merged/closed but the worktree is *not* removable —
+    # a finished-but-stuck worktree (dirty tree, or a reused branch name that
+    # withheld the merged verdict, issue #1719). These are neither live work
+    # nor removable cruft: they need a human's attention. Set by
+    # classify_worktree; defaulted so callers that build a WorktreeStatus by
+    # hand are unaffected. See _summary in vrg_worktree_status.
+    needs_attention: bool = False
     # Local pr-workflow handoff signals (.vergil/pr-workflow.json). Defaulted so
     # classify_worktree and the finalize sweep, which do not gather them, are
     # unaffected; gather_worktree_status attaches them. See _probe_pr_workflow.
@@ -95,6 +102,12 @@ def classify_worktree(
     equals the branch tip, the MERGED/CLOSED verdict is dropped and the
     branch is classified by its local commits (NO_PR / DRAFT) — never
     removable — so the straggler sweep cannot delete unmerged work.
+
+    A merged/closed PR whose worktree is *not* removable — the tree is
+    dirty, or the branch name was reused — is flagged ``needs_attention``.
+    Such a worktree is finished-but-stuck: not live work, but not safe to
+    delete either. The flag keeps ``_summary`` from miscounting it as
+    ``active`` and hiding it behind a "0 cruft" message (issue #2347).
     """
     if pr_lookup_failed:
         state = WorktreeState.UNKNOWN
@@ -113,6 +126,11 @@ def classify_worktree(
         state = WorktreeState.NO_PR
     else:
         state = WorktreeState.DRAFT
+    # Finished (PR merged/closed) but not removable → needs attention: either
+    # the tree is dirty, or the merged verdict was withheld for a reused
+    # branch name. Removable cruft (merged/closed + clean + matching tip) and
+    # live work never qualify.
+    needs_attention = pr_state in ("MERGED", "CLOSED") and (dirty or not merged_head_matches_tip)
     return WorktreeStatus(
         worktree=worktree,
         state=state,
@@ -120,6 +138,7 @@ def classify_worktree(
         ahead=ahead,
         dirty=dirty,
         detail=detail,
+        needs_attention=needs_attention,
     )
 
 
@@ -196,6 +215,23 @@ def _probe_pr_workflow(worktree: Worktree) -> tuple[str | None, str | None, bool
     return state.status, None, prepared
 
 
+def _describe_dirt(porcelain: str, *, limit: int = 5) -> str:
+    """Render ``git status --porcelain`` output as a human-readable summary.
+
+    Shows the count of uncommitted paths and up to *limit* of them (stripped
+    of the two-char porcelain status prefix) so the human can see at a glance
+    that the dirt is, e.g., just build output. Overflow is reported as a
+    ``(+N more)`` tail rather than a wall of paths.
+    """
+    paths = [line[3:].strip() for line in porcelain.splitlines() if line.strip()]
+    count = len(paths)
+    shown = paths[:limit]
+    preview = ", ".join(shown)
+    if count > limit:
+        preview += f" (+{count - limit} more)"
+    return f"{count} uncommitted path(s): {preview}"
+
+
 def gather_worktree_status(
     worktree: Worktree, *, target: str, with_freshness: bool = False
 ) -> WorktreeStatus:
@@ -217,7 +253,8 @@ def gather_worktree_status(
     ``vrg-worktree-status``; the finalize sweep leaves them unset.
     """
     ahead = git.commits_ahead(target, worktree.branch)
-    dirty = bool(git.read_output("-C", str(worktree.path), "status", "--porcelain"))
+    porcelain = git.read_output("-C", str(worktree.path), "status", "--porcelain")
+    dirty = bool(porcelain)
     workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
     # Freshness is opt-in: only vrg-worktree-status needs it. The finalize
     # straggler sweep also drives this function and must not pay for (or be
@@ -265,6 +302,17 @@ def gather_worktree_status(
                 f"closed PR #{pr_number} head {shown} does not match branch "
                 f"tip {tip[:8]} — branch name reused after that PR merged "
                 f"(issue #1719); current commits are unmerged"
+            )
+        elif dirty:
+            # Merged/closed and the tip matches, but the tree is dirty, so the
+            # worktree is stuck: not removable cruft, not live work. Surface an
+            # actionable note showing *what* the dirt is (often just build
+            # output) so the human can clear it and run vrg-finalize-pr (#2347).
+            verb = "merged" if pr_state == "MERGED" else "closed"
+            detail = (
+                f"{verb} PR #{pr_number} but worktree is dirty — "
+                f"{_describe_dirt(porcelain)}. "
+                f"Commit, stash, or discard the changes, then run vrg-finalize-pr."
             )
 
     return _with_workflow(

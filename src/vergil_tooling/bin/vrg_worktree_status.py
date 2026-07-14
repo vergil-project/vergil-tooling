@@ -103,14 +103,23 @@ def _render_table(rows: list[tuple[str, ...]]) -> str:
 def _summary(statuses: list[WorktreeStatus]) -> str:
     total = len(statuses)
     cruft = sum(1 for s in statuses if s.removable)
-    stalled = sum(1 for s in statuses if s.state is WorktreeState.NO_PR)
+    attention = sum(1 for s in statuses if s.needs_attention)
+    # A reused-branch worktree lands as NO_PR *and* needs_attention; count it
+    # only under attention so the buckets stay disjoint and sum to total.
+    stalled = sum(1 for s in statuses if s.state is WorktreeState.NO_PR and not s.needs_attention)
     prepared = sum(1 for s in statuses if s.pr_prepared)
-    active = total - cruft - stalled
+    # Finished-but-stuck worktrees (needs_attention) are pulled out of active:
+    # never let a merged-but-dirty worktree pose as live work behind "0 cruft"
+    # (issue #2347).
+    active = total - cruft - stalled - attention
     line = (
         f"{total} worktrees — {active} active, "
+        f"{attention} needs-attention, "
         f"{stalled} stalled (no-pr), {cruft} cruft (removable). "
         f"{prepared} PR prepared."
     )
+    if attention:
+        line += " Some worktrees need attention (see notes below)."
     if cruft:
         line += " Run vrg-finalize-pr to clean cruft."
     return line
