@@ -444,12 +444,23 @@ class IapTransport:
         self.project = project
         self.ssh_user = ssh_user
 
-    def _base(self) -> list[str]:
+    def _base(self, *, mux: bool = True) -> list[str]:
         # Multiplexing options ride the underlying ssh via ``--ssh-flag``. The
         # glued ``-oKey=Val`` form (no space) is used deliberately: gcloud splits a
         # ``--ssh-flag`` value on spaces, so ``-o ControlPath=…`` would arrive as
         # two mangled tokens — the glued form passes through intact.
-        mux = [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, _cwd())]
+        #
+        # ``mux=False`` (interactive :meth:`exec_session` only) opts out of the shared
+        # control socket: a long-lived human PTY gains nothing from multiplexing and is
+        # the sole victim of the reap-on-start teardown (#2345) — a concurrent session's
+        # ``close()`` does ``ssh -O exit`` on the (host, cwd)-keyed socket and kills the
+        # master out from under it ("Shared connection … closed"). Off the socket, the
+        # session opens its own connection and is immune. Keepalive bounding is retained.
+        mux_flags = (
+            [f"--ssh-flag=-o{key}={value}" for key, value in ssh_mux_options(self.host, _cwd())]
+            if mux
+            else []
+        )
         # Connection-liveness bounding (#2202) rides the same glued --ssh-flag form.
         keepalive = [f"--ssh-flag=-o{key}={value}" for key, value in _ssh_keepalive_options()]
         return [
@@ -461,7 +472,7 @@ class IapTransport:
             f"--zone={self.zone}",
             f"--project={self.project}",
             *keepalive,
-            *mux,
+            *mux_flags,
         ]
 
     def run(
@@ -498,7 +509,9 @@ class IapTransport:
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
         remote = f"cd {workdir} && {inner}"
-        cmd = [*self._base(), "--", "-t", remote]
+        # mux=False: the interactive session stays off the shared control socket so a
+        # concurrent session's reap-on-start can't tear it down mid-use (#2345).
+        cmd = [*self._base(mux=False), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
     def close(self) -> None:
@@ -522,10 +535,14 @@ class SshTransport:
         self.ssh_user = ssh_user
         self.key_path = key_path
 
-    def _base(self, *, pty: bool = False) -> list[str]:
+    def _base(self, *, pty: bool = False, mux: bool = True) -> list[str]:
         # Connection-liveness bounding (#2202) + multiplexing, both as split -o pairs.
+        # ``mux=False`` (interactive :meth:`exec_session` only) drops the shared control
+        # socket so a concurrent session's reap-on-start can't kill the PTY mid-use
+        # (#2345); keepalive bounding is retained. See IapTransport._base for the rationale.
+        mux_opts = ssh_mux_options(self.host, _cwd()) if mux else []
         opts: list[str] = []
-        for key, value in [*_ssh_keepalive_options(), *ssh_mux_options(self.host, _cwd())]:
+        for key, value in [*_ssh_keepalive_options(), *mux_opts]:
             opts += ["-o", f"{key}={value}"]
         return [
             "ssh",
@@ -570,7 +587,8 @@ class SshTransport:
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
         remote = f"cd {shlex.quote(workdir)} && {inner}"
-        cmd = [*self._base(pty=True), remote]
+        # mux=False: keep the interactive session off the shared control socket (#2345).
+        cmd = [*self._base(pty=True, mux=False), remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
     def close(self) -> None:
