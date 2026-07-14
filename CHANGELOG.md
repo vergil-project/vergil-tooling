@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.138] - 2026-07-14
+
+### Bug fixes
+
+- scope harvest artifact download to required gates (#2341)
+
 ## [2.1.137] - 2026-07-14
 
 ### Bug fixes
