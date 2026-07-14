@@ -320,6 +320,17 @@ class TestIapTransport:
         assert "--tunnel-through-iap" in cmd
         assert cmd[-3:] == ["--", "-t", "cd /work && exec bash"]
 
+    @patch("vergil_tooling.lib.vm_transport.os.execvp")
+    def test_exec_session_stays_off_shared_mux_socket(self, mock_execvp: MagicMock) -> None:
+        # #2345: the interactive PTY must NOT ride the shared control socket, or a
+        # concurrent session's reap-on-start tears it down ("Shared connection closed").
+        # It keeps its own connection but retains keepalive bounding.
+        IapTransport("inst", "z", "p", "vergil").exec_session("/work", "exec bash")
+        cmd = mock_execvp.call_args[0][1]
+        assert not any("Control" in a for a in cmd)
+        assert "--ssh-flag=-oServerAliveInterval=15" in cmd
+        assert "--ssh-flag=-oConnectTimeout=30" in cmd
+
     @patch("vergil_tooling.lib.vm_transport.subprocess.Popen")
     def test_popen_streams_over_iap_tunnel(self, mock_popen: MagicMock) -> None:
         IapTransport("inst", "z", "p", "vergil").popen(
@@ -491,6 +502,17 @@ class TestSshTransport:
         # the remote command (the bug: -t after user@host → no PTY allocated).
         assert cmd.index("-t") < cmd.index("ubuntu@1.2.3.4")
         assert any("cd /work && exec bash" in a for a in cmd)
+
+    @patch("vergil_tooling.lib.vm_transport.os.execvp")
+    def test_exec_session_stays_off_shared_mux_socket(self, mock_execvp: MagicMock) -> None:
+        # #2345: interactive PTY off the shared control socket, keepalive retained.
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").exec_session(
+            "/work", "exec bash"
+        )
+        cmd = mock_execvp.call_args[0][1]
+        assert not any("Control" in a for a in cmd)
+        assert "ServerAliveInterval=15" in cmd
+        assert "ConnectTimeout=30" in cmd
 
 
 _HEX16 = 16
