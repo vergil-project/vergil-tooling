@@ -168,6 +168,12 @@ class FinalizeContext:
     root: Path
     merged_branch: str | None = None
     deleted: list[str] = field(default_factory=list)
+    # Merged/closed worktrees the sweep could not remove — dirty, or a
+    # reused branch name with unmerged commits (issue #1719). Collected in
+    # _stage_cleanup and surfaced (and optionally cleared) after the pipeline
+    # tears down its live display, so the skip reason is impossible to miss
+    # instead of buried in the collapsed stage log (issue #2348).
+    stuck: list[worktrees.WorktreeStatus] = field(default_factory=list)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -214,6 +220,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--dry-run", action="store_true", help="Show what would be done without making changes"
     )
     parser.add_argument(
+        "--clean-dirty",
+        action="store_true",
+        help="Opt-in: clear a merged/closed worktree whose only dirt is "
+        "untracked build/validation output, after showing exactly what will "
+        "be deleted and confirming. Never touches modified tracked files or a "
+        "reused-branch straggler with unmerged commits (issue #2348).",
+    )
+    parser.add_argument(
         "--release",
         action="store_true",
         help="After a successful finalize, chain straight into vrg-release "
@@ -258,7 +272,9 @@ def _worktree_is_dirty(wt_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
-def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bool:
+def _delete_branch_and_worktree(
+    branch: str, root: Path, *, dry_run: bool, force: bool = False
+) -> bool:
     """Remove *branch* and its canonical worktree; True if the branch was deleted.
 
     Shared by the explicit-target step (the PR branch just merged, which
@@ -278,14 +294,22 @@ def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bo
     force-push during a CI fixup loop (the upstream-tracking ref is gone
     after `fetch --prune`). Trusting our own filter avoids the
     disagreement. Issue #307.
+
+    ``force`` is the opt-in ``--clean-dirty`` path (issue #2348): it skips
+    the dirty guard and passes ``git worktree remove --force`` so a
+    worktree dirtied only by untracked build output is discarded. Callers
+    must have already vetted that the dirt is untracked-only and the PR
+    merged/closed — the default (``force=False``) still refuses any dirty
+    worktree, so the standing guards are unweakened.
     """
     wt = worktrees.worktree_for_branch(branch, root)
     if wt is not None:
-        if _worktree_is_dirty(wt):
+        if not force and _worktree_is_dirty(wt):
             print(f"  Skipping {branch}: worktree {wt} has uncommitted changes")
             return False
+        remove_cmd = ["worktree", "remove", *(["--force"] if force else []), str(wt)]
         print(f"  Removing worktree: {wt}")
-        _run(["worktree", "remove", str(wt)], dry_run=dry_run)
+        _run(remove_cmd, dry_run=dry_run)
     print(f"  Deleting merged branch: {branch}")
     _run(["branch", "-D", branch], dry_run=dry_run)
     if not dry_run:
@@ -293,6 +317,131 @@ def _delete_branch_and_worktree(branch: str, root: Path, *, dry_run: bool) -> bo
         if removed:
             print(f"  Cleaned {removed} cached container image(s) for {branch}")
     return True
+
+
+def _worktree_porcelain(wt_path: Path) -> str:
+    """Return ``git status --porcelain`` for *wt_path*, or '' if git fails.
+
+    Used by the guarded clear to inspect *what* the dirt is. An empty string
+    — whether a clean tree or a git error — makes ``_dirt_is_untracked_only``
+    refuse, the safe direction: never delete on unproven-clean evidence.
+    """
+    result = subprocess.run(  # noqa: S603
+        ("git", "-C", str(wt_path), "status", "--porcelain"),  # noqa: S607
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    return result.stdout if result.returncode == 0 else ""
+
+
+def _dirt_is_untracked_only(porcelain: str) -> bool:
+    """True when every uncommitted path in *porcelain* is an untracked file.
+
+    ``git status --porcelain`` marks untracked files with a ``??`` status
+    code; every other code (`` M``, ``M ``, ``A ``, ``D ``, ``R ``, …) is a
+    tracked-file change the guarded clear must never discard. An empty
+    porcelain returns ``False`` — there is nothing to clear, and callers
+    reach this only for a tree already known dirty.
+    """
+    lines = [ln for ln in porcelain.splitlines() if ln.strip()]
+    return bool(lines) and all(ln.startswith("??") for ln in lines)
+
+
+_CLEARABLE_STATES = (worktrees.WorktreeState.MERGED, worktrees.WorktreeState.CLOSED)
+
+
+def _clean_dirty_worktrees(
+    stuck: list[worktrees.WorktreeStatus], root: Path, *, dry_run: bool, assume_yes: bool
+) -> list[worktrees.WorktreeStatus]:
+    """Guarded opt-in clear of untracked-only dirt (issue #2348).
+
+    Runs after the pipeline, on real stdio, so its confirmation prompt reaches
+    the human (a stage's stdout is redirected into the collapsed log). The
+    guards are strict and never weakened:
+
+    - A reused-branch straggler classifies as NO_PR/DRAFT (its merged verdict
+      is withheld, issue #1719), so it is never in a clearable state here and
+      its unmerged commits are never at risk.
+    - Only a MERGED/CLOSED worktree whose *every* uncommitted path is untracked
+      is a candidate; a modified tracked file is refused.
+    - Each removal shows exactly what will be deleted and is confirmed.
+
+    Returns the worktrees left in place (refused, or declined), so the caller
+    surfaces only what still needs attention.
+    """
+    remaining: list[worktrees.WorktreeStatus] = []
+    for status in stuck:
+        branch = status.worktree.branch
+        if status.state not in _CLEARABLE_STATES:
+            print(
+                f"  --clean-dirty: refusing {branch}: not a merged/closed worktree "
+                "(branch name reused — has unmerged commits, issue #1719)."
+            )
+            remaining.append(status)
+            continue
+        porcelain = _worktree_porcelain(status.worktree.path)
+        if not _dirt_is_untracked_only(porcelain):
+            print(
+                f"  --clean-dirty: refusing {branch}: working tree has modified "
+                "tracked files — not untracked-only build output."
+            )
+            remaining.append(status)
+            continue
+        paths = [ln[3:].strip() for ln in porcelain.splitlines() if ln.strip()]
+        print(f"  --clean-dirty: {branch} ({status.state.value}) — would remove the worktree and:")
+        for path in paths:
+            print(f"      untracked: {path}")
+        # In dry-run the confirm is skipped and _delete_branch_and_worktree
+        # (dry_run=True) prints the git commands it would run; otherwise
+        # confirm gates the real, irreversible removal.
+        if not dry_run and not confirm(
+            f"Clear worktree {status.worktree.path.name} and delete {branch}?",
+            assume_yes=assume_yes,
+            default=False,
+        ):
+            print(f"  --clean-dirty: left {branch} in place.")
+            remaining.append(status)
+            continue
+        _delete_branch_and_worktree(branch, root, dry_run=dry_run, force=True)
+    return remaining
+
+
+def _report_stuck_worktrees(stuck: list[worktrees.WorktreeStatus], *, clean_dirty: bool) -> None:
+    """Prominently report merged/closed worktrees the sweep left behind.
+
+    Printed after the pipeline so it lands below the collapsed stage log where
+    the human running finalize cannot miss it (issue #2348)."""
+    if not stuck:
+        return
+    print()
+    print(f"⚠  {len(stuck)} merged/closed worktree(s) left in place — needs attention:")
+    for status in stuck:
+        detail = status.detail or f"{status.state.value}, not removable"
+        print(f"   • {status.worktree.branch}: {detail}")
+    if not clean_dirty:
+        print(
+            "   Re-run with --clean-dirty to clear any dirtied only by untracked "
+            "build output (each is shown and confirmed first)."
+        )
+
+
+def _handle_stuck_worktrees(ctx: FinalizeContext) -> None:
+    """Surface — and, with --clean-dirty, guardedly clear — stuck worktrees.
+
+    The post-pipeline half of issue #2348: ``_stage_cleanup`` collected any
+    merged/closed worktree it could not remove into ``ctx.stuck``; here, on
+    real stdio, they are optionally cleared (untracked-only dirt) and the
+    remainder is surfaced prominently.
+    """
+    stuck = ctx.stuck
+    if not stuck:
+        return
+    if ctx.args.clean_dirty:
+        stuck = _clean_dirty_worktrees(
+            stuck, ctx.root, dry_run=ctx.args.dry_run, assume_yes=ctx.args.yes
+        )
+    _report_stuck_worktrees(stuck, clean_dirty=ctx.args.clean_dirty)
 
 
 def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> str | None:
@@ -546,6 +695,12 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
             continue
         status = worktrees.gather_worktree_status(wt, target=args.target_branch)
         if not status.removable:
+            if status.needs_attention:
+                # Finished-but-stuck: merged/closed but dirty, or a reused
+                # branch name (issue #1719). Collect it so it is surfaced
+                # after the pipeline instead of buried in the collapsed stage
+                # log (issue #2348).
+                ctx.stuck.append(status)
             print(f"  Skipping {branch}: {status.state.value} (not removable)")
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
@@ -780,6 +935,13 @@ def main(argv: list[str] | None = None) -> int:
         args=args,
         repo_root=root,
     )
+
+    # Surface — and, with --clean-dirty, guardedly clear — any merged/closed
+    # worktrees the sweep could not remove (issue #2348). Runs after the
+    # pipeline has torn down its live display so the report (and the
+    # confirmation prompt) reaches the human on real stdio, and regardless of
+    # rc so a stuck worktree is never hidden behind a failed later stage.
+    _handle_stuck_worktrees(ctx)
 
     # Task closure and epic rollup are event-driven now (epic
     # vergil-project/.github#75): the PR's `Closes #N` linkage closes the task on
