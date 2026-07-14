@@ -485,3 +485,42 @@ def test_validate_admits_safe_body_content(tmp_path: Path, body: str) -> None:
             ]
         )
     assert result == 0
+
+
+# --------------------------------------------------------------------------
+# Post-report-ready freeze (#2346)
+# --------------------------------------------------------------------------
+
+
+def test_main_refuses_commit_when_frozen(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with (
+        _commit_environment(tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_commit.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=True, message="branch is FROZEN; use unfreeze"),
+        ),
+    ):
+        result = main(_DEFAULT_ARGS)
+    assert result == 1
+    assert "FROZEN" in capsys.readouterr().err
+
+
+def test_main_warns_but_proceeds_on_freeze_read_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from vergil_tooling.lib.pr_workflow.freeze import FreezeCheck
+
+    with (
+        _commit_environment(tmp_path),
+        patch(
+            "vergil_tooling.bin.vrg_commit.freeze.check_worktree",
+            return_value=FreezeCheck(frozen=False, read_error="bad json"),
+        ),
+    ):
+        result = main(["--type", "feat", "--scope", "core", "--message", "add feature"])
+    assert result == 0
+    assert "could not read PR-workflow state" in capsys.readouterr().err

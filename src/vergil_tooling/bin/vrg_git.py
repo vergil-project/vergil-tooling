@@ -13,6 +13,7 @@ from pathlib import Path
 
 from vergil_tooling.lib import github, identity_mode
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
+from vergil_tooling.lib.pr_workflow import freeze
 
 _ALLOWED_SIMPLE: set[str] = {
     # Read-only inspection commands. These only read history, objects, or
@@ -367,6 +368,47 @@ _WORKFLOW_PERMISSION_RE = re.compile(
 )
 
 
+def _current_worktree_root() -> Path | None:
+    """Return the CWD's worktree root, or None when not resolvable.
+
+    Used to locate ``.vergil/pr-workflow.json`` for the freeze check. A
+    non-repo CWD (or any resolution failure) yields None so the push falls
+    through to git's own error rather than this layer masking it.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],  # noqa: S603, S607
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    root = result.stdout.strip()
+    return Path(root) if root else None
+
+
+def _check_frozen_push() -> str | None:
+    """Return a refusal message when the current worktree's branch is frozen.
+
+    A branch reported ready (``report-ready``) is done; advancing it with a push
+    produces the reused-branch straggler (issue #1719). The human's
+    ``vrg-submit-pr`` pushes via ``lib.git`` directly, not this wrapper, so this
+    guard only stops an *agent* push of a frozen branch. Returns None (push
+    allowed) when not frozen or when the worktree root cannot be resolved.
+    """
+    root = _current_worktree_root()
+    if root is None:
+        return None
+    check = freeze.check_worktree(root, action="advance this branch with a push")
+    if check.read_error is not None:
+        print(
+            f"vrg-git: warning: could not read PR-workflow state ({check.read_error}); "
+            "proceeding without a freeze check.",
+            file=sys.stderr,
+        )
+    return check.message if check.frozen else None
+
+
 def _print_workflow_push_guidance() -> None:
     mode = identity_mode.current_mode()
     print(
@@ -397,6 +439,8 @@ def _print_help() -> None:
         "    (develop, main, release/*).\n"
         "  - Worktree convention: branch switches in the main worktree and\n"
         "    'worktree add' targets outside .worktrees/ are refused.\n"
+        "  - Freeze: a push is refused once the branch was reported ready\n"
+        "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"
         "    the resolved identity mode (see vrg-whoami).\n"
         "\n"
@@ -475,6 +519,12 @@ def main(argv: list[str] | None = None) -> int:
     if worktree_err:
         print(f"vrg-git: {worktree_err}", file=sys.stderr)
         return 1
+
+    if subcmd == "push":
+        frozen_msg = _check_frozen_push()
+        if frozen_msg is not None:
+            print(frozen_msg, file=sys.stderr)
+            return 1
 
     env = None
     if subcmd in _REMOTE_SUBCOMMANDS:
