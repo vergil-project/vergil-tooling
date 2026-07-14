@@ -23,6 +23,7 @@ def _status(
     ahead: int = 0,
     dirty: bool = False,
     detail: str | None = None,
+    needs_attention: bool = False,
     workflow_status: str | None = None,
     workflow_error: str | None = None,
     pr_prepared: bool = False,
@@ -37,6 +38,7 @@ def _status(
         ahead=ahead,
         dirty=dirty,
         detail=detail,
+        needs_attention=needs_attention,
         workflow_status=workflow_status,
         workflow_error=workflow_error,
         pr_prepared=pr_prepared,
@@ -183,6 +185,98 @@ def test_main_surfaces_reused_branch_detail(capsys: pytest.CaptureFixture[str]) 
     assert "note: feature/286-build-buckets:" in out
     assert "#293" in out
     assert "0 cruft" in out
+
+
+def test_main_merged_dirty_is_needs_attention_not_active(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Issue #2347: the real Mac bug — merged-but-dirty worktrees were counted
+    as active behind '0 cruft'. They must now land in needs-attention, never
+    active, and never be hidden by a 'nothing to clean' message."""
+    statuses = [
+        _status(
+            "feature/1-merged-dirty",
+            WorktreeState.MERGED,
+            pr=101,
+            ahead=2,
+            dirty=True,
+            needs_attention=True,
+            detail="merged PR #101 but worktree is dirty — 1 uncommitted path(s): dist/out.js. "
+            "Commit, stash, or discard the changes, then run vrg-finalize-pr.",
+        ),
+        _status("feature/2-open", WorktreeState.OPEN_PR, pr=102, ahead=1),
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "1 active" in out
+    assert "1 needs-attention" in out
+    assert "0 cruft (removable)" in out
+    # The dirty worktree must not be sold as "nothing to clean".
+    assert "Some worktrees need attention" in out
+    assert "note: feature/1-merged-dirty:" in out
+    assert "dist/out.js" in out
+
+
+def test_main_four_merged_dirty_never_reported_all_active(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The exact Mac regression: four merged, stuck worktrees were reported as
+    '4 active … 0 cruft'. They must now be 0 active / 4 needs-attention."""
+    statuses = [
+        _status(
+            f"feature/{i}-stuck",
+            WorktreeState.MERGED,
+            pr=200 + i,
+            ahead=1,
+            dirty=True,
+            needs_attention=True,
+            detail=f"merged PR #{200 + i} but worktree is dirty — 1 uncommitted path(s): x.log.",
+        )
+        for i in range(4)
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 active" in out
+    assert "4 needs-attention" in out
+    assert "0 cruft (removable)" in out
+
+
+def test_main_reused_branch_is_needs_attention_not_stalled(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    statuses = [
+        _status(
+            "feature/286-build-buckets",
+            WorktreeState.NO_PR,
+            pr=293,
+            ahead=9,
+            needs_attention=True,
+            detail="closed PR #293 head 0ldd0cs does not match branch tip 7ead128 — reused",
+        )
+    ]
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "1 needs-attention" in out
+    assert "0 stalled (no-pr)" in out
+    assert "note: feature/286-build-buckets:" in out
 
 
 def test_row_renders_relative_ages() -> None:
