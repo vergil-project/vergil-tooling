@@ -14,7 +14,11 @@ Supports three modes:
   ``head_sha`` and the PR is opened **without** pushing (``--head`` names
   the source branch). This is the Mac-side of the cloud→Mac relay handoff:
   the branch and its metadata already rode GitHub, so no worktree, no
-  ``git.current_branch()``, and no push are involved.
+  ``git.current_branch()``, and no push are involved. With a cascade flag
+  (``--finalize``/``--release``/``--install``) it also carries the branches
+  through the cascade locally, using the same batch semantics as the local
+  worktree batch — finalize each PR, then a single validation and **one**
+  release (issue #2398).
 
 The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
@@ -852,6 +856,33 @@ def _verify_origin_tip(branch: str, state: WorkflowState) -> None:
         )
 
 
+def _relay_open(
+    root: Path, branch: str, args: argparse.Namespace, *, assume_yes: bool
+) -> tuple[str | None, str | None]:
+    """Resolve, verify, and open the relay PR for one already-pushed *branch*.
+
+    Returns ``(pr_url, submitted_url)``: exactly one is non-``None`` on a live
+    run — the new PR URL when the branch was opened, or the already-submitted
+    PR's URL when the branch already carries one. A dry run returns
+    ``(None, None)`` (``_open_pr`` previewed without opening). Resolves the
+    ready-state (local file preferred, else the relay ref), verifies origin's
+    tip matches the recorded ``head_sha``, and drives the shared :func:`_open_pr`
+    core with ``push=False``. Shared by the plain relay loop and the relay
+    cascade so both classify an already-submitted branch identically.
+    """
+    state = _resolve_ready_state(root, branch)
+    if state.submitted is not None:
+        return None, state.submitted.get("pr_url", "")
+    metadata = _metadata_from_state(state, branch)
+    base = _target_branch(args.base, state.base)
+    if not args.dry_run:
+        _verify_origin_tip(branch, state)
+    pr_url = _open_pr(
+        branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=assume_yes
+    )
+    return pr_url, None
+
+
 def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
     """Open PRs for each already-pushed *branch* without a local worktree.
 
@@ -860,31 +891,108 @@ def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
     the shared :func:`_open_pr` core with ``push=False``. Branches already
     carrying a submitted PR are reported and skipped. Standards/provenance run
     against the resolved GitHub-carried metadata, exactly as the local path runs
-    them against the worktree's file.
+    them against the worktree's file. The finalize/release/install cascade is
+    handled separately by :func:`_run_relay_cascade`.
     """
     root = Path(git.repo_root())
-    opened = 0
     for branch in branches:
-        state = _resolve_ready_state(root, branch)
-        if state.submitted is not None:
-            pr_url = state.submitted.get("pr_url", "")
+        pr_url, submitted_url = _relay_open(root, branch, args, assume_yes=args.yes)
+        if submitted_url is not None:
             print(
-                f"vrg-submit-pr: branch '{branch}' already has a submitted PR ({pr_url}); skipping."
+                f"vrg-submit-pr: branch '{branch}' already has a submitted PR "
+                f"({submitted_url}); skipping."
             )
             continue
-        metadata = _metadata_from_state(state, branch)
-        base = _target_branch(args.base, state.base)
-        if not args.dry_run:
-            _verify_origin_tip(branch, state)
-        pr_url = _open_pr(
-            branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=args.yes
-        )
-        if pr_url is None:
+        if pr_url is None:  # dry run — _open_pr previewed only
             continue
-        opened += 1
         print(f"Done. PR URL: {pr_url}")
         _print_pr_watch(pr_url)
     return 0
+
+
+def _run_relay_cascade(
+    branches: list[str], args: argparse.Namespace, *, release: bool, install: bool
+) -> int:
+    """Relay-submit *branches* and run the finalize (→ release → install) cascade.
+
+    The worktree-free counterpart of :func:`_run_submit_batch`, and it borrows
+    the same batch semantics because they are the *correct* ones for multiple
+    PRs: each branch is opened and finalized (``vrg-finalize-pr <url>
+    --skip-post-checks``) in turn, then — only if every branch merged — a single
+    end-of-batch validation runs, followed by **one** ``vrg-release`` (never one
+    per branch). It differs from ``_run_submit_batch`` only in the parts a
+    worktree provided: there is no local branch to rebase, and the PR is opened
+    via the relay core (``push=False``) rather than from a checked-out worktree.
+    ``vrg-finalize-pr`` already merges and cleans up a branch that is not checked
+    out locally — the cloud→Mac case the relay exists for — so no local fetch is
+    needed here.
+
+    Reached only when a cascade flag was passed (``--finalize`` is implied by
+    ``--release``/``--install``), so finalize always runs.
+    """
+    root = Path(git.repo_root())
+    main_root = git.main_worktree_root()
+
+    # Dry run: preview every PR and name the cascade, without touching origin.
+    if args.dry_run:
+        for branch in branches:
+            _relay_open(root, branch, args, assume_yes=args.yes)
+        print(_dry_run_chain_note(release=release, install=install))
+        return 0
+
+    def _process(branch: str) -> None:
+        pr_url, submitted_url = _relay_open(root, branch, args, assume_yes=True)
+        if submitted_url is not None:
+            raise batch.BatchAbortError(
+                f"branch already has a submitted PR ({submitted_url}); "
+                f"finalize it directly with: vrg-finalize-pr {submitted_url}"
+            )
+        # A live, non-submitted relay open always yields a URL (never a dry run);
+        # the guard narrows the type and defends the invariant.
+        if pr_url is None:  # pragma: no cover - unreachable on a live relay open
+            raise SystemExit("vrg-submit-pr: internal error: relay open returned no PR URL")
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", pr_url, "--skip-post-checks"),  # noqa: S607
+            cwd=main_root,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise batch.BatchAbortError(
+                f"vrg-finalize-pr {pr_url} --skip-post-checks exited {result.returncode}"
+            )
+
+    def _validate() -> None:
+        result = subprocess.run(  # noqa: S603
+            ("vrg-finalize-pr", "--cleanup-only"),  # noqa: S607
+            cwd=main_root,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"end-of-batch validation exited {result.returncode}")
+
+    def _release() -> None:
+        cmd = ("vrg-release", "--install") if install else ("vrg-release",)
+        result = subprocess.run(cmd, cwd=main_root, check=False)  # noqa: S603,S607
+        if result.returncode != 0:
+            raise batch.BatchAbortError(f"{' '.join(cmd)} exited {result.returncode}")
+
+    post_steps: list[batch.PostStep] = [batch.PostStep("validation", _validate)]
+    if release:
+        post_steps.append(batch.PostStep("release", _release))
+
+    plan = [f"relay-submit + finalize {branch}" for branch in branches]
+    plan.append("then: validate develop once" + (", then release" if release else ""))
+
+    report = batch.run_batch(
+        branches,
+        _process,
+        label=lambda branch: branch,
+        plan=plan,
+        assume_yes=args.yes,
+        post_steps=post_steps,
+    )
+    print(batch.format_report(report))
+    return 0 if report.all_merged and report.post_failure is None else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -911,9 +1019,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if args.branches:
-        # Relay path: branches identify the submit. It is deliberately narrow —
-        # it opens PRs worktree-free and hands off to pr-watch, with none of the
-        # local batch's worktree selection or finalize/release cascade.
+        # Relay path: branches identify the submit. It opens PRs worktree-free
+        # (from the branch's relayed ready-state), and — when a cascade flag is
+        # passed — carries them through finalize/release/install locally, exactly
+        # like the local worktree batch (issue #2398). It still rejects the
+        # worktree-selection and single-PR CLI flags, which name a different path.
         if args.all_worktrees or args.select is not None:
             print(
                 "vrg-submit-pr: branch arguments select the submit directly and "
@@ -929,13 +1039,9 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         if cascade_requested:
-            print(
-                "vrg-submit-pr: the relay branch path does not run the "
-                "--finalize/--release/--install cascade; open the PR, then run "
-                "the cascade separately.",
-                file=sys.stderr,
+            return _run_relay_cascade(
+                args.branches, args, release=args.release, install=args.install
             )
-            return 1
         return _run_relay(args.branches, args)
 
     cli_fields = [args.issue, args.summary, args.title]

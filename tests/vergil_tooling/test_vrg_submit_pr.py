@@ -2135,10 +2135,245 @@ class TestRelayBranchPath:
         assert rc == 1
         assert "--issue/--summary/--title" in capsys.readouterr().err
 
-    def test_relay_rejects_cascade_flags(self, capsys: pytest.CaptureFixture[str]) -> None:
-        rc = main(["feature/x", "--finalize"])
+    def test_relay_cascade_finalizes_each_and_releases_once(self) -> None:
+        """--release relays both branches, finalizes each with --skip-post-checks,
+        then validates once and releases exactly once — not once per branch
+        (issue #2398)."""
+        states = {
+            "feature/a": _ready_state(issue="1", branch="feature/a", head_sha="sha_a"),
+            "feature/b": _ready_state(issue="2", branch="feature/b", head_sha="sha_b"),
+        }
+
+        def fake_read_output(*args: str) -> str:
+            branch = args[-1].removeprefix("refs/heads/")
+            return f"sha_{branch[-1]}\t{args[-1]}"
+
+        def fake_transport(branch: str) -> MagicMock:
+            t = MagicMock()
+            t.read.return_value = states[branch]
+            return t
+
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            calls.append(tuple(cmd))
+            return MagicMock(returncode=0)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
+            patch(_MOD + ".git.read_output", side_effect=fake_read_output),
+            patch(_MOD + "._push_branch"),
+            patch(
+                _MOD + ".github.create_pr",
+                side_effect=["https://x/pull/1", "https://x/pull/2"],
+            ),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/a", "feature/b", "--release", "--yes"])
+        assert rc == 0
+        assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in calls
+        assert ("vrg-finalize-pr", "https://x/pull/2", "--skip-post-checks") in calls
+        assert ("vrg-finalize-pr", "--cleanup-only") in calls
+        # Released once for the whole batch, never per-branch.
+        assert calls.count(("vrg-release",)) == 1
+
+    def test_relay_cascade_finalize_only_skips_release(self) -> None:
+        """--finalize (no --release) finalizes each PR and validates once, but
+        never releases."""
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            calls.append(tuple(cmd))
+            return MagicMock(returncode=0)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/x", "--finalize", "--yes"])
+        assert rc == 0
+        assert ("vrg-finalize-pr", "https://x/pull/1", "--skip-post-checks") in calls
+        assert ("vrg-finalize-pr", "--cleanup-only") in calls
+        assert not any(cmd and cmd[0] == "vrg-release" for cmd in calls)
+
+    def test_relay_cascade_install_passes_through(self) -> None:
+        """--install runs the release step as `vrg-release --install`."""
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+        calls: list[tuple[str, ...]] = []
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            calls.append(tuple(cmd))
+            return MagicMock(returncode=0)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/x", "--install", "--yes"])
+        assert rc == 0
+        assert ("vrg-release", "--install") in calls
+        assert ("vrg-release",) not in calls
+
+    def test_relay_cascade_already_submitted_branch_aborts(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """In the cascade, an already-submitted branch is fail-fast: it cannot be
+        finalized via relay, so the batch stops and the rest are not started."""
+        states = {
+            "feature/a": _ready_state(
+                issue="1",
+                branch="feature/a",
+                submitted={"pr_url": "https://x/pull/9", "pr_number": "9"},
+            ),
+            "feature/b": _ready_state(issue="2", branch="feature/b", head_sha="sha_b"),
+        }
+
+        def fake_transport(branch: str) -> MagicMock:
+            t = MagicMock()
+            t.read.return_value = states[branch]
+            return t
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
+            patch(_MOD + ".git.read_output", return_value="sha_b\trefs/heads/feature/b"),
+            patch(_MOD + ".github.create_pr") as create,
+            patch(_MOD + ".subprocess.run") as run,
+        ):
+            rc = main(["feature/a", "feature/b", "--finalize", "--yes"])
         assert rc == 1
-        assert "cascade" in capsys.readouterr().err
+        create.assert_not_called()
+        run.assert_not_called()
+        out = capsys.readouterr().out
+        assert "already has a submitted PR" in out
+        assert "https://x/pull/9" in out
+
+    def test_relay_cascade_dry_run_previews_without_side_effects(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """--finalize --dry-run previews each PR and names the cascade, opening no
+        PR and running no finalize/release subprocess."""
+        state = _ready_state(branch="feature/x")
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output") as read_output,
+            patch(_MOD + ".github.create_pr") as create,
+            patch(_MOD + ".subprocess.run") as run,
+        ):
+            rc = main(["feature/x", "--finalize", "--dry-run"])
+        assert rc == 0
+        create.assert_not_called()
+        run.assert_not_called()
+        read_output.assert_not_called()
+        assert "would chain into" in capsys.readouterr().out
+
+    def test_relay_cascade_finalize_failure_stops_and_reports(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A per-PR finalize failure fails the batch and is reported."""
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            # Fail the per-PR finalize; the end-of-batch validation must not run.
+            return MagicMock(returncode=1)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/x", "--finalize", "--yes"])
+        assert rc == 1
+        assert "Failed" in capsys.readouterr().out
+
+    def test_relay_cascade_validation_failure_reported(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Every PR finalizes, but the end-of-batch validation fails: reported as a
+        post-step failure with a non-zero exit."""
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            # Per-PR finalize passes; the --cleanup-only validation fails.
+            failed = tuple(cmd) == ("vrg-finalize-pr", "--cleanup-only")
+            return MagicMock(returncode=1 if failed else 0)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/x", "--finalize", "--yes"])
+        assert rc == 1
+        assert "Post-step failed: validation" in capsys.readouterr().out
+
+    def test_relay_cascade_release_failure_reported(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """Finalize and validation pass, but the single release fails: reported as a
+        post-step failure."""
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+
+        def fake_run(cmd: tuple[str, ...], **_kwargs: object) -> MagicMock:
+            # Only vrg-release fails.
+            return MagicMock(returncode=1 if tuple(cmd)[0] == "vrg-release" else 0)
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://x/pull/1"),
+            patch(_MOD + ".subprocess.run", side_effect=fake_run),
+        ):
+            rc = main(["feature/x", "--release", "--yes"])
+        assert rc == 1
+        assert "Post-step failed: release" in capsys.readouterr().out
 
     def test_relay_blocked_for_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
