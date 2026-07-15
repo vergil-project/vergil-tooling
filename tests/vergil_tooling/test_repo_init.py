@@ -489,7 +489,19 @@ class TestRenderCdWorkflow:
         assert "attestations: write" in content
         assert "id-token: write" in content
         assert "pull-requests: write" in content
+        # cd-release.yml@v2.1 requests actions:read; without it the reusable
+        # workflow startup-fails at parse time on every CD run (issue #2392).
+        assert "actions: read" in content
         assert "cd-docs" not in content
+
+    def test_release_omits_actions_read_when_no_release(self) -> None:
+        # actions:read is only needed by the release job; a docs-only CD must
+        # not carry it (no cd-release call to satisfy).
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = True
+        ctx.publish_release = False
+        content = render_cd_workflow(ctx)
+        assert "actions: read" not in content
 
     def test_docs_and_release(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
