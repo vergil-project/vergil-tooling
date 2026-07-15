@@ -8515,7 +8515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -8543,7 +8543,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -9252,6 +9252,23 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="Relay branch mode (cloud-to-Mac handoff)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cascade-on-the-relay-path-finalize-release-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cascade on the relay path (--finalize/--release/--install)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -11841,6 +11858,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Relay branch mode (cloud-to-Mac handoff)">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cascade-on-the-relay-path-finalize-release-install" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cascade on the relay path (--finalize/--release/--install)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -12028,6 +12062,23 @@ Keep secrets out of the <code>report-ready</code> <code>--title</code>, <code>--
 <p>The relay ref is cleaned up by <a href="../finalize-pr/"><code>vrg-finalize-pr</code></a>, which
 deletes it alongside the branch on merge and sweeps any orphaned relay ref
 whose branch no longer exists.</p>
+<h3 id="cascade-on-the-relay-path-finalize-release-install">Cascade on the relay path (<code>--finalize</code>/<code>--release</code>/<code>--install</code>)<a class="headerlink" href="#cascade-on-the-relay-path-finalize-release-install" title="Permanent link">&para;</a></h3>
+<p>The relay path runs the full cascade too (issue #2398): the cascade is a
+<strong>local macOS</strong> action, so it does not matter whether the branch was
+implemented on the Mac or on a cloud VM. Once the PR is open, finalizing,
+releasing, and installing operate on the PR and the remote — the branch does
+not need to be checked out locally (<code>vrg-finalize-pr</code> already merges and
+cleans up a branch with no local worktree).</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Open PRs for both cloud-implemented branches, then merge, release, and</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># install — all locally, in one command.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-submit-pr<span class="w"> </span>--install<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
+</code></pre></div>
+<p>It uses the same batch semantics as the worktree batch (<code>--all</code> / <code>--select</code>):
+each PR is finalized in turn, then — only if every branch merged — a single
+end-of-batch validation runs, followed by <strong>one</strong> <code>vrg-release</code> (never one per
+branch). A branch that already carries a submitted PR is fail-fast in the
+cascade (finalize it directly with <code>vrg-finalize-pr &lt;url&gt;</code>); without a cascade
+flag it is simply reported and skipped, as before.</p>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -12083,23 +12134,23 @@ whose branch no longer exists.</p>
 <h3 id="linkage-keywords">Linkage Keywords<a class="headerlink" href="#linkage-keywords" title="Permanent link">&para;</a></h3>
 <p><code>Ref</code></p>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Normal flow: resolve the worktree, preview, confirm</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>vrg-submit-pr
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="c1"># Preview without submitting</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>vrg-submit-pr<span class="w"> </span>--dry-run
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Emergency CLI mode</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
-<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="c1"># Submit and merge-on-green in one step</span>
-<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>vrg-submit-pr<span class="w"> </span>--finalize
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Normal flow: resolve the worktree, preview, confirm</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>vrg-submit-pr
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="c1"># Relay branch mode: open PRs for cloud-implemented branches, worktree-free</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>vrg-submit-pr<span class="w"> </span>feature/123-x<span class="w"> </span>feature/124-y
+<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="c1"># Preview without submitting</span>
+<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>vrg-submit-pr<span class="w"> </span>--dry-run
+<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="c1"># Emergency CLI mode</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add new lint check for X&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="w">  </span>--title<span class="w"> </span><span class="s2">&quot;feat(lint): add new check for X&quot;</span>
+<a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a>
+<a id="__codelineno-3-16" name="__codelineno-3-16" href="#__codelineno-3-16"></a><span class="c1"># Submit and merge-on-green in one step</span>
+<a id="__codelineno-3-17" name="__codelineno-3-17" href="#__codelineno-3-17"></a>vrg-submit-pr<span class="w"> </span>--finalize
 </code></pre></div>
 <h2 id="behavior">Behavior<a class="headerlink" href="#behavior" title="Permanent link">&para;</a></h2>
 <ol>
