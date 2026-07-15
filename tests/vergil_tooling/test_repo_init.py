@@ -17,6 +17,7 @@ from vergil_tooling.lib.repo_init import (
     _default_ci_versions,
     _load_existing_config,
     _remote_branch_exists,
+    _resolve,
     _sync_labels,
     detect_completed_steps,
     prompt_choice,
@@ -131,6 +132,33 @@ class TestPromptFreeText:
         with patch("builtins.input", return_value=""):
             result = prompt_free_text("Optional", required=False)
         assert result == ""
+
+
+class TestResolve:
+    def test_override_wins(self) -> None:
+        called = False
+
+        def prompt() -> str:
+            nonlocal called
+            called = True
+            return "prompted"
+
+        result = _resolve("flag", non_interactive=False, default="dflt", prompt=prompt)
+        assert result == "flag"
+        assert called is False
+
+    def test_non_interactive_uses_default(self) -> None:
+        result = _resolve(None, non_interactive=True, default="dflt", prompt=lambda: "prompted")
+        assert result == "dflt"
+
+    def test_interactive_prompts_when_no_override(self) -> None:
+        result = _resolve(None, non_interactive=False, default="dflt", prompt=lambda: "prompted")
+        assert result == "prompted"
+
+    def test_false_boolean_override_is_respected(self) -> None:
+        # A False override must not be mistaken for "not supplied".
+        result = _resolve(False, non_interactive=True, default=True, prompt=lambda: True)
+        assert result is False
 
 
 class TestRepoInitContext:
@@ -634,6 +662,30 @@ class TestStepClone:
         ):
             step_clone(ctx, parent_dir=tmp_path)
 
+    def test_non_interactive_skips_clone_confirmation(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.non_interactive = True
+        target = tmp_path / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.prompt_yes_no",
+                side_effect=AssertionError("prompted in non-interactive mode"),
+            ),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
+        ):
+            step_clone(ctx, parent_dir=tmp_path)
+
+        assert ctx.work_dir == target
+
 
 class TestStepGenerateConfig:
     def test_prompts_and_writes_vergil_toml(self, tmp_path: Path) -> None:
@@ -797,6 +849,100 @@ class TestStepGenerateConfig:
 
         assert ctx.primary_language == "python"
         assert ctx.repository_type == "tooling"
+
+    def test_non_interactive_resolves_flags_without_prompting(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+        ctx.opt_repository_type = "tooling"
+        ctx.opt_primary_language = "python"
+        ctx.opt_branching_model = "library-release"
+        ctx.opt_versioning_scheme = "semver"
+        ctx.opt_release_model = "tagged-release"
+        ctx.opt_ci_versions = "3.12, 3.13"
+        ctx.opt_integration_tests = False
+        ctx.opt_publish_release = True
+        ctx.opt_publish_docs = False
+        ctx.opt_vergil_version = "v2.1"
+        ctx.opt_license_type = "Apache-2.0"
+        ctx.opt_initial_version = "1.0.0"
+
+        with (
+            patch(
+                "builtins.input",
+                side_effect=AssertionError("prompted in non-interactive mode"),
+            ),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.repository_type == "tooling"
+        assert ctx.primary_language == "python"
+        assert ctx.branching_model == "library-release"
+        assert ctx.versioning_scheme == "semver"
+        assert ctx.release_model == "tagged-release"
+        assert ctx.ci_versions == ["3.12", "3.13"]
+        assert ctx.integration_tests is False
+        assert ctx.publish_release is True
+        assert ctx.publish_docs is False
+        assert ctx.license_type == "Apache-2.0"
+        assert ctx.initial_version == "1.0.0"
+        content = (tmp_path / "vergil.toml").read_text()
+        assert 'primary-language = "python"' in content
+        assert _parse_raw_config(tomllib.loads(content)).ci.versions == ["3.12", "3.13"]
+
+    def test_non_interactive_uses_documented_defaults_for_optional_flags(
+        self, tmp_path: Path
+    ) -> None:
+        # Required enums supplied; every optional flag omitted falls back to its
+        # documented default (matching the interactive default exactly).
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+        ctx.opt_repository_type = "tooling"
+        ctx.opt_branching_model = "library-release"
+        ctx.opt_versioning_scheme = "semver"
+        ctx.opt_release_model = "tagged-release"
+
+        with (
+            patch(
+                "builtins.input",
+                side_effect=AssertionError("prompted in non-interactive mode"),
+            ),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+        ):
+            step_generate_config(ctx)
+
+        assert ctx.primary_language == ""  # no --language → language-less
+        assert ctx.integration_tests is False
+        assert ctx.publish_release is True  # release-model != none
+        assert ctx.publish_docs is True
+        assert ctx.vergil_version == "v2.1"
+        assert ctx.license_type == "MIT"
+        assert ctx.initial_version == "0.1.0"
+
+    def test_non_interactive_adopt_missing_required_enum_fails_loud(self, tmp_path: Path) -> None:
+        # Adopt with no existing vergil.toml and no flags: the required enums
+        # resolve empty, so the wizard must fail loud rather than write an
+        # invalid config (issue #2382, no silent failure).
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm", adopt=True)
+        ctx.work_dir = tmp_path
+        ctx.non_interactive = True
+
+        with (
+            patch(
+                "builtins.input",
+                side_effect=AssertionError("prompted in non-interactive mode"),
+            ),
+            patch("vergil_tooling.lib.repo_init.git.run"),
+            pytest.raises(SystemExit) as exc,
+        ):
+            step_generate_config(ctx)
+
+        message = str(exc.value)
+        assert "--repository-type" in message
+        assert "--branching-model" in message
+        assert not (tmp_path / "vergil.toml").exists()
 
 
 class TestStepScaffoldConfigFiles:

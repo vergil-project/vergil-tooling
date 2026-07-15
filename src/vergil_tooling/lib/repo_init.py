@@ -9,7 +9,10 @@ import subprocess
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from vergil_tooling.lib import git, github, repo_config
 from vergil_tooling.lib.config import _ENUMS
@@ -43,6 +46,28 @@ class RepoInitContext:
     vergil_version: str = "v2.1"
     license_type: str = "MIT"
     initial_version: str = "0.1.0"
+
+    # Non-interactive mode (issue #2382): resolve every value from a flag and
+    # never prompt. The wizard fails loud on a missing required value rather
+    # than silently defaulting.
+    non_interactive: bool = False
+
+    # Flag overrides carried into the wizard. ``None`` means the flag was not
+    # supplied on the CLI — distinct from a value that merely equals a default —
+    # so a resolver can tell "not provided" from "provided as the default".
+    opt_description: str | None = None
+    opt_repository_type: str | None = None
+    opt_primary_language: str | None = None
+    opt_branching_model: str | None = None
+    opt_versioning_scheme: str | None = None
+    opt_release_model: str | None = None
+    opt_ci_versions: str | None = None
+    opt_integration_tests: bool | None = None
+    opt_publish_release: bool | None = None
+    opt_publish_docs: bool | None = None
+    opt_vergil_version: str | None = None
+    opt_license_type: str | None = None
+    opt_initial_version: str | None = None
 
     @property
     def repo(self) -> str:
@@ -172,6 +197,29 @@ def prompt_free_text(
         if not required:
             return ""
         print("  This field is required.")
+
+
+def _resolve[T](
+    override: T | None,
+    *,
+    non_interactive: bool,
+    default: T,
+    prompt: Callable[[], T],
+) -> T:
+    """Resolve a wizard value: flag override, else default (non-interactive),
+    else prompt.
+
+    An explicit flag override always wins. With no override, a
+    ``--non-interactive`` run takes the documented default (which mirrors the
+    interactive default exactly), while an interactive run prompts. Required
+    values that have no sensible default are validated up front — see
+    ``parse_args`` and ``step_generate_config`` (issue #2382).
+    """
+    if override is not None:
+        return override
+    if non_interactive:
+        return default
+    return prompt()
 
 
 def _load_data_file(filename: str) -> str:
@@ -685,7 +733,8 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
         return
 
     resolved = target.resolve()
-    if not prompt_yes_no(f"Step 2: Clone to {resolved}?", default=True):
+    # Under --non-interactive/--yes the clone confirmation is auto-accepted.
+    if not ctx.non_interactive and not prompt_yes_no(f"Step 2: Clone to {resolved}?", default=True):
         print("Aborted. Re-run from the directory where you want the clone.")
         raise SystemExit(1)
 
@@ -734,61 +783,143 @@ def step_generate_config(ctx: RepoInitContext) -> None:
     pub_raw = existing.get("publish", {}) if existing else {}
     deps = existing.get("dependencies", {}) if existing else {}
 
-    ctx.repository_type = prompt_choice(
-        "Repository type",
-        sorted(_ENUMS["repository-type"]),
-        default=project.get("repository-type", ""),
+    ni = ctx.non_interactive
+
+    repo_type_default = project.get("repository-type", "")
+    ctx.repository_type = _resolve(
+        ctx.opt_repository_type,
+        non_interactive=ni,
+        default=repo_type_default,
+        prompt=lambda: prompt_choice(
+            "Repository type",
+            sorted(_ENUMS["repository-type"]),
+            default=repo_type_default,
+        ),
     )
 
     # Primary language is prompted on its own — "no language" is the absence of
     # a language, presented as a separate "none of the above" choice, not a
-    # sixth enum value (issue #1579).
-    ctx.primary_language = prompt_language(default=project.get("primary-language", ""))
+    # sixth enum value (issue #1579). Its documented default is "no language",
+    # so omitting --language under --non-interactive yields a language-less repo.
+    lang_default = project.get("primary-language", "")
+    ctx.primary_language = _resolve(
+        ctx.opt_primary_language,
+        non_interactive=ni,
+        default=lang_default,
+        prompt=lambda: prompt_language(default=lang_default),
+    )
 
-    enum_fields = [
-        ("branching_model", "branching-model", "Branching model"),
-        ("versioning_scheme", "versioning-scheme", "Versioning scheme"),
-        ("release_model", "release-model", "Release model"),
-    ]
-    for attr, toml_key, label in enum_fields:
-        options = sorted(_ENUMS[toml_key])
-        default = project.get(toml_key, "")
-        value = prompt_choice(label, options, default=default)
-        setattr(ctx, attr, value)
+    branching_default = project.get("branching-model", "")
+    ctx.branching_model = _resolve(
+        ctx.opt_branching_model,
+        non_interactive=ni,
+        default=branching_default,
+        prompt=lambda: prompt_choice(
+            "Branching model", sorted(_ENUMS["branching-model"]), default=branching_default
+        ),
+    )
+
+    versioning_default = project.get("versioning-scheme", "")
+    ctx.versioning_scheme = _resolve(
+        ctx.opt_versioning_scheme,
+        non_interactive=ni,
+        default=versioning_default,
+        prompt=lambda: prompt_choice(
+            "Versioning scheme", sorted(_ENUMS["versioning-scheme"]), default=versioning_default
+        ),
+    )
+
+    release_model_default = project.get("release-model", "")
+    ctx.release_model = _resolve(
+        ctx.opt_release_model,
+        non_interactive=ni,
+        default=release_model_default,
+        prompt=lambda: prompt_choice(
+            "Release model", sorted(_ENUMS["release-model"]), default=release_model_default
+        ),
+    )
+
+    # No silent failure (issue #2382): a --non-interactive run must resolve every
+    # required enum to a real value. New-repo runs are gated up front in
+    # parse_args; this catches the adopt path when an existing vergil.toml (or a
+    # missing one) leaves a required field empty and no flag supplied it.
+    if ni:
+        missing = [
+            flag
+            for value, flag in (
+                (ctx.repository_type, "--repository-type"),
+                (ctx.branching_model, "--branching-model"),
+                (ctx.versioning_scheme, "--versioning-scheme"),
+                (ctx.release_model, "--release-model"),
+            )
+            if not value
+        ]
+        if missing:
+            raise SystemExit(
+                "error: --non-interactive is missing required values: " + ", ".join(missing)
+            )
 
     default_versions = _default_ci_versions(ctx.primary_language)
     existing_versions = ", ".join(ci_raw.get("versions", []))
-    raw_versions = prompt_free_text(
-        "CI versions (comma-separated)",
-        default=existing_versions or default_versions,
+    versions_default = existing_versions or default_versions
+    raw_versions = _resolve(
+        ctx.opt_ci_versions,
+        non_interactive=ni,
+        default=versions_default,
+        prompt=lambda: prompt_free_text(
+            "CI versions (comma-separated)",
+            default=versions_default,
+        ),
     )
     ctx.ci_versions = [v.strip() for v in raw_versions.split(",")]
 
-    ctx.integration_tests = prompt_yes_no(
-        "Integration tests?",
-        default=ci_raw.get("integration-tests", False),
+    it_default = ci_raw.get("integration-tests", False)
+    ctx.integration_tests = _resolve(
+        ctx.opt_integration_tests,
+        non_interactive=ni,
+        default=it_default,
+        prompt=lambda: prompt_yes_no("Integration tests?", default=it_default),
     )
 
     release_default = ctx.release_model != "none"
-    ctx.publish_release = prompt_yes_no(
-        "Publish releases?",
-        default=pub_raw.get("release", release_default),
+    pr_default = pub_raw.get("release", release_default)
+    ctx.publish_release = _resolve(
+        ctx.opt_publish_release,
+        non_interactive=ni,
+        default=pr_default,
+        prompt=lambda: prompt_yes_no("Publish releases?", default=pr_default),
     )
 
-    ctx.publish_docs = prompt_yes_no(
-        "Publish docs?",
-        default=pub_raw.get("docs", True),
+    pd_default = pub_raw.get("docs", True)
+    ctx.publish_docs = _resolve(
+        ctx.opt_publish_docs,
+        non_interactive=ni,
+        default=pd_default,
+        prompt=lambda: prompt_yes_no("Publish docs?", default=pd_default),
     )
 
-    ctx.vergil_version = prompt_free_text(
-        "Vergil dependency version",
-        default=deps.get("vergil", "v2.1"),
+    vv_default = deps.get("vergil", "v2.1")
+    ctx.vergil_version = _resolve(
+        ctx.opt_vergil_version,
+        non_interactive=ni,
+        default=vv_default,
+        prompt=lambda: prompt_free_text("Vergil dependency version", default=vv_default),
     )
 
     license_options = ["MIT", "GPL-3.0", "Apache-2.0", "none"]
-    ctx.license_type = prompt_choice("License", license_options, default="MIT")
+    ctx.license_type = _resolve(
+        ctx.opt_license_type,
+        non_interactive=ni,
+        default="MIT",
+        prompt=lambda: prompt_choice("License", license_options, default="MIT"),
+    )
 
-    ctx.initial_version = prompt_free_text("Initial version", default="0.1.0")
+    ctx.initial_version = _resolve(
+        ctx.opt_initial_version,
+        non_interactive=ni,
+        default="0.1.0",
+        prompt=lambda: prompt_free_text("Initial version", default="0.1.0"),
+    )
 
     content = render_vergil_toml(ctx)
     if ctx.work_dir is None:  # pragma: no cover
