@@ -1,16 +1,26 @@
 """PR submission wrapper that constructs standards-compliant PR bodies.
 
-Supports two modes:
-- **Template mode** (no CLI args): reads the PR workflow state file
+Supports three modes:
+- **Template mode** (no args): reads the PR workflow state file
   (``.vergil/pr-workflow.json``); shows a summary, prompts for
   confirmation, pushes the branch, and creates the PR.
-- **CLI argument mode** (args provided): existing direct invocation
-  for human emergency use.
+- **CLI argument mode** (``--issue``/``--summary``/``--title``): existing
+  direct invocation for human emergency use.
+- **Relay branch mode** (positional ``branches``): opens PRs for
+  branches that are already on origin, worktree-free (issue #2368). Each
+  branch's ready-state is resolved from a local worktree's
+  ``pr-workflow.json`` when one exists, else the relay ref
+  (``GitHubTransport``); origin's tip is verified against the recorded
+  ``head_sha`` and the PR is opened **without** pushing (``--head`` names
+  the source branch). This is the Mac-side of the cloud→Mac relay handoff:
+  the branch and its metadata already rode GitHub, so no worktree, no
+  ``git.current_branch()``, and no push are involved.
 
-Both modes ensure the branch is pushed using the human's host
+The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
 of any agent's rights, this carries workflow-touching pushes that the
-agent's own credentials would be rejected for.
+agent's own credentials would be rejected for. The relay mode never
+pushes — the branch is already on origin.
 
 Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
@@ -42,6 +52,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github, identity_mode, worktrees
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
@@ -49,11 +60,24 @@ from vergil_tooling.lib.linkage import ALLOWED_LINKAGES, normalize_linkage
 from vergil_tooling.lib.pr_body import build_pr_body, resolve_issue_ref
 from vergil_tooling.lib.pr_workflow import batch, submission
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
+from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
+from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(description="Create a standards-compliant pull request.")
+    parser.add_argument(
+        "branches",
+        nargs="*",
+        help="Relay path: one or more branches (already on origin) to open PRs "
+        "for, worktree-free. Each branch's ready-state is resolved from a local "
+        "worktree's pr-workflow.json when present, else the relay ref. With no "
+        "branch arguments, the local-worktree flow runs unchanged.",
+    )
     parser.add_argument(
         "--issue", default=None, help="Issue reference: number or owner/repo#number"
     )
@@ -144,12 +168,12 @@ def _push_branch(branch: str) -> None:
         raise SystemExit(msg) from exc
 
 
-def _create_pr(*, target_branch: str, title: str, pr_body: str) -> str:
+def _create_pr(*, target_branch: str, title: str, pr_body: str, head: str | None = None) -> str:
     with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False) as f:
         f.write(pr_body)
         tmp_path = f.name
     try:
-        pr_url = github.create_pr(base=target_branch, title=title, body_file=tmp_path)
+        pr_url = github.create_pr(base=target_branch, title=title, body_file=tmp_path, head=head)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
     return pr_url
@@ -569,47 +593,84 @@ def _push_create_record(
     return pr_url
 
 
-def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: bool) -> str:
-    """Read the worktree's PR fields, push, create the PR, record it, return URL.
+def _open_pr(
+    branch: str,
+    base: str,
+    metadata: dict[str, str],
+    *,
+    push: bool,
+    dry_run: bool = False,
+    assume_yes: bool = False,
+) -> str | None:
+    """Shared PR-open core: run the standards/provenance guards on the issue,
+    resolve the linkage, build the body, optionally push the branch, and open
+    the PR against *base*. Returns the PR URL (``None`` on a dry run).
 
-    Self-contained submit for one worktree, used by the batch orchestrator.
-    Propagates ``AlreadySubmittedError`` / ``FileNotFoundError`` /
-    ``WorkflowError`` from the field reader and raises ``SystemExit`` on a
-    forbidden linkage or a declined confirm. The per-PR
-    confirm is pre-answered when *assume_yes* — the batch path passes True so
-    the single up-front batch confirm is the only gate (issue #1673).
+    This is the seam both the local worktree batch and the worktree-free relay
+    path build on. It takes *branch* / *base* / *metadata* as given — it never
+    reads ``git.current_branch()`` nor looks a worktree up — so the relay path
+    can drive it for a branch that is not checked out anywhere locally. *push*
+    is the one behavioral fork: the local path pushes the branch first
+    (``push=True``); the relay path skips it (``push=False``) because the branch
+    is already on origin, and passes ``--head`` so ``gh`` opens the PR for the
+    right branch from outside its worktree.
+
+    Raises ``SystemExit`` on a forbidden linkage or a declined confirm.
     """
-    fields = submission.read_pr_fields(worktree_root)
-    issue_ref = resolve_issue_ref(fields["issue"])
+    issue_ref = resolve_issue_ref(metadata["issue"])
     _reject_if_cross_repo(issue_ref)
     _reject_if_epic_link(issue_ref)
     _reject_if_operational_task(issue_ref)
-    branch = git.current_branch()
-    target = _target_branch(base_override, fields.get("base"))
     try:
-        linkage, linkage_warning = normalize_linkage(fields.get("linkage", "Ref"))
+        linkage, linkage_warning = normalize_linkage(metadata.get("linkage", "Ref"))
     except ValueError as exc:
         raise SystemExit(f"vrg-submit-pr: {exc}") from exc
     if linkage_warning:
         print(f"vrg-submit-pr: {linkage_warning}", file=sys.stderr)
     linkage = _resolve_linkage(issue_ref, linkage)
     pr_body = build_pr_body(
-        summary=fields["summary"],
+        summary=metadata["summary"],
         linkage=linkage,
         issue_ref=issue_ref,
-        notes=fields.get("notes", ""),
+        notes=metadata.get("notes", ""),
     )
-    print(f"=== Submitting issue {issue_ref}: {fields['title']} ===")
-    print(f"    base {target}, branch {branch}")
+    print(f"=== Submitting issue {issue_ref}: {metadata['title']} ===")
+    print(f"    base {base}, branch {branch}")
+    print(f"\n=== Body Preview ===\n{pr_body}")
+    if dry_run:
+        return None
     if not confirm("\nSubmit this PR?", assume_yes=assume_yes):
         raise SystemExit("vrg-submit-pr: submission declined at the per-PR confirm")
-    return _push_create_record(
-        worktree_root=worktree_root,
-        branch=branch,
-        target=target,
-        title=fields["title"],
-        pr_body=pr_body,
-    )
+    if push:
+        print(f"Ensuring branch '{branch}' is pushed to origin...")
+        _push_branch(branch)
+    print("Creating PR...")
+    pr_url = _create_pr(target_branch=base, title=metadata["title"], pr_body=pr_body, head=branch)
+    print(f"PR created: {pr_url}")
+    return pr_url
+
+
+def _submit_one(worktree_root: Path, *, base_override: str | None, assume_yes: bool) -> str:
+    """Read the worktree's PR fields, push, create the PR, record it, return URL.
+
+    Self-contained submit for one worktree, used by the batch orchestrator. The
+    push/create/guard flow is the shared :func:`_open_pr` core (``push=True``);
+    this wrapper adds the worktree-specific parts — reading the fields and
+    recording the submission on the local state file. Propagates
+    ``AlreadySubmittedError`` / ``FileNotFoundError`` / ``WorkflowError`` from the
+    field reader and raises ``SystemExit`` on a forbidden linkage or a declined
+    confirm. The per-PR confirm is pre-answered when *assume_yes* — the batch
+    path passes True so the single up-front batch confirm is the only gate
+    (issue #1673).
+    """
+    fields = submission.read_pr_fields(worktree_root)
+    branch = git.current_branch()
+    target = _target_branch(base_override, fields.get("base"))
+    pr_url = _open_pr(branch, target, fields, push=True, assume_yes=assume_yes)
+    if pr_url is None:  # pragma: no cover - the batch path never dry-runs
+        raise SystemExit("vrg-submit-pr: internal error: _open_pr returned no URL")
+    submission.record_submission(worktree_root, pr_url=pr_url)
+    return pr_url
 
 
 def _run_template_mode(args: argparse.Namespace) -> int:
@@ -718,8 +779,120 @@ def _run_template_mode(args: argparse.Namespace) -> int:
     return 0
 
 
+def _metadata_from_state(state: WorkflowState, branch: str) -> dict[str, str]:
+    """Extract the PR-body metadata from a ready ``WorkflowState``.
+
+    Mirrors ``submission.read_pr_fields`` but reads from an in-memory state
+    (which the relay path may have fetched from the ref rather than a local
+    file). Raises ``SystemExit`` when the state carries no PR metadata yet — the
+    USER agent must ``report-ready`` before the branch can be relayed.
+    """
+    meta = state.pr_metadata
+    if meta is None:
+        raise SystemExit(
+            f"vrg-submit-pr: branch '{branch}' has no PR metadata yet; run "
+            "`report-ready` before relaying it."
+        )
+    return {
+        "issue": state.issue,
+        "title": meta["title"],
+        "summary": meta["summary"],
+        "notes": meta.get("notes", ""),
+        "linkage": meta.get("linkage", "Ref"),
+    }
+
+
+def _resolve_ready_state(root: Path, branch: str) -> WorkflowState:
+    """Resolve *branch*'s ready-state for the relay path.
+
+    Prefers a local worktree's ``pr-workflow.json`` when a worktree is checked
+    out on *branch* and carries state; otherwise reads the relay ref
+    (``GitHubTransport``). Raises ``SystemExit`` with an actionable message when
+    neither source has a ready-state.
+    """
+    for wt in worktrees.list_worktrees(root):
+        if wt.branch == branch:
+            local = LocalFileTransport(wt.path).read()
+            if local is not None:
+                return local
+            break
+    remote = GitHubTransport(branch).read()
+    if remote is None:
+        raise SystemExit(
+            f"vrg-submit-pr: no ready-state for branch '{branch}' — no local "
+            "worktree pr-workflow.json and no relay ref on origin. Run "
+            "`report-ready` first."
+        )
+    return remote
+
+
+def _verify_origin_tip(branch: str, state: WorkflowState) -> None:
+    """Refuse to relay unless origin's tip of *branch* matches the ready-state.
+
+    The relay path never pushes — it trusts that origin already carries exactly
+    the commit ``report-ready`` recorded. If the branch moved on origin since
+    then (or was never pushed), the recorded metadata no longer describes the
+    tip, so the submission would be stale. Fail loudly rather than open a PR for
+    the wrong commit.
+    """
+    expected = state.git.get("head_sha")
+    listing = git.read_output("ls-remote", "origin", f"refs/heads/{branch}")
+    if not listing:
+        raise SystemExit(
+            f"vrg-submit-pr: branch '{branch}' is not on origin; a relay submit "
+            "needs the branch already pushed."
+        )
+    origin_sha = listing.split()[0]
+    if origin_sha != expected:
+        raise SystemExit(
+            f"vrg-submit-pr: origin/{branch} tip ({origin_sha[:12]}) does not "
+            f"match the ready-state head_sha ({str(expected)[:12]}). The branch "
+            "moved since `report-ready`; re-run `report-ready` on the current tip "
+            "(or fetch and reconcile) before relaying."
+        )
+
+
+def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
+    """Open PRs for each already-pushed *branch* without a local worktree.
+
+    For every branch: resolve its ready-state (local file preferred, else the
+    relay ref), verify origin's tip matches the recorded ``head_sha``, and drive
+    the shared :func:`_open_pr` core with ``push=False``. Branches already
+    carrying a submitted PR are reported and skipped. Standards/provenance run
+    against the resolved GitHub-carried metadata, exactly as the local path runs
+    them against the worktree's file.
+    """
+    root = Path(git.repo_root())
+    opened = 0
+    for branch in branches:
+        state = _resolve_ready_state(root, branch)
+        if state.submitted is not None:
+            pr_url = state.submitted.get("pr_url", "")
+            print(
+                f"vrg-submit-pr: branch '{branch}' already has a submitted PR ({pr_url}); skipping."
+            )
+            continue
+        metadata = _metadata_from_state(state, branch)
+        base = _target_branch(args.base, state.base)
+        if not args.dry_run:
+            _verify_origin_tip(branch, state)
+        pr_url = _open_pr(
+            branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=args.yes
+        )
+        if pr_url is None:
+            continue
+        opened += 1
+        print(f"Done. PR URL: {pr_url}")
+        _print_pr_watch(pr_url)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # Capture the cascade intent before normalization mutates the flags — the
+    # relay path guard below needs to know what the caller actually passed.
+    cascade_requested = args.finalize or args.release or args.install
 
     # --install extends the cascade one link past --release, which itself
     # implies --finalize; normalize once (install ⇒ release ⇒ finalize) so
@@ -736,6 +909,34 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 1
+
+    if args.branches:
+        # Relay path: branches identify the submit. It is deliberately narrow —
+        # it opens PRs worktree-free and hands off to pr-watch, with none of the
+        # local batch's worktree selection or finalize/release cascade.
+        if args.all_worktrees or args.select is not None:
+            print(
+                "vrg-submit-pr: branch arguments select the submit directly and "
+                "cannot be combined with --all/--select.",
+                file=sys.stderr,
+            )
+            return 1
+        if args.issue is not None or args.summary is not None or args.title is not None:
+            print(
+                "vrg-submit-pr: branch arguments cannot be combined with "
+                "--issue/--summary/--title (those drive the single-PR CLI path).",
+                file=sys.stderr,
+            )
+            return 1
+        if cascade_requested:
+            print(
+                "vrg-submit-pr: the relay branch path does not run the "
+                "--finalize/--release/--install cascade; open the PR, then run "
+                "the cascade separately.",
+                file=sys.stderr,
+            )
+            return 1
+        return _run_relay(args.branches, args)
 
     cli_fields = [args.issue, args.summary, args.title]
     has_any = any(f is not None for f in cli_fields)

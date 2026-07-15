@@ -62,9 +62,25 @@ def test_current_org_returns_remote_owner() -> None:
 
 
 def test_create_pr_returns_url() -> None:
-    with patch("vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/1"):
+    with patch(
+        "vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/1"
+    ) as mock_read:
         url = github.create_pr(base="main", title="title", body_file="body.md")
     assert url == "https://github.com/pr/1"
+    assert "--head" not in mock_read.call_args.args
+
+
+def test_create_pr_passes_head_when_given() -> None:
+    """The relay path opens a PR from outside the branch's worktree, so it must
+    pass --head to name the source branch explicitly."""
+    with patch(
+        "vergil_tooling.lib.github.read_output", return_value="https://github.com/pr/2"
+    ) as mock_read:
+        url = github.create_pr(base="main", title="title", body_file="body.md", head="feature/x")
+    assert url == "https://github.com/pr/2"
+    args = mock_read.call_args.args
+    assert "--head" in args
+    assert args[args.index("--head") + 1] == "feature/x"
 
 
 def test_create_issue_returns_url_and_builds_command() -> None:

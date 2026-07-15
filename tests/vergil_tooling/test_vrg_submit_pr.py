@@ -10,25 +10,32 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
+    _metadata_from_state,
+    _open_pr,
     _push_branch,
     _reject_if_cross_repo,
     _reject_if_epic_link,
     _reject_if_operational_task,
     _resolve_linkage,
+    _resolve_ready_state,
     _run_submit_batch,
     _select_batch_worktrees,
     _submit_one,
     _target_branch,
     _task_linkage,
+    _verify_origin_tip,
     main,
     parse_args,
 )
 from vergil_tooling.lib import epics, worktrees
+from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import AlreadySubmittedError, WorkflowError
 from vergil_tooling.lib.worktrees import Worktree
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 _MOD = "vergil_tooling.bin.vrg_submit_pr"
 
@@ -1547,7 +1554,9 @@ def test_submit_one_strips_issue_number_from_linkage_and_warns(
         patch(_MOD + ".git.current_branch", return_value="feature/1-x"),
         patch(_MOD + ".build_pr_body", return_value="BODY") as build,
         patch(_MOD + ".confirm", return_value=True),
-        patch(_MOD + "._push_create_record", return_value="https://example/pull/1"),
+        patch(_MOD + "._push_branch"),
+        patch(_MOD + "._create_pr", return_value="https://example/pull/1"),
+        patch(_MOD + ".submission.record_submission"),
     ):
         url = _submit_one(Path("/r"), base_override=None, assume_yes=True)
     assert url == "https://example/pull/1"
@@ -1795,3 +1804,365 @@ def test_reject_if_epic_link_noop_when_repo_unresolvable() -> None:
     # A bare ref with no resolvable default repo is skipped, not an error.
     with patch(f"{_MOD}.github.current_repo", return_value=""):
         _reject_if_epic_link("#42")
+
+
+# -- shared _open_pr core + worktree-free relay branch path (issue #2368) ------
+
+
+def _ready_state(
+    *,
+    issue: str = "42",
+    branch: str = "feature/x",
+    base: str = "develop",
+    head_sha: str = "abc123def456",
+    title: str = "fix: bug",
+    summary: str = "Fix the bug",
+    notes: str = "Verified",
+    linkage: str = "Ref",
+    submitted: dict[str, str] | None = None,
+) -> WorkflowState:
+    """Build a report-ready ``WorkflowState`` for the relay tests."""
+    now = "2026-06-08T00:00:00Z"
+    state = engine.init_state(
+        issue=issue, branch=branch, base=base, head_sha=head_sha, base_sha="b0", now=now
+    )
+    engine.apply_report_ready(
+        state,
+        title=title,
+        summary=summary,
+        notes=notes,
+        linkage=linkage,
+        head_sha=head_sha,
+        now=now,
+    )
+    if submitted is not None:
+        state.submitted = submitted
+    return state
+
+
+def test_open_pr_relay_opens_without_pushing() -> None:
+    """push=False opens the PR with --head and never pushes the branch."""
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".resolve_issue_ref", return_value="#42"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/9") as create,
+    ):
+        url = _open_pr("feature/x", "develop", metadata, push=False, assume_yes=True)
+    assert url == "https://github.com/pr/9"
+    push.assert_not_called()
+    assert create.call_args.kwargs["head"] == "feature/x"
+    assert create.call_args.kwargs["base"] == "develop"
+
+
+def test_open_pr_local_pushes_before_creating() -> None:
+    """push=True pushes the branch first, then opens the PR."""
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".resolve_issue_ref", return_value="#42"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/9"),
+    ):
+        url = _open_pr("feature/x", "develop", metadata, push=True, assume_yes=True)
+    assert url == "https://github.com/pr/9"
+    push.assert_called_once_with("feature/x")
+
+
+def test_open_pr_dry_run_previews_without_opening() -> None:
+    metadata = {"issue": "42", "title": "fix: bug", "summary": "s", "notes": "", "linkage": "Ref"}
+    with (
+        patch(_MOD + ".resolve_issue_ref", return_value="#42"),
+        patch(_MOD + ".build_pr_body", return_value="BODY"),
+        patch(_MOD + "._push_branch") as push,
+        patch(_MOD + ".github.create_pr") as create,
+    ):
+        url = _open_pr("feature/x", "develop", metadata, push=False, dry_run=True)
+    assert url is None
+    push.assert_not_called()
+    create.assert_not_called()
+
+
+def test_metadata_from_state_extracts_fields() -> None:
+    state = _ready_state(issue="7", title="T", summary="S", notes="N", linkage="Closes")
+    meta = _metadata_from_state(state, "feature/x")
+    assert meta == {"issue": "7", "title": "T", "summary": "S", "notes": "N", "linkage": "Closes"}
+
+
+def test_metadata_from_state_errors_without_pr_metadata() -> None:
+    now = "2026-06-08T00:00:00Z"
+    state = engine.init_state(
+        issue="7", branch="feature/x", base="develop", head_sha="h", base_sha="b", now=now
+    )
+    with pytest.raises(SystemExit, match="no PR metadata yet"):
+        _metadata_from_state(state, "feature/x")
+
+
+def test_resolve_ready_state_prefers_local_worktree_file() -> None:
+    """A branch with a local worktree resolves via the file — the ref is untouched."""
+    wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+    state = _ready_state()
+    local = MagicMock()
+    local.read.return_value = state
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".LocalFileTransport", return_value=local) as local_cls,
+        patch(_MOD + ".GitHubTransport") as gh_cls,
+    ):
+        out = _resolve_ready_state(Path("/repo"), "feature/x")
+    assert out is state
+    local_cls.assert_called_once_with(wt.path)
+    gh_cls.assert_not_called()
+
+
+def test_resolve_ready_state_falls_back_to_relay_ref() -> None:
+    """A worktree list with no branch match → read the relay ref via GitHubTransport."""
+    other = Worktree(path=Path("/repo/.worktrees/issue-99-y"), branch="feature/other")
+    state = _ready_state()
+    transport = MagicMock()
+    transport.read.return_value = state
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[other]),
+        patch(_MOD + ".GitHubTransport", return_value=transport) as gh_cls,
+    ):
+        out = _resolve_ready_state(Path("/repo"), "feature/x")
+    assert out is state
+    gh_cls.assert_called_once_with("feature/x")
+
+
+def test_resolve_ready_state_worktree_without_file_falls_back_to_ref() -> None:
+    """A worktree on the branch but with no state file falls through to the ref."""
+    wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+    state = _ready_state()
+    local = MagicMock()
+    local.read.return_value = None
+    transport = MagicMock()
+    transport.read.return_value = state
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+        patch(_MOD + ".LocalFileTransport", return_value=local),
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+    ):
+        out = _resolve_ready_state(Path("/repo"), "feature/x")
+    assert out is state
+
+
+def test_resolve_ready_state_errors_when_no_source() -> None:
+    transport = MagicMock()
+    transport.read.return_value = None
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".GitHubTransport", return_value=transport),
+        pytest.raises(SystemExit, match="no ready-state for branch"),
+    ):
+        _resolve_ready_state(Path("/repo"), "feature/x")
+
+
+def test_verify_origin_tip_passes_on_match() -> None:
+    state = _ready_state(head_sha="abc123")
+    with patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"):
+        _verify_origin_tip("feature/x", state)  # no raise
+
+
+def test_verify_origin_tip_errors_on_mismatch() -> None:
+    state = _ready_state(head_sha="abc123")
+    with (
+        patch(_MOD + ".git.read_output", return_value="deadbeef\trefs/heads/feature/x"),
+        pytest.raises(SystemExit, match="does not"),
+    ):
+        _verify_origin_tip("feature/x", state)
+
+
+def test_verify_origin_tip_errors_when_branch_absent_on_origin() -> None:
+    state = _ready_state(head_sha="abc123")
+    with (
+        patch(_MOD + ".git.read_output", return_value=""),
+        pytest.raises(SystemExit, match="not on origin"),
+    ):
+        _verify_origin_tip("feature/x", state)
+
+
+class TestRelayBranchPath:
+    """`vrg-submit-pr <branch>` opens a PR worktree-free (issue #2368)."""
+
+    @pytest.fixture(autouse=True)
+    def _human_mode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("VRG_IDENTITY_MODE", raising=False)
+        monkeypatch.delenv("VRG_APP_ID", raising=False)
+
+    def test_relay_opens_pr_without_pushing(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".git.run") as git_run,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5") as create,
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        push.assert_not_called()
+        assert not any(c.args and c.args[0] == "push" for c in git_run.call_args_list)
+        assert create.call_args.kwargs["head"] == "feature/x"
+        assert "/vergil:pr-watch https://github.com/pr/5" in capsys.readouterr().out
+
+    def test_relay_prefers_local_file_over_ref(self) -> None:
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        local = MagicMock()
+        local.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".GitHubTransport") as gh_cls,
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch"),
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/5"),
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        gh_cls.assert_not_called()
+
+    def test_relay_head_sha_mismatch_errors(self) -> None:
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output", return_value="deadbeef\trefs/heads/feature/x"),
+            patch(_MOD + ".github.create_pr") as create,
+            pytest.raises(SystemExit, match="does not"),
+        ):
+            main(["feature/x", "--yes"])
+        create.assert_not_called()
+
+    def test_relay_missing_ready_state_errors(self) -> None:
+        transport = MagicMock()
+        transport.read.return_value = None
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            pytest.raises(SystemExit, match="no ready-state for branch"),
+        ):
+            main(["feature/x", "--yes"])
+
+    def test_relay_skips_already_submitted_branch(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = _ready_state(
+            branch="feature/x",
+            submitted={"pr_url": "https://github.com/o/r/pull/12", "pr_number": "12"},
+        )
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".github.create_pr") as create,
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        create.assert_not_called()
+        assert "already has a submitted PR" in capsys.readouterr().out
+
+    def test_relay_batches_two_branches(self) -> None:
+        states = {
+            "feature/a": _ready_state(issue="1", branch="feature/a", head_sha="sha_a"),
+            "feature/b": _ready_state(issue="2", branch="feature/b", head_sha="sha_b"),
+        }
+
+        def fake_read_output(*args: str) -> str:
+            branch = args[-1].removeprefix("refs/heads/")
+            return f"sha_{branch[-1]}\t{args[-1]}"
+
+        def fake_transport(branch: str) -> MagicMock:
+            t = MagicMock()
+            t.read.return_value = states[branch]
+            return t
+
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", side_effect=fake_transport),
+            patch(_MOD + ".git.read_output", side_effect=fake_read_output),
+            patch(_MOD + "._push_branch") as push,
+            patch(
+                _MOD + ".github.create_pr",
+                side_effect=["https://github.com/pr/1", "https://github.com/pr/2"],
+            ) as create,
+        ):
+            rc = main(["feature/a", "feature/b", "--yes"])
+        assert rc == 0
+        assert create.call_count == 2
+        push.assert_not_called()
+        heads = [c.kwargs["head"] for c in create.call_args_list]
+        assert heads == ["feature/a", "feature/b"]
+
+    def test_relay_dry_run_skips_verify_and_create(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = _ready_state(branch="feature/x")
+        transport = MagicMock()
+        transport.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+            patch(_MOD + ".GitHubTransport", return_value=transport),
+            patch(_MOD + ".git.read_output") as read_output,
+            patch(_MOD + ".github.create_pr") as create,
+        ):
+            rc = main(["feature/x", "--dry-run"])
+        assert rc == 0
+        create.assert_not_called()
+        read_output.assert_not_called()  # no ls-remote verification on dry-run
+        assert "fix: bug" in capsys.readouterr().out
+
+    def test_relay_rejects_all_flag(self, capsys: pytest.CaptureFixture[str]) -> None:
+        rc = main(["feature/x", "--all"])
+        assert rc == 1
+        assert "--all/--select" in capsys.readouterr().err
+
+    def test_relay_rejects_cli_fields(self, capsys: pytest.CaptureFixture[str]) -> None:
+        rc = main(["feature/x", "--issue", "42", "--summary", "s", "--title", "t"])
+        assert rc == 1
+        assert "--issue/--summary/--title" in capsys.readouterr().err
+
+    def test_relay_rejects_cascade_flags(self, capsys: pytest.CaptureFixture[str]) -> None:
+        rc = main(["feature/x", "--finalize"])
+        assert rc == 1
+        assert "cascade" in capsys.readouterr().err
+
+    def test_relay_blocked_for_agent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("VRG_IDENTITY_MODE", "user")
+        with patch(_MOD + ".github.create_pr") as create:
+            rc = main(["feature/x"])
+        assert rc != 0
+        create.assert_not_called()
+
+
+def test_no_arg_local_path_unchanged_regression(tmp_path: Path) -> None:
+    """Regression guard for issue #2368: extracting the shared _open_pr core must
+    leave the no-arg local worktree path byte-for-byte behaviorally unchanged —
+    it force-with-lease pushes the branch, opens the PR, and marks the local
+    state file submitted."""
+    _write_workflow_state(tmp_path, title="fix: bug", summary="Fix")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.run") as git_run,
+        patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/1") as create,
+        patch("builtins.input", return_value="y"),
+    ):
+        rc = main([])
+    assert rc == 0
+    git_run.assert_called_once_with("push", "--force-with-lease", "-u", "origin", "feature/x")
+    create.assert_called_once()
+    assert _state_submitted(tmp_path)
