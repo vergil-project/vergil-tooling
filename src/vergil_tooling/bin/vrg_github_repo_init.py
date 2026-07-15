@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+from vergil_tooling.lib import identity_mode
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -149,6 +150,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    # `gh repo create` and the org-level branch/label/Pages setup this command
+    # drives require human GitHub credentials. Under an agent identity those
+    # credentials are absent, and without this guard the failure surfaces deep in
+    # the call stack as an opaque `gh auth login` traceback (issue #2391). Refuse
+    # up front with one clear message — mirroring the identity check in
+    # vrg-submit-pr / vrg-release — before any side effect. This command is
+    # human-credential-only until that boundary moves.
+    if identity_mode.is_agent():
+        print(
+            "vrg-github-repo-init must be run by a human with an authenticated gh. "
+            "It runs `gh repo create` and other org-level operations that the "
+            "agent-credential path cannot perform, so it is human-credential-only "
+            "until that boundary moves.\n"
+            "Remedy: run it in a human shell.",
+            file=sys.stderr,
+        )
+        return 1
 
     if args.adopt:
         from vergil_tooling.lib import github
