@@ -96,6 +96,28 @@ The relay ref is cleaned up by [`vrg-finalize-pr`](finalize-pr.md), which
 deletes it alongside the branch on merge and sweeps any orphaned relay ref
 whose branch no longer exists.
 
+### Cascade on the relay path (`--finalize`/`--release`/`--install`)
+
+The relay path runs the full cascade too (issue #2398): the cascade is a
+**local macOS** action, so it does not matter whether the branch was
+implemented on the Mac or on a cloud VM. Once the PR is open, finalizing,
+releasing, and installing operate on the PR and the remote — the branch does
+not need to be checked out locally (`vrg-finalize-pr` already merges and
+cleans up a branch with no local worktree).
+
+```bash
+# Open PRs for both cloud-implemented branches, then merge, release, and
+# install — all locally, in one command.
+vrg-submit-pr --install feature/123-x feature/124-y
+```
+
+It uses the same batch semantics as the worktree batch (`--all` / `--select`):
+each PR is finalized in turn, then — only if every branch merged — a single
+end-of-batch validation runs, followed by **one** `vrg-release` (never one per
+branch). A branch that already carries a submitted PR is fail-fast in the
+cascade (finalize it directly with `vrg-finalize-pr <url>`); without a cascade
+flag it is simply reported and skipped, as before.
+
 ## Arguments
 
 | Argument | Required (CLI mode) | Description |
