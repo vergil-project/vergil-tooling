@@ -309,6 +309,35 @@ class TestRenderReadme:
         assert "See [LICENSE](LICENSE).\n" in content
         assert "GPL" not in content
 
+    def test_long_description_reflowed_under_md013(self) -> None:
+        # A long one-paragraph description must be wrapped to <=100-char lines so
+        # the generated README passes the bundled markdownlint MD013 limit — the
+        # first vrg-validate of every new repo lints it (issue #2393).
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.description = (
+            "A resilience and observability toolkit for message queues that "
+            "provides retry policies, dead-letter handling, structured tracing, "
+            "and Prometheus metrics across RabbitMQ and Kafka backends, with "
+            "sensible defaults for production deployments."
+        )
+        ctx.license_type = "MIT"
+        ctx.publish_docs = True
+        content = render_readme(ctx)
+        assert all(len(line) <= 100 for line in content.splitlines())
+        # Content is preserved — every word from the description survives the wrap.
+        collapsed = " ".join(content.split())
+        for word in ctx.description.split():
+            assert word in collapsed
+
+    def test_description_paragraphs_preserved(self) -> None:
+        # Blank-line-separated paragraphs survive the reflow as separate blocks.
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+        ctx.description = "First paragraph.\n\nSecond paragraph."
+        ctx.license_type = "MIT"
+        ctx.publish_docs = True
+        content = render_readme(ctx)
+        assert "First paragraph.\n\nSecond paragraph.\n" in content
+
 
 class TestRenderGitignore:
     def test_contains_baseline_patterns(self) -> None:
