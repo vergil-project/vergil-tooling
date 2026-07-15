@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.8/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.6/">
+        <link rel="next" href="../v2.1.144/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.7 - VERGIL Tooling</title>
+        <title>2.1.145 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-147-2026-04-30" class="md-skip">
+        <a href="#release-21145-2026-07-15" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.7
+              2.1.145
             
           </span>
         </div>
@@ -1156,10 +1156,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.145/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.145
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1175,6 +1202,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -8100,37 +8158,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.7
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.7/" class="md-nav__link">
         
   
   
@@ -8146,37 +8177,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11648,10 +11648,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -11675,30 +11675,14 @@
 
 
 
-<h1 id="release-147-2026-04-30">Release 1.4.7 (2026-04-30)<a class="headerlink" href="#release-147-2026-04-30" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21145-2026-07-15">Release 2.1.145 (2026-07-15)<a class="headerlink" href="#release-21145-2026-07-15" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>force-update tags on git fetch to prevent stale local state</strong>
-All git fetch calls in st-prepare-release and st-finalize-repo now include --tags --force, ensuring floating tags (e.g. v1.4) are updated even when the remote has force-pushed them.</p>
-</li>
-<li>
-<p><strong>add --pull=always to docker run to prevent stale image cache</strong>
-Docker does not check the registry for newer images when a tag
-exists locally. This caused st-docker-run to use a stale
-dev-base:latest with standard-tooling v1.4.1 pre-baked, producing
-spurious repo-profile validation errors. The --pull=always flag
-checks the manifest digest on each run (sub-second) and only
-downloads layers when the image has actually changed.</p>
-</li>
-<li>
-<p><strong>use uv run for validation in Python repos during finalization</strong>
-st-finalize-repo ran st-docker-run -- st-validate-local, which
-fails in Python consumer repos because the console script lives
-in the project .venv, not on the container system PATH. Detect
-pyproject.toml and use uv run st-validate-local for Python repos.</p>
-</li>
+<li><strong>expose every wizard prompt as a CLI flag for non-interactive repo creation (#2387)</strong>
+vrg-github-repo-init was interactive-only: apart from repo, --adopt, and --visibility every setup answer was a runtime prompt, blocking scripted repo creation.</li>
 </ul>
+<p>Add a flag for each remaining prompt (--description, --repository-type, --language, --branching-model, --versioning-scheme, --release-model, --versions, --integration-tests/--no-, --publish-release/--no-, --publish-docs/--no-, --vergil-version, --license, --initial-version) plus a --non-interactive/--yes mode. Each flag overrides its prompt exactly as --visibility already did; supplying all of them runs the tool with zero prompts.</p>
+<p>--non-interactive fails loud on any missing required value rather than silently defaulting: parse_args names each missing no-default flag for a new repo up front, and step_generate_config catches the adopt path where an existing (or absent) vergil.toml leaves a required enum empty. Optional prompts fall back to their documented interactive defaults. The adopt Continue? and clone confirmations are auto-accepted under --yes. Omitting flags preserves today's interactive behaviour unchanged. Ref #2382</p>
 
 
 
