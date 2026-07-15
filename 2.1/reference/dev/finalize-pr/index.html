@@ -1084,6 +1084,8 @@
       
         
       
+        
+      
     
     
     
@@ -1136,6 +1138,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.144/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.144
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12128,7 +12158,11 @@ would do.</p>
 <p>The just-merged PR branch and its <code>.worktrees/</code> worktree are deleted
 by name. The default squash strategy rewrites history onto the
 target, so the branch is never an ancestor and the merged-branch
-sweep below cannot see it.</p>
+sweep below cannot see it. The branch's PR-workflow relay ref
+(<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>, pushed by <code>report-ready</code>) is
+deleted alongside it, so a cloud-handoff ref never outlives its
+branch (issue #2369). Deleting a relay ref that was never pushed is a
+no-op.</p>
 <h3 id="2-switch-to-target-branch">2. Switch to Target Branch<a class="headerlink" href="#2-switch-to-target-branch" title="Permanent link">&para;</a></h3>
 <p>Checks out the target branch (default: <code>develop</code>).</p>
 <h3 id="3-fast-forward-pull">3. Fast-Forward Pull<a class="headerlink" href="#3-fast-forward-pull" title="Permanent link">&para;</a></h3>
@@ -12212,7 +12246,11 @@ configuration, out of scope for finalize itself.</p>
 </table>
 <h3 id="5-prune-remote-references">5. Prune Remote References<a class="headerlink" href="#5-prune-remote-references" title="Permanent link">&para;</a></h3>
 <p>Runs <code>git remote prune origin</code> to clean up stale remote-tracking
-branches.</p>
+branches. As a swept safety net, any PR-workflow relay ref
+(<code>refs/vergil/pr-workflow/*</code>) whose branch no longer exists on origin
+is pruned too, so a relay ref stranded by a branch deleted outside
+finalize (or by an earlier failed run) is never left behind
+(issue #2369).</p>
 <h3 id="6-working-tree-cleanliness-gate">6. Working-Tree Cleanliness Gate<a class="headerlink" href="#6-working-tree-cleanliness-gate" title="Permanent link">&para;</a></h3>
 <p>Fails if the target branch's working tree is not clean, so leftover
 files are cleaned up before the next issue.</p>

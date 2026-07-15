@@ -1084,6 +1084,8 @@
       
         
       
+        
+      
     
     
     
@@ -1136,6 +1138,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.144/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.144
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12221,8 +12251,14 @@ worktree convention).</p>
 </tbody>
 </table>
 <h3 id="vrg-submit-pr">vrg-submit-pr<a class="headerlink" href="#vrg-submit-pr" title="Permanent link">&para;</a></h3>
-<p>Create standards-compliant pull requests. Pushes the current branch
-and opens a PR with a populated template body.</p>
+<p>Create standards-compliant pull requests. Template mode pushes the
+current branch and opens a PR from <code>.vergil/pr-workflow.json</code>. <strong>Relay
+branch mode</strong> (positional <code>&lt;branch&gt; [&lt;branch&gt; …]</code>) opens PRs
+<strong>worktree-free</strong> for branches already on origin — the Mac side of the
+cloud→Mac handoff: each branch's ready-state comes from a local
+worktree's <code>pr-workflow.json</code> when present, else the relay ref
+<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>; origin's tip is checked against the
+recorded <code>head_sha</code> and the PR opens with <code>--head</code> <strong>without pushing</strong>.</p>
 <table>
 <thead>
 <tr>
@@ -12237,15 +12273,15 @@ and opens a PR with a populated template body.</p>
 </tr>
 <tr>
 <td>Args</td>
-<td><code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>, <code>--dry-run</code></td>
+<td>positional <code>branches</code> (relay mode); or <code>--issue</code> (required), <code>--summary</code> (required), <code>--linkage</code> (default: Ref; <code>vrg-submit-pr</code> auto-selects <code>Closes</code> for a managed task — <code>Fixes</code>/<code>Resolves</code> are banned), <code>--notes</code>, <code>--title</code>, <code>--dry-run</code></td>
 </tr>
 <tr>
 <td>Preconditions</td>
-<td>Git repo, <code>gh</code> CLI on PATH</td>
+<td>Git repo, <code>gh</code> CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching <code>head_sha</code></td>
 </tr>
 <tr>
 <td>Failure mode</td>
-<td>Subprocess error from <code>git push</code> or <code>gh pr create</code></td>
+<td>Subprocess error from <code>git push</code> or <code>gh pr create</code>; relay mode: loud failure on a missing ready-state or <code>head_sha</code> drift</td>
 </tr>
 <tr>
 <td>Exit codes</td>
@@ -12302,13 +12338,22 @@ standards failures during the pr-watch reconcile loop (denied to the
 the oracle <code>vrg-submit-pr</code> reads. <code>report-ready</code> writes the PR metadata
 (<code>--issue/--title/--summary/--notes</code>, optional <code>--linkage</code>) and marks the
 branch <strong>ready</strong>; it is idempotent — re-running overwrites the recorded
-prose (correcting the title/summary/notes is always allowed). Reaching
-<strong>ready</strong> <em>freezes</em> the branch: <code>vrg-commit</code> and the <code>vrg-git</code> push path
-then refuse further commits/pushes, because a task is exactly one PR and
-more work is a new follow-up issue (epic #146). <code>unfreeze</code> is the only
-sanctioned way to reopen a still-unsubmitted branch — it drops the state
-back to <code>implementing</code> while keeping the metadata; an already-submitted
-branch cannot be unfrozen. <code>status</code> prints the current state.</p>
+prose (correcting the title/summary/notes is always allowed).
+<code>report-ready</code> <strong>always</strong> also mirrors the ready-state onto the reserved
+relay ref <code>refs/vergil/pr-workflow/&lt;branch&gt;</code> (unconditional — no config,
+no off-platform detection), so a cloud VM's report-ready reaches the Mac
+that later runs <code>vrg-submit-pr &lt;branch&gt;</code> even though the two never share a
+disk. The relay push is a pure ref write built with git plumbing; it never
+advances the branch, so it stays <strong>freeze-neutral</strong>. A push failure is
+loud on stderr but never rolls back the durable local file. Because the
+ref is world-readable on a public repo, keep secrets out of
+<code>--title/--summary/--notes</code>. Reaching <strong>ready</strong> <em>freezes</em> the branch:
+<code>vrg-commit</code> and the <code>vrg-git</code> push path then refuse further
+commits/pushes, because a task is exactly one PR and more work is a new
+follow-up issue (epic #146). <code>unfreeze</code> is the only sanctioned way to
+reopen a still-unsubmitted branch — it drops the state back to
+<code>implementing</code> while keeping the metadata; an already-submitted branch
+cannot be unfrozen. <code>status</code> prints the current state.</p>
 <table>
 <thead>
 <tr>
@@ -12423,8 +12468,11 @@ Claude plugin, VERSION file) to find the version.</p>
 <p>Finalize a pull request. Given a PR, runs the provenance check, merges
 it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
 the target branch, fast-forward pulls, deletes merged local branches
-(auto-removing worktrees inside <code>.worktrees/</code> when necessary), prunes
-remotes, runs validation, and checks the CD workflow status. A
+(auto-removing worktrees inside <code>.worktrees/</code> when necessary), deletes
+each merged branch's PR-workflow relay ref
+(<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>) and sweeps any orphaned relay ref
+whose branch is gone (issue #2369), prunes remotes, runs validation, and
+checks the CD workflow status. A
 merged/closed worktree the sweep cannot remove — a dirty tree, or a
 reused branch name with unmerged commits (issue #1719) — is surfaced
 <strong>prominently after the pipeline</strong> rather than buried in the stage log;
