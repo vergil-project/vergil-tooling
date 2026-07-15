@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.145] - 2026-07-15
+
+### Features
+
+- expose every wizard prompt as a CLI flag for non-interactive repo creation (#2387)
+
 ## [2.1.144] - 2026-07-15
 
 ### Documentation
