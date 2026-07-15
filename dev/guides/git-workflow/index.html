@@ -12301,6 +12301,18 @@ allowed; deliberately reopening the branch needs
 <code>vrg-pr-workflow unfreeze</code>. See the tool's entry in the
 <a href="../../reference/cli-tools-overview/#vrg-pr-workflow">CLI Tools Overview</a>.</p>
 </div>
+<div class="admonition note">
+<p class="admonition-title">Cloud (off-platform) agents: same handoff, over GitHub</p>
+<p>A cloud x86 VM shares no disk with the Mac, so <code>report-ready</code>
+<strong>always</strong> also mirrors the ready-state onto the reserved relay ref
+<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>. A cloud agent therefore does
+PR-development end-to-end — implement, push the branch, <code>report-ready</code>
+— exactly like a Lima agent, and the human submits from the Mac
+worktree-free with <code>vrg-submit-pr &lt;branch&gt; [&lt;branch&gt; …]</code> (see the
+<a href="../../reference/dev/submit-pr/#relay-branch-mode-cloud-to-mac-handoff">reference</a>).
+The relay ref is world-readable on a public repo, so keep secrets out
+of the <code>report-ready</code> title/summary/notes.</p>
+</div>
 <h3 id="4-wait-for-review-merge-manually">4. Wait for review, merge manually<a class="headerlink" href="#4-wait-for-review-merge-manually" title="Permanent link">&para;</a></h3>
 <p>Once CI is green and a reviewer approves, merge through the GitHub
 UI (squash merge for feature PRs). No automated merge will happen.</p>
@@ -12312,8 +12324,11 @@ UI (squash merge for feature PRs). No automated merge will happen.</p>
 <ul>
 <li>Switches back to the integration branch (<code>develop</code>).</li>
 <li>Pulls the latest.</li>
-<li>Deletes the merged local feature branch and removes its worktree.</li>
-<li>Prunes stale remote-tracking refs.</li>
+<li>Deletes the merged local feature branch and removes its worktree,
+  along with the branch's PR-workflow relay ref
+  (<code>refs/vergil/pr-workflow/&lt;branch&gt;</code>).</li>
+<li>Prunes stale remote-tracking refs and sweeps any orphaned relay ref
+  whose branch is gone.</li>
 <li>Runs post-merge validation via <code>vrg-container-run</code> to catch any
   regression introduced by the merge.</li>
 </ul>
