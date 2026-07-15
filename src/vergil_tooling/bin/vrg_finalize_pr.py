@@ -55,7 +55,7 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container_cache import clean_branch_images
-from vergil_tooling.lib.pr_workflow import batch
+from vergil_tooling.lib.pr_workflow import batch, github_transport
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
 
@@ -272,6 +272,42 @@ def _worktree_is_dirty(wt_path: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def _delete_relay_ref(branch: str, *, dry_run: bool) -> None:
+    """Drop *branch*'s pr-workflow relay ref alongside the branch (issue #2369).
+
+    ``report-ready`` on a cloud VM parks the PR-handoff payload at
+    ``refs/vergil/pr-workflow/<branch>`` (epic #146). Once the branch is
+    cleaned up that ref is orphaned, so delete it here. ``delete()`` is a
+    no-op when the ref is absent — the common Mac case, where the local-file
+    transport was used and no relay ref was ever pushed — so calling it
+    unconditionally is safe.
+    """
+    if dry_run:
+        print(f"  [dry-run] delete relay ref for {branch}")
+        return
+    github_transport.GitHubTransport(branch).delete()
+
+
+def _prune_orphan_relay_refs(*, dry_run: bool) -> None:
+    """Prune relay refs whose branch no longer exists (issue #2369).
+
+    The per-branch cleanup already drops the relay ref alongside the branch it
+    deletes. This is the swept safety net: a relay ref whose branch was removed
+    out-of-band — merged and branch-pruned on the remote, or abandoned — would
+    otherwise linger forever in the reserved namespace. Both reads are
+    read-only ``ls-remote`` calls; under ``--dry-run`` no ref is touched.
+    """
+    if dry_run:
+        print("  [dry-run] prune orphaned pr-workflow relay refs")
+        return
+    live = git.remote_branches()
+    for branch in github_transport.list_relay_branches():
+        if branch in live:
+            continue
+        print(f"  Deleting orphaned relay ref for {branch} (branch no longer exists)")
+        github_transport.GitHubTransport(branch).delete()
+
+
 def _delete_branch_and_worktree(
     branch: str, root: Path, *, dry_run: bool, force: bool = False
 ) -> bool:
@@ -316,6 +352,9 @@ def _delete_branch_and_worktree(
         removed = clean_branch_images(branch)
         if removed:
             print(f"  Cleaned {removed} cached container image(s) for {branch}")
+    # Drop the branch's relay ref too, so a cloud-handoff ref never outlives the
+    # branch it belonged to (issue #2369). Shared by both cleanup paths.
+    _delete_relay_ref(branch, dry_run=dry_run)
     return True
 
 
@@ -735,6 +774,9 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
             continue
         if _delete_branch_and_worktree(branch, root, dry_run=args.dry_run):
             deleted.append(branch)
+
+    print("Checking for orphaned pr-workflow relay refs...")
+    _prune_orphan_relay_refs(dry_run=args.dry_run)
 
     print("Pruning stale remote-tracking references...")
     if args.dry_run:

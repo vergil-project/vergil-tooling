@@ -172,6 +172,22 @@ def commits_ahead(base: str, branch: str) -> int:
     return int(read_output("rev-list", "--count", f"{base}..{branch}"))
 
 
+def remote_branches(remote: str = "origin") -> set[str]:
+    """Return the branch names present on *remote* (via ``ls-remote --heads``).
+
+    Strips the ``refs/heads/`` prefix, so a nested name like ``feature/123-x``
+    comes back whole. Used to tell whether a branch still exists on the remote
+    when deciding if a reserved ref keyed to it has been orphaned (#2369).
+    """
+    prefix = "refs/heads/"
+    names: set[str] = set()
+    for line in read_output("ls-remote", "--heads", remote).splitlines():
+        _sha, _tab, ref = line.partition("\t")
+        if ref.startswith(prefix):
+            names.add(ref[len(prefix) :])
+    return names
+
+
 def working_tree_status() -> str:
     """Return ``git status --porcelain`` output (empty string when clean)."""
     return read_output("status", "--porcelain")

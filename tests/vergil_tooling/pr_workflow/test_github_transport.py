@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import subprocess
 from typing import TYPE_CHECKING
+from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
+from vergil_tooling.lib.pr_workflow.github_transport import (
+    GitHubTransport,
+    list_relay_branches,
+)
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 if TYPE_CHECKING:
@@ -114,6 +118,26 @@ def test_delete_is_a_noop_when_ref_absent(clone: Path) -> None:
     # No ref was ever written; delete must not raise.
     GitHubTransport(_BRANCH).delete()
     assert GitHubTransport(_BRANCH).read() is None
+
+
+def test_list_relay_branches_returns_branches_with_refs(clone: Path) -> None:
+    # The ``*`` glob spans slashes, so nested branch names round-trip whole.
+    GitHubTransport("feature/1-a").write(_state())
+    GitHubTransport("feature/2-b").write(_state())
+    assert sorted(list_relay_branches()) == ["feature/1-a", "feature/2-b"]
+
+
+def test_list_relay_branches_empty_when_none(clone: Path) -> None:
+    assert list_relay_branches() == []
+
+
+def test_list_relay_branches_ignores_malformed_lines() -> None:
+    output = "sha\trefs/vergil/pr-workflow/feature/9-y\nnot-a-ref-line"
+    with patch(
+        "vergil_tooling.lib.pr_workflow.github_transport.git.read_output",
+        return_value=output,
+    ):
+        assert list_relay_branches() == ["feature/9-y"]
 
 
 def test_head_sha_returns_current_head(clone: Path) -> None:

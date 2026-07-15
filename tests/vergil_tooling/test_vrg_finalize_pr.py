@@ -16,8 +16,10 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
     _check_cd_workflow_status,
+    _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
+    _prune_orphan_relay_refs,
     _resolve_open_prs,
     _resolve_strategy,
     _run_finalize_batch,
@@ -74,6 +76,24 @@ def _clean_working_tree() -> Iterator[None]:
     directly — the innermost patch wins.
     """
     with patch(_MOD + ".git.working_tree_status", return_value=""):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _relay_refs_inert() -> Iterator[None]:
+    """Default: relay-ref cleanup touches nothing (issue #2369).
+
+    Cleanup drops each deleted branch's pr-workflow relay ref and sweeps
+    orphaned refs; both do remote ls-remote/push. Stub the seams so the many
+    cleanup tests neither hit the network nor need to know about relay refs.
+    Tests that assert relay behavior re-patch these directly — the innermost
+    patch wins.
+    """
+    with (
+        patch(_MOD + ".github_transport.GitHubTransport"),
+        patch(_MOD + ".github_transport.list_relay_branches", return_value=[]),
+        patch(_MOD + ".git.remote_branches", return_value=set()),
+    ):
         yield
 
 
@@ -2205,3 +2225,142 @@ def test_main_comma_list_routes_to_batch() -> None:
 # vergil-project/.github#75): vrg-finalize-pr no longer closes tasks. The
 # former _close_managed_task tests were removed in T4; the closing keyword is
 # covered by the linkage/submit-pr tests and rollup by test_vrg_epic_rollup.
+
+
+# -- relay-ref cleanup (issue #2369) ---------------------------------------
+
+
+def test_delete_branch_and_worktree_prunes_relay_ref(tmp_path: Path) -> None:
+    """Both cleanup paths funnel through _delete_branch_and_worktree, so the
+    branch's pr-workflow relay ref is dropped alongside it (issue #2369)."""
+    with (
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=False)
+    mock_transport.assert_called_once_with("feature/9-x")
+    mock_transport.return_value.delete.assert_called_once_with()
+
+
+def test_delete_branch_and_worktree_skips_relay_ref_on_dry_run(tmp_path: Path) -> None:
+    """--dry-run never pushes a ref deletion; it only announces it."""
+    with (
+        patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        assert _delete_branch_and_worktree("feature/9-x", tmp_path, dry_run=True)
+    mock_transport.assert_not_called()
+
+
+def test_main_merged_branch_prunes_relay_ref(tmp_path: Path) -> None:
+    """Merged-PR path: the explicit-target cleanup drops the relay ref."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(f"{_MOD}.pr_provenance.check_pr", return_value=_clean()),
+        patch(f"{_MOD}.github.pr_state", return_value="MERGED"),
+        patch(f"{_MOD}.github.head_ref", return_value="feature/42-x"),
+        patch(f"{_MOD}.git.current_branch", return_value="develop"),
+        patch(f"{_MOD}.git.merged_branches", return_value=[]),
+        patch(f"{_MOD}.git.read_output", return_value="feature/42-x"),
+        patch(f"{_MOD}.git.run"),
+        patch(f"{_MOD}.worktrees.worktree_for_branch", return_value=None),
+        patch(f"{_MOD}.clean_branch_images", return_value=0),
+        patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
+        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}.github_transport.GitHubTransport") as mock_transport,
+    ):
+        result = main(["42"])
+    assert result == 0
+    mock_transport.assert_any_call("feature/42-x")
+    mock_transport.return_value.delete.assert_called_once_with()
+
+
+def test_main_closed_pr_cleanup_prunes_relay_ref(tmp_path: Path) -> None:
+    """Closed-PR path (ancestry sweep): each swept branch drops its relay ref."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        _sweep_guards_pass(),
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="feature/x"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=["feature/x", "develop"]),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".clean_branch_images", return_value=0),
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        result = main([])
+    assert result == 0
+    mock_transport.assert_any_call("feature/x")
+    mock_transport.return_value.delete.assert_called_once_with()
+
+
+def test_prune_orphan_relay_refs_deletes_dead_branch() -> None:
+    """A relay ref whose branch no longer exists on the remote is pruned."""
+    with (
+        patch(_MOD + ".git.remote_branches", return_value={"feature/live"}),
+        patch(
+            _MOD + ".github_transport.list_relay_branches",
+            return_value=["feature/dead", "feature/live"],
+        ),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        _prune_orphan_relay_refs(dry_run=False)
+    mock_transport.assert_called_once_with("feature/dead")
+    mock_transport.return_value.delete.assert_called_once_with()
+
+
+def test_prune_orphan_relay_refs_keeps_live_branch() -> None:
+    """A relay ref whose branch still exists is left untouched (no-op)."""
+    with (
+        patch(_MOD + ".git.remote_branches", return_value={"feature/live"}),
+        patch(
+            _MOD + ".github_transport.list_relay_branches",
+            return_value=["feature/live"],
+        ),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        _prune_orphan_relay_refs(dry_run=False)
+    mock_transport.assert_not_called()
+
+
+def test_prune_orphan_relay_refs_skipped_on_dry_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--dry-run neither reads the remote nor pushes any deletion."""
+    with (
+        patch(_MOD + ".git.remote_branches") as mock_remote,
+        patch(_MOD + ".github_transport.list_relay_branches") as mock_list,
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+    ):
+        _prune_orphan_relay_refs(dry_run=True)
+    mock_remote.assert_not_called()
+    mock_list.assert_not_called()
+    mock_transport.assert_not_called()
+    assert "[dry-run] prune orphaned" in capsys.readouterr().out
+
+
+def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:
+    """The cleanup stage sweeps a relay ref whose branch is gone (issue #2369)."""
+    _make_profile(tmp_path, "library-release")
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".git.current_branch", return_value="develop"),
+        patch(_MOD + ".git.run"),
+        patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.remote_branches", return_value=set()),
+        patch(
+            _MOD + ".github_transport.list_relay_branches",
+            return_value=["feature/orphan"],
+        ),
+        patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
+        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+    ):
+        result = main([])
+    assert result == 0
+    mock_transport.assert_any_call("feature/orphan")
+    mock_transport.return_value.delete.assert_called_once_with()
