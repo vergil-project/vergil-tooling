@@ -151,6 +151,46 @@ class TestParseArgs:
 
 
 class TestMain:
+    def test_aborts_under_agent_identity(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # gh repo create + org-level setup need human credentials; an agent
+        # identity must hard-abort with a clear message before any side effect,
+        # not crash deep in the call stack (issue #2391).
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.identity_mode.is_agent",
+                return_value=True,
+            ),
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+            patch("vergil_tooling.lib.github.current_repo") as mock_current_repo,
+        ):
+            result = main(["org/repo"])
+
+        assert result == 1
+        mock_wizard.assert_not_called()
+        mock_current_repo.assert_not_called()
+        err = capsys.readouterr().err
+        assert "human" in err.lower()
+        assert "gh repo create" in err
+
+    def test_agent_refusal_precedes_adopt_side_effects(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The refusal fires before adopt resolves the repo or prompts, so an
+        # agent hits it in every mode.
+        with (
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.identity_mode.is_agent",
+                return_value=True,
+            ),
+            patch("vergil_tooling.lib.github.current_repo") as mock_current_repo,
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["--adopt"])
+
+        assert result == 1
+        mock_current_repo.assert_not_called()
+        mock_wizard.assert_not_called()
+
     def test_adopt_mode_success(self) -> None:
         with (
             patch("vergil_tooling.lib.github.current_repo", return_value="org/repo"),
