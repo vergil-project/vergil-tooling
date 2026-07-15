@@ -28,15 +28,21 @@ worktree convention).
 
 ### vrg-submit-pr
 
-Create standards-compliant pull requests. Pushes the current branch
-and opens a PR with a populated template body.
+Create standards-compliant pull requests. Template mode pushes the
+current branch and opens a PR from `.vergil/pr-workflow.json`. **Relay
+branch mode** (positional `<branch> [<branch> …]`) opens PRs
+**worktree-free** for branches already on origin — the Mac side of the
+cloud→Mac handoff: each branch's ready-state comes from a local
+worktree's `pr-workflow.json` when present, else the relay ref
+`refs/vergil/pr-workflow/<branch>`; origin's tip is checked against the
+recorded `head_sha` and the PR opens with `--head` **without pushing**.
 
 | Attribute | Value |
 |---|---|
 | Source | `vergil_tooling.bin.vrg_submit_pr` |
-| Args | `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`, `--dry-run` |
-| Preconditions | Git repo, `gh` CLI on PATH |
-| Failure mode | Subprocess error from `git push` or `gh pr create` |
+| Args | positional `branches` (relay mode); or `--issue` (required), `--summary` (required), `--linkage` (default: Ref; `vrg-submit-pr` auto-selects `Closes` for a managed task — `Fixes`/`Resolves` are banned), `--notes`, `--title`, `--dry-run` |
+| Preconditions | Git repo, `gh` CLI on PATH; relay mode: named branches on origin with a resolvable ready-state and matching `head_sha` |
+| Failure mode | Subprocess error from `git push` or `gh pr create`; relay mode: loud failure on a missing ready-state or `head_sha` drift |
 | Exit codes | 0 success |
 | Status | Active |
 
@@ -63,13 +69,22 @@ Record and manage the PR handoff state in `.vergil/pr-workflow.json` —
 the oracle `vrg-submit-pr` reads. `report-ready` writes the PR metadata
 (`--issue/--title/--summary/--notes`, optional `--linkage`) and marks the
 branch **ready**; it is idempotent — re-running overwrites the recorded
-prose (correcting the title/summary/notes is always allowed). Reaching
-**ready** *freezes* the branch: `vrg-commit` and the `vrg-git` push path
-then refuse further commits/pushes, because a task is exactly one PR and
-more work is a new follow-up issue (epic #146). `unfreeze` is the only
-sanctioned way to reopen a still-unsubmitted branch — it drops the state
-back to `implementing` while keeping the metadata; an already-submitted
-branch cannot be unfrozen. `status` prints the current state.
+prose (correcting the title/summary/notes is always allowed).
+`report-ready` **always** also mirrors the ready-state onto the reserved
+relay ref `refs/vergil/pr-workflow/<branch>` (unconditional — no config,
+no off-platform detection), so a cloud VM's report-ready reaches the Mac
+that later runs `vrg-submit-pr <branch>` even though the two never share a
+disk. The relay push is a pure ref write built with git plumbing; it never
+advances the branch, so it stays **freeze-neutral**. A push failure is
+loud on stderr but never rolls back the durable local file. Because the
+ref is world-readable on a public repo, keep secrets out of
+`--title/--summary/--notes`. Reaching **ready** *freezes* the branch:
+`vrg-commit` and the `vrg-git` push path then refuse further
+commits/pushes, because a task is exactly one PR and more work is a new
+follow-up issue (epic #146). `unfreeze` is the only sanctioned way to
+reopen a still-unsubmitted branch — it drops the state back to
+`implementing` while keeping the metadata; an already-submitted branch
+cannot be unfrozen. `status` prints the current state.
 
 | Attribute | Value |
 |---|---|
@@ -115,8 +130,11 @@ Claude plugin, VERSION file) to find the version.
 Finalize a pull request. Given a PR, runs the provenance check, merges
 it, then cleans up; with no PR, runs cleanup only. Cleanup switches to
 the target branch, fast-forward pulls, deletes merged local branches
-(auto-removing worktrees inside `.worktrees/` when necessary), prunes
-remotes, runs validation, and checks the CD workflow status. A
+(auto-removing worktrees inside `.worktrees/` when necessary), deletes
+each merged branch's PR-workflow relay ref
+(`refs/vergil/pr-workflow/<branch>`) and sweeps any orphaned relay ref
+whose branch is gone (issue #2369), prunes remotes, runs validation, and
+checks the CD workflow status. A
 merged/closed worktree the sweep cannot remove — a dirty tree, or a
 reused branch name with unmerged commits (issue #1719) — is surfaced
 **prominently after the pipeline** rather than buried in the stage log;

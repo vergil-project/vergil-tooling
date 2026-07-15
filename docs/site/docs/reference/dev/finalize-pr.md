@@ -94,7 +94,11 @@ would do.
 The just-merged PR branch and its `.worktrees/` worktree are deleted
 by name. The default squash strategy rewrites history onto the
 target, so the branch is never an ancestor and the merged-branch
-sweep below cannot see it.
+sweep below cannot see it. The branch's PR-workflow relay ref
+(`refs/vergil/pr-workflow/<branch>`, pushed by `report-ready`) is
+deleted alongside it, so a cloud-handoff ref never outlives its
+branch (issue #2369). Deleting a relay ref that was never pushed is a
+no-op.
 
 ### 2. Switch to Target Branch
 
@@ -175,7 +179,11 @@ Eternal branches are protected based on the `branching_model`:
 ### 5. Prune Remote References
 
 Runs `git remote prune origin` to clean up stale remote-tracking
-branches.
+branches. As a swept safety net, any PR-workflow relay ref
+(`refs/vergil/pr-workflow/*`) whose branch no longer exists on origin
+is pruned too, so a relay ref stranded by a branch deleted outside
+finalize (or by an earlier failed run) is never left behind
+(issue #2369).
 
 ### 6. Working-Tree Cleanliness Gate
 
