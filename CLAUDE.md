@@ -187,32 +187,52 @@ of the tree.
 
 ### Cloud session prompt contract (off-platform VMs)
 
-The PR handoff above assumes the agent and the human share one
-filesystem — true on the Mac (Lima), where the agent's worktree and the
-local `.vergil/pr-workflow.json` are visible to the human running
-`vrg-submit-pr`. **Cloud x86 VMs have no shared filesystem with the
-Mac**, so that handoff does not yet work there. Until the GitHub-relay
-transport lands (issue
-[#1858](https://github.com/vergil-project/vergil-tooling/issues/1858),
-Deliverable B), a cloud session must observe this boundary:
+The PR handoff above no longer needs a shared filesystem. `report-ready`
+**always** mirrors the recorded ready-state onto a reserved git ref,
+`refs/vergil/pr-workflow/<branch>` (the *relay ref*), in addition to the
+local `.vergil/pr-workflow.json`. The push is unconditional — no config
+key, no off-platform detection — so a cloud x86 VM's `report-ready` is
+visible to the Mac even though the two never share a disk. The write is a
+pure ref update built out-of-band with git plumbing; it never advances the
+feature branch, so it stays freeze-neutral (the post-`report-ready` freeze
+still holds).
 
-- **Cloud x86 VMs are for runtime verification, builds,
-  triage/debugging, and issue registration — not PR-development.** The
-  MQ x86 work and other native-x86 / Red Hat stacks that cannot run
-  under Lima are exercised on a cloud VM for triage only.
-- **The GitHub issue is the cloud→Mac message bus.** A cloud triage
-  agent writes structured findings, repro steps, and diagnosis as
-  comments on the tracking issue (via `vrg-gh`); a Mac development agent
-  picks the issue up through the normal flow and does the PR-development
-  there via Lima, where the shared filesystem and `vrg-submit-pr` work
-  unchanged.
+Because the metadata now rides GitHub, **a cloud VM can do PR-development
+end-to-end** — not just triage. A cloud agent implements the issue,
+commits, pushes the feature branch to origin, and runs `report-ready`,
+exactly as it would under Lima. The old "cloud x86 VMs are triage-only /
+not for PR-development" boundary is retired, along with the "until the
+relay lands" framing — the relay
+([#1858](https://github.com/vergil-project/vergil-tooling/issues/1858),
+Deliverable B) shipped.
 
-This is a **best-effort advisory, not a hard guard.** The session layer
-(not `vrg-pr-workflow` itself) knows it is on a cloud VM, so the
-convention is carried here in the prompt contract. It extends the
-"agents must not run `vrg-submit-pr`" policy upstream: cloud agents do
-not do PR-development at all. If you find yourself about to prepare a PR
-in a cloud context, stop and hand the issue back to the Mac instead.
+**Only submission and merge stay human-on-Mac.** From the Mac's main
+worktree, the human runs `vrg-submit-pr` **worktree-free** with an explicit
+branch list:
+
+```text
+vrg-submit-pr <branch> [<branch> …]
+```
+
+Each branch's ready-state is resolved from a local worktree's
+`pr-workflow.json` when one exists, else fetched from the relay ref; the
+tip of `origin/<branch>` is verified against the recorded `head_sha`, and
+the PR is opened **without pushing** (the branch already rode GitHub, so
+`--head` just names it). Merge and cleanup stay human actions:
+`vrg-finalize-pr` deletes the branch's relay ref alongside the branch on
+cleanup, and a swept safety net prunes any relay ref whose branch no longer
+exists, so a cloud-handoff ref never outlives its work.
+
+**The relay ref is world-readable on a public repo.** Anyone can read
+`refs/vergil/pr-workflow/<branch>`, so the `report-ready` `--title`,
+`--summary`, and `--notes` must carry **no secrets** — treat them as public
+the moment they are recorded.
+
+This does not loosen the "agents must not run `vrg-submit-pr`" policy: the
+cloud agent stops at `report-ready`, exactly like a Lima agent, and the
+human submits and merges on the Mac. What changed is only *where the
+development can happen* — the relay removed the shared-disk requirement, so
+a cloud VM is now a full PR-development environment, not a triage-only one.
 
 ## Project Overview
 

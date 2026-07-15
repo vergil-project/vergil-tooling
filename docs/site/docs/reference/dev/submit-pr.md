@@ -5,12 +5,22 @@
 **Source:** `src/vergil_tooling/bin/vrg_submit_pr.py`
 
 Wrapper that creates standards-compliant pull requests with
-proper issue linkage. Has two modes:
+proper issue linkage. Has three modes:
 
 - **Template mode** (no arguments) — the normal path. Reads
   `.vergil/pr-workflow.json` (the oracle state file the agent records via
   `vrg-pr-workflow`), shows a preview, asks for confirmation, pushes the
   branch, creates the PR, and emits the `/vergil:pr-watch` handoff line.
+- **Relay branch mode** (positional `<branch> [<branch> …]`) — the Mac
+  side of the cloud→Mac relay handoff (issue #2368). Opens PRs for
+  branches that are **already on origin, worktree-free**: each branch's
+  ready-state is resolved from a local worktree's `pr-workflow.json` when
+  one exists, else fetched from the relay ref
+  `refs/vergil/pr-workflow/<branch>` that `report-ready` always pushes.
+  Origin's tip is verified against the recorded `head_sha` and the PR is
+  opened **without pushing** (`--head` names the source branch). No
+  worktree, no `git.current_branch()`, and no push are involved — the
+  branch and its metadata already rode GitHub.
 - **CLI mode** (`--issue/--summary/--title`) — direct invocation for
   human emergency use.
 
@@ -32,6 +42,9 @@ container.
 # Template mode (normal): from the repo root or inside the worktree
 vrg-submit-pr
 
+# Relay branch mode (cloud handoff): worktree-free, from the main worktree
+vrg-submit-pr <branch> [<branch> …]
+
 # CLI mode (emergency): from inside the worktree
 vrg-submit-pr --issue NUMBER --summary TEXT --title TEXT [options]
 ```
@@ -51,6 +64,37 @@ resolves the target worktree itself:
 Run from inside a worktree, behavior is unchanged. The tool is
 interactive by design — it is a human touch point of the workflow and
 requires a terminal; root launches fail fast when stdin is not a TTY.
+
+## Relay branch mode (cloud-to-Mac handoff)
+
+Passing one or more branch names opens PRs **worktree-free** for work an
+off-platform (cloud x86) agent implemented and pushed. It is the Mac side
+of the GitHub relay: the cloud VM and the Mac never share a disk, so the
+agent's `report-ready` mirrors its ready-state onto the reserved ref
+`refs/vergil/pr-workflow/<branch>` in addition to the local
+`.vergil/pr-workflow.json`. Run from the **main worktree**:
+
+```bash
+vrg-submit-pr feature/123-x feature/124-y
+```
+
+For each branch, the tool:
+
+1. resolves the ready-state from a local worktree's `pr-workflow.json`
+   when one exists, else fetches it from the relay ref;
+2. verifies the tip of `origin/<branch>` matches the recorded `head_sha`
+   (a mismatch fails loudly — the metadata is for a different commit);
+3. opens the PR with `--head <branch>` and **does not push** — the branch
+   is already on origin.
+
+!!! warning "The relay ref is world-readable"
+    On a public repo, anyone can read `refs/vergil/pr-workflow/<branch>`.
+    Keep secrets out of the `report-ready` `--title`, `--summary`, and
+    `--notes` — they are public the moment they are recorded.
+
+The relay ref is cleaned up by [`vrg-finalize-pr`](finalize-pr.md), which
+deletes it alongside the branch on merge and sweeps any orphaned relay ref
+whose branch no longer exists.
 
 ## Arguments
 
@@ -74,6 +118,9 @@ requires a terminal; root launches fail fast when stdin is not a TTY.
 ```bash
 # Normal flow: resolve the worktree, preview, confirm
 vrg-submit-pr
+
+# Relay branch mode: open PRs for cloud-implemented branches, worktree-free
+vrg-submit-pr feature/123-x feature/124-y
 
 # Preview without submitting
 vrg-submit-pr --dry-run

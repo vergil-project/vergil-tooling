@@ -166,6 +166,17 @@ See the [vrg-submit-pr reference](../reference/dev/submit-pr.md).
     `vrg-pr-workflow unfreeze`. See the tool's entry in the
     [CLI Tools Overview](../reference/cli-tools-overview.md#vrg-pr-workflow).
 
+!!! note "Cloud (off-platform) agents: same handoff, over GitHub"
+    A cloud x86 VM shares no disk with the Mac, so `report-ready`
+    **always** also mirrors the ready-state onto the reserved relay ref
+    `refs/vergil/pr-workflow/<branch>`. A cloud agent therefore does
+    PR-development end-to-end — implement, push the branch, `report-ready`
+    — exactly like a Lima agent, and the human submits from the Mac
+    worktree-free with `vrg-submit-pr <branch> [<branch> …]` (see the
+    [reference](../reference/dev/submit-pr.md#relay-branch-mode-cloud-to-mac-handoff)).
+    The relay ref is world-readable on a public repo, so keep secrets out
+    of the `report-ready` title/summary/notes.
+
 ### 4. Wait for review, merge manually
 
 Once CI is green and a reviewer approves, merge through the GitHub
@@ -182,8 +193,11 @@ This:
 
 - Switches back to the integration branch (`develop`).
 - Pulls the latest.
-- Deletes the merged local feature branch and removes its worktree.
-- Prunes stale remote-tracking refs.
+- Deletes the merged local feature branch and removes its worktree,
+  along with the branch's PR-workflow relay ref
+  (`refs/vergil/pr-workflow/<branch>`).
+- Prunes stale remote-tracking refs and sweeps any orphaned relay ref
+  whose branch is gone.
 - Runs post-merge validation via `vrg-container-run` to catch any
   regression introduced by the merge.
 
