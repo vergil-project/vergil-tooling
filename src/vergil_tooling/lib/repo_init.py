@@ -546,7 +546,14 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
     """Render .github/workflows/cd.yml."""
     permissions = ["  contents: write\n"]
     if ctx.publish_release:
+        # The release job inherits these top-level permissions (it sets no block
+        # of its own). cd-release.yml@v2.1 requests actions:read; GitHub validates
+        # reusable-workflow permissions at parse time, so omitting it fails the
+        # whole CD run with startup_failure on every push — even though the job is
+        # if:main-gated (if is evaluated after parse). Keep actions:read here in
+        # sync with whatever cd-release.yml requires (issue #2392).
         permissions = [
+            "  actions: read\n",
             "  attestations: write\n",
             "  contents: write\n",
             "  id-token: write\n",
