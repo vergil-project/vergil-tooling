@@ -86,6 +86,42 @@ def test_read_output_returns_stripped_stdout() -> None:
     assert "GIT_CONFIG_KEY_0" not in kwargs["env"]
 
 
+def test_read_output_stdin_feeds_stdin_and_returns_stripped_stdout() -> None:
+    with patch("vergil_tooling.lib.git.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(stdout="  blobsha  \n")
+        result = git.read_output_stdin("payload", "hash-object", "-w", "--stdin")
+    assert result == "blobsha"
+    _args, kwargs = mock_run.call_args
+    assert _args[0] == ("git", "hash-object", "-w", "--stdin")
+    assert kwargs["input"] == "payload"
+    assert kwargs["check"] is True
+    assert kwargs["capture_output"] is True
+    assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+
+
+def test_read_output_stdin_prints_stderr_on_error(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git mktree", stderr="fatal: bad tree\n")
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.read_output_stdin("spec", "mktree")
+    assert "bad tree" in capsys.readouterr().err
+
+
+def test_read_output_stdin_error_no_stderr(capsys: pytest.CaptureFixture[str]) -> None:
+    err = subprocess.CalledProcessError(1, "git mktree")
+    err.stderr = ""
+    err.stdout = ""
+    with (
+        patch("vergil_tooling.lib.git.subprocess.run", side_effect=err),
+        pytest.raises(subprocess.CalledProcessError),
+    ):
+        git.read_output_stdin("spec", "mktree")
+    assert capsys.readouterr().err == ""
+
+
 def test_repo_root_returns_path() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="/var/repo"):  # noqa: S108
         result = git.repo_root()

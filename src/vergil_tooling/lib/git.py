@@ -71,6 +71,29 @@ def read_output(*args: str) -> str:
     return result.stdout.strip()
 
 
+def read_output_stdin(stdin: str, *args: str) -> str:
+    """Run a git command feeding *stdin*, and return stripped stdout.
+
+    The stdin sibling of ``read_output``, for plumbing that reads its payload
+    from standard input (``hash-object --stdin``, ``mktree``) rather than argv.
+    """
+    env = _git_env(args)
+    try:
+        result = subprocess.run(  # noqa: S603
+            ("git", *args),  # noqa: S607
+            check=True,
+            text=True,
+            capture_output=True,
+            input=stdin,
+            env=env,
+        )
+    except subprocess.CalledProcessError as exc:
+        if exc.stderr:
+            print(exc.stderr, end="", file=sys.stderr)
+        raise
+    return result.stdout.strip()
+
+
 def repo_root() -> Path:
     """Return the repository root directory."""
     return Path(read_output("rev-parse", "--show-toplevel"))
