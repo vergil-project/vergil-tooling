@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.144] - 2026-07-15
+
+### Documentation
+
+- reflect shipped cloud PR relay in contract and site docs (#2383)
+
 ## [2.1.143] - 2026-07-15
 
 ### Features
