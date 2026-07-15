@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.34/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.32/">
+        <link rel="next" href="../v2.1.141/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.33 - VERGIL Tooling</title>
+        <title>2.1.142 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2133-2026-06-12" class="md-skip">
+        <a href="#release-21142-2026-07-15" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.33
+              2.1.142
             
           </span>
         </div>
@@ -1150,10 +1150,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.142/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.142
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1169,6 +1196,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4202,37 +4260,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.33
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.33/" class="md-nav__link">
         
   
   
@@ -4248,37 +4279,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11585,38 +11585,13 @@
 
 
 
-<h1 id="release-2133-2026-06-12">Release 2.1.33 (2026-06-12)<a class="headerlink" href="#release-2133-2026-06-12" title="Permanent link">&para;</a></h1>
+<h1 id="release-21142-2026-07-15">Release 2.1.142 (2026-07-15)<a class="headerlink" href="#release-21142-2026-07-15" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>rebuild creates the VM when it doesn't exist instead of aborting (#1631) (#1632)</strong>
-vrg-vm rebuild aborted with 'VM does not exist — run vrg-vm create first' when the target VM was absent, forcing the user to notice the error and re-run a different command. Rebuild is now idempotent: when vm_status is empty it prints a note and delegates to _cmd_create(args).</li>
+<li><strong>add GitHubTransport relay over refs/vergil/pr-workflow (#2372)</strong>
+Add GitHubTransport(Transport) carrying pr-workflow.json across filesystems via the reserved ref refs/vergil/pr-workflow/<branch>. read() fetches the ref and parses the payload (None when absent); write() builds a single-file commit out-of-band with git plumbing (hash-object -&gt; mktree -&gt; commit-tree) and force-pushes the SHA straight to the ref, never running git commit and never touching HEAD/index/worktree so it stays freeze-neutral under the epic #146 report-ready freeze; delete() removes the ref (no-op when absent). Adds git.read_output_stdin for plumbing that reads its payload from stdin. Ref #2366</li>
 </ul>
-<p>An absent VM has nothing to destroy, so the create lifecycle — not a destroy-skipped rebuild — is the correct pipeline. _cmd_create re-confirms absence, runs the create stages, and labels the run as a create. rebuild on an existing VM still runs the destroy-first rebuild pipeline.</p>
-<p>Replaced test_rebuild_fails_if_not_created with test_rebuild_creates_if_not_created (asserts create_vm runs, delete_vm does not); test_rebuild_destroys_and_creates still covers the existing-VM path. Ref #1631.</p>
-<ul>
-<li><strong>resumable releases via vrg-release --resume (#1633)</strong></li>
-<li>docs(release): design for resumable releases via tracking-issue state</li>
-</ul>
-<p>Design spec for #1612: vrg-release --resume adopts an open release: X.Y.Z tracking issue and continues from the first incomplete stage. The issue body holds a generated stage checklist (the resume cursor), comments hold the log, and the issue is the lock. Stages tick their box at the end and probe reality where cheap; the issue is created before any other durable artifact so post-creation failures are resumable. Ref #1612.</p>
-<ul>
-<li>docs(release): apply pushback revisions to resumable-release spec</li>
-</ul>
-<p>Five design fixes from the spec pushback review: (1) skip = hydrate ctx from reality, not no-op; (2) close-finalize closes the issue only when no fail-defer stage has a pending error; (3) prepare is sub-step idempotent; (4) version-skew guard gets an actionable off-ramp; (5) issue creation lands after read-only validation, before the first durable artifact (splitting preflight). Ref #1612.</p>
-<ul>
-<li>docs(release): implementation plan for resumable releases (phase 1)</li>
-</ul>
-<p>Phased implementation plan for #1612 with file structure and a 3-phase roadmap. Phase 1 (the checklist module: render/parse/upsert/first_unchecked/tick + version-skew guard) is specified in full bite-sized TDD detail; Phases 2 (idempotency/hydrate) and 3 (resume orchestration/CLI) are roadmapped and get their own plans authored against then-current code. Ref #1612.</p>
-<ul>
-<li>docs(release): apply alignment fixes to resumable-release spec and plan</li>
-</ul>
-<p>Two alignment-review fixes: soften the version-skew guard in the spec to drop a reference to a recovery doc that does not exist, and add an explicit refactor task to the Phase 1 plan (extract the shared names/checked helper used by first_unchecked and tick). The phased plan structure (Phase 1 tasked, Phases 2-3 roadmapped) is accepted as-is. Ref #1612.</p>
-<ul>
-<li>feat(release): add checklist module skeleton</li>
-</ul>
-<p>Markers and ChecklistError for the resumable-release progress block. Ref #1612.</p>
-<ul>
-<li>feat(release): render checklist block</li>
-</ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.142/v2.1.142-ci-evidence.tar.gz">Download →</a></p>
 
 
 
