@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github
 from vergil_tooling.lib.linkage import (
@@ -24,7 +25,9 @@ from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
-from vergil_tooling.lib.pr_workflow.state import WorkflowState
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
 def _now() -> str:
