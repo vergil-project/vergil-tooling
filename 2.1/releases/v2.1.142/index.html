@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.76/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.74/">
+        <link rel="next" href="../v2.1.141/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.75 - VERGIL Tooling</title>
+        <title>2.1.142 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2175-2026-06-27" class="md-skip">
+        <a href="#release-21142-2026-07-15" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.75
+              2.1.142
             
           </span>
         </div>
@@ -1150,10 +1150,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.142/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.142
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1169,6 +1196,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3026,37 +3084,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.75
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.75/" class="md-nav__link">
         
   
   
@@ -3072,37 +3103,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11558,10 +11558,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -11585,14 +11585,13 @@
 
 
 
-<h1 id="release-2175-2026-06-27">Release 2.1.75 (2026-06-27)<a class="headerlink" href="#release-2175-2026-06-27" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21142-2026-07-15">Release 2.1.142 (2026-07-15)<a class="headerlink" href="#release-21142-2026-07-15" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>drop redundant per-session tooling reinstall (#1902)</strong>
-vrg-vm session reinstalled vergil-tooling on every Lima session launch before exec claude, costing ~21s on a cold uv cache. This is redundant: create, rebuild, every start, and every update already install or refresh the tooling, so by the time a VM is sessionable its tooling is current.</li>
+<li><strong>add GitHubTransport relay over refs/vergil/pr-workflow (#2372)</strong>
+Add GitHubTransport(Transport) carrying pr-workflow.json across filesystems via the reserved ref refs/vergil/pr-workflow/<branch>. read() fetches the ref and parses the payload (None when absent); write() builds a single-file commit out-of-band with git plumbing (hash-object -&gt; mktree -&gt; commit-tree) and force-pushes the SHA straight to the ref, never running git commit and never touching HEAD/index/worktree so it stays freeze-neutral under the epic #146 report-ready freeze; delete() removes the ref (no-op when absent). Adds git.read_output_stdin for plumbing that reads its payload from stdin. Ref #2366</li>
 </ul>
-<p>Remove the per-session try_update_tooling call from _cmd_session and delete the now-orphaned try_update_tooling helper (its only production caller) from vm_guest, along with its dedicated tests. update_tooling stays; it has other callers.</p>
-<p>The accepted trade-off: a VM left running across a release the sweep missed runs stale tooling until the next start/update/rebuild, handled out of band.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.142/v2.1.142-ci-evidence.tar.gz">Download →</a></p>
 
 
 
