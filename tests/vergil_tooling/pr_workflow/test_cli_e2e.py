@@ -75,6 +75,83 @@ def test_report_ready_initializes_and_records(
     assert state["pr_metadata"]["title"] == "t"
 
 
+def test_report_ready_pushes_relay_ref(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # Task 3 (#2367): report-ready always mirrors the ready state onto the relay
+    # ref via GitHubTransport, in addition to the local file write. The trigger
+    # is unconditional (no off-platform detection).
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "status": "ready"}
+    # The relay was written with the ready state, after the local write.
+    mock_transport.assert_called_once()
+    write = mock_transport.return_value.write
+    write.assert_called_once()
+    (pushed_state,) = write.call_args.args
+    assert pushed_state.status == "ready"
+    assert pushed_state.pr_metadata is not None
+    assert pushed_state.pr_metadata["title"] == "t"
+    # And the durable local file was written too.
+    assert (in_git_repo / ".vergil" / "pr-workflow.json").is_file()
+
+
+def test_report_ready_relay_push_failure_surfaces_but_local_persists(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A relay push failure surfaces loudly on stderr but never undoes the durable
+    # local write (which happens first and stays): report-ready still succeeds
+    # and .vergil/pr-workflow.json still holds the ready state.
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport") as mock_transport:
+        mock_transport.return_value.ref = "refs/vergil/pr-workflow/feature/42-x"
+        mock_transport.return_value.write.side_effect = subprocess.CalledProcessError(
+            1, ("git", "push")
+        )
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "42",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    captured = capsys.readouterr()
+    # Local write is durable: the command still succeeds and stdout is unchanged.
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "status": "ready"}
+    # The push failure surfaced loudly on stderr.
+    assert "warning" in captured.err.lower()
+    assert "relay ref" in captured.err.lower()
+    # And the local state file persists with the ready metadata.
+    state_path = in_git_repo / ".vergil" / "pr-workflow.json"
+    assert state_path.is_file()
+    persisted = json.loads(state_path.read_text())
+    assert persisted["status"] == "ready"
+    assert persisted["pr_metadata"]["title"] == "t"
+
+
 def test_report_ready_rejects_epic(in_git_repo: Path, capsys: pytest.CaptureFixture[str]) -> None:
     # Guard parity with vrg-submit-pr: report-ready refuses an epic linkage at
     # the point the value is entered, instead of only failing later at submit.

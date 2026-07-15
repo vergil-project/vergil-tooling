@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.143] - 2026-07-15
+
+### Features
+
+- report-ready always pushes the relay ref (#2376)
+- delete the relay ref on branch cleanup (#2378)
+
+### Refactoring
+
+- shared _open_pr core + worktree-free relay branch path (#2377)
+
 ## [2.1.142] - 2026-07-15
 
 ### Features

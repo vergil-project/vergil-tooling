@@ -453,9 +453,19 @@ def delete_if_exists(endpoint: str) -> bool:
     return "404" not in first_line
 
 
-def create_pr(*, base: str, title: str, body_file: str) -> str:
-    """Create a pull request and return its URL."""
-    return read_output("pr", "create", "--base", base, "--title", title, "--body-file", body_file)
+def create_pr(*, base: str, title: str, body_file: str, head: str | None = None) -> str:
+    """Create a pull request and return its URL.
+
+    *head* names the source branch explicitly (``gh pr create --head``). It is
+    required when the PR is opened from outside the branch's worktree — the
+    worktree-free relay path in ``vrg-submit-pr`` runs from the main worktree, so
+    ``gh``'s default "current branch" head would be wrong. The in-worktree paths
+    leave it ``None`` and rely on the checked-out branch, unchanged.
+    """
+    args = ["pr", "create", "--base", base, "--title", title, "--body-file", body_file]
+    if head is not None:
+        args += ["--head", head]
+    return read_output(*args)
 
 
 def create_issue(

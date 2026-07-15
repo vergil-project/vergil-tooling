@@ -8,10 +8,12 @@ and ``vrg-submit-pr`` (human-run) reads it. ``status`` prints the current state.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import subprocess
 import sys
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import epics, git, github
 from vergil_tooling.lib.linkage import (
@@ -21,7 +23,11 @@ from vergil_tooling.lib.linkage import (
 )
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
+from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
 from vergil_tooling.lib.pr_workflow.local_transport import LocalFileTransport
+
+if TYPE_CHECKING:
+    from vergil_tooling.lib.pr_workflow.state import WorkflowState
 
 
 def _now() -> str:
@@ -103,6 +109,32 @@ def _reject_operational_issue(issue: str) -> None:
         )
 
 
+def _push_relay_ref(state: WorkflowState, base: str) -> None:
+    """Mirror the ready state onto the reserved relay ref, after the local write.
+
+    Unconditional by design (Task 3, epic vergil-project/.github#148): every
+    ``report-ready`` also force-pushes the state to
+    ``refs/vergil/pr-workflow/<branch>`` via ``GitHubTransport`` — no
+    off-platform detection — so a cloud VM's report-ready is visible to the Mac
+    that later runs ``vrg-submit-pr`` (the two never share a disk). The durable
+    local file has already been written and stays put; a push failure is
+    therefore surfaced loudly on stderr but never rolls the local state back.
+
+    ``report-ready`` speaks a JSON-on-stdout contract, so the relay push's git
+    chatter is redirected to stderr — where "loud" belongs — keeping stdout a
+    pure JSON document whether the push succeeds or fails.
+    """
+    relay = GitHubTransport(git.current_branch(), base=base)
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            relay.write(state)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        print(
+            f"warning: could not push pr-workflow relay ref {relay.ref}: {exc}",
+            file=sys.stderr,
+        )
+
+
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
     _reject_cross_repo_issue(str(args.issue))
     _reject_epic_issue(str(args.issue))
@@ -140,6 +172,7 @@ def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) ->
         now=_now(),
     )
     transport.write(state)
+    _push_relay_ref(state, args.base)
     response: dict[str, object] = {"ok": True, "status": state.status}
     if linkage_warning:
         response["warning"] = linkage_warning
