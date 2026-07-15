@@ -30,6 +30,24 @@ _COMMIT_MESSAGE = "vergil: pr-workflow relay"
 _BLOB_MODE = "100644"
 
 
+def list_relay_branches(remote: str = "origin") -> list[str]:
+    """Return every branch that has a relay ref on *remote*.
+
+    Lists ``refs/vergil/pr-workflow/*`` off *remote* and strips the namespace
+    prefix, yielding the branch names whose pr-workflow payload is currently
+    parked on the relay. The ``*`` glob spans slashes, so a nested branch name
+    (``feature/123-x``) is matched in full. Used by the finalize sweep to find
+    relay refs whose branch no longer exists so they can be pruned (#2369).
+    """
+    prefix = f"{_REF_PREFIX}/"
+    branches: list[str] = []
+    for line in git.read_output("ls-remote", remote, f"{prefix}*").splitlines():
+        _sha, _tab, ref = line.partition("\t")
+        if ref.startswith(prefix):
+            branches.append(ref[len(prefix) :])
+    return branches
+
+
 class GitHubTransport(Transport):
     """Relay the workflow state over ``refs/vergil/pr-workflow/<branch>``."""
 

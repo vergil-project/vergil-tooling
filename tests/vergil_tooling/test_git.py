@@ -214,6 +214,23 @@ def test_merged_branches_empty() -> None:
     assert result == []
 
 
+def test_remote_branches_parses_heads() -> None:
+    output = (
+        "sha1\trefs/heads/develop\n"
+        "sha2\trefs/heads/feature/12-x\n"
+        "sha3\trefs/tags/v1.0"  # not a head — must be ignored
+    )
+    with patch("vergil_tooling.lib.git.read_output", return_value=output) as mock:
+        result = git.remote_branches()
+    assert result == {"develop", "feature/12-x"}
+    mock.assert_called_once_with("ls-remote", "--heads", "origin")
+
+
+def test_remote_branches_empty() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.remote_branches() == set()
+
+
 def test_working_tree_status_returns_porcelain_output() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="?? orphan.md") as mock:
         result = git.working_tree_status()
