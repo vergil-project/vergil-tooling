@@ -30,7 +30,7 @@ from vergil_tooling.bin.vrg_vm_resolve import (
     name_by_session,
     projects_glob,
 )
-from vergil_tooling.lib import progress, vm_cloud
+from vergil_tooling.lib import progress, vm_cloud, vm_memory
 from vergil_tooling.lib.config import ConfigError, VmStanza, read_config
 from vergil_tooling.lib.identity import (
     Identity,
@@ -2429,6 +2429,12 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     assert target.org is not None  # noqa: S101 — dedicated cloud target always carries org/repo
     assert target.repo is not None  # noqa: S101
     workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, target.org, target.repo)
+    # #2411 (Component 3): project this repo's memory subset (per-repo memory/ +
+    # MEMORY.md) and the global CLAUDE.md from the host into the guest at the
+    # matching slug, so the cloud session reads canonical host memory rather than a
+    # divergent (or empty) cloud copy. The read-only lock is applied separately
+    # (#2412); this copies the files only.
+    vm_memory.project_memory(transport, claude_dir=claude_dir, host_workdir=workdir)
     print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
