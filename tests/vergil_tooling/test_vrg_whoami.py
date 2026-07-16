@@ -124,3 +124,57 @@ class TestExplain:
 def test_mode_and_explain_are_mutually_exclusive() -> None:
     with pytest.raises(SystemExit):
         main(["--mode", "--explain"])
+
+
+class TestPlatform:
+    def test_platform_flag_prints_token(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: False)
+        assert main(["--platform"]) == 0
+        assert capsys.readouterr().out == "physical-host\n"
+
+    def test_platform_token_reports_cloud_vm(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: True)
+        monkeypatch.setattr(
+            "vergil_tooling.lib.platform_env._cloud_metadata_reachable", lambda: True
+        )
+        assert main(["--platform"]) == 0
+        assert capsys.readouterr().out.strip() == "cloud-vm"
+
+    def test_platform_is_mutually_exclusive_with_mode(self) -> None:
+        with pytest.raises(SystemExit):
+            main(["--platform", "--mode"])
+
+    def test_explain_includes_platform_section(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: False)
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._identity_is_agent", lambda: False)
+        assert main(["--explain"]) == 0
+        out = capsys.readouterr().out
+        assert "platform:      physical-host" in out
+        assert "platform signals:" in out
+
+    def test_explain_warns_on_platform_disagreement(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Agent identity on the physical host is a platform/identity mismatch.
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: False)
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._identity_is_agent", lambda: True)
+        assert main(["--explain"]) == 0
+        assert "WARNING: platform and identity signals disagree" in capsys.readouterr().err
+
+    def test_explain_no_platform_warning_when_correlated(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: False)
+        monkeypatch.setattr("vergil_tooling.lib.platform_env._identity_is_agent", lambda: False)
+        assert main(["--explain"]) == 0
+        assert "platform and identity signals disagree" not in capsys.readouterr().err
