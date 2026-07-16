@@ -12,9 +12,10 @@ from vergil_tooling.lib.platform_env import (
     resolve_platform,
 )
 
-# Capture the real probe before the autouse fixture replaces the module
-# attribute, so the low-level helper tests exercise the actual body.
+# Capture the real probes before the autouse fixture replaces the module
+# attributes, so the low-level helper tests exercise the actual bodies.
 _REAL_CLOUD_METADATA_REACHABLE = platform_env._cloud_metadata_reachable
+_REAL_LIMA_MARKER_PRESENT = platform_env._lima_marker_present
 
 
 @pytest.fixture(autouse=True)
@@ -162,3 +163,17 @@ def test_cloud_metadata_reachable_false_on_oserror(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("socket.create_connection", _boom)
     assert _REAL_CLOUD_METADATA_REACHABLE() is False
+
+
+def test_lima_marker_present_true_when_a_marker_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    # __file__ is a real, existing path, so the any(...) predicate is True.
+    monkeypatch.setattr("vergil_tooling.lib.platform_env._LIMA_MARKERS", (__file__,))
+    assert _REAL_LIMA_MARKER_PRESENT() is True
+
+
+def test_lima_marker_present_false_when_no_marker_exists(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "vergil_tooling.lib.platform_env._LIMA_MARKERS",
+        ("/nonexistent/vrg-lima-marker-should-not-exist",),
+    )
+    assert _REAL_LIMA_MARKER_PRESENT() is False
