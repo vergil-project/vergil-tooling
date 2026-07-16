@@ -3732,6 +3732,7 @@ class _CloudPatches:
             "vergil_tooling.bin.vrg_vm.vm_cloud.ensure_host_path",
             return_value="/Users/me/dev/projects/lmf/cloud",
         )
+        _patch("vergil_tooling.bin.vrg_vm.vm_memory.project_memory")
         _patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
@@ -4072,6 +4073,28 @@ class TestCloudSession:
         order = [name for name, _, _ in manager.mock_calls]
         # host-path indirection is built after the volume relink, before the exec
         assert order.index("link") < order.index("ensure") < order.index("exec")
+
+    def test_cloud_session_projects_host_memory(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # #2411 (Component 3): _cloud_session must project the host memory subset
+        # (per-repo memory/ + MEMORY.md) and the global CLAUDE.md into the guest at
+        # the host slug, AFTER building the host-path indirection (so the slug is
+        # known) and BEFORE the process-replacing exec_session.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            manager = MagicMock()
+            manager.attach_mock(m["ensure_host_path"], "ensure")
+            manager.attach_mock(m["project_memory"], "project")
+            manager.attach_mock(transport.exec_session, "exec")
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["project_memory"].assert_called_once()
+        assert m["project_memory"].call_args.args[0] is transport
+        kwargs = m["project_memory"].call_args.kwargs
+        assert kwargs["host_workdir"] == m["ensure_host_path"].return_value
+        assert kwargs["claude_dir"] == Path.home() / ".claude"
+        order = [name for name, _, _ in manager.mock_calls]
+        # projection runs after the host-path indirection, before the exec
+        assert order.index("ensure") < order.index("project") < order.index("exec")
 
     def test_cloud_session_seeds_claude_config(self, _cloud_repo: Path, tmp_path: Path) -> None:
         # #1999 (Fix A): the cloud session path must seed the operator's ~/.claude
