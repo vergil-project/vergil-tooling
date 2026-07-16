@@ -561,6 +561,32 @@ def link_cloud_claude_dirs(transport: Transport) -> None:
     transport.run("bash", "-c", " ; ".join(parts))
 
 
+_CLOUD_PROJECTS_VOLUME = "/vergil/projects"
+
+
+def ensure_host_path(transport: Transport, host_projects_dir: str, org: str, repo: str) -> str:
+    """Symlink the host-equivalent project path onto the ``/vergil`` checkout.
+
+    A cloud session must *start* at the host project path
+    (``<host_projects_dir>/<org>/<repo>``) so Claude Code derives the same memory
+    slug as the physical host and finds the projected memory under the guest's
+    ``~/.claude/projects/<host-slug>/`` (spec Component 2a). The guest checkout
+    lives at ``/vergil/projects/<org>/<repo>``; this creates the host path as a
+    symlink onto it — ``mkdir -p`` the parent first, then ``ln -sfn`` the leaf —
+    and returns the host-equivalent absolute path so the caller can open the
+    session there.
+
+    Idempotent: ``mkdir -p`` is a no-op when the parent already exists, and
+    ``ln -sfn`` re-points an existing link rather than nesting a new one inside
+    it. Follows the ``link_cloud_claude_dirs`` bash-over-transport idiom.
+    """
+    checkout = f"{_CLOUD_PROJECTS_VOLUME}/{org}/{repo}"
+    host_path = f"{host_projects_dir}/{org}/{repo}"
+    host_parent = f"{host_projects_dir}/{org}"
+    transport.run("bash", "-c", f"mkdir -p {host_parent} && ln -sfn {checkout} {host_path}")
+    return host_path
+
+
 # --- OpenTofu two-state runner -----------------------------------------------
 #
 # The cloud backend keeps the volume and the VM in *separate* tofu states under

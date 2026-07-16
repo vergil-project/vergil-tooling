@@ -3728,6 +3728,10 @@ class _CloudPatches:
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.await_readiness")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.bootstrap_volume")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.link_cloud_claude_dirs")
+        _patch(
+            "vergil_tooling.bin.vrg_vm.vm_cloud.ensure_host_path",
+            return_value="/Users/me/dev/projects/lmf/cloud",
+        )
         _patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
@@ -4037,8 +4041,37 @@ class TestCloudSession:
         m["preflight"].assert_called_once()
         transport.exec_session.assert_called_once()
         kwargs = transport.exec_session.call_args.kwargs
-        assert kwargs["workdir"] == "/vergil/projects/lmf/cloud"
+        # #2410: the session now starts at the host-equivalent project path (the
+        # ensure_host_path return), not the /vergil literal, so Claude derives the
+        # host memory slug.
+        assert kwargs["workdir"] == "/Users/me/dev/projects/lmf/cloud"
         assert "vrg-vm-resolve-session" in kwargs["inner"]
+
+    def test_cloud_session_aligns_workdir_to_host_path(
+        self, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        # #2410 (Component 2a): _cloud_session must build the host-path indirection
+        # (after relinking the volume dirs) and pass the host-equivalent path as the
+        # session workdir, so the memory slug matches the physical host.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            manager = MagicMock()
+            manager.attach_mock(m["link_cloud_claude_dirs"], "link")
+            manager.attach_mock(m["ensure_host_path"], "ensure")
+            manager.attach_mock(transport.exec_session, "exec")
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["ensure_host_path"].assert_called_once()
+        ensure_args = m["ensure_host_path"].call_args.args
+        assert ensure_args[0] is transport
+        assert ensure_args[1].endswith("/projects")  # identity.projects_dir
+        assert ensure_args[2] == "lmf"
+        assert ensure_args[3] == "cloud"
+        kwargs = transport.exec_session.call_args.kwargs
+        assert kwargs["workdir"] == m["ensure_host_path"].return_value
+        order = [name for name, _, _ in manager.mock_calls]
+        # host-path indirection is built after the volume relink, before the exec
+        assert order.index("link") < order.index("ensure") < order.index("exec")
 
     def test_cloud_session_seeds_claude_config(self, _cloud_repo: Path, tmp_path: Path) -> None:
         # #1999 (Fix A): the cloud session path must seed the operator's ~/.claude
