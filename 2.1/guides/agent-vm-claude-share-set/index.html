@@ -1092,6 +1092,8 @@
       
         
       
+        
+      
     
     
     
@@ -1144,6 +1146,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.148/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.148
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11422,6 +11452,78 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cloud-vms-read-only-memory-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud VMs: read-only memory projection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cloud VMs: read-only memory projection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-three-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three platforms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-platform-resolver-vrg-whoami-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The platform resolver (vrg-whoami --platform)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-only-projection-refreshed-at-session-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read-only projection, refreshed at session start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-policy-clause-soft-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The policy clause (soft control)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#issue-driven-writeback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Issue-driven writeback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11779,6 +11881,78 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#cloud-vms-read-only-memory-projection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cloud VMs: read-only memory projection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cloud VMs: read-only memory projection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-three-platforms" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The three platforms
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-platform-resolver-vrg-whoami-platform" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The platform resolver (vrg-whoami --platform)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read-only-projection-refreshed-at-session-start" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Read-only projection, refreshed at session start
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-policy-clause-soft-control" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The policy clause (soft control)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#issue-driven-writeback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Issue-driven writeback
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -11803,6 +11977,10 @@ why plugins and the session roster are deliberately kept VM-local. The
 wiring lives in <code>src/vergil_tooling/lib/lima.py</code> (<code>create_vm</code>,
 <code>link_claude_dirs</code>, <code>copy_claude_config</code>); the <code>vergil-vm</code> template only
 declares the static <code>projects</code> mount.</p>
+<p>The share set below describes <strong>local (Lima) VMs</strong>. <strong>Cloud VMs</strong> cannot
+share the host store live, so they receive canonical agent data as a
+read-only cached projection instead — see <a href="#cloud-vms-read-only-memory-projection">Cloud VMs: read-only memory
+projection</a>.</p>
 <h2 id="the-share-set">The share set<a class="headerlink" href="#the-share-set" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -11876,6 +12054,123 @@ problem as the roster. Instead, <code>update_plugins</code> refreshes the market
 its latest version with the plugin's own scope (<code>claude plugin update &lt;id&gt;
 --scope &lt;user|project&gt;</code> — there is no bulk-update form), all inside the VM.
 It is driven by <code>vrg-vm update</code> and a warn-mode stage on VM start/rebuild.</p>
+<h2 id="cloud-vms-read-only-memory-projection">Cloud VMs: read-only memory projection<a class="headerlink" href="#cloud-vms-read-only-memory-projection" title="Permanent link">&para;</a></h2>
+<p>The share set above works because <strong>local (Lima) VMs</strong> path-preserve the
+project mount and symlink <code>~/.claude/{projects,skills}</code> onto the host's
+live directories, so a memory write in a local-VM session flows straight
+through to the durable host disk. <strong>Cloud VMs</strong> — off-platform x86 boxes
+backed by the ephemeral <code>/vergil</code> data disk — cannot do that. Their disk
+is nuked and rebuilt freely, and the checkout lives at a different path,
+so a memory write there would either be lost on the next rebuild or land
+under a slug no other environment reads. The corrosive part is that the
+loss is <strong>silent</strong>: the harness advertises the memory directory as
+persistent, an agent writes memory believing it durable, and the write
+quietly evaporates.</p>
+<p>To keep the physical host the single source of truth, a cloud VM receives
+canonical agent data — the per-repo <code>memory/</code> subtree and the global
+<code>CLAUDE.md</code> — as a <strong>read-only cached projection</strong> that never flows back
+automatically. See epic
+<a href="https://github.com/vergil-project/.github/issues/156">vergil-project/.github#156</a>
+and its
+<a href="https://github.com/vergil-project/.github/blob/develop/epics/156-cloud-memory-projection/spec.md">spec</a>
+for the full rationale, trust model, and failure modes.</p>
+<h3 id="the-three-platforms">The three platforms<a class="headerlink" href="#the-three-platforms" title="Permanent link">&para;</a></h3>
+<p>A single platform-awareness signal distinguishes three states along two
+axes — <em>sandbox</em> (in a VM) vs. <em>host</em> (not a VM), and <em>cloud</em> vs.
+<em>local</em>:</p>
+<table>
+<thead>
+<tr>
+<th>Platform</th>
+<th>Sandbox?</th>
+<th>Credentials</th>
+<th>Canonical store</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>physical-host</code></td>
+<td>no</td>
+<td>human</td>
+<td>live and writable (source of truth)</td>
+</tr>
+<tr>
+<td><code>local-vm</code></td>
+<td>yes</td>
+<td>agent (GitHub App)</td>
+<td>shared live via path-preserved mounts (durable)</td>
+</tr>
+<tr>
+<td><code>cloud-vm</code></td>
+<td>yes</td>
+<td>agent (GitHub App)</td>
+<td>read-only copy on ephemeral disk</td>
+</tr>
+</tbody>
+</table>
+<p><code>physical-host</code> names the property that matters — <em>physical, not a VM</em> —
+not the operating system; it is macOS today only because that is the
+hardware in use. The read-only memory control activates <strong>only</strong> on
+<code>cloud-vm</code>: <code>local-vm</code> writes already reach the live host store, and
+<code>physical-host</code> <em>is</em> the store.</p>
+<h3 id="the-platform-resolver-vrg-whoami-platform">The platform resolver (<code>vrg-whoami --platform</code>)<a class="headerlink" href="#the-platform-resolver-vrg-whoami-platform" title="Permanent link">&para;</a></h3>
+<p><code>vrg-whoami --platform</code> reports the platform as a single token, parallel
+to the existing <code>--mode</code>; <code>vrg-whoami --explain</code> reports the resolving
+signal and warns on disagreement. The resolver is <strong>empirical</strong> — it
+derives the platform from heuristics (a <code>/vergil</code> mount ⇒ in a VM; a
+reachable cloud metadata endpoint ⇒ cloud; host OS and resolved identity
+as corroboration), with <strong>no written marker file</strong>.</p>
+<p>It <strong>fails closed</strong> for the memory control: if a VM signal is present but
+the box cannot be positively confirmed as <code>local-vm</code>, it is treated as
+<code>cloud-vm</code> (locked), never as <code>physical-host</code>. Fail-open — silently
+deciding "host" and re-enabling futile writes — is the exact failure this
+model exists to kill, and is prohibited.</p>
+<h3 id="read-only-projection-refreshed-at-session-start">Read-only projection, refreshed at session start<a class="headerlink" href="#read-only-projection-refreshed-at-session-start" title="Permanent link">&para;</a></h3>
+<p>Projection is coupled to <code>vrg-vm</code> <strong>cloud-session start</strong>, not build: a
+cloud VM is not used until a session opens, so the first session on a
+freshly built box performs the initial projection and every subsequent
+session refreshes it. Before opening the session, <code>vrg-vm</code>:</p>
+<ol>
+<li>aligns the guest working directory to the host project path (via a
+   symlink onto the <code>/vergil</code> checkout) so Claude derives the <strong>same
+   memory slug</strong> as the host and finds the projected memory;</li>
+<li>copies that repo's <code>memory/</code> + <code>MEMORY.md</code> and the global <code>CLAUDE.md</code>
+   from the host over the established transport idiom (the same
+   <code>cat &gt; &lt;file&gt;</code> mechanism <code>copy_claude_config</code> uses — there is no
+   <code>rsync</code> over the transport);</li>
+<li>re-applies <strong>surgical</strong> read-only permissions — locking <code>memory/</code>,
+   <code>MEMORY.md</code>, and <code>CLAUDE.md</code> while leaving the session-transcript
+   <code>.jsonl</code> files writable (a blanket <code>chmod</code> of <code>projects/&lt;slug&gt;/</code>
+   would break session logging);</li>
+<li><strong>verifies</strong> that the host path resolves in the guest and the slug
+   memory directory is non-empty, failing <strong>loudly</strong> otherwise — a
+   broken indirection would otherwise degrade silently to empty memory.</li>
+</ol>
+<p>The read-only permissions are the hard backstop: a write attempt in the
+cloud fails with <code>EACCES</code> — loudly, so a futile write can no longer
+succeed-then-vanish.</p>
+<h3 id="the-policy-clause-soft-control">The policy clause (soft control)<a class="headerlink" href="#the-policy-clause-soft-control" title="Permanent link">&para;</a></h3>
+<p>The hard read-only permissions are paired with a <strong>soft control</strong>: a
+condition-gated clause in the canonical <code>~/.claude/CLAUDE.md</code> that stops
+an agent from <em>attempting</em> a cloud memory write in the first place. Its
+substance: when <code>vrg-whoami --platform</code> reports <code>cloud-vm</code>, memory and
+copied config are a read-only cache; never write memory — the write
+would fail (<code>EACCES</code>) and would be futile anyway — and when memory needs
+to change, file it via <code>/vergil:triage-capture</code> for implementation on
+the host. Because that file is the developer's personal, global config,
+the clause is authored once on the host and rides the copied file into
+every environment; its condition is simply almost never true outside
+<code>cloud-vm</code>. Keeping the clause part of the canonical file also keeps
+<code>CLAUDE.md</code> byte-identical across environments, so it stays lockable.</p>
+<h3 id="issue-driven-writeback">Issue-driven writeback<a class="headerlink" href="#issue-driven-writeback" title="Permanent link">&para;</a></h3>
+<p>Canonical data never flows back automatically. When a cloud session
+determines that memory or config must change, it files an issue through
+the existing <code>/vergil:triage-capture</code> flow, producing an intake issue in
+the org <code>.github</code> repository. The change is later implemented on the
+physical host against the live store and re-projected on the next cloud
+session or rebuild. Given how infrequently this data changes, this
+issue-driven, human-executed writeback is sufficient — no automated
+two-way sync.</p>
 <p>See also: <a href="../identity-architecture/">Identity Architecture</a>.</p>
 
 

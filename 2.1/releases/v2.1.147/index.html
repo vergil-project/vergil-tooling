@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.148/">
       
       
         <link rel="next" href="../v2.1.146/">
@@ -1099,6 +1099,8 @@
       
         
       
+        
+      
     
     
     
@@ -1154,6 +1156,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.148/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.148
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11776,6 +11806,7 @@ The scaffolded README.md emitted the user-supplied description paragraph verbati
 The relay/positional-branch submit path refused --finalize/--release/--install, forcing the human to open the PRs and then run the cascade separately (looking up each PR number). The refusal was an artificial narrowing, not a technical constraint: the cascade is a local macOS action, and vrg-finalize-pr already merges and cleans up a branch that is not checked out locally — the cloud-to-Mac case the relay exists for.</li>
 </ul>
 <p>Route the relay path through the cascade when a cascade flag is passed, reusing the same batch semantics as the local worktree batch: finalize each opened PR (vrg-finalize-pr <url> --skip-post-checks), then — only if every branch merged — a single end-of-batch validation followed by one vrg-release (never one per branch). A branch already carrying a submitted PR is fail-fast in the cascade; without a cascade flag it is reported and skipped as before. Dry-run previews each PR and names the cascade without side effects.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.147/v2.1.147-ci-evidence.tar.gz">Download →</a></p>
 
 
 
