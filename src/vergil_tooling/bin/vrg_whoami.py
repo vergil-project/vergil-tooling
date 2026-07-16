@@ -13,9 +13,15 @@ Modes:
 - ``vrg-whoami`` / ``vrg-whoami --mode`` — print the resolved role as a
   single token (``human`` | ``user`` | ``audit``), suitable for
   ``export VRG_IDENTITY_MODE="$(vrg-whoami --mode)"``.
+- ``vrg-whoami --platform`` — print the resolved platform as a single
+  token (``physical-host`` | ``local-vm`` | ``cloud-vm``), from the
+  empirical, fail-closed resolver in
+  :mod:`vergil_tooling.lib.platform_env`.
 - ``vrg-whoami --explain`` — print the resolved role, the signal it
-  resolved from, and every signal's state; warn on stderr when present
-  signals disagree (the condition that precedes a misread).
+  resolved from, and every signal's state, plus the resolved platform
+  and its signals; warn on stderr when present identity signals disagree
+  or when the platform and identity correlate poorly (the conditions
+  that precede a misread).
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import argparse
 import sys
 
 from vergil_tooling.lib.identity_mode import Resolution, Signal, resolve
+from vergil_tooling.lib.platform_env import PlatformResolution, resolve_platform
 
 _SIGNAL_LABELS = {
     Signal.ENV_VAR: "environment variable",
@@ -43,6 +50,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--mode",
         action="store_true",
         help="Emit only the role token (machine-readable; the default already does this).",
+    )
+    group.add_argument(
+        "--platform",
+        action="store_true",
+        help="Emit only the platform token (physical-host | local-vm | cloud-vm).",
     )
     group.add_argument(
         "--explain",
@@ -86,12 +98,38 @@ def _explain(resolution: Resolution) -> int:
     return 0
 
 
+def _explain_platform(platform: PlatformResolution) -> None:
+    print(f"platform:      {platform.platform.value}")
+    print(f"resolved from: {platform.resolved_from}")
+    print("platform signals:")
+    for name, state in platform.signals.items():
+        print(f"  {name}: {state}")
+
+    if platform.disagreement:
+        print(
+            f"WARNING: platform and identity signals disagree "
+            f"(platform={platform.platform.value}, "
+            f"identity={platform.signals['identity']}); the expected "
+            "correlation is host<->human, VM<->agent. Reconcile the signals "
+            "— disagreement is the condition that precedes a misread.",
+            file=sys.stderr,
+        )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+
+    if args.platform:
+        print(resolve_platform().platform.value)
+        return 0
+
     resolution = resolve()
 
     if args.explain:
-        return _explain(resolution)
+        rc = _explain(resolution)
+        print()
+        _explain_platform(resolve_platform())
+        return rc
 
     print(resolution.mode.value)
     return 0

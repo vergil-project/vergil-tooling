@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.148] - 2026-07-16
+
+### Documentation
+
+- document read-only cloud-memory projection and platform resolver (#2415)
+
+### Features
+
+- add empirical fail-closed platform resolver (--platform) (#2414)
+
 ## [2.1.147] - 2026-07-15
 
 ### Bug fixes
