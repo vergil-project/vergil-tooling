@@ -2422,6 +2422,13 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     claude_dir = Path.home() / ".claude"
     copy_claude_config(transport, claude_dir)
     vm_cloud.link_cloud_claude_dirs(transport)
+    # #2410 (Component 2a): start the session at the host-equivalent project path so
+    # Claude derives the host's memory slug and finds the projected memory under
+    # ~/.claude/projects/<host-slug>/. A symlink from that path onto the /vergil
+    # checkout makes the host path resolve in the guest.
+    assert target.org is not None  # noqa: S101 — dedicated cloud target always carries org/repo
+    assert target.repo is not None  # noqa: S101
+    workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, target.org, target.repo)
     print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)
@@ -2433,7 +2440,6 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
         resolve_session_stale_days(config, identity),
         resolve_session_archive_days(config, identity),
     )
-    workdir = f"/vergil/projects/{target.org}/{target.repo}"
     transport.exec_session(workdir=workdir, inner=inner)
     return 0  # unreachable, keeps the type checker happy
 

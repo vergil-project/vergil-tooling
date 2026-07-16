@@ -805,6 +805,26 @@ class TestCloudClaudeLayout:
         assert ".credentials.json" not in joined
 
 
+class TestEnsureHostPath:
+    def test_symlinks_onto_volume(self) -> None:
+        # Component 2a (#2410): the host-equivalent project path is created as a
+        # symlink onto the /vergil checkout so Claude, started there, derives the
+        # host's memory slug.
+        transport = MagicMock()
+        transport.run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        path = vm_cloud.ensure_host_path(
+            transport, "/Users/me/dev/projects", "vergil-project", "vergil-tooling"
+        )
+        assert path == "/Users/me/dev/projects/vergil-project/vergil-tooling"
+        # transport.run("bash", "-c", <script>) — the script is the last positional arg
+        script = transport.run.call_args.args[-1]
+        assert "mkdir -p /Users/me/dev/projects/vergil-project" in script
+        assert (
+            "ln -sfn /vergil/projects/vergil-project/vergil-tooling "
+            "/Users/me/dev/projects/vergil-project/vergil-tooling" in script
+        )
+
+
 def _tofu_output_json(values: dict[str, str]) -> str:
     return json.dumps({k: {"value": v} for k, v in values.items()})
 
