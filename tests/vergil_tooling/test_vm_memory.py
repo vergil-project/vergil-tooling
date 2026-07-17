@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock
+
+import pytest
 
 from vergil_tooling.lib import vm_memory
 
@@ -178,3 +181,56 @@ def test_lock_projection_locks_each_extra_in_locked_set() -> None:
     # Every path in the audited locked_set is chmod'd read-only, guarded.
     assert 'chmod a-w "$HOME/.claude/CLAUDE.md"' in script
     assert 'chmod a-w "$HOME/.claude/extra.md"' in script
+
+
+def test_verify_projection_raises_when_host_path_missing() -> None:
+    # (Component 6) A broken Component-2a host-path indirection would otherwise
+    # degrade *silently* to empty memory. verify_projection turns the first failed
+    # in-guest ``test`` (a CalledProcessError over the transport) into a loud
+    # ProjectionError carrying an actionable message.
+    transport = MagicMock()
+    transport.run.side_effect = subprocess.CalledProcessError(1, "test")
+
+    with pytest.raises(vm_memory.ProjectionError) as excinfo:
+        vm_memory.verify_projection(transport, host_workdir=_WORKDIR, slug=_SLUG)
+
+    message = str(excinfo.value)
+    # The message names the failed check (the host path) and the fix (re-run/rebuild).
+    assert _WORKDIR in message
+    assert "re-run" in message.lower()
+    assert "rebuild" in message.lower()
+
+
+def test_verify_projection_raises_when_memory_dir_missing() -> None:
+    # The host path resolves (first ``test`` succeeds) but the projected memory dir
+    # is absent (second ``test`` fails) — still a loud ProjectionError naming the
+    # memory dir and the fix, not a silent empty read.
+    transport = MagicMock()
+    transport.run.side_effect = [
+        subprocess.CompletedProcess(args=["bash"], returncode=0),
+        subprocess.CalledProcessError(1, "test"),
+    ]
+
+    with pytest.raises(vm_memory.ProjectionError) as excinfo:
+        vm_memory.verify_projection(transport, host_workdir=_WORKDIR, slug=_SLUG)
+
+    message = str(excinfo.value)
+    assert f"projects/{_SLUG}/memory" in message
+    assert "re-run" in message.lower()
+
+
+def test_verify_projection_passes_when_both_checks_succeed() -> None:
+    # Both read-only ``test -d`` checks pass: the host path resolves and the slug
+    # memory dir exists, so verify returns without raising (and never mutates —
+    # safe against the read-only lock).
+    transport = MagicMock()
+    transport.run.return_value = subprocess.CompletedProcess(args=["bash"], returncode=0)
+
+    vm_memory.verify_projection(transport, host_workdir=_WORKDIR, slug=_SLUG)
+
+    # Exactly the two read-only ``test -d`` checks ran — the host path and the slug
+    # memory dir — and nothing else (no write, no chmod).
+    scripts = [c.args[-1] for c in transport.run.call_args_list]
+    assert any(f"test -d {_WORKDIR}" in s for s in scripts)
+    assert any(f"test -d ~/.claude/projects/{_SLUG}/memory" in s for s in scripts)
+    assert all("test -d " in s for s in scripts)
