@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.154/">
       
       
         <link rel="next" href="../v2.1.152/">
@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
       
         
         <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
@@ -1111,6 +1111,8 @@
       
         
       
+        
+      
     
     
     
@@ -1166,6 +1168,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.154/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.154
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11921,6 +11951,7 @@
 <li><strong>make copy_claude_config tolerate the read-only projected CLAUDE.md (#2437)</strong>
 Interaction between #2412 (lock) and pre-existing copy_claude_config: lock_projection chmod a-w's ~/.claude/CLAUDE.md at the end of a cloud session; the next session's copy_claude_config runs before project_memory and did a plain 'cat &gt; ~/.claude/CLAUDE.md', failing with 'permission denied' and aborting every 2nd+ cloud session. Now chmod u+w each target (2&gt;/dev/null) before the cat, mirroring project_memory's guard. No-op on Lima and on a fresh file. Host-side change only. Ref vergil-project/.github#156.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.153/v2.1.153-ci-evidence.tar.gz">Download →</a></p>
 
 
 
@@ -11979,7 +12010,7 @@ Interaction between #2412 (lock) and pre-existing copy_claude_config: lock_proje
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.highlight", "search.suggest"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
       
     
   </body>
