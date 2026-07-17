@@ -2435,6 +2435,11 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     # divergent (or empty) cloud copy. The read-only lock is applied separately
     # (#2412); this copies the files only.
     vm_memory.project_memory(transport, claude_dir=claude_dir, host_workdir=workdir)
+    # #2413 (Component 6): verify the projection actually resolved in-guest before
+    # opening the session. A broken Component-2a host-path indirection would
+    # otherwise degrade *silently* to empty memory; verify_projection turns that
+    # into a loud ProjectionError that aborts the session (no silent continue).
+    vm_memory.verify_projection(transport, host_workdir=workdir, slug=vm_memory.host_slug(workdir))
     print("  -> opening the session", file=sys.stderr, flush=True)
     workspace_abs = os.path.normpath(resolve_workspace(args.workspace, identity.projects_dir))
     rel_path = os.path.relpath(workspace_abs, identity.projects_dir)

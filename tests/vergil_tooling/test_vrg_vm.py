@@ -45,7 +45,7 @@ from vergil_tooling.bin.vrg_vm import (
     resolve_borrow,
     warn_if_off_host,
 )
-from vergil_tooling.lib import vm_cloud
+from vergil_tooling.lib import vm_cloud, vm_memory
 from vergil_tooling.lib.identity import Identity, IdentityConfig
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_spec import ComposedSpec, SpecError
@@ -3733,6 +3733,7 @@ class _CloudPatches:
             return_value="/Users/me/dev/projects/lmf/cloud",
         )
         _patch("vergil_tooling.bin.vrg_vm.vm_memory.project_memory")
+        _patch("vergil_tooling.bin.vrg_vm.vm_memory.verify_projection")
         _patch("vergil_tooling.bin.vrg_vm.copy_claude_config")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.preflight")
         _patch("vergil_tooling.bin.vrg_vm.vm_cloud.destroy_vm")
@@ -4095,6 +4096,42 @@ class TestCloudSession:
         order = [name for name, _, _ in manager.mock_calls]
         # projection runs after the host-path indirection, before the exec
         assert order.index("ensure") < order.index("project") < order.index("exec")
+
+    def test_cloud_session_verifies_projection(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # #2413 (Component 6): _cloud_session must verify the projection resolved —
+        # AFTER project_memory (so there is something to verify) and BEFORE the
+        # process-replacing exec_session — so a broken host-path indirection aborts
+        # the session loudly instead of degrading to empty memory.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            manager = MagicMock()
+            manager.attach_mock(m["ensure_host_path"], "ensure")
+            manager.attach_mock(m["project_memory"], "project")
+            manager.attach_mock(m["verify_projection"], "verify")
+            manager.attach_mock(transport.exec_session, "exec")
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["verify_projection"].assert_called_once()
+        assert m["verify_projection"].call_args.args[0] is transport
+        kwargs = m["verify_projection"].call_args.kwargs
+        assert kwargs["host_workdir"] == m["ensure_host_path"].return_value
+        assert kwargs["slug"] == vm_memory.host_slug(m["ensure_host_path"].return_value)
+        order = [name for name, _, _ in manager.mock_calls]
+        # verification runs after the projection, before the exec
+        assert order.index("project") < order.index("verify") < order.index("exec")
+
+    def test_cloud_session_aborts_on_projection_error(
+        self, _cloud_repo: Path, tmp_path: Path
+    ) -> None:
+        # A ProjectionError from verify_projection must propagate and abort the
+        # session (no silent continue): exec_session is never reached.
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            m["verify_projection"].side_effect = vm_memory.ProjectionError("broken projection")
+            with pytest.raises(vm_memory.ProjectionError):
+                main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        transport.exec_session.assert_not_called()
 
     def test_cloud_session_seeds_claude_config(self, _cloud_repo: Path, tmp_path: Path) -> None:
         # #1999 (Fix A): the cloud session path must seed the operator's ~/.claude
