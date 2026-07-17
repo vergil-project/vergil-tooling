@@ -17,6 +17,7 @@ vanishing (spec §Component 3, §Error handling).
 
 from __future__ import annotations
 
+import subprocess
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -149,3 +150,62 @@ def lock_projection(
 
     script = "\n".join(f"if [ -e {target} ]; then {chmod}; fi" for target, chmod in targets)
     transport.run("bash", "-c", script)
+
+
+class ProjectionError(RuntimeError):
+    """The projected memory failed its post-copy verification (spec §Component 6).
+
+    Raised — not swallowed — when an in-guest check shows the projection did not
+    resolve, so a broken host-path indirection aborts the cloud session *loudly*
+    instead of degrading silently to empty memory (the one silent-degradation risk
+    the epic exists to kill). Carries an actionable message naming the failed check
+    and the fix.
+    """
+
+
+def verify_projection(transport: Transport, *, host_workdir: str, slug: str) -> None:
+    """Verify, in-guest, that the memory projection actually resolved (fail loudly).
+
+    The one silent-degradation risk (spec §Component 6): if the Component-2a
+    host-path indirection is broken, Claude starts at a path whose slug diverges
+    from the host, reads *empty* memory, and reports no error. This turns that
+    silent failure into a loud one by asserting two things over the transport,
+    **after** ``project_memory`` has run:
+
+    1. ``host_workdir`` resolves to a directory in the guest — the ``ensure_host_path``
+       symlink exists and points at the ``/vergil`` checkout (a broken or missing
+       symlink fails ``test -d``, which follows the link to its target).
+    2. ``~/.claude/projects/<slug>/memory`` exists — the projected memory landed at
+       the slug Claude will derive from ``host_workdir``.
+
+    Both are read-only ``test -d`` checks, so they are safe against the read-only
+    lock ``lock_projection`` has already applied. A failed ``test`` surfaces as a
+    :class:`subprocess.CalledProcessError` over the transport; it is re-raised as a
+    :class:`ProjectionError` whose message names the failed check and the fix
+    (re-run the session, which rebuilds the indirection and re-projects; rebuild the
+    VM if it persists). The error is allowed to propagate so ``_cloud_session``
+    aborts before ``exec_session`` rather than opening a session on empty memory.
+    """
+    guest_memory_dir = f"{_GUEST_CLAUDE_DIR}/projects/{slug}/memory"
+    checks = (
+        (
+            host_workdir,
+            f"projection verification failed: the host project path {host_workdir!r} "
+            f"does not resolve in the guest — the host-path symlink (Component 2a) is "
+            f"missing or broken, so Claude would derive a divergent memory slug and "
+            f"read empty memory. Fix: re-run the cloud session (it rebuilds the "
+            f"symlink and re-projects); rebuild the VM if it persists.",
+        ),
+        (
+            guest_memory_dir,
+            f"projection verification failed: the projected memory directory "
+            f"{guest_memory_dir!r} is missing in the guest — the host->guest memory "
+            f"copy did not land at the expected slug. Fix: re-run the cloud session "
+            f"to re-project memory; rebuild the VM if it persists.",
+        ),
+    )
+    for target, message in checks:
+        try:
+            transport.run("bash", "-c", f"test -d {target}")
+        except subprocess.CalledProcessError as exc:
+            raise ProjectionError(message) from exc
