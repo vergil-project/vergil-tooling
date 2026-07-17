@@ -131,7 +131,11 @@ fallback steps (env var → mode file → `app.pem` → `VRG_APP_ID` →
 human); an unset value means "fall through," not "default to human."
 `vrg-whoami --mode` emits a single token for scripting, and
 `vrg-whoami --explain` reports the resolving signal and warns when
-signals disagree.
+signals disagree. `vrg-whoami --platform` resolves a second, orthogonal
+axis — `physical-host` / `local-vm` / `cloud-vm` — from empirical signals
+(fail-closed: an unconfirmed VM resolves to `cloud-vm`, never
+`physical-host`); `--explain` also cross-checks the platform against the
+identity and warns when the two disagree.
 
 **Agents must not run `vrg-submit-pr`.** PR submission, merge, and
 finalization are human actions. The PR handoff is:
@@ -345,9 +349,10 @@ CLI tools installed as `vrg-*` console scripts:
 - **`vrg-validate`** — Unified validation driver (runs inside dev container)
 - **`vrg-ensure-label`** — Idempotent GitHub label creation
 - **`vrg-hook-guard`** — Claude Code PreToolUse hook guard (blocks raw git/gh)
-- **`vrg-whoami`** — Canonical identity-mode resolver (`--mode` for a
-  scripting token, `--explain` to report the resolving signal and warn
-  on signal disagreement)
+- **`vrg-whoami`** — Canonical identity-mode and platform resolver
+  (`--mode` for a scripting token, `--explain` to report the resolving
+  signal and warn on signal disagreement, `--platform` for the empirical
+  fail-closed `physical-host`/`local-vm`/`cloud-vm` token)
 - **`vrg-container-run`** — Run arbitrary commands inside a dev container
 - **`vrg-container-test`** — Run repo test suite inside a dev container
 
