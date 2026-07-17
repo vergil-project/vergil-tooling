@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.153/">
       
       
         <link rel="next" href="../v2.1.151/">
@@ -1109,6 +1109,8 @@
       
         
       
+        
+      
     
     
     
@@ -1164,6 +1166,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.153/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.153
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -11891,6 +11921,7 @@
 <li><strong>create host-path prefix and symlink under sudo (#2432)</strong>
 Regression from #2410: _cloud_session -&gt; ensure_host_path ran an unprivileged 'mkdir -p /Users/<user>/dev/projects/<org>' in the cloud guest. /Users sits under root-owned /, so it failed with 'mkdir: cannot create directory /Users: Permission denied', aborting every cloud 'vrg-vm session' before it opened. Run both the mkdir and the ln under sudo (the guest has passwordless sudo, already used for the cloud-init log tail); a root-owned symlink is traversable and its /vergil target stays ubuntu-owned. Host-side change only — reinstalling the host tool fixes existing VMs with no rebuild. Ref vergil-project/.github#156.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.152/v2.1.152-ci-evidence.tar.gz">Download →</a></p>
 
 
 
