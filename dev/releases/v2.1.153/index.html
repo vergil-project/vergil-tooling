@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.5/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.3/">
+        <link rel="next" href="../v2.1.152/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.4 - VERGIL Tooling</title>
+        <title>2.1.153 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-144-2026-04-29" class="md-skip">
+        <a href="#release-21153-2026-07-17" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.4
+              2.1.153
             
           </span>
         </div>
@@ -1172,10 +1172,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.153/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.153
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1191,6 +1218,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -8424,37 +8482,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.4
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.4/" class="md-nav__link">
         
   
   
@@ -8470,59 +8501,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#styling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Styling
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11920,28 +11898,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#styling" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Styling
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -11959,21 +11915,13 @@
 
 
 
-<h1 id="release-144-2026-04-29">Release 1.4.4 (2026-04-29)<a class="headerlink" href="#release-144-2026-04-29" title="Permanent link">&para;</a></h1>
+<h1 id="release-21153-2026-07-17">Release 2.1.153 (2026-07-17)<a class="headerlink" href="#release-21153-2026-07-17" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>reject invocation from secondary worktree instead of os.chdir</strong></li>
-<li><strong>re-allow legacy chore/bump-version and chore/next-cycle-deps branch prefixes</strong></li>
+<li><strong>make copy_claude_config tolerate the read-only projected CLAUDE.md (#2437)</strong>
+Interaction between #2412 (lock) and pre-existing copy_claude_config: lock_projection chmod a-w's ~/.claude/CLAUDE.md at the end of a cloud session; the next session's copy_claude_config runs before project_memory and did a plain 'cat &gt; ~/.claude/CLAUDE.md', failing with 'permission denied' and aborting every 2nd+ cloud session. Now chmod u+w each target (2&gt;/dev/null) before the cat, mirroring project_memory's guard. No-op on Lima and on a fresh file. Host-side change only. Ref vergil-project/.github#156.</li>
 </ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>add st-wait-until-green command for CI polling</strong></li>
-</ul>
-<h2 id="styling">Styling<a class="headerlink" href="#styling" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>move Path import to TYPE_CHECKING block</strong></li>
-<li><strong>fix import ordering in release.py</strong></li>
-</ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.153/v2.1.153-ci-evidence.tar.gz">Download →</a></p>
 
 
 
