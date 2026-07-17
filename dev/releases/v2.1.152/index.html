@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.148/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.146/">
+        <link rel="next" href="../v2.1.151/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.147 - VERGIL Tooling</title>
+        <title>2.1.152 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21147-2026-07-15" class="md-skip">
+        <a href="#release-21152-2026-07-17" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.147
+              2.1.152
             
           </span>
         </div>
@@ -1170,10 +1170,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.152/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.152
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1189,6 +1216,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1310,37 +1368,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.147
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.147/" class="md-nav__link">
         
   
   
@@ -1356,48 +1387,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11879,17 +11868,6 @@
   
 </li>
       
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
     </ul>
   
 </nav>
@@ -11907,26 +11885,13 @@
 
 
 
-<h1 id="release-21147-2026-07-15">Release 2.1.147 (2026-07-15)<a class="headerlink" href="#release-21147-2026-07-15" title="Permanent link">&para;</a></h1>
+<h1 id="release-21152-2026-07-17">Release 2.1.152 (2026-07-17)<a class="headerlink" href="#release-21152-2026-07-17" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>add actions:read to generated cd.yml release permissions (#2399)</strong>
-For a publish.release=true repo, the generated cd.yml top-level permissions block granted attestations/contents/id-token/pull-requests but not actions. The release job inherits that block and calls cd-release.yml@v2.1, which requests actions:read. Because the caller sets an explicit permissions block, unlisted scopes default to none, and GitHub validates reusable-workflow permissions at parse time — so the entire CD workflow failed with startup_failure on every push to develop and main, even though the release job is if:main-gated (if is evaluated after parse). Add actions:read to the top-level permissions so the release job's inherited permissions satisfy cd-release.yml.</p>
-</li>
-<li>
-<p><strong>reflow generated README description under markdownlint MD013 (#2400)</strong>
-The scaffolded README.md emitted the user-supplied description paragraph verbatim as a single line. A typical description exceeds the bundled markdownlint MD013 limit (100), and vrg-validate lints README.md, so the first PR of every new repo failed validation on generated content before any real code.</p>
-</li>
+<li><strong>create host-path prefix and symlink under sudo (#2432)</strong>
+Regression from #2410: _cloud_session -&gt; ensure_host_path ran an unprivileged 'mkdir -p /Users/<user>/dev/projects/<org>' in the cloud guest. /Users sits under root-owned /, so it failed with 'mkdir: cannot create directory /Users: Permission denied', aborting every cloud 'vrg-vm session' before it opened. Run both the mkdir and the ln under sudo (the guest has passwordless sudo, already used for the cloud-init log tail); a root-owned symlink is traversable and its /vergil target stays ubuntu-owned. Host-side change only — reinstalling the host tool fixes existing VMs with no rebuild. Ref vergil-project/.github#156.</li>
 </ul>
-<p>Reflow the description to &lt;=100-char lines with a paragraph-aware wrap (word boundaries; long tokens like URLs are never split; blank-line-separated paragraphs are preserved). A freshly-created repo now passes vrg-validate with no manual README edit.</p>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>run the finalize/release/install cascade on the relay branch path (#2401)</strong>
-The relay/positional-branch submit path refused --finalize/--release/--install, forcing the human to open the PRs and then run the cascade separately (looking up each PR number). The refusal was an artificial narrowing, not a technical constraint: the cascade is a local macOS action, and vrg-finalize-pr already merges and cleans up a branch that is not checked out locally — the cloud-to-Mac case the relay exists for.</li>
-</ul>
-<p>Route the relay path through the cascade when a cascade flag is passed, reusing the same batch semantics as the local worktree batch: finalize each opened PR (vrg-finalize-pr <url> --skip-post-checks), then — only if every branch merged — a single end-of-batch validation followed by one vrg-release (never one per branch). A branch already carrying a submitted PR is fail-fast in the cascade; without a cascade flag it is reported and skipped as before. Dry-run previews each PR and names the cascade without side effects.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.147/v2.1.147-ci-evidence.tar.gz">Download →</a></p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.152/v2.1.152-ci-evidence.tar.gz">Download →</a></p>
 
 
 
