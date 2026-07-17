@@ -425,7 +425,16 @@ _CLAUDE_CONFIG_FILES = ("CLAUDE.md", "settings.json")
 
 
 def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
-    """Copy CLAUDE.md and settings.json from host into the VM."""
+    """Copy CLAUDE.md and settings.json from host into the VM.
+
+    Each target is made writable (``chmod u+w``) before the overwrite: on a
+    cloud VM the memory projection locks ``~/.claude/CLAUDE.md`` read-only at the
+    end of a session (``lock_projection``, #2412), so a later session's plain
+    ``cat >`` would fail with "permission denied" (#2436). The ``chmod u+w``
+    clears any prior lock first; it is a harmless no-op on Lima (never locked)
+    and on a fresh file (guarded with ``2>/dev/null``). Mirrors the same guard in
+    ``vm_memory.project_memory``.
+    """
     if not claude_dir.is_dir():
         return
     transport.run("bash", "-c", "mkdir -p ~/.claude")
@@ -434,7 +443,7 @@ def copy_claude_config(transport: Transport, claude_dir: Path) -> None:
         if source.exists():
             content = source.read_text()
             transport.pipe(
-                f"cat > ~/.claude/{filename}",
+                f"chmod u+w ~/.claude/{filename} 2>/dev/null; cat > ~/.claude/{filename}",
                 content,
             )
 
