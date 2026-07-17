@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.111/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.109/">
+        <link rel="next" href="../v2.1.150/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.110 - VERGIL Tooling</title>
+        <title>2.1.151 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21110-2026-07-04" class="md-skip">
+        <a href="#release-21151-2026-07-17" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.110
+              2.1.151
             
           </span>
         </div>
@@ -1168,10 +1168,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.151/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.151
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1187,6 +1214,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2316,37 +2374,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.110
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.110/" class="md-nav__link">
         
   
   
@@ -2362,37 +2393,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11828,10 +11828,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Features
       
     </span>
   </a>
@@ -11855,13 +11855,11 @@
 
 
 
-<h1 id="release-21110-2026-07-04">Release 2.1.110 (2026-07-04)<a class="headerlink" href="#release-21110-2026-07-04" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21151-2026-07-17">Release 2.1.151 (2026-07-17)<a class="headerlink" href="#release-21151-2026-07-17" title="Permanent link">&para;</a></h1>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>export ~/.local/bin PATH for bootstrap_volume vrg-git calls (#2146)</strong>
-The bootstrap-volume stage ran 'vrg-git clone'/'vrg-git fetch' as bare commands over a non-login 'gcloud compute ssh --command=' shell, whose PATH is the system default and excludes ~/.local/bin where 'uv tool install' places vrg-git. So both the clone (fresh volume) and fetch (reattach) branches failed with exit 127 (command not found) on every cloud rebuild — a regression from the git-&gt;vrg-git switch (#1791/#1786/#1781), since raw /usr/bin/git was on the default PATH.</li>
+<li><strong>apply surgical read-only lock to projected memory and CLAUDE.md (#2427)</strong></li>
 </ul>
-<p>Route both calls through 'bash -c' with a $HOME/.local/bin PATH export, mirroring the established pattern every other in-guest tool call uses (vm_guest's _PLUGIN_PATH_EXPORT / _uv_tool_install). Add regression tests asserting both branches' composed guest command carries the export.</p>
 
 
 
