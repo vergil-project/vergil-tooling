@@ -818,9 +818,12 @@ class TestEnsureHostPath:
         assert path == "/Users/me/dev/projects/vergil-project/vergil-tooling"
         # transport.run("bash", "-c", <script>) — the script is the last positional arg
         script = transport.run.call_args.args[-1]
-        assert "mkdir -p /Users/me/dev/projects/vergil-project" in script
+        # #2431: the host prefix lives under root-owned /, so both steps run
+        # under sudo — an unprivileged mkdir -p /Users/... fails and aborts the
+        # session. Guard both the mkdir and the ln against a non-sudo regression.
+        assert "sudo mkdir -p /Users/me/dev/projects/vergil-project" in script
         assert (
-            "ln -sfn /vergil/projects/vergil-project/vergil-tooling "
+            "sudo ln -sfn /vergil/projects/vergil-project/vergil-tooling "
             "/Users/me/dev/projects/vergil-project/vergil-tooling" in script
         )
 
