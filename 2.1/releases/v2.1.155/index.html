@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.150/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.148/">
+        <link rel="next" href="../v2.1.154/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.149 - VERGIL Tooling</title>
+        <title>2.1.155 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21149-2026-07-16" class="md-skip">
+        <a href="#release-21155-2026-07-17" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.149
+              2.1.155
             
           </span>
         </div>
@@ -1176,10 +1176,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.155/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.155
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1195,6 +1222,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1344,37 +1402,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.149
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.149/" class="md-nav__link">
         
   
   
@@ -1390,37 +1421,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11948,10 +11948,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Documentation
       
     </span>
   </a>
@@ -11975,12 +11975,12 @@
 
 
 
-<h1 id="release-21149-2026-07-16">Release 2.1.149 (2026-07-16)<a class="headerlink" href="#release-21149-2026-07-16" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21155-2026-07-17">Release 2.1.155 (2026-07-17)<a class="headerlink" href="#release-21155-2026-07-17" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>align cloud session workdir to host project path for memory-slug parity (#2419)</strong></li>
+<li><strong>document vrg-whoami --platform (epic #156 doc-review sweep) (#2445)</strong>
+Documentation-review sweep for epic vergil-project/.github#156. CLAUDE.md's vrg-whoami description covered --mode/--explain but not the new --platform axis; add it to both the identity-modes narrative and the architecture bullet (empirical, fail-closed physical-host/local-vm/cloud-vm). Sweep result: the site guide docs/site/docs/guides/agent-vm-claude-share-set.md was already comprehensive (written from the spec, incl. the fail-loud verify step); no other repo (checked vergil-vm docs) references the memory-projection or vrg-whoami surface, so no per-repo doc task is spawned. Ref vergil-project/.github#156.</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.149/v2.1.149-ci-evidence.tar.gz">Download →</a></p>
 
 
 
