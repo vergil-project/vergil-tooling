@@ -428,6 +428,18 @@ class TestCopyClaudeConfig:
         assert "settings.json" in settings_call[0][0]
         assert '"key"' in settings_call[0][1]
 
+        # #2436: the target must be made writable before the overwrite, because
+        # the cloud memory projection locks CLAUDE.md read-only (#2412) — a plain
+        # `cat >` on a later session would fail with "permission denied". Guard
+        # both files against a non-chmod regression.
+        assert (
+            "chmod u+w ~/.claude/CLAUDE.md 2>/dev/null; cat > ~/.claude/CLAUDE.md" in md_call[0][0]
+        )
+        assert (
+            "chmod u+w ~/.claude/settings.json 2>/dev/null; cat > ~/.claude/settings.json"
+            in settings_call[0][0]
+        )
+
     def test_skips_missing_files(self, tmp_path: Path) -> None:
         claude_dir = tmp_path / ".claude"
         claude_dir.mkdir()
