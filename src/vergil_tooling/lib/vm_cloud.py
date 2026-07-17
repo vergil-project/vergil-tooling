@@ -576,14 +576,24 @@ def ensure_host_path(transport: Transport, host_projects_dir: str, org: str, rep
     and returns the host-equivalent absolute path so the caller can open the
     session there.
 
-    Idempotent: ``mkdir -p`` is a no-op when the parent already exists, and
-    ``ln -sfn`` re-points an existing link rather than nesting a new one inside
-    it. Follows the ``link_cloud_claude_dirs`` bash-over-transport idiom.
+    Both steps run under ``sudo``. The host prefix (e.g. ``/Users``) sits under
+    root-owned ``/``, so an unprivileged ``mkdir -p /Users/...`` fails with
+    "Permission denied" and aborts the session before it opens (regression
+    #2431). The guest has passwordless sudo (already used for the cloud-init log
+    tail), so ``sudo`` creates the prefix and the symlink; a root-owned symlink
+    is fully traversable and its ``/vergil`` target stays ``ubuntu``-owned, so
+    the session reads and writes the checkout normally.
+
+    Idempotent: ``sudo mkdir -p`` is a no-op when the parent already exists, and
+    ``sudo ln -sfn`` re-points an existing link rather than nesting a new one
+    inside it. Follows the ``link_cloud_claude_dirs`` bash-over-transport idiom.
     """
     checkout = f"{_CLOUD_PROJECTS_VOLUME}/{org}/{repo}"
     host_path = f"{host_projects_dir}/{org}/{repo}"
     host_parent = f"{host_projects_dir}/{org}"
-    transport.run("bash", "-c", f"mkdir -p {host_parent} && ln -sfn {checkout} {host_path}")
+    transport.run(
+        "bash", "-c", f"sudo mkdir -p {host_parent} && sudo ln -sfn {checkout} {host_path}"
+    )
     return host_path
 
 
