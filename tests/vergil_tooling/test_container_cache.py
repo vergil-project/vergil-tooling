@@ -18,6 +18,7 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    provision_dev_image,
     resolve_base_digest,
 )
 
@@ -286,6 +287,48 @@ def test_ensure_rebuilds_when_base_digest_changes(tmp_path: Path) -> None:
     mock_build.assert_called_once()
     # The stale image was removed.
     assert stale_tag in mock_run.call_args[0][0]
+
+
+# -- provision_dev_image ------------------------------------------------------
+
+
+def test_provision_uses_env_override(tmp_path: Path) -> None:
+    with (
+        patch.dict("os.environ", {"DOCKER_DEV_IMAGE": "custom:img"}, clear=True),
+        patch("vergil_tooling.lib.container_cache.ensure_cached_image") as ensure,
+    ):
+        image, source = provision_dev_image(tmp_path, "python")
+    assert (image, source) == ("custom:img", "env")
+    # The env override short-circuits — no image is built.
+    ensure.assert_not_called()
+
+
+def test_provision_returns_cached_when_built(tmp_path: Path) -> None:
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("vergil_tooling.lib.container_cache.default_image", return_value="base:1"),
+        patch(
+            "vergil_tooling.lib.container_cache.ensure_cached_image",
+            return_value="base:1--develop--abcd1234",
+        ),
+    ):
+        image, source = provision_dev_image(tmp_path, "python", runtime="docker")
+    assert (image, source) == ("base:1--develop--abcd1234", "cached")
+
+
+def test_provision_returns_default_when_no_cache_files(tmp_path: Path) -> None:
+    # ensure_cached_image returns the base unchanged when the repo declares no
+    # cache-sensitive files, so the source is the plain base image.
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("vergil_tooling.lib.container_cache.default_image", return_value="base:1"),
+        patch(
+            "vergil_tooling.lib.container_cache.ensure_cached_image",
+            return_value="base:1",
+        ),
+    ):
+        image, source = provision_dev_image(tmp_path, "python")
+    assert (image, source) == ("base:1", "default")
 
 
 # -- clean_branch_images ------------------------------------------------------

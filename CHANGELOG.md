@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.156] - 2026-07-22
+
+### Bug fixes
+
+- pin UV_LINK_MODE=copy to silence uv hardlink-fallback warning (#2463)
+
+### Features
+
+- provision the dev image explicitly before validation (#2464)
+
 ## [2.1.155] - 2026-07-17
 
 ### Documentation

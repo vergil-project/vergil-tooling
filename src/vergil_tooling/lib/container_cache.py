@@ -10,7 +10,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import vrg_install_tag
-from vergil_tooling.lib.container import container_platform, detect_runtime
+from vergil_tooling.lib.container import container_platform, default_image, detect_runtime
 from vergil_tooling.lib.languages import CheckKind, language_commands
 
 if TYPE_CHECKING:
@@ -236,6 +236,14 @@ def _build_cached_image(
         uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
         setup = f"{uv_install} && {warmup}" if warmup else uv_install
 
+    # Attribute the build clearly as an environment-provisioning step. A rebuild
+    # can be triggered lazily by an operational command (the first vrg-container-run
+    # whose cache key no longer matches), and without this framing a build failure
+    # reads as a failure of whatever operation happened to trigger it — e.g. a
+    # cold build during vrg-finalize-pr's validation looking like "validation
+    # failed after a clean merge" (issue #2462). This banner keeps a provisioning
+    # failure attributable to provisioning, not to the caller's operation.
+    print("── Provisioning dev image (environment build — not part of your command) ──")
     print(f"Building cached image: {target_tag}")
     print(f"  Base:    {base_image}")
     if self_repo:
@@ -330,6 +338,37 @@ def ensure_cached_image(
 
     target_tag = cache_image_tag(base_image, branch, current_hash)
     return _build_cached_image(repo_root, lang, base_image, target_tag, runtime=rt)
+
+
+def provision_dev_image(
+    repo_root: Path,
+    lang: str,
+    *,
+    prefix: str = "prod",
+    runtime: str = "",
+) -> tuple[str, str]:
+    """Resolve the dev image for *repo_root*, building/warming it if needed.
+
+    This is the explicit provisioning seam: it names, as a single operation, the
+    image resolution that ``vrg-container-run`` performs lazily on every call.
+    ``vrg-finalize-pr`` calls it up front — right after develop advances — so the
+    target-branch image is warm before validation (or the next PR's work) uses
+    it, instead of triggering a cold rebuild mid-operation (issue #2462).
+
+    Returns ``(image, source)`` where *source* is ``"env"`` (a ``DOCKER_DEV_IMAGE``
+    override), ``"cached"`` (a per-branch cached image), or ``"default"`` (the base
+    image, when the repo declares no cache-sensitive files).
+
+    Kept in step with ``vrg_container_run.main``'s inline resolution: both honour
+    ``DOCKER_DEV_IMAGE`` first, then fall back to ``default_image`` +
+    ``ensure_cached_image``. Change the two together.
+    """
+    env_image = os.environ.get("DOCKER_DEV_IMAGE")
+    if env_image:
+        return env_image, "env"
+    base = default_image(lang, fallback=True, prefix=prefix)
+    image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
+    return image, ("cached" if image != base else "default")
 
 
 def clean_branch_images(branch: str, *, runtime: str = "") -> int:
