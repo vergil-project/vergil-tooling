@@ -184,6 +184,29 @@ def test_build_container_args_nerdctl(tmp_path: Path) -> None:
     assert args[0:3] == ["nerdctl", "run", "--rm"]
 
 
+def _env_value(args: list[str], name: str) -> str | None:
+    """Return the value passed via ``-e NAME=value``, or None if absent."""
+    for i, a in enumerate(args):
+        if a == "-e" and i + 1 < len(args) and args[i + 1].startswith(f"{name}="):
+            return args[i + 1].split("=", 1)[1]
+    return None
+
+
+def test_build_container_args_defaults_uv_link_mode_copy(tmp_path: Path) -> None:
+    # The uv cache and the /workspace venv target are on different filesystems,
+    # so uv falls back to copy; we pin it to copy to silence the warning (#2461).
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "UV_LINK_MODE") == "copy"
+
+
+def test_build_container_args_respects_host_uv_link_mode(tmp_path: Path) -> None:
+    # An operator's explicit UV_LINK_MODE wins over the copy default.
+    with patch.dict("os.environ", {"UV_LINK_MODE": "hardlink"}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "UV_LINK_MODE") == "hardlink"
+
+
 def test_build_docker_args_basic(tmp_path: Path) -> None:
     with patch.dict("os.environ", {}, clear=True):
         args = build_docker_args(tmp_path, "img:1", ["echo", "hello"])

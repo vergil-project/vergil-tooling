@@ -170,6 +170,15 @@ def build_container_args(
             if name.startswith(prefixes):
                 container_args.extend(["-e", name])
 
+    # uv's cache (`/root/.cache/uv`, container overlay fs) and the venv target
+    # (`/workspace/.venv`, the bind-mounted repo) live on different filesystems,
+    # so uv cannot hardlink and falls back to a full copy, printing a warning on
+    # every install in every run. Pin the link mode to copy to suppress that
+    # noise — uv already copies here, so this changes no behaviour. An explicit
+    # host UV_LINK_MODE wins, so an operator can still override it. (#2461)
+    uv_link_mode = os.environ.get("UV_LINK_MODE", "copy")
+    container_args.extend(["-e", f"UV_LINK_MODE={uv_link_mode}"])
+
     # Mount host git config so git identity is available in the container.
     gitconfig = Path.home() / ".gitconfig"
     if gitconfig.exists():
