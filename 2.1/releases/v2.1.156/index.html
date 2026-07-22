@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.99/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.97/">
+        <link rel="next" href="../v2.1.155/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.98 - VERGIL Tooling</title>
+        <title>2.1.156 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2198-2026-07-01" class="md-skip">
+        <a href="#release-21156-2026-07-22" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.98
+              2.1.156
             
           </span>
         </div>
@@ -1178,10 +1178,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.156/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.156
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1197,6 +1224,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2802,37 +2871,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.98
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.98/" class="md-nav__link">
         
   
   
@@ -2848,48 +2890,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#ci" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        CI
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -11989,10 +11989,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#ci" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        CI
+        Bug fixes
       
     </span>
   </a>
@@ -12027,32 +12027,20 @@
 
 
 
-<h1 id="release-2198-2026-07-01">Release 2.1.98 (2026-07-01)<a class="headerlink" href="#release-2198-2026-07-01" title="Permanent link">&para;</a></h1>
-<h2 id="ci">CI<a class="headerlink" href="#ci" title="Permanent link">&para;</a></h2>
+<h1 id="release-21156-2026-07-22">Release 2.1.156 (2026-07-22)<a class="headerlink" href="#release-21156-2026-07-22" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add on: issues.closed caller for event-driven epic rollup (#2060)</strong>
-Thin caller (epic vergil-project/.github#75, task #2052) that fires on issues.closed and hands off to the reusable ops-epic-rollup workflow in vergil-actions (shipped in 2.1.9/2.1.10, PR #733), passing the APP_CLIENT_ID/APP_PRIVATE_KEY secrets. The reusable workflow mints a scoped app token, installs vergil-tooling, and runs vrg-epic-rollup for the closed issue. This is the vergil-tooling half of event-driven rollup; per repo convention all logic lives in the reusable workflow (cf. ops.yml). With this merged, closing a task issue rolls up its parent epic with no dependence on which command ran.</li>
+<li><strong>pin UV_LINK_MODE=copy to silence uv hardlink-fallback warning (#2463)</strong>
+uv's cache lives on the container overlay fs while the venv target is the bind-mounted /workspace, so uv cannot hardlink and falls back to a full copy, printing a warning on every install in every run. Pin UV_LINK_MODE=copy in the vrg-container-run environment to suppress the noise; uv already copies here, so this is a zero-behaviour-change suppression. An explicit host UV_LINK_MODE still wins so operators can override. Ref #2461.</li>
 </ul>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>descriptive --help for container-test, pr-issue-linkage, repo-profile (#2062)</strong>
-Give the three remaining standalone help-gap tools argparse parsers so --help explains each (purpose, scope, exit codes) instead of the tool silently running. Existing behavior is unchanged: they take no flags — the parser exists for its --help. Because main() now parses argv, no-arg library/test calls pass an explicit [] (validate_common's internal vrg_repo_profile.main([]) and the three tools' test suites), matching the convention. Removes all three from the help-coverage KNOWN_GAPS ratchet; only the wrappers and container-docs remain (task 4). Ref vergil-project/vergil-tooling#2059.</p>
-</li>
-<li>
-<p><strong>emit Closes for managed tasks so they auto-close on merge (#2063)</strong>
-vrg-submit-pr now links a managed task (an issue with an epic-labeled parent) with Closes instead of Ref, so merging its single PR to develop auto-closes the task and the on: issues.closed rollup Action closes the parent epic when the last sibling lands (epic vergil-project/.github#75, T3). Adds _task_linkage (epic-parent lookup) and _resolve_linkage (announce + apply) at all three PR-body build sites; legacy issues with no epic parent keep Ref and stay open for manual close. ALLOWED_LINKAGES gains Closes; report-ready still stores Ref (the upgrade happens at submit-time), so the pr-workflow engine is untouched.</p>
-</li>
-<li>
-<p><strong>add vrg-issue-create + vrg-epic-move/unlink; block raw issue create (#2064)</strong></p>
-</li>
-<li>feat(epics): add remove_child and resolve_epic_ref primitives</li>
+<li><strong>provision the dev image explicitly before validation (#2464)</strong>
+vrg-finalize-pr previously let the post-finalization validation cold-rebuild the target-branch dev image inside the validation stage: ensure_cached_image runs on the first vrg-container-run whose cache key no longer matches, so a build-time glitch surfaced as 'validation failed after a clean merge', independent of the repo's actual state.</li>
 </ul>
-<p>remove_child issues a removeSubIssue GraphQL mutation (the counterpart to add_child) to unlink a task from an epic. resolve_epic_ref resolves an epic ref, accepting a "standing" sentinel that discovers the repo epic+standing-labelled issue (0 or &gt;=2 -&gt; hard error), and validates epic-ness for explicit refs. Foundations for vrg-issue-create and vrg-epic-move/unlink.</p>
-<ul>
-<li><strong>wrapper-specific --help for vrg-git/vrg-gh + vrg-container-docs help (#2065)</strong>
-vrg-git and vrg-gh now intercept a top-level -h/--help and print wrapper-specific help (subcommand allowlist, denied commands, flag deny-list, worktree convention, identity-based credential selection) before forwarding; per-subcommand help still forwards to git/gh. Adds the missing 'if <strong>name</strong> == "<strong>main</strong>"' guard to both wrappers so they run as module entrypoints (the coverage gate invokes them via python -m). vrg-container-docs now recognizes -h/--help explicitly, printing its usage with exit 0. Removes the three from the help-coverage KNOWN_GAPS ratchet. Note: #2059 also shrinks KNOWN_GAPS from different entries; whichever merges second reconciles to an empty set, and test_gap_set_matches_reality fails CI if that reconciliation is wrong. Ref vergil-project/vergil-tooling#2061.</li>
-</ul>
+<p>Make provisioning an explicit prerequisite. A new fail_fast 'provision' stage runs between cleanup (which advances the target branch, the one deterministic reason its image needs rebuilding) and validation, warming the image once via a shared provision_dev_image helper so validation and the next PR's work reuse a warm image instead of racing a cold rebuild mid-operation.</p>
+<p>Any environment build is now clearly attributed: _build_cached_image prints a 'Provisioning dev image (environment build - not part of your command)' banner, so a provisioning failure stays attributable to provisioning rather than masquerading as the caller's operation. The lazy path keeps auto-building (no hard user-facing gate); it is only made deterministic-early and visible.</p>
+<p>Does not cure the underlying ansible-lint/Python-3.14 metadata glitch that first surfaced this (tracked in vergil-containers#446); it removes the mid-operation rebuild and the mis-attribution. Ref #2462.</p>
 
 
 
