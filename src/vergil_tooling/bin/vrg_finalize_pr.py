@@ -54,7 +54,8 @@ from vergil_tooling.lib import (
     worktrees,
 )
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
-from vergil_tooling.lib.container_cache import clean_branch_images
+from vergil_tooling.lib.container import detect_language
+from vergil_tooling.lib.container_cache import clean_branch_images, provision_dev_image
 from vergil_tooling.lib.pr_workflow import batch, github_transport
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
@@ -809,6 +810,32 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
     )
 
 
+def _stage_provision(ctx: FinalizeContext) -> None:
+    """Provision the target-branch dev image up front, before validation.
+
+    ``_stage_cleanup`` has just advanced the target branch — the one
+    deterministic reason its cached image needs rebuilding. Warm it here, once,
+    so the validation stage (and the next PR's work) reuse a warm image instead
+    of triggering a cold rebuild *inside* an operation. That lazy just-in-time
+    rebuild — late, and possibly under parallel load — is what let a build-time
+    glitch masquerade as "validation failed after a clean merge" (issue #2462).
+    """
+    args = ctx.args
+    if args.dry_run:
+        print("  [dry-run] provision dev image for the target branch")
+        return
+    print("Provisioning dev image for post-finalization validation...")
+    lang = detect_language(ctx.root)
+    try:
+        image, source = provision_dev_image(ctx.root, lang)
+    except RuntimeError as exc:
+        raise FinalizeError(f"dev-image provisioning failed: {exc}") from exc
+    if source == "env":
+        print(f"  Using DOCKER_DEV_IMAGE override: {image}")
+    else:
+        print(f"  Image ready: {image}")
+
+
 def _stage_validation(ctx: FinalizeContext) -> None:
     """Run canonical validation to catch problems on the target branch
     before the next PR is created.
@@ -861,10 +888,11 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
     """Assemble the pipeline for the resolved mode.
 
     provenance/merge run only when a PR was given or inferred; cleanup always
-    runs. validation and cd-check run unless *include_post_checks* is False
-    (the batch path defers them to one end-of-batch run, issue #1673); they
-    are fail_defer so a validation failure still surfaces the CD status —
-    matching the pre-pipeline control flow.
+    runs. provision, validation, and cd-check run unless *include_post_checks*
+    is False (the batch path defers them to one end-of-batch run, issue #1673).
+    provision warms the target-branch image (fail_fast, before it is used);
+    validation and cd-check are fail_defer so a validation failure still surfaces
+    the CD status — matching the pre-pipeline control flow.
     """
     stages: list[Stage] = []
     if include_pr:
@@ -872,6 +900,10 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
         stages.append(Stage("merge", _stage_merge, "fail_fast"))
     stages.append(Stage("cleanup", _stage_cleanup, "fail_fast"))
     if include_post_checks:
+        # Provision the environment before it is used. fail_fast: if the image
+        # cannot be built there is no point running validation against a broken
+        # or absent one (issue #2462).
+        stages.append(Stage("provision", _stage_provision, "fail_fast"))
         stages.append(Stage("validation", _stage_validation, "fail_defer"))
         stages.append(Stage("cd-check", _stage_cd_check, "fail_defer"))
     return tuple(stages)

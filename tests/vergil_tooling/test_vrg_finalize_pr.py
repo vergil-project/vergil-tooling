@@ -26,6 +26,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _stage_cd_check,
     _stage_merge,
     _stage_provenance,
+    _stage_provision,
     _stage_validation,
     _worktree_is_dirty,
     build_stages,
@@ -106,6 +107,17 @@ def _validation_passes() -> Iterator[None]:
     innermost patch wins.
     """
     with patch(_MOD + ".progress.run", return_value=0):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _provisioning_passes() -> Iterator[None]:
+    """Default: the provision stage warms the image without touching docker.
+
+    The provision stage calls provision_dev_image (issue #2462); tests that
+    assert provisioning behavior re-patch it directly — the innermost patch wins.
+    """
+    with patch(_MOD + ".provision_dev_image", return_value=("img--develop--test", "cached")):
         yield
 
 
@@ -1450,12 +1462,17 @@ def test_stage_merge_dry_run_skips_engine() -> None:
 
 def test_build_stages_with_pr() -> None:
     names = [s.name for s in build_stages(include_pr=True)]
-    assert names == ["provenance", "merge", "cleanup", "validation", "cd-check"]
+    assert names == ["provenance", "merge", "cleanup", "provision", "validation", "cd-check"]
 
 
 def test_build_stages_without_pr() -> None:
     names = [s.name for s in build_stages(include_pr=False)]
-    assert names == ["cleanup", "validation", "cd-check"]
+    assert names == ["cleanup", "provision", "validation", "cd-check"]
+
+
+def test_build_stages_skips_post_checks() -> None:
+    names = [s.name for s in build_stages(include_pr=True, include_post_checks=False)]
+    assert names == ["provenance", "merge", "cleanup"]
 
 
 def test_build_stages_failure_modes() -> None:
@@ -1463,10 +1480,54 @@ def test_build_stages_failure_modes() -> None:
     assert modes["provenance"] == "fail_fast"
     assert modes["merge"] == "fail_fast"
     assert modes["cleanup"] == "fail_fast"
+    # Provisioning is a prerequisite: fail_fast so validation never runs against
+    # a broken or absent image (issue #2462).
+    assert modes["provision"] == "fail_fast"
     # fail_defer preserves current semantics: a validation failure still
     # runs the cd-check, and either failure exits 1.
     assert modes["validation"] == "fail_defer"
     assert modes["cd-check"] == "fail_defer"
+
+
+def test_stage_provision_warms_image(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".detect_language", return_value="python"),
+        patch(
+            _MOD + ".provision_dev_image", return_value=("img--develop--abcd1234", "cached")
+        ) as prov,
+    ):
+        _stage_provision(ctx)
+    prov.assert_called_once_with(tmp_path, "python")
+
+
+def test_stage_provision_reports_env_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".detect_language", return_value="python"),
+        patch(_MOD + ".provision_dev_image", return_value=("custom:img", "env")),
+    ):
+        _stage_provision(ctx)
+    assert "DOCKER_DEV_IMAGE override" in capsys.readouterr().out
+
+
+def test_stage_provision_failure_raises(tmp_path: Path) -> None:
+    ctx = _stage_ctx([], root=tmp_path)
+    with (
+        patch(_MOD + ".detect_language", return_value="python"),
+        patch(_MOD + ".provision_dev_image", side_effect=RuntimeError("Cache build failed")),
+        pytest.raises(FinalizeError, match="dev-image provisioning failed"),
+    ):
+        _stage_provision(ctx)
+
+
+def test_stage_provision_dry_run_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--dry-run"], root=tmp_path)
+    with patch(_MOD + ".provision_dev_image") as prov:
+        _stage_provision(ctx)
+    prov.assert_not_called()
 
 
 def test_stage_validation_streams_through_progress(tmp_path: Path) -> None:
