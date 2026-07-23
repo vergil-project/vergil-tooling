@@ -14,7 +14,7 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib import git
-from vergil_tooling.lib.config import container_env_prefixes
+from vergil_tooling.lib.config import container_env_prefixes, primary_ci_version
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     build_container_args,
@@ -38,7 +38,9 @@ def build_test_container_args(
     env_prefixes: Sequence[str] = (),
 ) -> list[str]:
     """Build the container run argument list for test execution."""
-    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(lang)
+    image = os.environ.get("DOCKER_DEV_IMAGE") or default_image(
+        lang, version=primary_ci_version(repo_root)
+    )
     test_cmd = os.environ.get("DOCKER_TEST_CMD") or _DEFAULT_TEST_COMMANDS.get(lang, "")
     network = os.environ.get("DOCKER_NETWORK", "")
 

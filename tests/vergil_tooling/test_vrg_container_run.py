@@ -369,6 +369,56 @@ def test_registry_image_uses_pull_always(tmp_path: Path) -> None:
     assert "--pull=always" in args
 
 
+# -- [ci].versions authoritative container selection (issue #2468) ------------
+
+
+def test_declared_ci_version_selects_container(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A repo declaring [ci].versions must drive the container version — not the
+    # hardcoded _DEFAULT_VERSIONS — and must not warn.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.primary_ci_version", return_value="3.12"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ) as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp"),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "cmd"])
+    # ensure_cached_image(repo_root, lang, base, ...) — the base carries 3.12.
+    assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/prod-python:3.12"
+    assert "WARNING" not in capsys.readouterr().err
+
+
+def test_no_declared_version_warns_and_uses_builtin_default(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # No declared version: fall back to the built-in default, but say so loudly.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch("vergil_tooling.bin.vrg_container_run.primary_ci_version", return_value=None),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ) as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp"),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "cmd"])
+    assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/prod-python:3.14"
+    err = capsys.readouterr().err
+    assert "no [ci].versions" in err
+
+
 # -- validation-command override ([validation] in vergil.toml) ----------------
 
 
