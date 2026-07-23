@@ -388,7 +388,7 @@ def render_gitignore() -> str:
         "Thumbs.db\n"
         "\n"
         "# Vergil\n"
-        ".venv-host/\n"
+        ".venv/\n"
         ".worktrees/\n"
         ".vergil/\n"
         ".superpowers/\n"
