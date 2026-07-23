@@ -9,7 +9,6 @@ Thumbs.db
 .env.*
 *.log
 .venv/
-.venv-host/
 __pycache__/
 *.pyc
 *.egg-info/

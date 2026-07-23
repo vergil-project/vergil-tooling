@@ -187,6 +187,14 @@ revert to the host-installed version.
 
 ### Why `.venv-host`, not `.venv`
 
+> **Superseded (epic vergil-project/.github#179).** The `.venv-host`
+> dual-venv model described in this section was retired. The dev
+> container now masks the host `.venv` with an anonymous volume, so
+> host and container Python environments can no longer clobber each
+> other. The host dev tree therefore uses a single `.venv` (`uv sync
+> --group dev`); `.venv-host` is gone. The rationale below is retained
+> as historical record only.
+
 The `standard-tooling` repo is itself developed and validated inside
 the dev container. Inside the container, `uv sync` populates `.venv/`
 with shebangs pointing at the container's Python

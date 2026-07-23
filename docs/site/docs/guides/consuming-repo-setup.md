@@ -76,9 +76,12 @@ vrg-container-run --help   # should print usage
 
 !!! note "Dev-tree override for vergil-tooling development"
     If you are developing vergil-tooling itself and want to test
-    unreleased code on the host, use the `.venv-host` dev-tree
-    override described in the vergil-tooling `CLAUDE.md`. This
-    does not apply to consuming repos.
+    unreleased code on the host, use the single-`.venv` dev-tree
+    override described in the vergil-tooling `CLAUDE.md` (`uv sync
+    --group dev`, then prepend `.venv/bin` to `PATH`). A single
+    `.venv` is safe because the dev container masks the host `.venv`
+    with an anonymous volume, so host and container never clobber
+    each other's environment. This does not apply to consuming repos.
 
 ## Step 3: Claude Code hook guard
 
