@@ -18,6 +18,7 @@ from vergil_tooling.lib.config import (
     _warn_unrecognized_keys,
     container_env_prefixes,
     parse_vm_stanza,
+    primary_ci_version,
     read_config,
     validation_container_command,
     vrg_install_tag,
@@ -107,6 +108,25 @@ def test_read_config_invalid_toml(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text("[invalid\n")
     with pytest.raises(ConfigError, match="not valid TOML"):
         read_config(tmp_path)
+
+
+def test_primary_ci_version_returns_first_declared(tmp_path: Path) -> None:
+    toml = _BASE_TOML + '\n[ci]\nversions = ["3.12", "3.13", "3.14"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert primary_ci_version(tmp_path) == "3.12"
+
+
+def test_primary_ci_version_none_when_no_config(tmp_path: Path) -> None:
+    # No vergil.toml: the caller falls back to the built-in default version.
+    assert primary_ci_version(tmp_path) is None
+
+
+def test_primary_ci_version_propagates_config_error(tmp_path: Path) -> None:
+    # A malformed config fails loudly rather than silently defaulting — matching
+    # validation_container_command / container_env_prefixes (issue #2468).
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
+    with pytest.raises(ConfigError):
+        primary_ci_version(tmp_path)
 
 
 def test_read_config_missing_required_project_field(tmp_path: Path) -> None:

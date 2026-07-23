@@ -80,18 +80,30 @@ def detect_language(repo_root: Path) -> str:
     return ""
 
 
-def default_image(lang: str, *, fallback: bool = False, prefix: str = _DEFAULT_PREFIX) -> str:
+def default_image(
+    lang: str,
+    *,
+    fallback: bool = False,
+    prefix: str = _DEFAULT_PREFIX,
+    version: str | None = None,
+) -> str:
     """Return the default container image for a language.
 
     When *fallback* is True, return the base image if no language
     matches instead of returning an empty string.
+
+    *version* overrides the built-in ``_DEFAULT_VERSIONS`` entry for *lang*
+    (issue #2468). Callers pass the repo's declared ``[ci].versions`` primary
+    (via :func:`config.primary_ci_version`) so the repo — not a tooling-side
+    constant — picks the container tag. When it is ``None`` (or empty), the
+    built-in default is used.
     """
-    version = _DEFAULT_VERSIONS.get(lang, "")
-    if not version and fallback:
+    resolved = version or _DEFAULT_VERSIONS.get(lang, "")
+    if not resolved and fallback:
         return _fallback_image(prefix)
-    if not version:
+    if not resolved:
         return ""
-    return f"{_GHCR}/{prefix}-{lang}:{version}"
+    return f"{_GHCR}/{prefix}-{lang}:{resolved}"
 
 
 def worktree_parent_gitdir(repo_root: Path) -> Path | None:

@@ -489,6 +489,28 @@ def vrg_install_tag(repo_root: Path) -> str:
     return cfg.dependencies["vergil"]
 
 
+def primary_ci_version(repo_root: Path) -> str | None:
+    """Return the repo's primary declared version — ``[ci].versions[0]``.
+
+    This is authoritative for local container selection (issue #2468): the
+    dev/validate image tag is ``prod-<lang>:<version>``, and the repo's declared
+    version must win over the built-in ``_DEFAULT_VERSIONS`` so a tooling-side
+    default bump cannot silently change every consuming repo's local builds (or
+    skew them from CI, which runs the same ``[ci].versions``).
+
+    Returns ``None`` — the caller falls back to the built-in default — when the
+    repo has no ``vergil.toml``. A ``ConfigError`` from a malformed config
+    propagates, matching :func:`validation_container_command` and
+    :func:`container_env_prefixes`; the parser guarantees ``[ci].versions`` is a
+    non-empty list, so ``[0]`` is always valid once the read succeeds.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return None
+    return cfg.ci.versions[0]
+
+
 def container_env_prefixes(repo_root: Path) -> list[str]:
     """Return ``[container].env-prefixes`` from vergil.toml, or ``[]``."""
     try:
