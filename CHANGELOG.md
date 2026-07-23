@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.160] - 2026-07-23
+
+### Bug fixes
+
+- mask host venv on cache-build path too (#2495) (#2496)
+
 ## [2.1.159] - 2026-07-23
 
 ### Features

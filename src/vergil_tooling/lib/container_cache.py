@@ -10,7 +10,12 @@ import sys
 from typing import TYPE_CHECKING
 
 from vergil_tooling.lib.config import primary_ci_version, vrg_install_tag
-from vergil_tooling.lib.container import container_platform, default_image, detect_runtime
+from vergil_tooling.lib.container import (
+    container_platform,
+    default_image,
+    detect_runtime,
+    workspace_mount_args,
+)
 from vergil_tooling.lib.languages import CheckKind, language_commands
 
 if TYPE_CHECKING:
@@ -253,24 +258,26 @@ def _build_cached_image(
     if warmup:
         print(f"  Warmup:  {warmup}")
 
+    create_args = [
+        rt,
+        "create",
+        f"--platform={container_platform()}",
+        # Use the freshly-pulled base (resolve_base_digest pulled it). Only pull
+        # here if it is somehow absent locally; never --pull=always, which would
+        # fail an offline build that has a usable local copy.
+        "--pull=missing",
+        # Shared with the run path (container.py): the workspace bind-mount, the
+        # working dir, and the Python-gated `.venv` mask. Masking the host `.venv`
+        # here too keeps the cache-build (cold-rebuild) `setup` step from
+        # corrupting the bind-mounted host venv — the mount site #2486 missed (#2495).
+        *workspace_mount_args(repo_root),
+        base_image,
+        "bash",
+        "-c",
+        setup,
+    ]
     cid_result = subprocess.run(  # noqa: S603
-        [  # noqa: S607
-            rt,
-            "create",
-            f"--platform={container_platform()}",
-            # Use the freshly-pulled base (resolve_base_digest pulled it). Only pull
-            # here if it is somehow absent locally; never --pull=always, which would
-            # fail an offline build that has a usable local copy.
-            "--pull=missing",
-            "-v",
-            f"{repo_root}:/workspace",
-            "-w",
-            "/workspace",
-            base_image,
-            "bash",
-            "-c",
-            setup,
-        ],
+        create_args,
         capture_output=True,
         text=True,
     )

@@ -137,6 +137,18 @@ def worktree_parent_gitdir(repo_root: Path) -> Path | None:
     return gitdir.parent.parent
 
 
+def workspace_mount_args(repo_root: Path) -> list[str]:
+    """Return the workspace bind-mount + working dir, plus a fresh anonymous
+    volume masking the venv for Python repos so in-container uv never rewrites
+    the bind-mounted host .venv (#2473/#2495). Used by BOTH the run path and
+    the cache-build path — one source of truth so a new mount site can't
+    silently reintroduce the corruption."""
+    args = ["-v", f"{repo_root}:/workspace", "-w", "/workspace"]
+    if detect_language(repo_root) == "python":
+        args += ["-v", "/workspace/.venv"]
+    return args
+
+
 def build_container_args(
     repo_root: Path,
     image: str,
@@ -152,21 +164,11 @@ def build_container_args(
     container_args = [runtime, "run", "--rm", f"--platform={container_platform()}"]
     if pull_policy != "never":
         container_args.append("--pull=always")
-    container_args.extend(
-        [
-            "-v",
-            f"{repo_root}:/workspace",
-            "-w",
-            "/workspace",
-        ]
-    )
 
-    # Mask the bind-mounted host `.venv` with a fresh anonymous volume so an
-    # in-container `uv sync` builds a throwaway venv at the default path and can
-    # never corrupt the host venv. This is structural isolation — no env-var
-    # propagation. Gated to Python repos, the only ones with a `.venv` (#2486).
-    if detect_language(repo_root) == "python":
-        container_args.extend(["-v", "/workspace/.venv"])
+    # The workspace bind-mount, working dir, and the Python-gated `.venv` mask
+    # come from one shared helper so the run path and the cache-build path
+    # (container_cache.py) can never drift on venv protection (#2486/#2495).
+    container_args.extend(workspace_mount_args(repo_root))
 
     # When repo_root is a git worktree, the worktree's `.git` is a file
     # pointing at <parent>/.git/worktrees/<name>. Mount the parent .git
