@@ -302,7 +302,7 @@ def _build_cached_image(
         )
     finally:
         subprocess.run(  # noqa: S603
-            [rt, "rm", container_id],  # noqa: S607
+            [rt, "rm", "-v", container_id],  # noqa: S607
             capture_output=True,
         )
 
