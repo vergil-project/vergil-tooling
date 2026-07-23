@@ -17,6 +17,7 @@ from vergil_tooling.lib.container import (
     detect_language,
     detect_runtime,
     docker_platform,
+    workspace_mount_args,
     worktree_parent_gitdir,
 )
 
@@ -189,6 +190,26 @@ def test_default_image_no_language_falls_back_despite_declared_version() -> None
 
 def test_default_image_no_language_no_fallback_ignores_version() -> None:
     assert default_image("", version="latest") == ""
+
+
+# -- workspace_mount_args -----------------------------------------------------
+
+
+def test_workspace_mount_args_python_masks_venv(tmp_path: Path) -> None:
+    # A Python repo gets the bind mount, workdir, AND the anonymous `.venv`
+    # mask together — one source of truth shared by the run and cache-build
+    # paths so a mount site can't reintroduce host-venv corruption (#2495).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    args = workspace_mount_args(tmp_path)
+    assert args == ["-v", f"{tmp_path}:/workspace", "-w", "/workspace", "-v", "/workspace/.venv"]
+
+
+def test_workspace_mount_args_non_python_omits_venv_mask(tmp_path: Path) -> None:
+    # A non-Python repo has no `.venv` to protect, so no mask is added (#2495).
+    (tmp_path / "go.mod").write_text("module example\n")
+    args = workspace_mount_args(tmp_path)
+    assert args == ["-v", f"{tmp_path}:/workspace", "-w", "/workspace"]
+    assert "/workspace/.venv" not in args
 
 
 # -- build_container_args -----------------------------------------------------
