@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.161/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.159/">
+        <link rel="next" href="../v2.1.160/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.160 - VERGIL Tooling</title>
+        <title>2.1.161 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21160-2026-07-23" class="md-skip">
+        <a href="#release-21161-2026-07-23" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.160
+              2.1.161
             
           </span>
         </div>
@@ -1188,34 +1188,6 @@
                 
   
   
-  
-  
-    <li class="md-nav__item">
-      <a href="../v2.1.161/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.161
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
     
   
   
@@ -1235,7 +1207,7 @@
   <span class="md-ellipsis">
     
   
-    2.1.160
+    2.1.161
   
 
     
@@ -1253,7 +1225,7 @@
   <span class="md-ellipsis">
     
   
-    2.1.160
+    2.1.161
   
 
     
@@ -1293,6 +1265,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.160/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.160
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -12155,14 +12155,12 @@
 
 
 
-<h1 id="release-21160-2026-07-23">Release 2.1.160 (2026-07-23)<a class="headerlink" href="#release-21160-2026-07-23" title="Permanent link">&para;</a></h1>
+<h1 id="release-21161-2026-07-23">Release 2.1.161 (2026-07-23)<a class="headerlink" href="#release-21161-2026-07-23" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>mask host venv on cache-build path too (#2495) (#2496)</strong>
-The T2 venv mask (#2486) was applied to only the run mount in container.py, not the cache-build create mount in container_cache.py. Cache builds fire on cache-miss (cold rebuilds), whose setup step corrupts the bind-mounted host .venv — exactly the failure T4 (#2488) caught.</li>
+<li><strong>reclaim anonymous venv mask volume on cache-build cleanup (#2501)</strong>
+The cache-build path creates a build container, commits it, then removes it in the finally block. The cleanup used <code>rm</code> without <code>-v</code>, orphaning the anonymous /workspace/.venv mask volume introduced in #2495 — <code>nerdctl volume ls</code> grew by one per cold build. Add <code>-v</code> so the container's anonymous volumes are reclaimed on removal, matching the run path's <code>run --rm</code> behavior.</li>
 </ul>
-<p>Extract a shared workspace_mount_args(repo_root) helper in container.py returning the -v {repo_root}:/workspace, -w /workspace, and the Python-gated -v /workspace/.venv mask together, and call it from BOTH build_container_args and the cache-build create args. One source of truth so a future mount site can't silently reintroduce the corruption. The cache-build create args are refactored into a named create_args local so they are unit-testable.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.160/v2.1.160-ci-evidence.tar.gz">Download →</a></p>
 
 
 
