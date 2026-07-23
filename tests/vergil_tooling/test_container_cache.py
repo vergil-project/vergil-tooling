@@ -427,6 +427,44 @@ def test_build_cached_image_includes_platform(tmp_path: Path) -> None:
     assert any(a.startswith("--platform=linux/") for a in create_cmd)
 
 
+def _capture_create_cmd(tmp_path: Path, lang: str) -> list[str]:
+    """Run _build_cached_image and return the `create` command it issued."""
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    ok = MagicMock(returncode=0)
+    create_cmd: list[str] = []
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            create_cmd.extend(cmd)
+            return create_result
+        return ok
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, lang, "img:1", "img:1--branch--hash", runtime="docker")
+    return create_cmd
+
+
+def test_build_cached_image_masks_venv_for_python(tmp_path: Path) -> None:
+    # The cache-build (cold-rebuild) path masks the bind-mounted host `.venv`
+    # for a Python repo, so its `setup` step can never corrupt the host venv —
+    # the second mount site the run-path mask (#2486) missed (#2495).
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    create_cmd = _capture_create_cmd(tmp_path, "python")
+    assert "/workspace/.venv" in create_cmd
+    idx = create_cmd.index("/workspace/.venv")
+    assert create_cmd[idx - 1] == "-v"
+
+
+def test_build_cached_image_omits_venv_mask_for_non_python(tmp_path: Path) -> None:
+    # A non-Python repo has no host `.venv`, so the cache-build create args
+    # add no mask (#2495).
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "go.mod").write_text("module example\n")
+    create_cmd = _capture_create_cmd(tmp_path, "go")
+    assert "/workspace/.venv" not in create_cmd
+
+
 def test_build_cached_image_create_fails(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=1, stderr="no space")
