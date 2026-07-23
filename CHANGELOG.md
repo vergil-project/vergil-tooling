@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.159] - 2026-07-23
+
+### Features
+
+- isolate container venv with anonymous mask over .venv (#2490)
+
+### Refactoring
+
+- retire .venv-host dual-venv model in favor of single .venv (#2491)
+
 ## [2.1.158] - 2026-07-23
 
 ### Bug fixes
