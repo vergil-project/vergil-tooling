@@ -82,7 +82,7 @@ def _find_yaml_files(repo_root: Path) -> list[str]:
     (.markdownlint.yaml etc.), `.github/` tree (workflows, issue
     templates), and `docs/site/mkdocs.yml`.
 
-    Vendored paths (`.worktrees`, `.venv`, `.venv-host`,
+    Vendored paths (`.worktrees`, `.venv`,
     `node_modules`) are excluded by construction — discovery only
     walks the listed locations, never venv/worktree subtrees.
     """

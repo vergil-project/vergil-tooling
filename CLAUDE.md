@@ -260,19 +260,17 @@ repository under `docs/`.
 Host-side `vrg-*` tools are installed via `uv tool install` (see
 [Consumption Model](#consumption-model)). For developing
 vergil-tooling itself, there is also a **dev-tree override** using
-a local `.venv-host`:
-
-- **`.venv`** — Created inside dev containers. Shebang paths reference
-  `/workspace/.venv/...` and do not work on the host.
-- **`.venv-host`** — Dev-tree override venv for testing unreleased
-  code on the host. Not the normal install mechanism.
+a local `.venv` for testing unreleased code on the host:
 
 ```bash
 # Dev-tree override (vergil-tooling development only)
-UV_PROJECT_ENVIRONMENT=.venv-host uv sync --group dev
-export PATH="$(pwd)/.venv-host/bin:$PATH"
+uv sync --group dev
+export PATH="$(pwd)/.venv/bin:$PATH"
 
 ```
+
+A single `.venv` is safe because the dev container never touches the
+host `.venv` — it is masked by an anonymous volume (#2486).
 
 After host tools are available, use `vrg-container-run` to run all
 commands inside the dev container. See [Validation](#validation)

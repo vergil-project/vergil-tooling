@@ -419,7 +419,7 @@ def test_find_yaml_files_mkdocs(tmp_path: Path) -> None:
 
 
 def test_find_yaml_files_skips_worktrees_and_venv(tmp_path: Path) -> None:
-    for skip in (".worktrees", ".venv", ".venv-host", "node_modules"):
+    for skip in (".worktrees", ".venv", "node_modules"):
         nested = tmp_path / skip / ".github" / "workflows"
         nested.mkdir(parents=True)
         (nested / "ci.yml").write_text("name: CI\n")

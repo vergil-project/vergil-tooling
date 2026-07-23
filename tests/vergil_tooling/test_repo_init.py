@@ -344,7 +344,8 @@ class TestRenderGitignore:
         content = render_gitignore()
         assert ".DS_Store" in content
         assert ".worktrees/" in content
-        assert ".venv-host/" in content
+        assert ".venv/" in content
+        assert ".venv-host/" not in content
 
     def test_contains_vergil_workflow_patterns(self) -> None:
         content = render_gitignore()
