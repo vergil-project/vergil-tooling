@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.157/">
       
       
         <link rel="next" href="../v2.1.155/">
@@ -1117,6 +1117,8 @@
       
         
       
+        
+      
     
     
     
@@ -1172,6 +1174,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.157/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.157
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -8894,7 +8924,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../v1.2.0/" class="md-nav__link">
+      <a href="../v1.2.1/" class="md-nav__link">
         
   
   
@@ -8922,7 +8952,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../v1.2.1/" class="md-nav__link">
+      <a href="../v1.2.0/" class="md-nav__link">
         
   
   
@@ -12041,6 +12071,7 @@ vrg-finalize-pr previously let the post-finalization validation cold-rebuild the
 <p>Make provisioning an explicit prerequisite. A new fail_fast 'provision' stage runs between cleanup (which advances the target branch, the one deterministic reason its image needs rebuilding) and validation, warming the image once via a shared provision_dev_image helper so validation and the next PR's work reuse a warm image instead of racing a cold rebuild mid-operation.</p>
 <p>Any environment build is now clearly attributed: _build_cached_image prints a 'Provisioning dev image (environment build - not part of your command)' banner, so a provisioning failure stays attributable to provisioning rather than masquerading as the caller's operation. The lazy path keeps auto-building (no hard user-facing gate); it is only made deterministic-early and visible.</p>
 <p>Does not cure the underlying ansible-lint/Python-3.14 metadata glitch that first surfaced this (tracked in vergil-containers#446); it removes the mid-operation rebuild and the mis-attribution. Ref #2462.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.156/v2.1.156-ci-evidence.tar.gz">Download →</a></p>
 
 
 
