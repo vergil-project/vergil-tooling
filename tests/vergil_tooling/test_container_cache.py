@@ -410,6 +410,30 @@ def test_build_cached_image_success(tmp_path: Path) -> None:
     assert result == "img:1--branch--hash"
 
 
+def test_build_cached_image_cleanup_reclaims_anonymous_volumes(tmp_path: Path) -> None:
+    """Cleanup `rm` must pass `-v` so the anonymous venv mask volume is reclaimed.
+
+    Without `-v`, `nerdctl volume ls` grows by one per cold build because the
+    `/workspace/.venv` mask volume orphans (issue #2500).
+    """
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    rm_cmd: list[str] = []
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return create_result
+        if cmd[1] == "rm":
+            rm_cmd.extend(cmd)
+        return MagicMock(returncode=0)
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
+
+    assert rm_cmd[:3] == ["docker", "rm", "-v"]
+    assert "abc123" in rm_cmd
+
+
 def test_build_cached_image_includes_platform(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
