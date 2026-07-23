@@ -161,6 +161,13 @@ def build_container_args(
         ]
     )
 
+    # Mask the bind-mounted host `.venv` with a fresh anonymous volume so an
+    # in-container `uv sync` builds a throwaway venv at the default path and can
+    # never corrupt the host venv. This is structural isolation — no env-var
+    # propagation. Gated to Python repos, the only ones with a `.venv` (#2486).
+    if detect_language(repo_root) == "python":
+        container_args.extend(["-v", "/workspace/.venv"])
+
     # When repo_root is a git worktree, the worktree's `.git` is a file
     # pointing at <parent>/.git/worktrees/<name>. Mount the parent .git
     # at the same absolute path so the pointer resolves in-container.

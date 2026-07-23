@@ -234,6 +234,26 @@ def test_build_container_args_respects_host_uv_link_mode(tmp_path: Path) -> None
     assert _env_value(args, "UV_LINK_MODE") == "hardlink"
 
 
+def test_build_container_args_masks_venv_for_python(tmp_path: Path) -> None:
+    # A Python repo gets an anonymous volume masking the bind-mounted host
+    # `.venv`, so in-container `uv sync` builds a throwaway venv that cannot
+    # corrupt the host venv (#2486).
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert "/workspace/.venv" in args
+    idx = args.index("/workspace/.venv")
+    assert args[idx - 1] == "-v"
+
+
+def test_build_container_args_omits_venv_mask_for_non_python(tmp_path: Path) -> None:
+    # A non-Python repo has no `.venv` to protect, so no mask is added (#2486).
+    (tmp_path / "go.mod").write_text("module example\n")
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert "/workspace/.venv" not in args
+
+
 def test_build_docker_args_basic(tmp_path: Path) -> None:
     with patch.dict("os.environ", {}, clear=True):
         args = build_docker_args(tmp_path, "img:1", ["echo", "hello"])

@@ -151,8 +151,13 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    # Prepend `.venv/bin` unconditionally. Under the container's anonymous
+    # `.venv` mask the dir is empty at startup and populated by the install
+    # stage; PATH resolves at exec time, so prepending a not-yet-existent dir is
+    # harmless and required for later bare `ruff`/`mypy`/`pytest` to resolve
+    # (#2486).
     venv_bin = Path.cwd() / ".venv" / "bin"
-    if venv_bin.is_dir() and str(venv_bin) not in os.environ.get("PATH", "").split(os.pathsep):
+    if str(venv_bin) not in os.environ.get("PATH", "").split(os.pathsep):
         os.environ["PATH"] = f"{venv_bin}{os.pathsep}{os.environ.get('PATH', '')}"
 
     repo_root = git.repo_root()

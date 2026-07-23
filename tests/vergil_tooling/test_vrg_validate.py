@@ -485,6 +485,27 @@ def test_venv_bin_prepended_to_path(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert str(venv_bin) in os.environ["PATH"].split(os.pathsep)
 
 
+def test_venv_bin_prepended_when_dir_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Under the container's anonymous `.venv` mask the dir is empty (does not
+    # yet contain `bin`) at startup; PATH resolves at exec time, so the add is
+    # unconditional and must not depend on the dir existing (#2486).
+    _write_config(tmp_path, "python")
+    venv_bin = tmp_path / ".venv" / "bin"
+    assert not venv_bin.exists()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    with (
+        patch(_MOD + ".git.repo_root", return_value=tmp_path),
+        patch(_MOD + ".progress.run", return_value=0),
+    ):
+        result = main(["--check", "lint"])
+    assert result == 0
+    assert str(venv_bin) in os.environ["PATH"].split(os.pathsep)
+
+
 def test_venv_bin_not_prepended_when_already_on_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
