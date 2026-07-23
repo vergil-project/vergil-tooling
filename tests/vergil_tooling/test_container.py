@@ -164,6 +164,20 @@ def test_docker_platform_alias() -> None:
     assert docker_platform is container_platform
 
 
+def test_default_image_version_override() -> None:
+    # The repo's declared [ci].versions primary wins over _DEFAULT_VERSIONS (#2468).
+    assert default_image("python", version="3.12") == "ghcr.io/vergil-project/prod-python:3.12"
+
+
+def test_default_image_version_none_uses_builtin_default() -> None:
+    assert default_image("python", version=None) == "ghcr.io/vergil-project/prod-python:3.14"
+
+
+def test_default_image_empty_version_uses_builtin_default() -> None:
+    # An empty string is "no declared version" (falsy), not a literal tag.
+    assert default_image("python", version="") == "ghcr.io/vergil-project/prod-python:3.14"
+
+
 # -- build_container_args -----------------------------------------------------
 
 

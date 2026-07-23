@@ -316,6 +316,21 @@ def test_provision_returns_cached_when_built(tmp_path: Path) -> None:
     assert (image, source) == ("base:1--develop--abcd1234", "cached")
 
 
+def test_provision_passes_declared_version(tmp_path: Path) -> None:
+    # The repo's declared [ci].versions primary threads into image selection so
+    # provisioning warms the same image vrg-container-run picks (issue #2468).
+    with (
+        patch.dict("os.environ", {}, clear=True),
+        patch("vergil_tooling.lib.container_cache.primary_ci_version", return_value="3.12"),
+        patch(
+            "vergil_tooling.lib.container_cache.default_image", return_value="base:1"
+        ) as default_img,
+        patch("vergil_tooling.lib.container_cache.ensure_cached_image", return_value="base:1"),
+    ):
+        provision_dev_image(tmp_path, "python", runtime="docker")
+    default_img.assert_called_once_with("python", fallback=True, prefix="prod", version="3.12")
+
+
 def test_provision_returns_default_when_no_cache_files(tmp_path: Path) -> None:
     # ensure_cached_image returns the base unchanged when the repo declares no
     # cache-sensitive files, so the source is the plain base image.

@@ -15,6 +15,7 @@ import subprocess
 import sys
 
 from vergil_tooling.lib import git
+from vergil_tooling.lib.config import primary_ci_version
 from vergil_tooling.lib.container import (
     assert_runtime_available,
     default_image,
@@ -34,7 +35,7 @@ from vergil_tooling.lib.container_cache import (
 def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
-    base = default_image(lang, fallback=True)
+    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
     assert_runtime_available(runtime)
     image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
     if image == base:
@@ -45,7 +46,7 @@ def _cmd_build(_args: argparse.Namespace, *, runtime: str) -> int:
 def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
-    base = default_image(lang, fallback=True)
+    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
     if existing is None:
@@ -62,7 +63,7 @@ def _cmd_clean(_args: argparse.Namespace, *, runtime: str) -> int:
 def _cmd_status(_args: argparse.Namespace, *, runtime: str) -> int:
     repo_root = git.repo_root()
     lang = detect_language(repo_root)
-    base = default_image(lang, fallback=True)
+    base = default_image(lang, fallback=True, version=primary_ci_version(repo_root))
     branch = git.current_branch()
     existing = find_cached_image(base, branch, runtime=runtime)
     files = cache_sensitive_files(repo_root, lang)
