@@ -98,11 +98,14 @@ def default_image(
     constant — picks the container tag. When it is ``None`` (or empty), the
     built-in default is used.
     """
-    resolved = version or _DEFAULT_VERSIONS.get(lang, "")
-    if not resolved and fallback:
-        return _fallback_image(prefix)
-    if not resolved:
-        return ""
+    # A declared *version* overrides only for a language that has a per-language
+    # image. A language-less/unknown repo has no `prod-<lang>` image, so it always
+    # uses the base — a declared [ci].versions must not resurrect a malformed
+    # `prod-:<version>` tag (#2475, the #2468 regression).
+    default_version = _DEFAULT_VERSIONS.get(lang, "")
+    if not default_version:
+        return _fallback_image(prefix) if fallback else ""
+    resolved = version or default_version
     return f"{_GHCR}/{prefix}-{lang}:{resolved}"
 
 
