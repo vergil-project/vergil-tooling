@@ -178,6 +178,19 @@ def test_default_image_empty_version_uses_builtin_default() -> None:
     assert default_image("python", version="") == "ghcr.io/vergil-project/prod-python:3.14"
 
 
+def test_default_image_no_language_falls_back_despite_declared_version() -> None:
+    # A language-less repo (lang="") that declares [ci].versions must still fall
+    # back to the base image, not build a malformed prod-:<ver> tag (#2475: the
+    # declared version must not resurrect a per-language image when there is none).
+    assert default_image("", fallback=True, version="latest") == (
+        "ghcr.io/vergil-project/prod-base:latest"
+    )
+
+
+def test_default_image_no_language_no_fallback_ignores_version() -> None:
+    assert default_image("", version="latest") == ""
+
+
 # -- build_container_args -----------------------------------------------------
 
 
