@@ -12,6 +12,7 @@ import pytest
 from vergil_tooling.lib.config import _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
     _default_ci_versions,
@@ -515,7 +516,10 @@ class TestRenderCdWorkflow:
         assert "if: github.ref == 'refs/heads/main'" in content
         assert "language: python" in content
         assert 'container-tag: "3.14"' in content
-        assert "secrets: inherit" in content
+        # python publishes via OIDC trusted publishing — no repo secret, and
+        # the blanket `secrets: inherit` must never be emitted (epic .github#189).
+        assert "secrets: inherit" not in content
+        assert "secrets:" not in content
         assert "attestations: write" in content
         assert "id-token: write" in content
         assert "pull-requests: write" in content
@@ -545,6 +549,57 @@ class TestRenderCdWorkflow:
         assert "language: go" in content
         assert 'container-tag: "latest"' in content
         assert "attestations: write" in content
+        # go needs no publishing token — no secrets block, never blanket inherit.
+        assert "secrets: inherit" not in content
+        assert "secrets:" not in content
+
+    def test_release_rust_explicit_secrets(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        ctx.primary_language = "rust"
+        content = render_cd_workflow(ctx)
+        assert "secrets: inherit" not in content
+        assert "    secrets:\n" in content
+        assert "      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}\n" in content
+
+    def test_release_ruby_explicit_secrets(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        ctx.primary_language = "ruby"
+        content = render_cd_workflow(ctx)
+        assert "secrets: inherit" not in content
+        assert "    secrets:\n" in content
+        assert "      RUBYGEMS_API_KEY: ${{ secrets.RUBYGEMS_API_KEY }}\n" in content
+
+    def test_release_java_explicit_secrets(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.publish_docs = False
+        ctx.publish_release = True
+        ctx.primary_language = "java"
+        content = render_cd_workflow(ctx)
+        assert "secrets: inherit" not in content
+        assert "    secrets:\n" in content
+        assert "      CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}\n" in content
+        assert "      CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}\n" in content
+        assert "      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}\n" in content
+        assert "      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}\n" in content
+
+    def test_cd_release_secrets_helper(self) -> None:
+        # python/go/unlisted → no secrets; publishers → their exact secret set.
+        assert _cd_release_secrets("python") == []
+        assert _cd_release_secrets("go") == []
+        assert _cd_release_secrets(None) == []
+        assert _cd_release_secrets("elixir") == []
+        assert _cd_release_secrets("rust") == ["CARGO_REGISTRY_TOKEN"]
+        assert _cd_release_secrets("ruby") == ["RUBYGEMS_API_KEY"]
+        assert _cd_release_secrets("java") == [
+            "CENTRAL_USERNAME",
+            "CENTRAL_TOKEN",
+            "GPG_PRIVATE_KEY",
+            "GPG_PASSPHRASE",
+        ]
 
 
 class TestRenderMkdocsYml:

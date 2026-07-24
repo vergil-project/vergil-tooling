@@ -410,6 +410,24 @@ def _container_suffix(language: str | None) -> str:
     return suffix_map.get(language, "base")
 
 
+def _cd_release_secrets(language: str | None) -> list[str]:
+    """Secrets ``cd-release.yml`` consumes per ecosystem (least-privilege).
+
+    Mirrors exactly what the reusable release workflow reads for each
+    ecosystem, so a generated ``cd.yml`` forwards only what its publisher
+    needs instead of the blanket ``secrets: inherit`` (epic
+    vergil-project/.github#189). python (OIDC trusted publishing) and go
+    (no token) — and any non-listed / non-publishing language — need no
+    repo secret, so they get an empty list and no ``secrets:`` block.
+    """
+    secrets_map = {
+        "rust": ["CARGO_REGISTRY_TOKEN"],
+        "ruby": ["RUBYGEMS_API_KEY"],
+        "java": ["CENTRAL_USERNAME", "CENTRAL_TOKEN", "GPG_PRIVATE_KEY", "GPG_PASSPHRASE"],
+    }
+    return secrets_map.get(language or "", [])
+
+
 def _container_tag(language: str | None, versions: list[str]) -> str:
     """Derive the container tag from language and versions."""
     if language == "python" and versions:
@@ -621,9 +639,16 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
                 "    with:\n",
                 f"      language: {suffix}\n",
                 f'      container-tag: "{tag}"\n',
-                "    secrets: inherit\n",
             ]
         )
+        # Forward only the secrets this ecosystem's publisher needs, keyed on
+        # the primary language, instead of a blanket `secrets: inherit`
+        # (epic vergil-project/.github#189). python (OIDC) / go (none) forward
+        # nothing, so no `secrets:` block is emitted at all.
+        secret_names = _cd_release_secrets(ctx.primary_language)
+        if secret_names:
+            lines.append("    secrets:\n")
+            lines.extend(f"      {name}: ${{{{ secrets.{name} }}}}\n" for name in secret_names)
 
     return "".join(lines)
 
