@@ -154,9 +154,11 @@ def desired_security_settings(*, ghas: bool) -> DesiredSecuritySettings:
     )
 
 
-def desired_actions_permissions(primary_language: str | None) -> DesiredActionsPermissions:
+def desired_actions_permissions(
+    primary_language: str | None, extra_patterns: list[str] | None = None
+) -> DesiredActionsPermissions:
     lang_patterns = _LANGUAGE_ACTION_PATTERNS.get(primary_language, []) if primary_language else []
-    patterns = sorted(set(_BASE_ACTION_PATTERNS) | set(lang_patterns))
+    patterns = sorted(set(_BASE_ACTION_PATTERNS) | set(lang_patterns) | set(extra_patterns or []))
     return DesiredActionsPermissions(
         default_workflow_permissions="read",
         can_approve_pull_request_reviews=False,
@@ -439,7 +441,9 @@ def compute_desired_state(
     return DesiredState(
         repo_settings=desired_repo_settings(is_org=is_org, visibility=visibility),
         security=desired_security_settings(ghas=ghas),
-        actions_permissions=desired_actions_permissions(config.project.primary_language),
+        actions_permissions=desired_actions_permissions(
+            config.project.primary_language, config.actions.extra_allowed_patterns
+        ),
         rulesets=rulesets,
         publish=publish,
     )
