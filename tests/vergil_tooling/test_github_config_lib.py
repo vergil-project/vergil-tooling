@@ -134,6 +134,38 @@ def test_desired_actions_permissions_python() -> None:
     ]
 
 
+def test_desired_actions_permissions_extra_patterns() -> None:
+    a = desired_actions_permissions("go", ["dataaxiom/ghcr-cleanup-action@*"])
+    assert a.patterns_allowed == [
+        "actions/*",
+        "dataaxiom/ghcr-cleanup-action@*",
+        "docker/*",
+        "github/*",
+        "vergil-project/*",
+    ]
+
+
+def test_desired_actions_permissions_extra_patterns_unioned_not_duplicated() -> None:
+    # An extra pattern that overlaps a language default is unioned, not duplicated.
+    a = desired_actions_permissions("python", ["astral-sh/*", "dataaxiom/ghcr-cleanup-action@*"])
+    assert a.patterns_allowed == [
+        "actions/*",
+        "astral-sh/*",
+        "dataaxiom/ghcr-cleanup-action@*",
+        "docker/*",
+        "github/*",
+        "pypa/*",
+        "vergil-project/*",
+    ]
+
+
+def test_compute_desired_state_threads_extra_action_patterns() -> None:
+    cfg = _vergil_config()
+    cfg.actions.extra_allowed_patterns = ["dataaxiom/ghcr-cleanup-action@*"]
+    state = compute_desired_state(cfg, visibility="public", is_org=True)
+    assert "dataaxiom/ghcr-cleanup-action@*" in state.actions_permissions.patterns_allowed
+
+
 def test_branch_protection_ruleset() -> None:
     r = desired_branch_protection_ruleset()
     assert r.name == "Branch protection"

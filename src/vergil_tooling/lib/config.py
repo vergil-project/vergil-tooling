@@ -40,7 +40,17 @@ _REQUIRED_PROJECT_FIELDS = (
 _PROJECT_FIELDS = (*_REQUIRED_PROJECT_FIELDS, "primary-language", "ghas")
 
 _KNOWN_SECTIONS = frozenset(
-    {"project", "dependencies", "markdownlint", "ci", "publish", "container", "validation", "vm"},
+    {
+        "project",
+        "dependencies",
+        "markdownlint",
+        "ci",
+        "publish",
+        "container",
+        "validation",
+        "actions",
+        "vm",
+    },
 )
 
 _KNOWN_KEYS: dict[str, frozenset[str]] = {
@@ -51,6 +61,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
     "container": frozenset({"env-prefixes"}),
     "validation": frozenset({"container-command"}),
+    "actions": frozenset({"extra-allowed-patterns"}),
 }
 
 
@@ -97,6 +108,15 @@ class ValidationConfig:
 
 
 @dataclass
+class ActionsConfig:
+    # Extra allowed-action patterns unioned into the repo's GitHub Actions
+    # allowed-actions policy, on top of the base + per-language defaults in
+    # github_config.desired_actions_permissions. Least-privilege by convention:
+    # name the specific action (``owner/repo@*``), not the whole org (``owner/*``).
+    extra_allowed_patterns: list[str]
+
+
+@dataclass
 class VergilConfig:
     project: ProjectConfig
     dependencies: dict[str, str]
@@ -105,6 +125,7 @@ class VergilConfig:
     publish: PublishConfig
     container: ContainerConfig
     validation: ValidationConfig
+    actions: ActionsConfig = field(default_factory=lambda: ActionsConfig(extra_allowed_patterns=[]))
     vm: VmStanza | None = None
 
 
@@ -440,6 +461,18 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
     else:
         validation = ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND)
 
+    actions_raw = raw.get("actions")
+    if actions_raw is not None:
+        extra_patterns = actions_raw.get("extra-allowed-patterns", [])
+        if not isinstance(extra_patterns, list) or not all(
+            isinstance(p, str) for p in extra_patterns
+        ):
+            msg = f"{source}: [actions].extra-allowed-patterns must be a list of strings"
+            raise ConfigError(msg)
+        actions = ActionsConfig(extra_allowed_patterns=extra_patterns)
+    else:
+        actions = ActionsConfig(extra_allowed_patterns=[])
+
     project = ProjectConfig(
         repository_type=project_raw["repository-type"],
         versioning_scheme=project_raw["versioning-scheme"],
@@ -456,6 +489,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         publish=publish,
         container=container,
         validation=validation,
+        actions=actions,
         vm=parse_vm_stanza(raw, source),
     )
 
