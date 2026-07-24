@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.164] - 2026-07-24
+
+### Documentation
+
+- document explicit least-privilege CD secrets and semgrep rule exclusions (#2518)
+
+### Features
+
+- allow read-only 'gh search' in the wrapper allowlist (#2520)
+
 ## [2.1.163] - 2026-07-24
 
 ### Features
