@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.8/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.6/">
+        <link rel="next" href="../v2.1.161/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.7 - VERGIL Tooling</title>
+        <title>2.1.162 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-217-2026-06-04" class="md-skip">
+        <a href="#release-21162-2026-07-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.7
+              2.1.162
             
           </span>
         </div>
@@ -1190,10 +1190,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.162/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.162
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1209,6 +1236,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -5474,37 +5543,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.7
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.7/" class="md-nav__link">
         
   
   
@@ -5520,37 +5562,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12158,10 +12169,21 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
       
     </span>
   </a>
@@ -12185,12 +12207,19 @@
 
 
 
-<h1 id="release-217-2026-06-04">Release 2.1.7 (2026-06-04)<a class="headerlink" href="#release-217-2026-06-04" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21162-2026-07-24">Release 2.1.162 (2026-07-24)<a class="headerlink" href="#release-21162-2026-07-24" title="Permanent link">&para;</a></h1>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>join dedicated-VM instance name tiers with '.' not '--'</strong>
-Lima's instance-name validator requires single separators (regex ^[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)*$), so the '--' tier join produced names limactl rejects — dedicated VMs (org/repo targets) were never creatable. Join identity/org/repo with a single '.' instead, parse with split('.', 2) so a repo name containing dots round-trips, and reject identity/org tiers that contain a dot so the codec stays unambiguous. Base-box VMs are unaffected and no migration is needed (the '--' names never existed on disk). Ref #1399.</li>
+<li><strong>align host dev-tree docs with single-.venv model (#2506)</strong></li>
+<li>docs(docs): align host dev-tree docs with single-.venv model</li>
 </ul>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>emit language-aware explicit secrets map in cd.yml (#2509)</strong>
+Replace the blanket <code>secrets: inherit</code> in generated cd.yml with a language-keyed least-privilege secrets map so each repo forwards only the secrets its ecosystem's publisher needs to cd-release.yml.</li>
+</ul>
+<p>New helper _cd_release_secrets(language) returns the exact secret set per ecosystem: rust -&gt; CARGO_REGISTRY_TOKEN, ruby -&gt; RUBYGEMS_API_KEY, java -&gt; CENTRAL_USERNAME/CENTRAL_TOKEN/GPG_PRIVATE_KEY/GPG_PASSPHRASE. python (OIDC trusted publishing), go (no token), and any non-listed language forward nothing, so no secrets: block is emitted at all.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.162/v2.1.162-ci-evidence.tar.gz">Download →</a></p>
 
 
 
