@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.162/">
       
       
         <link rel="next" href="../v2.1.160/">
@@ -1127,6 +1127,8 @@
       
         
       
+        
+      
     
     
     
@@ -1182,6 +1184,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.162/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.162
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9033,7 +9063,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../v1.2.1/" class="md-nav__link">
+      <a href="../v1.2.0/" class="md-nav__link">
         
   
   
@@ -9061,7 +9091,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../v1.2.0/" class="md-nav__link">
+      <a href="../v1.2.1/" class="md-nav__link">
         
   
   
@@ -12161,6 +12191,7 @@
 <li><strong>reclaim anonymous venv mask volume on cache-build cleanup (#2501)</strong>
 The cache-build path creates a build container, commits it, then removes it in the finally block. The cleanup used <code>rm</code> without <code>-v</code>, orphaning the anonymous /workspace/.venv mask volume introduced in #2495 — <code>nerdctl volume ls</code> grew by one per cold build. Add <code>-v</code> so the container's anonymous volumes are reclaimed on removal, matching the run path's <code>run --rm</code> behavior.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.161/v2.1.161-ci-evidence.tar.gz">Download →</a></p>
 
 
 

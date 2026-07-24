@@ -1120,6 +1120,8 @@
       
         
       
+        
+      
     
     
     
@@ -1172,6 +1174,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.162/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.162
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -8965,7 +8995,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -8993,7 +9023,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -12472,9 +12502,12 @@ sibling checkout, no custom PATH entries, no venv bootstrapping.</p>
 <div class="admonition note">
 <p class="admonition-title">Dev-tree override for vergil-tooling development</p>
 <p>If you are developing vergil-tooling itself and want to test
-unreleased code on the host, use the <code>.venv-host</code> dev-tree
-override described in the vergil-tooling <code>CLAUDE.md</code>. This
-does not apply to consuming repos.</p>
+unreleased code on the host, use the single-<code>.venv</code> dev-tree
+override described in the vergil-tooling <code>CLAUDE.md</code> (<code>uv sync
+--group dev</code>, then prepend <code>.venv/bin</code> to <code>PATH</code>). A single
+<code>.venv</code> is safe because the dev container masks the host <code>.venv</code>
+with an anonymous volume, so host and container never clobber
+each other's environment. This does not apply to consuming repos.</p>
 </div>
 <h2 id="step-3-claude-code-hook-guard">Step 3: Claude Code hook guard<a class="headerlink" href="#step-3-claude-code-hook-guard" title="Permanent link">&para;</a></h2>
 <p>Every managed repo ships a <code>.claude/hooks/guard.sh</code> shim that
