@@ -153,6 +153,48 @@ security-and-standards:
     common name (`ruby`, `python`, `java`) but Go requires `golang`.
     Use the `semgrep-language` input to override when needed.
 
+#### Fleet-excluded semgrep rules
+
+The semgrep scanner (`vrg-semgrep-scan`, backed by
+`src/vergil_tooling/lib/semgrep.py`) always excludes a small set of
+fleet-default rules — `DEFAULT_EXCLUDED_RULES` — via semgrep's
+`--exclude-rule`. Callers can add further exclusions with the repeatable
+`--exclude-rule <RULE_ID>` flag; those are added **on top of** the fleet
+defaults, never in place of them.
+
+The one fleet default today is
+`github-actions-mutable-action-tag`, which flags every `uses: …@vN`
+action reference. It is exempted fleet-wide pending backlog
+[vergil-project/.github#194](https://github.com/vergil-project/.github/issues/194)
+(pin third-party action SHAs once pin-advancement tooling exists). Our
+own `vergil-project/vergil-actions@v2.1` references are a **permanent**
+exception — they are our release line, not a mutable third-party tag.
+Every other semgrep rule stays enforced.
+
+### CD: release-publishing secrets
+
+The release-publishing workflow generated into a consuming repo's
+`cd.yml` (by `repo_init`) forwards **explicit, least-privilege secrets**
+to the reusable `cd-release` workflow per ecosystem — never a blanket
+`secrets: inherit` (epic
+[vergil-project/.github#189](https://github.com/vergil-project/.github/issues/189)).
+The map lives in `_cd_release_secrets()`
+(`src/vergil_tooling/lib/repo_init.py`) and mirrors exactly what each
+publisher reads:
+
+| Ecosystem | Secrets forwarded |
+| --------- | ----------------- |
+| python | *none* — PyPI OIDC trusted publishing |
+| go | *none* — no publish token |
+| rust | `CARGO_REGISTRY_TOKEN` |
+| ruby | `RUBYGEMS_API_KEY` |
+| java | `CENTRAL_USERNAME`, `CENTRAL_TOKEN`, `GPG_PRIVATE_KEY`, `GPG_PASSPHRASE` |
+
+A language that needs no secret (python, go, or any non-publishing
+language) gets **no `secrets:` block at all**, not `secrets: inherit`.
+References to our own `vergil-actions@v2.1` reusable workflows are
+unaffected — they are trusted first-party refs.
+
 ### Default matrix pattern
 
 Use `fromJSON()` with a fallback to embed the full default matrix
