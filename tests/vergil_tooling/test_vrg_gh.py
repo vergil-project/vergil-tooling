@@ -66,6 +66,11 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("repo", "list"),
     ("label", "list"),
     ("label", "create"),
+    ("search", "code"),
+    ("search", "commits"),
+    ("search", "issues"),
+    ("search", "prs"),
+    ("search", "repos"),
 ]
 
 
@@ -85,6 +90,37 @@ def test_allowed_pair_passes(top: str, sub: str) -> None:
     assert args[0] == "gh"
     assert args[1] == top
     assert args[2] == sub
+
+
+# -- search (read-only, cross-org code search) -------------------------------
+
+
+def test_search_code_with_query_and_owner_passes_through() -> None:
+    # Acceptance: `vrg-gh search code '<query>' --owner <org>` runs read-only
+    # for cross-org fleet sweeps (issue #2505). The query and flags forward
+    # unchanged.
+    with (
+        patch(
+            "vergil_tooling.bin.vrg_gh.github.get_installation_token",
+            return_value=None,
+        ),
+        patch("vergil_tooling.lib.retry.subprocess.run") as mock_run,
+    ):
+        mock_run.return_value = _completed()
+        rc = main(["search", "code", "secrets: inherit", "--owner", "vergil-project"])
+    assert rc == 0
+    args = mock_run.call_args[0][0]
+    assert args[:4] == ["gh", "search", "code", "secrets: inherit"]
+    assert "--owner" in args
+    assert "vergil-project" in args
+
+
+def test_search_has_no_write_subcommands() -> None:
+    # Guard against accidentally widening `search` beyond gh's read-only
+    # subcommands (code/commits/issues/prs/repos).
+    from vergil_tooling.bin.vrg_gh import _ALLOWED
+
+    assert _ALLOWED["search"] == {"code", "commits", "issues", "prs", "repos"}
 
 
 # -- unrecognized subcommands ------------------------------------------------
@@ -675,6 +711,7 @@ class TestAuditAllowlist:
             ("run", "list"),
             ("repo", "view"),
             ("label", "list"),
+            ("search", "code"),
         ],
     )
     def test_audit_non_pr_denied(

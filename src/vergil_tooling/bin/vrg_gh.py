@@ -18,6 +18,10 @@ _ALLOWED: dict[str, set[str]] = {
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},
     "label": {"list", "create"},
+    # `gh search` is read-only across all its subcommands (code/commits/
+    # issues/prs/repos), so it fits the wrapper's no-mutation safety model.
+    # Enables cross-org GitHub code search for fleet-wide sweeps (#2505).
+    "search": {"code", "commits", "issues", "prs", "repos"},
 }
 
 _ALLOWED_AUDIT: dict[str, set[str]] = {
