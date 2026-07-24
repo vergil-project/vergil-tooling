@@ -40,6 +40,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Additional semgrep config values",
     )
     parser.add_argument(
+        "--exclude-rule",
+        action="append",
+        default=[],
+        metavar="RULE_ID",
+        help=(
+            "Full semgrep rule id to exclude (repeatable). Added on top of the "
+            "fleet defaults in DEFAULT_EXCLUDED_RULES, which are always excluded."
+        ),
+    )
+    parser.add_argument(
         "--has-dockerfiles",
         action="store_true",
         help="Add Dockerfile-specific rulesets",
@@ -62,7 +72,12 @@ def main(argv: list[str] | None = None) -> int:
         emit_warning(f"no rulesets resolved for language: {args.language}")
         return 0
 
-    scan_result = run_scan(rulesets, args.target_dir, args.output)
+    scan_result = run_scan(
+        rulesets,
+        args.target_dir,
+        args.output,
+        exclude_rules=args.exclude_rule or None,
+    )
     write_output("scan_exit_code", str(scan_result.returncode))
 
     if scan_result.returncode > 1:
