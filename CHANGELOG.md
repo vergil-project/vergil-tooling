@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.163] - 2026-07-24
+
+### Features
+
+- add --exclude-rule; exempt github-actions-mutable-action-tag fleet-wide (#2514)
+
 ## [2.1.162] - 2026-07-24
 
 ### Documentation
