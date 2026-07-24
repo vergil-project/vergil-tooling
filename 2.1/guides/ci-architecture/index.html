@@ -1124,6 +1124,8 @@
       
         
       
+        
+      
     
     
     
@@ -1176,6 +1178,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.164/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.164
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12121,6 +12151,34 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Shared security workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fleet-excluded-semgrep-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet-excluded semgrep rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cd-release-publishing-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CD: release-publishing secrets
+      
+    </span>
+  </a>
+  
 </li>
         
           <li class="md-nav__item">
@@ -12481,6 +12539,34 @@
     <span class="md-ellipsis">
       
         Shared security workflow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Shared security workflow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#fleet-excluded-semgrep-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Fleet-excluded semgrep rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cd-release-publishing-secrets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CD: release-publishing secrets
       
     </span>
   </a>
@@ -12846,6 +12932,64 @@ reusable workflow at
 common name (<code>ruby</code>, <code>python</code>, <code>java</code>) but Go requires <code>golang</code>.
 Use the <code>semgrep-language</code> input to override when needed.</p>
 </div>
+<h4 id="fleet-excluded-semgrep-rules">Fleet-excluded semgrep rules<a class="headerlink" href="#fleet-excluded-semgrep-rules" title="Permanent link">&para;</a></h4>
+<p>The semgrep scanner (<code>vrg-semgrep-scan</code>, backed by
+<code>src/vergil_tooling/lib/semgrep.py</code>) always excludes a small set of
+fleet-default rules — <code>DEFAULT_EXCLUDED_RULES</code> — via semgrep's
+<code>--exclude-rule</code>. Callers can add further exclusions with the repeatable
+<code>--exclude-rule &lt;RULE_ID&gt;</code> flag; those are added <strong>on top of</strong> the fleet
+defaults, never in place of them.</p>
+<p>The one fleet default today is
+<code>github-actions-mutable-action-tag</code>, which flags every <code>uses: …@vN</code>
+action reference. It is exempted fleet-wide pending backlog
+<a href="https://github.com/vergil-project/.github/issues/194">vergil-project/.github#194</a>
+(pin third-party action SHAs once pin-advancement tooling exists). Our
+own <code>vergil-project/vergil-actions@v2.1</code> references are a <strong>permanent</strong>
+exception — they are our release line, not a mutable third-party tag.
+Every other semgrep rule stays enforced.</p>
+<h3 id="cd-release-publishing-secrets">CD: release-publishing secrets<a class="headerlink" href="#cd-release-publishing-secrets" title="Permanent link">&para;</a></h3>
+<p>The release-publishing workflow generated into a consuming repo's
+<code>cd.yml</code> (by <code>repo_init</code>) forwards <strong>explicit, least-privilege secrets</strong>
+to the reusable <code>cd-release</code> workflow per ecosystem — never a blanket
+<code>secrets: inherit</code> (epic
+<a href="https://github.com/vergil-project/.github/issues/189">vergil-project/.github#189</a>).
+The map lives in <code>_cd_release_secrets()</code>
+(<code>src/vergil_tooling/lib/repo_init.py</code>) and mirrors exactly what each
+publisher reads:</p>
+<table>
+<thead>
+<tr>
+<th>Ecosystem</th>
+<th>Secrets forwarded</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>python</td>
+<td><em>none</em> — PyPI OIDC trusted publishing</td>
+</tr>
+<tr>
+<td>go</td>
+<td><em>none</em> — no publish token</td>
+</tr>
+<tr>
+<td>rust</td>
+<td><code>CARGO_REGISTRY_TOKEN</code></td>
+</tr>
+<tr>
+<td>ruby</td>
+<td><code>RUBYGEMS_API_KEY</code></td>
+</tr>
+<tr>
+<td>java</td>
+<td><code>CENTRAL_USERNAME</code>, <code>CENTRAL_TOKEN</code>, <code>GPG_PRIVATE_KEY</code>, <code>GPG_PASSPHRASE</code></td>
+</tr>
+</tbody>
+</table>
+<p>A language that needs no secret (python, go, or any non-publishing
+language) gets <strong>no <code>secrets:</code> block at all</strong>, not <code>secrets: inherit</code>.
+References to our own <code>vergil-actions@v2.1</code> reusable workflows are
+unaffected — they are trusted first-party refs.</p>
 <h3 id="default-matrix-pattern">Default matrix pattern<a class="headerlink" href="#default-matrix-pattern" title="Permanent link">&para;</a></h3>
 <p>Use <code>fromJSON()</code> with a fallback to embed the full default matrix
 directly in the workflow:</p>
