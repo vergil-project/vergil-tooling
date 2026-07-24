@@ -40,7 +40,7 @@ _FINDINGS_SARIF = {
 def test_clean_scan(tmp_path: Path) -> None:
     output = tmp_path / "results.sarif"
 
-    def _fake_scan(rulesets: list, target: object, out: object) -> ScanResult:
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
         output.write_text(json.dumps(_CLEAN_SARIF))
         return ScanResult(returncode=0, sarif_produced=True)
 
@@ -55,7 +55,7 @@ def test_clean_scan(tmp_path: Path) -> None:
 def test_findings_scan(tmp_path: Path) -> None:
     output = tmp_path / "results.sarif"
 
-    def _fake_scan(rulesets: list, target: object, out: object) -> ScanResult:
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
         output.write_text(json.dumps(_FINDINGS_SARIF))
         return ScanResult(returncode=1, sarif_produced=True)
 
@@ -122,7 +122,7 @@ def test_unknown_language(tmp_path: Path) -> None:
 def test_extra_config(tmp_path: Path) -> None:
     output = tmp_path / "results.sarif"
 
-    def _fake_scan(rulesets: list, target: object, out: object) -> ScanResult:
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
         output.write_text(json.dumps(_CLEAN_SARIF))
         return ScanResult(returncode=0, sarif_produced=True)
 
@@ -145,10 +145,39 @@ def test_extra_config(tmp_path: Path) -> None:
     assert "p/custom" in rulesets
 
 
+def test_exclude_rule_threads_through(tmp_path: Path) -> None:
+    output = tmp_path / "results.sarif"
+
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
+        output.write_text(json.dumps(_CLEAN_SARIF))
+        return ScanResult(returncode=0, sarif_produced=True)
+
+    with (
+        patch(f"{_MOD}.run_scan", side_effect=_fake_scan) as mock_scan,
+        patch(f"{_MOD}.write_output"),
+    ):
+        main(
+            [
+                "--language",
+                "python",
+                "--output",
+                str(output),
+                "--exclude-rule",
+                "custom.rule.a",
+                "--exclude-rule",
+                "custom.rule.b",
+            ]
+        )
+
+    exclude_rules = mock_scan.call_args.kwargs["exclude_rules"]
+    assert "custom.rule.a" in exclude_rules
+    assert "custom.rule.b" in exclude_rules
+
+
 def test_dockerfile_and_workflow_flags(tmp_path: Path) -> None:
     output = tmp_path / "results.sarif"
 
-    def _fake_scan(rulesets: list, target: object, out: object) -> ScanResult:
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
         output.write_text(json.dumps(_CLEAN_SARIF))
         return ScanResult(returncode=0, sarif_produced=True)
 
@@ -175,7 +204,7 @@ def test_dockerfile_and_workflow_flags(tmp_path: Path) -> None:
 def test_outputs_finding_count(tmp_path: Path) -> None:
     output = tmp_path / "results.sarif"
 
-    def _fake_scan(rulesets: list, target: object, out: object) -> ScanResult:
+    def _fake_scan(rulesets: list, target: object, out: object, **_kwargs: object) -> ScanResult:
         output.write_text(json.dumps(_FINDINGS_SARIF))
         return ScanResult(returncode=1, sarif_produced=True)
 
