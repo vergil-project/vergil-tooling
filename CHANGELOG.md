@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.165] - 2026-07-24
+
+### Features
+
+- add per-repo allowed-actions override in vergil.toml (#2525)
+
 ## [2.1.164] - 2026-07-24
 
 ### Documentation
