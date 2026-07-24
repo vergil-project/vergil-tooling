@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.163/">
       
       
         <link rel="next" href="../v2.1.161/">
@@ -1129,6 +1129,8 @@
       
         
       
+        
+      
     
     
     
@@ -1184,6 +1186,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.163/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.163
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12219,6 +12249,7 @@
 Replace the blanket <code>secrets: inherit</code> in generated cd.yml with a language-keyed least-privilege secrets map so each repo forwards only the secrets its ecosystem's publisher needs to cd-release.yml.</li>
 </ul>
 <p>New helper _cd_release_secrets(language) returns the exact secret set per ecosystem: rust -&gt; CARGO_REGISTRY_TOKEN, ruby -&gt; RUBYGEMS_API_KEY, java -&gt; CENTRAL_USERNAME/CENTRAL_TOKEN/GPG_PRIVATE_KEY/GPG_PASSPHRASE. python (OIDC trusted publishing), go (no token), and any non-listed language forward nothing, so no secrets: block is emitted at all.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.162/v2.1.162-ci-evidence.tar.gz">Download →</a></p>
 
 
 
