@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.50/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.48/">
+        <link rel="next" href="../v2.1.162/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.49 - VERGIL Tooling</title>
+        <title>2.1.163 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2149-2026-06-22" class="md-skip">
+        <a href="#release-21163-2026-07-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.49
+              2.1.163
             
           </span>
         </div>
@@ -1192,10 +1192,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.163/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.163
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1211,6 +1238,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4384,37 +4442,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.49
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.49/" class="md-nav__link">
         
   
   
@@ -4430,37 +4461,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12215,12 +12215,15 @@
 
 
 
-<h1 id="release-2149-2026-06-22">Release 2.1.49 (2026-06-22)<a class="headerlink" href="#release-2149-2026-06-22" title="Permanent link">&para;</a></h1>
+<h1 id="release-21163-2026-07-24">Release 2.1.163 (2026-07-24)<a class="headerlink" href="#release-21163-2026-07-24" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>reject auto-close keywords in report-ready/report-fixes at entry (#1736)</strong>
-report-ready and report-fixes now reject any --title/--summary/--notes that carries a GitHub auto-close keyword (close/fix/resolve #N), failing loud before the value is written to state. Previously the keyword was caught only at submit time, after it had already landed in .vergil/pr-workflow.json and the rendered PR body. Detection reuses the anywhere-in-text AUTOCLOSE_RE via a new find_autoclose helper, so bare #N, Ref #N, conventional-commit titles like fix(rdqm): right-size matrices (#300), and prose like 'the fix touches #287' all still pass. The submit-time check stays as defense-in-depth. Ref #1735</li>
+<li><strong>add --exclude-rule; exempt github-actions-mutable-action-tag fleet-wide (#2514)</strong>
+vrg-semgrep-scan could only add rulesets (--extra-config); it had no way to suppress a single rule. The recent semgrep ruleset release added github-actions-mutable-action-tag, which flags every uses: ...@vN action ref and now blocks CD PRs fleet-wide.</li>
 </ul>
+<p>Add a rule-exclusion capability: run_scan now emits --exclude-rule <id> for a module-level fleet default (DEFAULT_EXCLUDED_RULES) plus any caller-supplied ids, and vrg-semgrep-scan gains a repeatable --exclude-rule CLI arg. Caller-supplied ids are added on top of the fleet defaults, never in place of them.</p>
+<p>github-actions-mutable-action-tag is exempted fleet-wide as a deliberate interim pending vergil-project/.github#194 (pin third-party action SHAs once pin-advancement tooling exists); our own vergil-actions@v2.1 refs are a permanent exception. All other rules stay enforced.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.163/v2.1.163-ci-evidence.tar.gz">Download →</a></p>
 
 
 
