@@ -99,6 +99,28 @@ def test_read_config_valid(tmp_path: Path) -> None:
     assert cfg.dependencies["vergil"] == "v2.0"
 
 
+def test_read_config_actions_extra_allowed_patterns(tmp_path: Path) -> None:
+    toml = (
+        _VALID_TOML + '\n[actions]\nextra-allowed-patterns = ["dataaxiom/ghcr-cleanup-action@*"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.actions.extra_allowed_patterns == ["dataaxiom/ghcr-cleanup-action@*"]
+
+
+def test_read_config_no_actions_section_defaults_empty(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.actions.extra_allowed_patterns == []
+
+
+def test_read_config_actions_extra_allowed_patterns_not_a_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '\n[actions]\nextra-allowed-patterns = "nope"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[actions\]\.extra-allowed-patterns must be a list"):
+        read_config(tmp_path)
+
+
 def test_read_config_missing_file(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="vergil.toml"):
         read_config(tmp_path)
