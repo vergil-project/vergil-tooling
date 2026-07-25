@@ -498,27 +498,18 @@ def _by_ref(results: dict[str, object]):
     return _fake
 
 
-def test_resolve_config_prefers_main() -> None:
+def test_resolve_config_resolves_from_develop() -> None:
     cfg = _make_config()
     with patch(
         f"{_MODULE}._fetch_config_from_ref",
-        side_effect=_by_ref({"main": cfg, "develop": None}),
+        side_effect=_by_ref({"develop": cfg}),
     ) as mock_fetch:
         result = _resolve_config("o/r")
     assert result is cfg
-    # develop is not consulted once main resolves.
+    # Only the default branch (develop) is consulted; main is never fetched —
+    # under GitFlow main can't hold a vergil.toml that develop lacks.
     assert mock_fetch.call_count == 1
-
-
-def test_resolve_config_falls_back_to_develop() -> None:
-    cfg = _make_config()
-    with patch(
-        f"{_MODULE}._fetch_config_from_ref",
-        side_effect=_by_ref({"main": None, "develop": cfg}),
-    ) as mock_fetch:
-        result = _resolve_config("o/r")
-    assert result is cfg
-    assert mock_fetch.call_count == 2
+    assert mock_fetch.call_args.args[1] == "develop"
 
 
 def test_resolve_config_falls_back_to_local_when_cwd_matches() -> None:
@@ -526,7 +517,7 @@ def test_resolve_config_falls_back_to_local_when_cwd_matches() -> None:
     with (
         patch(
             f"{_MODULE}._fetch_config_from_ref",
-            side_effect=_by_ref({"main": None, "develop": None}),
+            side_effect=_by_ref({"develop": None}),
         ),
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}._load_cwd_config", return_value=cfg) as mock_local,
@@ -540,7 +531,7 @@ def test_resolve_config_no_local_fallback_when_cwd_mismatch() -> None:
     with (
         patch(
             f"{_MODULE}._fetch_config_from_ref",
-            side_effect=_by_ref({"main": None, "develop": None}),
+            side_effect=_by_ref({"develop": None}),
         ),
         patch(f"{_MODULE}._cwd_matches_repo", return_value=False),
         patch(f"{_MODULE}._load_cwd_config") as mock_local,
@@ -567,7 +558,7 @@ def test_resolve_config_errors_when_absent_everywhere() -> None:
     with (
         patch(
             f"{_MODULE}._fetch_config_from_ref",
-            side_effect=_by_ref({"main": None, "develop": None}),
+            side_effect=_by_ref({"develop": None}),
         ),
         patch(f"{_MODULE}._cwd_matches_repo", return_value=True),
         patch(f"{_MODULE}._load_cwd_config", return_value=None),
@@ -576,7 +567,7 @@ def test_resolve_config_errors_when_absent_everywhere() -> None:
         _resolve_config("o/r")
     message = str(excinfo.value)
     assert "o/r" in message
-    assert "main" in message
+    assert "develop" in message
     assert "develop" in message
     assert "--config" in message
 
