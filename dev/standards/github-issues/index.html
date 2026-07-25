@@ -12806,13 +12806,14 @@ cross-forge fallback.</p>
 <p>Non-trivial work starts with the <code>epic-create</code> workflow — the <strong>default entry
 point</strong>, since a solution worth designing is worth tracking rather than
 brainstorming and walking away. <code>epic-create</code> is the <strong>outer</strong> orchestrator: it
-runs the whole design pipeline and seeds the two bookend tasks (below) at
+runs the whole design pipeline and seeds the epic's bookend tasks (below) at
 defined handoffs:</p>
 <ol>
 <li><code>superpowers:brainstorming</code> — explore intent, one question at a time
    (<strong>interactive</strong>).</li>
 <li>Initialize the epic in its <a href="#epic-home-the-orggithub-rule">home</a> and seed the
-   docs-first and review-last bookend tasks.</li>
+   bookend tasks — the docs-first opening task, the documentation-review sweep,
+   and the terminal <strong>retrospective</strong> (see the bookend convention below).</li>
 <li>Write <code>spec.md</code>, then <code>paad:pushback</code> on it (<strong>interactive</strong>).</li>
 <li>Human review.</li>
 <li><code>superpowers:writing-plans</code> → <code>plan.md</code> (<strong>automated</strong> — no gating).</li>
@@ -12830,24 +12831,38 @@ design collapses to a single-PR change, it drops onto the target repo's ad-hoc
 epic instead of minting a finite epic. The full doctrine lives in the
 <code>epic-create</code> skill (<code>vergil-claude-plugin</code>).</p>
 <h3 id="the-bookend-convention">The bookend convention<a class="headerlink" href="#the-bookend-convention" title="Permanent link">&para;</a></h3>
-<p><strong>An epic is never closed until you have decided what comes next.</strong> Almost no
-real problem is fully resolved by one epic — you deliver a completed subset and
-acknowledge the follow-on. So <strong>every epic carries at least two tasks</strong>, and
-its first and last are fixed bookends:</p>
+<p><strong>An epic is never closed until you have decided what comes next AND confirmed
+the docs reflect what changed.</strong> Almost no real problem is fully resolved by one
+epic — you deliver a completed subset and acknowledge the follow-on. Epic work
+runs through a <strong>three-skill lifecycle</strong>, each with a distinct cardinality:
+<code>epic-create</code> (<strong>once</strong> — open the epic) → <code>epic-implement</code> (<strong>N times</strong> — drive
+the tasks, pausing and resuming as blockers allow) → <code>epic-retrospective</code>
+(<strong>once</strong> — the terminal finishing gate). So every epic carries fixed bookends:</p>
 <ul>
 <li><strong>Opening bookend — documentation.</strong> A docs-first task carrying the epic's
   spec and plan, born from planning; it lands before the implementation tasks.</li>
-<li><strong>Closing bookend — review + follow-on.</strong> A documentation-review task (verify
-  the shipped work is fully reflected in the docs) plus a follow-on-brainstorm
-  task that reviews what shipped — successes, failures, mid-flight changes,
-  newly found problems and opportunities — and files the follow-on epic(s). If
-  the answer is the rare "nothing further," the epic is done; you always ask.</li>
+<li><strong>Closing bookends — ordered:</strong></li>
+<li><strong>Documentation-review sweep</strong> (runs first) — verify the shipped work is
+     fully reflected in the human-facing docs across every repo the epic touched;
+     it spawns per-repo doc tasks where other repos' docs need work.</li>
+<li><strong>Retrospective (terminal — the final gate)</strong> — a mandatory, <strong>single</strong>,
+     backward-looking record that partners the spec and plan
+     (<code>epics/&lt;N&gt;-&lt;slug&gt;/retrospective.md</code>), so a later reader follows
+     <strong>spec → plan → retrospective</strong>. Authored with <code>epic-retrospective</code>, whose
+     preflight refuses to run until every other child of the epic is closed; its
+     docs PR <strong>closes the epic</strong>.</li>
+<li><strong>Follow-on brainstorm — semi-optional.</strong> Reviewing what shipped and
+  brainstorming the follow-on epic(s) is a <strong>forward-looking</strong> concern that <strong>no
+  longer defines the end of an epic</strong>: seed it at creation only when a known
+  enabling chain already exists, otherwise accrue it during implementation or
+  skip it. Its outcomes are recorded in the retrospective.</li>
 </ul>
-<p>The bookend needs no new closing mechanism — it rides the existing rollup. A
-finite epic rolls up only when every child is closed, so the closing review
-task <strong>naturally gates closure</strong>. The convention is mechanized as prose in the
-<code>epic-create</code> skill, not in rigid tooling, because choosing the right follow-on
-is an inherently agentic judgment.</p>
+<p>The bookends need no new closing mechanism — they ride the existing rollup. A
+finite epic rolls up only when every child is closed, and the retrospective is
+the last to close, so it <strong>naturally gates closure</strong> as the final bookend. The
+convention is mechanized as prose in the <code>epic-create</code> / <code>epic-retrospective</code>
+skills (<code>vergil-claude-plugin</code>), not in rigid tooling, because the retrospective
+and any follow-on are inherently agentic judgment.</p>
 <h3 id="epic-home-the-orggithub-rule">Epic home (the <code>&lt;org&gt;/.github</code> rule)<a class="headerlink" href="#epic-home-the-orggithub-rule" title="Permanent link">&para;</a></h3>
 <p>An epic's home repo is derived from repository visibility:</p>
 <ul>
