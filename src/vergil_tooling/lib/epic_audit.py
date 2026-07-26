@@ -9,6 +9,7 @@ by the caller.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 from dataclasses import dataclass
@@ -349,6 +350,37 @@ def closed_epic_open_child(org: str, *, home: str | None = None) -> list[EpicOpe
         if open_kids:
             violations.append((epic, open_kids))
     return violations
+
+
+def render_epic_children(epic: epics.IssueRef, children: list[epics.ChildState]) -> str:
+    """Machine-readable JSON enumeration of *epic*'s children with their state.
+
+    Emits a stable, trivially-parseable object — the epic slug plus a ``children``
+    array whose entries each carry ``repo`` (``owner/name``), ``number``,
+    ``title``, and ``state`` (``"OPEN"``/``"CLOSED"``). This is the sanctioned
+    replacement for the brittle ``gh issue view <epic> --json subIssues --jq`` path
+    that failed with ``expected an object but got: array`` (issue #2538): callers
+    filter ``.children[] | select(.state=="OPEN")`` over a proper array of objects
+    instead of GitHub's raw sub-issue shape, and get each child's repo/number/title
+    without a second per-issue lookup. *children* is the output of
+    :func:`epics.child_states` (native sub-issues, reflink fallback), so the native
+    vs portable mechanism is transparent to the caller. Entries are sorted by
+    (owner, repo, number) so the output is deterministic across runs.
+    """
+    ordered = sorted(children, key=lambda c: (c.ref.owner, c.ref.repo, c.ref.number))
+    payload = {
+        "epic": epic.slug,
+        "children": [
+            {
+                "repo": f"{child.ref.owner}/{child.ref.repo}",
+                "number": child.ref.number,
+                "title": child.title,
+                "state": child.state,
+            }
+            for child in ordered
+        ],
+    }
+    return json.dumps(payload, indent=2)
 
 
 def render(

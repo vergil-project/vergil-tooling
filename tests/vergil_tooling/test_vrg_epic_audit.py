@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_epic_audit import main
+from vergil_tooling.lib.epics import ChildState, IssueRef
 
 _MOD = "vergil_tooling.bin.vrg_epic_audit"
 
@@ -36,6 +38,47 @@ def test_main_repo_malformed_errors(capsys: pytest.CaptureFixture[str]) -> None:
     rc = main(["--repo", "noslash"])
     assert rc == 1
     assert "owner/repo" in capsys.readouterr().err
+
+
+def test_main_epic_enumerates_children_as_json(capsys: pytest.CaptureFixture[str]) -> None:
+    # --epic emits the epic's children (mixed open/closed) as machine-readable
+    # JSON, bypassing the drift audit (issue #2538).
+    children = [
+        ChildState(IssueRef("vergil-project", "vergil-tooling", 2538), "OPEN", "Open child"),
+        ChildState(IssueRef("vergil-project", "vergil-tooling", 2500), "CLOSED", "Closed child"),
+    ]
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=True),
+        patch(f"{_MOD}.epics.child_states", return_value=children) as cs,
+    ):
+        rc = main(["--epic", "vergil-project/.github#201"])
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["epic"] == "vergil-project/.github#201"
+    states = {c["number"]: c["state"] for c in payload["children"]}
+    assert states == {2500: "CLOSED", 2538: "OPEN"}
+    # child_states is asked about the resolved epic ref.
+    assert cs.call_args.args[0] == IssueRef("vergil-project", ".github", 201)
+
+
+def test_main_epic_rejects_non_epic_ref(capsys: pytest.CaptureFixture[str]) -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"),
+        patch(f"{_MOD}.epics.is_epic", return_value=False),
+        patch(f"{_MOD}.epics.child_states") as cs,
+    ):
+        rc = main(["--epic", "vergil-project/vergil-tooling#2538"])
+    assert rc == 1
+    assert "is not an epic" in capsys.readouterr().err
+    cs.assert_not_called()
+
+
+def test_main_epic_rejects_malformed_ref(capsys: pytest.CaptureFixture[str]) -> None:
+    with patch(f"{_MOD}.github.current_repo", return_value="vergil-project/.github"):
+        rc = main(["--epic", "not-a-ref"])
+    assert rc == 1
+    assert "not an issue ref" in capsys.readouterr().err
 
 
 def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
