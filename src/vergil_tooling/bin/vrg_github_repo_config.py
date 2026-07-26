@@ -64,7 +64,7 @@ def _load_local_config(path: str) -> VergilConfig:
 
 # Canonical config branches, in resolution order: the released/stable branch
 # first, then the integration branch as a bootstrap fallback.
-_CONFIG_REFS = ("main", "develop")
+_DEFAULT_BRANCH = "develop"
 
 
 def _is_not_found(exc: github.GitHubAPIError) -> bool:
@@ -115,28 +115,40 @@ def _load_cwd_config() -> VergilConfig | None:
 
 
 def _resolve_config(repo: str) -> VergilConfig:
-    """Resolve the canonical vergil.toml for ``repo``.
+    """Resolve the canonical vergil.toml for ``repo`` from the default branch.
 
-    Resolution order: the ``main`` branch, then ``develop``, then the local
-    working-directory copy when the cwd is a checkout of ``repo``. The remote
-    branches are the canonical source; the local fallback makes bootstrapping
-    ergonomic — run ``apply`` from the repo root before the file has landed on
-    any canonical branch — and is safe under the trust model: agents may *write*
-    vergil.toml, but only a human runs ``apply`` and owns that action, so the
-    local copy can never be applied without human oversight. The fallback is
-    gated on the cwd matching the target repo so a ``--repo other/repo`` run can
-    never apply the current directory's unrelated config.
+    Resolution order: the ``develop`` branch (the fleet default branch), then
+    the local working-directory copy when the cwd is a checkout of ``repo``.
+    Config tracks the **default branch**: everything else GitHub does off a
+    repo — workflows above all — runs from the default branch, so a config
+    change merged to ``develop`` must apply immediately, the same paradigm.
+
+    ``main`` is deliberately NOT consulted. Under GitFlow, content reaches
+    ``main`` only by way of ``develop``, so ``main`` can never hold a
+    vergil.toml that ``develop`` lacks — a ``main`` fallback could only ever
+    return the same file or a staler one, never a uniquely-available one. And
+    reading ``main`` *first* was the original bug: it silently ignored a
+    merged-to-develop change until a release carried it to ``main``, and
+    ``main`` may not exist at all in a new or unreleased repo
+    (vergil-tooling#2530).
+
+    The local copy is the final bootstrap fallback — run ``apply`` from the
+    repo root before the file has landed on ``develop`` — safe under the trust
+    model: agents may *write* vergil.toml, but only a human runs ``apply`` and
+    owns that action, so the local copy can never be applied without human
+    oversight. The fallback is gated on the cwd matching the target repo so a
+    ``--repo other/repo`` run can never apply the current directory's unrelated
+    config.
     """
-    for ref in _CONFIG_REFS:
-        config = _fetch_config_from_ref(repo, ref)
-        if config is not None:
-            return config
+    config = _fetch_config_from_ref(repo, _DEFAULT_BRANCH)
+    if config is not None:
+        return config
     cwd_is_repo = _cwd_matches_repo(repo)
     if cwd_is_repo:
         local = _load_cwd_config()
         if local is not None:
             return local
-    locations = "the 'main' and 'develop' branches"
+    locations = "the 'develop' branch"
     if cwd_is_repo:
         locations += " and the current directory"
     msg = (

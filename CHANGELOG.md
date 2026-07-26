@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.166] - 2026-07-25
+
+### Bug fixes
+
+- source vergil.toml from develop, never main (#2532)
+
+### Documentation
+
+- make the retrospective the terminal bookend in the epic-lifecycle standard (#2533)
+
 ## [2.1.165] - 2026-07-24
 
 ### Features

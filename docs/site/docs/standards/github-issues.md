@@ -134,13 +134,14 @@ cross-forge fallback.
 Non-trivial work starts with the `epic-create` workflow — the **default entry
 point**, since a solution worth designing is worth tracking rather than
 brainstorming and walking away. `epic-create` is the **outer** orchestrator: it
-runs the whole design pipeline and seeds the two bookend tasks (below) at
+runs the whole design pipeline and seeds the epic's bookend tasks (below) at
 defined handoffs:
 
 1. `superpowers:brainstorming` — explore intent, one question at a time
    (**interactive**).
 2. Initialize the epic in its [home](#epic-home-the-orggithub-rule) and seed the
-   docs-first and review-last bookend tasks.
+   bookend tasks — the docs-first opening task, the documentation-review sweep,
+   and the terminal **retrospective** (see the bookend convention below).
 3. Write `spec.md`, then `paad:pushback` on it (**interactive**).
 4. Human review.
 5. `superpowers:writing-plans` → `plan.md` (**automated** — no gating).
@@ -160,24 +161,38 @@ epic instead of minting a finite epic. The full doctrine lives in the
 
 ### The bookend convention
 
-**An epic is never closed until you have decided what comes next.** Almost no
-real problem is fully resolved by one epic — you deliver a completed subset and
-acknowledge the follow-on. So **every epic carries at least two tasks**, and
-its first and last are fixed bookends:
+**An epic is never closed until you have decided what comes next AND confirmed
+the docs reflect what changed.** Almost no real problem is fully resolved by one
+epic — you deliver a completed subset and acknowledge the follow-on. Epic work
+runs through a **three-skill lifecycle**, each with a distinct cardinality:
+`epic-create` (**once** — open the epic) → `epic-implement` (**N times** — drive
+the tasks, pausing and resuming as blockers allow) → `epic-retrospective`
+(**once** — the terminal finishing gate). So every epic carries fixed bookends:
 
 - **Opening bookend — documentation.** A docs-first task carrying the epic's
   spec and plan, born from planning; it lands before the implementation tasks.
-- **Closing bookend — review + follow-on.** A documentation-review task (verify
-  the shipped work is fully reflected in the docs) plus a follow-on-brainstorm
-  task that reviews what shipped — successes, failures, mid-flight changes,
-  newly found problems and opportunities — and files the follow-on epic(s). If
-  the answer is the rare "nothing further," the epic is done; you always ask.
+- **Closing bookends — ordered:**
+  1. **Documentation-review sweep** (runs first) — verify the shipped work is
+     fully reflected in the human-facing docs across every repo the epic touched;
+     it spawns per-repo doc tasks where other repos' docs need work.
+  2. **Retrospective (terminal — the final gate)** — a mandatory, **single**,
+     backward-looking record that partners the spec and plan
+     (`epics/<N>-<slug>/retrospective.md`), so a later reader follows
+     **spec → plan → retrospective**. Authored with `epic-retrospective`, whose
+     preflight refuses to run until every other child of the epic is closed; its
+     docs PR **closes the epic**.
+- **Follow-on brainstorm — semi-optional.** Reviewing what shipped and
+  brainstorming the follow-on epic(s) is a **forward-looking** concern that **no
+  longer defines the end of an epic**: seed it at creation only when a known
+  enabling chain already exists, otherwise accrue it during implementation or
+  skip it. Its outcomes are recorded in the retrospective.
 
-The bookend needs no new closing mechanism — it rides the existing rollup. A
-finite epic rolls up only when every child is closed, so the closing review
-task **naturally gates closure**. The convention is mechanized as prose in the
-`epic-create` skill, not in rigid tooling, because choosing the right follow-on
-is an inherently agentic judgment.
+The bookends need no new closing mechanism — they ride the existing rollup. A
+finite epic rolls up only when every child is closed, and the retrospective is
+the last to close, so it **naturally gates closure** as the final bookend. The
+convention is mechanized as prose in the `epic-create` / `epic-retrospective`
+skills (`vergil-claude-plugin`), not in rigid tooling, because the retrospective
+and any follow-on are inherently agentic judgment.
 
 ### Epic home (the `<org>/.github` rule)
 
