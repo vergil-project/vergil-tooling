@@ -61,6 +61,21 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(f"How many days back to scan for merged PRs (default: {_DEFAULT_WINDOW_DAYS})."),
     )
     parser.add_argument(
+        "--epic",
+        metavar="REF",
+        help=(
+            "Enumerate a single epic's child tasks as machine-readable JSON "
+            "instead of running the drift audit. REF is an epic ref "
+            "('owner/repo#N', or a bare '#N' resolved against the current repo). "
+            'Emits {"epic": <slug>, "children": [{repo, number, title, '
+            "state}, ...]} — a stable array of objects (native sub-issues, with "
+            "the portable Parent: reflink fallback), so "
+            "'.children[] | select(.state==\"OPEN\")' lists the open children "
+            "without brittle jq against GitHub's raw subIssues shape. Read-only; "
+            "ignores the drift-audit flags."
+        ),
+    )
+    parser.add_argument(
         "--repo",
         help=(
             "Audit a single repo's resolved epic home ('owner/repo') instead of "
@@ -85,6 +100,25 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+    # Epic-scoped enumeration is a distinct, read-only mode: resolve the epic ref
+    # and emit its children (with states) as machine-readable JSON, bypassing the
+    # drift-audit path entirely (issue #2538). Parse + validate directly rather
+    # than via resolve_epic_ref so the read-only 'adhoc' sentinel (which *creates*
+    # an epic) is not reachable from an enumeration.
+    if args.epic is not None:
+        try:
+            epic = epics.parse_issue_ref(args.epic, default_repo=github.current_repo())
+        except ValueError as exc:
+            print(f"vrg-epic-audit: {exc}", file=sys.stderr)
+            return 1
+        if not epics.is_epic(epic):
+            print(
+                f"vrg-epic-audit: {epic.slug} is not an epic (missing the 'epic' label)",
+                file=sys.stderr,
+            )
+            return 1
+        print(epic_audit.render_epic_children(epic, epics.child_states(epic)))
+        return 0
     # Gate the write path before any network work so a rejected agent run is
     # cheap and unambiguous. A human may close interactively; the scheduled
     # reconciliation sweep (ops-epic-sweep) closes via the _SWEEP_ENV signal.
