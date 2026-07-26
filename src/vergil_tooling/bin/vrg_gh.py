@@ -17,6 +17,11 @@ _ALLOWED: dict[str, set[str]] = {
     "pr": {"view", "checks", "list", "diff", "comment", "edit", "review", "merge"},
     "run": {"list", "view", "watch"},
     "repo": {"view", "list"},
+    # `release` is read-only here: only `list` and `view` are permitted so
+    # release facts can be queried directly. Write actions (create/edit/
+    # delete/upload/download) are denied by the action-level allowlist's
+    # deny-by-default. See issue #2539.
+    "release": {"list", "view"},
     "label": {"list", "create"},
     # `gh search` is read-only across all its subcommands (code/commits/
     # issues/prs/repos), so it fits the wrapper's no-mutation safety model.
