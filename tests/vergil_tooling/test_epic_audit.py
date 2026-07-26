@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -695,3 +696,45 @@ def test_epic_drift_scopes_to_home() -> None:
 def test_render_banner_names_home_when_repo_scoped() -> None:
     out = epic_audit.render([], [], org="org", window_days=30, home="org/lab")
     assert "**org/lab**" in out  # banner names the scoped home, not the org
+
+
+# -- render_epic_children (machine-readable enumeration, issue #2538) ---------
+
+
+def test_render_epic_children_lists_children_with_states() -> None:
+    epic = epics.IssueRef("vergil-project", ".github", 201)
+    children = [
+        epics.ChildState(
+            epics.IssueRef("vergil-project", "vergil-tooling", 2538), "OPEN", "Harden enumeration"
+        ),
+        epics.ChildState(
+            epics.IssueRef("vergil-project", "vergil-tooling", 2500), "CLOSED", "Earlier task"
+        ),
+    ]
+    out = json.loads(epic_audit.render_epic_children(epic, children))
+    assert out["epic"] == "vergil-project/.github#201"
+    # Deterministic order (owner, repo, number): 2500 sorts before 2538.
+    assert out["children"] == [
+        {
+            "repo": "vergil-project/vergil-tooling",
+            "number": 2500,
+            "title": "Earlier task",
+            "state": "CLOSED",
+        },
+        {
+            "repo": "vergil-project/vergil-tooling",
+            "number": 2538,
+            "title": "Harden enumeration",
+            "state": "OPEN",
+        },
+    ]
+    # Open children are trivially selectable from a proper array of objects — the
+    # brittle-jq failure mode this replaces (issue #2538).
+    open_children = [c for c in out["children"] if c["state"] == "OPEN"]
+    assert [c["number"] for c in open_children] == [2538]
+
+
+def test_render_epic_children_empty_when_no_children() -> None:
+    epic = epics.IssueRef("vergil-project", ".github", 201)
+    out = json.loads(epic_audit.render_epic_children(epic, []))
+    assert out == {"epic": "vergil-project/.github#201", "children": []}

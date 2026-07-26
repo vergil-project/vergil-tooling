@@ -33,10 +33,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
     parser.add_argument(
         "--kind",
-        choices=("task", "validation", "deployment"),
+        choices=("task", "validation", "deployment", "retrospective"),
         default="task",
-        help="Issue kind; an operational kind (validation/deployment) stamps its "
-        "label and executable scaffold",
+        help="Issue kind; validation/deployment stamp an operational "
+        "(not-PR-workable) label + scaffold, retrospective stamps a PR-workable "
+        "epic-retrospective label + scaffold",
     )
     parser.add_argument(
         "--blocked-by",
@@ -53,20 +54,29 @@ def _issue_number_from_url(url: str) -> int:
     return int(url.rstrip("/").rsplit("/", 1)[-1])
 
 
-_OPERATIONAL_INTRO = {
+# The operational kinds — a not-PR-workable task run to completion and recorded
+# as a comment. Kept in sync with ``epics._OPERATIONAL_LABELS``. ``retrospective``
+# is deliberately NOT here: it is an ordinary PR-workable task whose docs PR
+# publishes ``retrospective.md``, so PR tooling must accept it.
+_OPERATIONAL_KINDS = ("validation", "deployment")
+
+_SCAFFOLD_INTRO = {
     "validation": "Post-merge validation task.",
     "deployment": "Deployment task.",
+    "retrospective": "Epic retrospective task.",
 }
 
 
-def _render_operational_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
-    """Build an operational-task body from the *kind*'s scaffold template.
+def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) -> str:
+    """Build a scaffolded issue body from the *kind*'s template.
 
-    Each operational kind (validation, deployment) has its own
-    ``<kind>_task_body.md`` scaffold — a precondition self-check, the procedure,
-    acceptance criteria, and a SUCCESS/FAILURE results template. *deps* are
-    rendered as machine-parseable ``Blocked-by:`` reflinks under a Dependencies
-    heading (or omitted entirely when there are none).
+    Each scaffolded kind has its own ``<kind>_task_body.md`` template. The
+    operational kinds (validation, deployment) render a precondition self-check,
+    the procedure, acceptance criteria, and a SUCCESS/FAILURE results template;
+    ``retrospective`` renders the backward-looking epic-retrospective outline.
+    *deps* (operational only) are rendered as machine-parseable ``Blocked-by:``
+    reflinks under a Dependencies heading (or omitted entirely when there are
+    none); a template without a ``{blocked_by}`` field simply ignores them.
     """
     template = (
         resources.files("vergil_tooling.data")
@@ -76,7 +86,7 @@ def _render_operational_body(*, kind: str, intro: str, deps: list[epics.IssueRef
     blocked_by = ""
     if deps:
         blocked_by = "## Dependencies (merge-first)\n\n" + epics.render_blocked_by(deps) + "\n"
-    return template.format(intro=intro or _OPERATIONAL_INTRO[kind], blocked_by=blocked_by)
+    return template.format(intro=intro or _SCAFFOLD_INTRO[kind], blocked_by=blocked_by)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -101,13 +111,15 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-    # Build the issue body/labels. An operational kind (validation/deployment)
-    # stamps its executable scaffold + its label and renders its Blocked-by
-    # reflinks; a plain task passes the caller's body/labels through unchanged.
+    # Build the issue body/labels. A scaffolded kind stamps its label + template
+    # body; an operational kind (validation/deployment) also renders its
+    # Blocked-by reflinks, while retrospective is a plain PR-workable task that
+    # merely carries a scaffold. A plain task passes the caller's body/labels
+    # through unchanged.
     labels = list(args.label)
     body = args.body
     body_file = args.body_file
-    if args.kind in ("validation", "deployment"):
+    if args.kind != "task":
         if args.body_file:
             print(
                 f"vrg-issue-create: --body-file is not compatible with --kind {args.kind} "
@@ -115,13 +127,24 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        try:
-            deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]
-        except ValueError as exc:
-            print(f"vrg-issue-create: invalid --blocked-by ref: {exc}", file=sys.stderr)
+        deps: list[epics.IssueRef] = []
+        if args.kind in _OPERATIONAL_KINDS:
+            try:
+                deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]
+            except ValueError as exc:
+                print(f"vrg-issue-create: invalid --blocked-by ref: {exc}", file=sys.stderr)
+                return 1
+        elif args.blocked_by:
+            # --blocked-by encodes an operational merge-first dependency; a
+            # retrospective is an ordinary PR-workable task and takes none.
+            print(
+                f"vrg-issue-create: --blocked-by is only valid for an operational kind "
+                f"(validation/deployment), not --kind {args.kind}",
+                file=sys.stderr,
+            )
             return 1
         labels.append(args.kind)
-        body = _render_operational_body(kind=args.kind, intro=args.body, deps=deps)
+        body = _render_scaffold_body(kind=args.kind, intro=args.body, deps=deps)
         body_file = None
 
     # Scope every App-token call below to the issue's owner, not the cwd org.

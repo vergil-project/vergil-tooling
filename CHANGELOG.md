@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.167] - 2026-07-26
+
+### Bug fixes
+
+- demote workflow-file push refusal to a warning + success (#2544)
+
+### Features
+
+- add --kind retrospective (PR-workable label + scaffold) (#2541)
+- add machine-readable epic sub-issue enumeration (--epic) (#2542)
+- add read-only release subcommand to the allowlist (#2543)
+
 ## [2.1.166] - 2026-07-25
 
 ### Bug fixes

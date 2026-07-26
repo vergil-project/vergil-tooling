@@ -103,6 +103,81 @@ def test_kind_deployment_applies_label_and_scaffold() -> None:
     assert kwargs["body_file"] is None
 
 
+def test_kind_retrospective_applies_label_and_scaffold() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            ["--epic", "adhoc", "--kind", "retrospective", "--title", "Retrospective: the epic"]
+        )
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert "retrospective" in kwargs["labels"]
+    body = kwargs["body"]
+    assert "retrospective task" in body.lower()  # scaffold rendered
+    assert "## What went well" in body
+    assert "PR-workable" in body  # scaffold states it is PR-workable
+    assert kwargs["body_file"] is None
+
+
+def test_kind_retrospective_is_not_operational() -> None:
+    # The critical distinction: retrospective is a labelled kind, but unlike
+    # validation/deployment it is PR-workable, so PR tooling (vrg-submit-pr /
+    # vrg-pr-workflow report-ready) must NOT refuse it. The single source of
+    # truth is epics._OPERATIONAL_LABELS — retrospective must be excluded.
+    assert "retrospective" not in epics.operational_labels()
+    assert "validation" in epics.operational_labels()  # sanity: set is populated
+
+
+def test_kind_retrospective_rejects_body_file(tmp_path: Path) -> None:
+    body_file = tmp_path / "b.md"
+    body_file.write_text("x")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--kind",
+                "retrospective",
+                "--title",
+                "R",
+                "--body-file",
+                str(body_file),
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
+def test_kind_retrospective_rejects_blocked_by() -> None:
+    # --blocked-by encodes an operational merge-first dependency; a retrospective
+    # is an ordinary PR-workable task and must not accept it.
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--kind",
+                "retrospective",
+                "--title",
+                "R",
+                "--blocked-by",
+                "org/repo#5",
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
 def test_kind_validation_without_blockers_has_no_dependency_reflink() -> None:
     with (
         patch(f"{_MOD}.github.current_repo", return_value="org/repo"),

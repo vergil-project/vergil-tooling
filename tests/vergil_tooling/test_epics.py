@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib import epics, github
-from vergil_tooling.lib.epics import ChildState, IssueRef
+from vergil_tooling.lib.epics import _SUBISSUES_QUERY, ChildState, IssueRef
 
 EPIC = IssueRef("org", ".github", 40)
 TASK = IssueRef("org", "repo-a", 101)
@@ -86,6 +86,64 @@ def test_child_states_reflink_fallback_when_native_empty() -> None:
     assert "Parent: org/.github#40" in mock_search.call_args.args
     assert "--owner" in mock_search.call_args.args
     assert "org" in mock_search.call_args.args
+
+
+def test_child_states_native_carries_title() -> None:
+    # The native traversal requests and propagates each child's title (issue #2538).
+    data = {
+        "node": {
+            "subIssues": {
+                "nodes": [
+                    {
+                        "number": 101,
+                        "state": "CLOSED",
+                        "title": "First task",
+                        "repository": _repo_node("org", "repo-a"),
+                    },
+                    {
+                        "number": 102,
+                        "state": "OPEN",
+                        "title": "Second task",
+                        "repository": _repo_node("org", "repo-b"),
+                    },
+                ]
+            }
+        }
+    }
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        result = epics.child_states(EPIC)
+    assert result == [
+        ChildState(IssueRef("org", "repo-a", 101), "CLOSED", "First task"),
+        ChildState(IssueRef("org", "repo-b", 102), "OPEN", "Second task"),
+    ]
+    # The GraphQL query asks GitHub for the title field.
+    assert "title" in _SUBISSUES_QUERY
+
+
+def test_child_states_reflink_carries_title() -> None:
+    # The portable Parent: reflink fallback also requests and propagates title.
+    empty = {"node": {"subIssues": {"nodes": []}}}
+    search = [
+        {
+            "number": 41,
+            "state": "OPEN",
+            "title": "Fallback task",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        }
+    ]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=empty),
+        patch("vergil_tooling.lib.github.read_json", return_value=search) as mock_search,
+    ):
+        result = epics.child_states(EPIC)
+    assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN", "Fallback task")]
+    # The search requests the title field so the fallback listing is complete.
+    assert "number,state,title,repository,body" in mock_search.call_args.args
 
 
 # -- parent_of ---------------------------------------------------------------

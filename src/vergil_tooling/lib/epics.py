@@ -36,10 +36,16 @@ class IssueRef:
 
 @dataclass(frozen=True)
 class ChildState:
-    """A child task and whether it is open or closed."""
+    """A child task: its ref, open/closed state, and title.
+
+    ``title`` is descriptive metadata for machine-readable enumeration (issue
+    #2538); it defaults to ``""`` so state-only consumers construct a
+    ``ChildState`` without supplying it.
+    """
 
     ref: IssueRef
     state: str  # "OPEN" | "CLOSED"
+    title: str = ""
 
 
 _PARENT_RE = re.compile(
@@ -95,7 +101,7 @@ query($id: ID!) {
   node(id: $id) {
     ... on Issue {
       subIssues(first: 100) {
-        nodes { number state repository { name owner { login } } }
+        nodes { number state title repository { name owner { login } } }
       }
     }
   }
@@ -154,7 +160,12 @@ def _ref_from_node(node: Any) -> IssueRef:
 def _native_child_states(epic: IssueRef) -> list[ChildState]:
     data: Any = github.graphql(_SUBISSUES_QUERY, id=_node_id(epic))
     nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
-    return [ChildState(ref=_ref_from_node(n), state=str(n["state"]).upper()) for n in nodes]
+    return [
+        ChildState(
+            ref=_ref_from_node(n), state=str(n["state"]).upper(), title=str(n.get("title") or "")
+        )
+        for n in nodes
+    ]
 
 
 def _body_declares_parent(body: str, epic: IssueRef) -> bool:
@@ -185,7 +196,7 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         "--owner",
         epic.owner,
         "--json",
-        "number,state,repository,body",
+        "number,state,title,repository,body",
     )
     states: list[ChildState] = []
     for item in results if isinstance(results, list) else []:
@@ -199,6 +210,7 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
             ChildState(
                 ref=IssueRef(owner=owner, repo=name, number=int(item["number"])),
                 state=str(item["state"]).upper(),
+                title=str(item.get("title") or ""),
             )
         )
     return states
@@ -406,7 +418,9 @@ def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
 
 # Labels marking a not-PR-workable *operational task* — one that is run and whose
 # acceptance is a recorded ``Outcome:`` comment, not a merged PR. Extended as new
-# operational kinds are added (e.g. ``deployment``).
+# operational kinds are added (e.g. ``deployment``). NOTE: ``retrospective`` is a
+# labelled kind but is deliberately NOT operational — its acceptance IS a merged
+# docs PR (publishing ``retrospective.md``), so PR tooling must accept it.
 _OPERATIONAL_LABELS: set[str] = {"validation", "deployment"}
 
 
