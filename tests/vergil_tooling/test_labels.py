@@ -94,6 +94,19 @@ def test_registry_includes_deployment_label() -> None:
     assert entry["description"], "deployment label needs a description"
 
 
+def test_registry_includes_retrospective_label() -> None:
+    # Epic retrospective bookend (vergil-project/.github#201): a labelled kind
+    # that — unlike validation/deployment — IS PR-workable; its docs PR publishes
+    # the epic's retrospective.md. The label makes the bookend mechanical for the
+    # epic-retrospective preflight and vrg-epic-audit.
+    entry = next(
+        (label for label in load_labels()["labels"] if label["name"] == "retrospective"),
+        None,
+    )
+    assert entry is not None, "retrospective label missing from the registry"
+    assert entry["description"], "retrospective label needs a description"
+
+
 def test_label_descriptions_within_github_limit() -> None:
     # GitHub caps a label's description at 100 chars; a longer one fails
     # provisioning with HTTP 422 so vrg-ensure-label --sync cannot deploy it.
