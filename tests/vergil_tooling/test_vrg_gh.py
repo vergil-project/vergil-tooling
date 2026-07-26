@@ -64,6 +64,8 @@ _ALLOWED_PAIRS: list[tuple[str, str]] = [
     ("run", "watch"),
     ("repo", "view"),
     ("repo", "list"),
+    ("release", "list"),
+    ("release", "view"),
     ("label", "list"),
     ("label", "create"),
     ("search", "code"),
@@ -121,6 +123,26 @@ def test_search_has_no_write_subcommands() -> None:
     from vergil_tooling.bin.vrg_gh import _ALLOWED
 
     assert _ALLOWED["search"] == {"code", "commits", "issues", "prs", "repos"}
+
+
+# -- release (read-only) -----------------------------------------------------
+
+
+def test_release_is_read_only() -> None:
+    # Guard against widening `release` beyond the read-only actions. Only
+    # `list`/`view` may ever be permitted (issue #2539).
+    from vergil_tooling.bin.vrg_gh import _ALLOWED
+
+    assert _ALLOWED["release"] == {"list", "view"}
+
+
+@pytest.mark.parametrize("sub", ["create", "edit", "delete", "upload", "download"])
+def test_release_write_actions_rejected(sub: str, capsys: pytest.CaptureFixture[str]) -> None:
+    # Write/mutating release actions are not on the allowlist and are rejected
+    # by the action-level deny-by-default (issue #2539).
+    assert main(["release", sub]) != 0
+    err = capsys.readouterr().err
+    assert sub in err
 
 
 # -- unrecognized subcommands ------------------------------------------------
