@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import github, identity_mode
+from vergil_tooling.lib import github
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
@@ -410,12 +410,16 @@ def _check_frozen_push() -> str | None:
 
 
 def _print_workflow_push_guidance() -> None:
-    mode = identity_mode.current_mode()
     print(
-        f"\nvrg-git: Push rejected — workflow file changes require elevated permissions.\n"
-        f"  Your identity ({mode.value}) is not permitted to push workflow file changes.\n"
-        f"  Stop and escalate to a human maintainer. Do not attempt to work around\n"
-        f"  this failure (e.g., by removing workflow files from the commit).",
+        "\nvrg-git: warning: push skipped for workflow-file changes — this is"
+        " EXPECTED and NOT an error.\n"
+        "  This branch touches .github/workflows/**, which an agent is not"
+        " permitted to push;\n"
+        "  it does not need an agent push. The human's vrg-submit-pr pushes"
+        " the branch at\n"
+        "  submit time. PROCEED AS USUAL — run `vrg-pr-workflow report-ready`"
+        " to hand off.\n"
+        "  Do NOT remove the workflow files from the commit to force a push.",
         file=sys.stderr,
     )
 
@@ -552,7 +556,13 @@ def main(argv: list[str] | None = None) -> int:
         if push_result.stderr:
             sys.stderr.write(push_result.stderr)
         if push_result.returncode != 0 and _WORKFLOW_PERMISSION_RE.search(push_result.stderr or ""):
+            # A workflow-file push refusal is expected and routine: the agent
+            # never pushes a workflow branch — the human's vrg-submit-pr does,
+            # at submit time. Warn and report success so the agent proceeds to
+            # report-ready instead of mistreating a normal case as a failure
+            # (#2540). Any other push failure keeps its original returncode.
             _print_workflow_push_guidance()
+            return 0
         return push_result.returncode
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
