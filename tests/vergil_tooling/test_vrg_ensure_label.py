@@ -127,8 +127,9 @@ def test_main_sync_provisions_all_labels() -> None:
     assert result == 0
     # Should have called once per label + once for the delete
     label_calls = [c for c in mock_run.call_args_list if c.args[1] == "create"]
-    # 18 before retiring the deprecated 'standing' alias (retire-standing task).
-    assert len(label_calls) == 17
+    # 18 before retiring the deprecated 'standing' alias (retire-standing task);
+    # 18 again after adding the 'retrospective' kind label.
+    assert len(label_calls) == 18
 
 
 def test_main_sync_uses_force_with_color_description() -> None:

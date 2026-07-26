@@ -406,7 +406,9 @@ def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
 
 # Labels marking a not-PR-workable *operational task* — one that is run and whose
 # acceptance is a recorded ``Outcome:`` comment, not a merged PR. Extended as new
-# operational kinds are added (e.g. ``deployment``).
+# operational kinds are added (e.g. ``deployment``). NOTE: ``retrospective`` is a
+# labelled kind but is deliberately NOT operational — its acceptance IS a merged
+# docs PR (publishing ``retrospective.md``), so PR tooling must accept it.
 _OPERATIONAL_LABELS: set[str] = {"validation", "deployment"}
 
 
