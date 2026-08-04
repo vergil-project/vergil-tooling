@@ -8,10 +8,13 @@ from unittest.mock import patch
 import pytest
 
 from vergil_tooling.lib.config import (
+    DEFAULT_CPP_STD,
+    DEFAULT_CPP_STDLIB,
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
     ConfigError,
     ContainerConfig,
+    CppConfig,
     MarkdownlintConfig,
     ValidationConfig,
     VmStanza,
@@ -225,6 +228,26 @@ def test_config_warns_on_claude_plugin_language(
     cfg = read_config(tmp_path)
     assert cfg.project.primary_language is None
     assert "unrecognized primary-language 'claude-plugin'" in capsys.readouterr().err
+
+
+def test_config_accepts_cpp_language(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """``primary-language = "cpp"`` is a recognized language (no warning)."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "cpp"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language == "cpp"
+    assert "unrecognized primary-language" not in capsys.readouterr().err
+
+
+def test_config_warns_on_unknown_language_after_cpp_added(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Adding cpp does not weaken the enum — an unknown value still warns."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "cobol"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+    assert "unrecognized primary-language 'cobol'" in capsys.readouterr().err
 
 
 # -- [markdownlint] section ---------------------------------------------------
@@ -1089,3 +1112,106 @@ def test_parse_vm_stanza_rejects_instance_entry_not_a_table() -> None:
     raw = {"vm": {"vergil-user": {"instances": {"cloud-x86": "not-a-table"}}}}
     with pytest.raises(ConfigError, match="must be a table"):
         parse_vm_stanza(raw)
+
+
+# -- [cpp] section (epic vergil-project/.github#207, T4) -----------------------
+
+_CPP_BASE_TOML = """\
+[project]
+repository-type = "application"
+versioning-scheme = "semver"
+branching-model = "application-promotion"
+release-model = "environment-promotion"
+primary-language = "cpp"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["clang-20", "gcc-15"]
+"""
+
+
+def test_cpp_block_defaults_when_absent(tmp_path: Path) -> None:
+    """With no [cpp] block, std/stdlib fall back to the v1 pins."""
+    (tmp_path / "vergil.toml").write_text(_CPP_BASE_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.cpp == CppConfig(std=DEFAULT_CPP_STD, stdlib=DEFAULT_CPP_STDLIB)
+    assert cfg.cpp.std == "c++20"
+    assert cfg.cpp.stdlib == "libstdc++"
+
+
+def test_cpp_block_parsed(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstd = "c++23"\nstdlib = "libstdc++"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.cpp == CppConfig(std="c++23", stdlib="libstdc++")
+
+
+def test_cpp_block_std_only_stdlib_defaults(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstd = "c++17"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.cpp.std == "c++17"
+    assert cfg.cpp.stdlib == DEFAULT_CPP_STDLIB
+
+
+def test_cpp_block_stdlib_only_std_defaults(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstdlib = "libstdc++"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.cpp.std == DEFAULT_CPP_STD
+    assert cfg.cpp.stdlib == "libstdc++"
+
+
+@pytest.mark.parametrize("std", ["c++17", "c++20", "c++23"])
+def test_cpp_std_valid_values(tmp_path: Path, std: str) -> None:
+    toml = _CPP_BASE_TOML + f'\n[cpp]\nstd = "{std}"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert read_config(tmp_path).cpp.std == std
+
+
+def test_cpp_std_rejects_nonsense(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstd = "banana"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[cpp\]\.std 'banana'"):
+        read_config(tmp_path)
+
+
+def test_cpp_std_non_string_rejected(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + "\n[cpp]\nstd = 20\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[cpp\]\.std must be a string"):
+        read_config(tmp_path)
+
+
+def test_cpp_stdlib_rejects_nonsense(tmp_path: Path) -> None:
+    # libc++ is deferred (spec §9 ledger #2): not yet a valid value, so it is
+    # rejected rather than silently ignored.
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstdlib = "libc++"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[cpp\]\.stdlib 'libc\+\+'"):
+        read_config(tmp_path)
+
+
+def test_cpp_stdlib_non_string_rejected(tmp_path: Path) -> None:
+    toml = _CPP_BASE_TOML + "\n[cpp]\nstdlib = true\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[cpp\]\.stdlib must be a string"):
+        read_config(tmp_path)
+
+
+def test_warns_unrecognized_cpp_key(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstd = "c++20"\nabi = 1\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'abi' in [cpp]" in capsys.readouterr().err
+
+
+def test_cpp_block_not_flagged_as_unrecognized_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _CPP_BASE_TOML + '\n[cpp]\nstd = "c++20"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized section [cpp]" not in capsys.readouterr().err
