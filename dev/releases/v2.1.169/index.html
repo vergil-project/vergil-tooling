@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.127/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.125/">
+        <link rel="next" href="../v2.1.168/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.126 - VERGIL Tooling</title>
+        <title>2.1.169 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21126-2026-07-11" class="md-skip">
+        <a href="#release-21169-2026-08-04" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.126
+              2.1.169
             
           </span>
         </div>
@@ -1204,10 +1204,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.169/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.169
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1223,6 +1250,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2408,37 +2488,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.126
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.126/" class="md-nav__link">
         
   
   
@@ -2454,37 +2507,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12552,6 +12574,28 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#features" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12579,19 +12623,44 @@
 
 
 
-<h1 id="release-21126-2026-07-11">Release 2.1.126 (2026-07-11)<a class="headerlink" href="#release-21126-2026-07-11" title="Permanent link">&para;</a></h1>
+<h1 id="release-21169-2026-08-04">Release 2.1.169 (2026-08-04)<a class="headerlink" href="#release-21169-2026-08-04" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>support cpp for CodeQL + repo-init (#2566)</strong>
+Add "cpp" to _CODEQL_SUPPORTED_LANGUAGES so a cpp repo receives the CodeQL CI gate, aligning github_config with repo_init._CODEQL_LANGUAGES (which already listed cpp) and fixing the confirmed discrepancy.</li>
+</ul>
+<p>Make repo_init container scaffolding compiler-family-aware for cpp: _container_suffix resolves cpp-clang/cpp-gcc from the clang-/gcc- prefix on the primary [ci].versions entry, and _container_tag returns the numeric version (clang-20 -&gt; prod-cpp-clang:20). Seed a cpp default of clang-20 in _default_ci_versions so generated scaffolding renders a family-aware image rather than a bare base image.</p>
+<p>No _LANGUAGE_ACTION_PATTERNS entry is needed: vergil-actions' cpp CI uses no marketplace actions beyond the base allowlist.</p>
+<p>Task T7 of epic vergil-project/.github#207.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>add C++ development standards docs (#2568)</strong></li>
+<li>docs(cpp-standards): add C++ development standards docs</li>
+</ul>
+<p>Add the four C++ standards pages under docs/site/docs/standards/development/cpp/ and register them in the MkDocs nav.</p>
+<ul>
+<li>overview.md: CMake + Conan 2 layout, the dual-compiler model (Clang primary / GCC secondary as co-equal first-class gates), the prebuilt-toolchains-only rule, and CTest-as-runner with GoogleTest as the documented default.</li>
+<li>toolchain-and-warnings.md: the concrete portable warning set enforced in TYPECHECK, mirrored from the T5 registry entry, plus the no-standing-suppression rule and why per-compiler warning sets are deferred.</li>
+<li>testing-and-coverage.md: the 100%-per-compiler gcovr gate and the GCOVR_EXCL exclusion discipline (legitimate narrow markers vs. whole-file abuse), and that compiler-specific #ifdef blocks are a smell that mostly self-handles under per-compiler coverage.</li>
+<li>naming-conventions.md: C++ naming rules matching the depth of the sibling language pages.</li>
+</ul>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>allow the agent to run 'issue transfer' for finite-epic relocation (#2271)</strong>
-Add "transfer" to the issue allowlist in vrg_gh.py so human and user
-identities can relocate a finite epic's issues to another repository via
-gh issue transfer. The audit identity stays read-only because <code>issue</code>
-is absent from its allowlist; no denied-pair entry is added since
-transfer is a non-destructive repository move.</li>
+<li><strong>C++ registry entry (clang/gcc) (#2565)</strong>
+Add the C++ Language entry to the _REGISTRY (epic vergil-project/.github#207, T5), building on the merged T3 cardinality concept and T4 [cpp] schema.</li>
 </ul>
-<p>The _print_help() output is derived from _ALLOWED, so it reflects the
-new action automatically. Tests add the (issue, transfer) allowed pair
-and a USER-agent test asserting the call is forwarded to gh.</p>
+<p>INSTALL runs conan install then a cmake configure that exports compile_commands.json and threads the [cpp] std/stdlib in as VERGIL_CPP_<em> cache vars. LINT (declared ONCE) runs clang-format, run-clang-tidy over the compile DB, and cppcheck against packaged {configs}/cpp/</em> configs. TYPECHECK (per-version) is the warnings-to-11 build; this task owns and unit-tests the concrete curated warning set. TEST (per-version) runs ctest, gcovr --fail-under-line 100, and a separate ASan/UBSan build+run. AUDIT (declared ONCE) runs conan audit plus a best-effort Conan license surfacing; a C++ license allowlist constant is added.</p>
+<p>language_commands gains {std}/{stdlib} expansion (defaulting to the v1 pins) and vrg-validate threads the parsed [cpp] values through. Packaged clang-format/clang-tidy/cppcheck/gcovr configs land under configs/cpp/ and are registered in package-data.</p>
+<p>Curated warning set (floor + extras, portable across both current GCC and Clang since one static command runs in every image): -Wall -Wextra -Werror -Wpedantic -Wshadow -Wconversion -Wsign-conversion -Wcast-qual -Wold-style-cast -Wnon-virtual-dtor -Woverloaded-virtual -Wdouble-promotion -Wformat=2 -Wimplicit-fallthrough -Wnull-dereference.</p>
+<ul>
+<li><strong>resolve C++ container images and detect cpp projects (#2567)</strong>
+Add C++ support to the container-selection path (T6 of epic vergil-project/.github#207).</li>
+</ul>
+<p>detect_language returns "cpp" when a repo carries both a CMakeLists.txt and a Conan manifest (conanfile.py or conanfile.txt); either marker alone is insufficient since CMake is used well beyond Conan-managed C++.</p>
+<p>default_image resolves the compiler family from the clang-/gcc- version-tag prefix and builds prod-cpp-<family>:<v> (clang-20 to prod-cpp-clang:20, gcc-15 to prod-cpp-gcc:15), matching the image names T1/T2 produce in vergil-containers. A malformed tag falls back like an unknown language rather than building a prod-cpp-:<ver> image.</p>
+<p>_DEFAULT_VERSIONS["cpp"] is the primary Clang tag (clang-20) and _DEFAULT_TEST_COMMANDS["cpp"] is a conan install &amp;&amp; cmake &amp;&amp; ctest line for vrg-container-test.</p>
+<p>The clang-/gcc- tag parse is extracted to languages.parse_cpp_version_tag as the single source of truth, and repo_init._cpp_family_and_version (added by T7) now delegates to it so image naming and CI scaffolding cannot drift.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.169/v2.1.169-ci-evidence.tar.gz">Download →</a></p>
 
 
 
