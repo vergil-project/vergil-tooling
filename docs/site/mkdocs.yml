@@ -106,6 +106,11 @@ nav:
               - Local Validation: standards/development/python/local-validation-scripts.md
               - Version Management: standards/development/python/version-management.md
               - ty Migration Plan: standards/development/python/ty-migration-plan.md
+          - C++:
+              - Overview: standards/development/cpp/overview.md
+              - Toolchain and Warnings: standards/development/cpp/toolchain-and-warnings.md
+              - Testing and Coverage: standards/development/cpp/testing-and-coverage.md
+              - Naming Conventions: standards/development/cpp/naming-conventions.md
           - Go:
               - Overview: standards/development/go/overview.md
               - Naming Conventions: standards/development/go/naming-conventions.md
