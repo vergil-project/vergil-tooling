@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.169] - 2026-08-04
+
+### Bug fixes
+
+- support cpp for CodeQL + repo-init (#2566)
+
+### Documentation
+
+- add C++ development standards docs (#2568)
+
+### Features
+
+- C++ registry entry (clang/gcc) (#2565)
+- resolve C++ container images and detect cpp projects (#2567)
+
 ## [2.1.168] - 2026-08-04
 
 ### Features
