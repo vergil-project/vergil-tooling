@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.168] - 2026-08-04
+
+### Features
+
+- per-kind CI-gate cardinality (#2559)
+- add cpp primary-language + [cpp] block (#2560)
+
 ## [2.1.167] - 2026-07-26
 
 ### Bug fixes
