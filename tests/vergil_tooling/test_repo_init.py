@@ -15,6 +15,7 @@ from vergil_tooling.lib.repo_init import (
     _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
+    _container_tag,
     _default_ci_versions,
     _load_existing_config,
     _remote_branch_exists,
@@ -390,6 +391,18 @@ class TestRenderCiWorkflow:
         assert "ci-version-bump.yml@v2.1" in content
         assert "run-codeql: false" not in content
 
+    def test_cpp_workflow(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "cpp"
+        ctx.ci_versions = ["clang-20", "clang-19"]
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        # Compiler-family-aware suffix + numeric tag → prod-cpp-clang:20.
+        assert "container-suffix: cpp-clang" in content
+        assert "container-tag: '20'" in content
+        # cpp is CodeQL-supported, so run-codeql must NOT be disabled.
+        assert "run-codeql: false" not in content
+
     def test_no_language_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.ci_versions = ["latest"]
@@ -487,6 +500,43 @@ class TestContainerHelpers:
 
     def test_default_ci_versions_none_returns_latest(self) -> None:
         assert _default_ci_versions(None) == "latest"
+
+    def test_container_suffix_cpp_clang(self) -> None:
+        # cpp is compiler-family-aware: the family rides the image suffix,
+        # parsed from the clang-/gcc- prefix on the primary [ci].versions entry
+        # (epic vergil-project/.github#207 §6).
+        assert _container_suffix("cpp", ["clang-20"]) == "cpp-clang"
+
+    def test_container_suffix_cpp_gcc(self) -> None:
+        assert _container_suffix("cpp", ["gcc-15"]) == "cpp-gcc"
+
+    def test_container_suffix_cpp_uses_first_entry_as_primary(self) -> None:
+        # A mixed-family matrix takes its representative top-level suffix from
+        # the first entry.
+        assert _container_suffix("cpp", ["gcc-15", "clang-20"]) == "cpp-gcc"
+
+    def test_container_suffix_cpp_unparseable_falls_back_to_base(self) -> None:
+        assert _container_suffix("cpp", ["latest"]) == "base"
+        assert _container_suffix("cpp", []) == "base"
+
+    def test_container_tag_cpp_is_numeric_version(self) -> None:
+        # The tag carries only the numeric version; family lives in the suffix,
+        # so clang-20 resolves to prod-cpp-clang:20.
+        assert _container_tag("cpp", ["clang-20"]) == "20"
+        assert _container_tag("cpp", ["gcc-15"]) == "15"
+
+    def test_container_tag_cpp_unparseable_falls_back_to_latest(self) -> None:
+        assert _container_tag("cpp", ["latest"]) == "latest"
+        assert _container_tag("cpp", []) == "latest"
+
+    def test_default_ci_versions_cpp_seeds_clang_primary(self) -> None:
+        # The cpp default must be a clang-/gcc- prefixed tag so the derived
+        # suffix/tag are family-aware; a bare "latest" would render a base image.
+        default = _default_ci_versions("cpp")
+        assert default == "clang-20"
+        versions = [v.strip() for v in default.split(",")]
+        assert _container_suffix("cpp", versions) == "cpp-clang"
+        assert _container_tag("cpp", versions) == "20"
 
 
 class TestRenderCdWorkflow:

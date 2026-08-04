@@ -228,6 +228,9 @@ _CODEQL_SUPPORTED_LANGUAGES = frozenset(
         "java",
         "ruby",
         "rust",
+        # cpp aligns this list with repo_init._CODEQL_LANGUAGES, which already
+        # lists cpp — the two must agree (epic vergil-project/.github#207 T7).
+        "cpp",
     }
 )
 
