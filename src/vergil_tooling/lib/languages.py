@@ -202,6 +202,31 @@ _CPP_WARNINGS_CXX_FLAGS = " ".join(_CPP_WARNING_FLAGS)
 _CPP_BUILD_DIR = "build"
 _CPP_SANITIZE_BUILD_DIR = "build-sanitize"
 
+# Recognized C++ compiler families, in declared-primary precedence order. The
+# `[ci].versions` tags carry the compiler family as a `<family>-<version>`
+# prefix (e.g. ``clang-20``), per spec vergil-project/.github#207 §6.
+_CPP_FAMILIES = ("clang", "gcc")
+
+
+def parse_cpp_version_tag(tag: str) -> tuple[str, str] | None:
+    """Split a C++ compiler-family version tag into ``(family, version)``.
+
+    C++ carries its compiler-family × version axis on ``[ci].versions`` as a
+    ``clang-``/``gcc-`` prefixed tag (e.g. ``clang-20`` → ``("clang", "20")``,
+    ``gcc-15`` → ``("gcc", "15")``), per spec vergil-project/.github#207 §6.
+    Returns ``None`` when *tag* carries no recognized family prefix.
+
+    This is the single source of truth for the tag format, shared by the
+    container image-resolution path (:mod:`container`) and the CI scaffolding
+    path (:mod:`repo_init`) so the two can never drift on the naming.
+    """
+    for family in _CPP_FAMILIES:
+        prefix = f"{family}-"
+        if tag.startswith(prefix):
+            return family, tag[len(prefix) :]
+    return None
+
+
 # -- Registry -----------------------------------------------------------------
 
 _REGISTRY: dict[str, Language] = {
