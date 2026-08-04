@@ -88,7 +88,14 @@ def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Sta
     return Stage(label, fn, mode=mode)
 
 
-def _build_stages(check: str | None, language: str | None, repo_root: Path) -> list[Stage]:
+def _build_stages(
+    check: str | None,
+    language: str | None,
+    repo_root: Path,
+    *,
+    cpp_std: str | None = None,
+    cpp_stdlib: str | None = None,
+) -> list[Stage]:
     stages: list[Stage] = []
 
     if check in (None, "common"):
@@ -103,10 +110,15 @@ def _build_stages(check: str | None, language: str | None, repo_root: Path) -> l
 
     if language is not None and check != "common":
         kinds = [kind for kind in _LANGUAGE_CHECK_ORDER if check is None or check == kind.value]
-        kind_cmds = [(kind, language_commands(language, kind)) for kind in kinds]
+        kind_cmds = [
+            (kind, language_commands(language, kind, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib))
+            for kind in kinds
+        ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
         if kind_cmds:
-            install_cmds = language_commands(language, CheckKind.INSTALL)
+            install_cmds = language_commands(
+                language, CheckKind.INSTALL, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib
+            )
             if install_cmds:
                 stages.append(_command_stage("install", install_cmds, mode="fail_fast"))
             stages.extend(
@@ -162,16 +174,20 @@ def main(argv: list[str] | None = None) -> int:
 
     repo_root = git.repo_root()
 
+    cpp_std: str | None = None
+    cpp_stdlib: str | None = None
     try:
         vergil_config = config.read_config(repo_root)
         language = vergil_config.project.primary_language
+        cpp_std = vergil_config.cpp.std
+        cpp_stdlib = vergil_config.cpp.stdlib
     except FileNotFoundError:
         language = None
     except config.ConfigError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    stages = _build_stages(args.check, language, repo_root)
+    stages = _build_stages(args.check, language, repo_root, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib)
     if not stages:
         print(f"No {args.check} commands for language '{language or '<not set>'}'")
         return 0

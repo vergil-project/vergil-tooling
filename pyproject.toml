@@ -85,7 +85,7 @@ constraint-dependencies = ["msgpack>=1.2.1"]
 package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
-vergil_tooling = ["data/*.json", "data/*.md", "data/*.sh", "data/licenses/*.txt", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml"]
+vergil_tooling = ["data/*.json", "data/*.md", "data/*.sh", "data/licenses/*.txt", "configs/*.yaml", "configs/*.toml", "configs/ruby/*.yml", "configs/cpp/.clang-format", "configs/cpp/.clang-tidy", "configs/cpp/*.txt", "configs/cpp/*.cfg"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

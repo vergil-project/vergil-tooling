@@ -1,0 +1,27 @@
+# Packaged clang-tidy config for Vergil C++ repos
+# (epic vergil-project/.github#207, T5). Consumed via
+# `run-clang-tidy -p build -config-file={configs}/cpp/.clang-tidy`.
+#
+# WarningsAsErrors: '*' makes the LINT stage fail on any enabled diagnostic —
+# the "no standing suppression list" house rule applied to static analysis.
+# The check set is a curated, portable baseline (bugprone / performance /
+# portability / modernize / readability, minus noisy or opinionated checks);
+# the C++ standards docs (T9) describe the rationale.
+---
+Checks: >
+  clang-analyzer-*,
+  bugprone-*,
+  performance-*,
+  portability-*,
+  modernize-*,
+  readability-*,
+  cppcoreguidelines-*,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay
+WarningsAsErrors: '*'
+HeaderFilterRegex: '.*'
+FormatStyle: file
+...

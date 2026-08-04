@@ -1,0 +1,18 @@
+# Packaged cppcheck suppressions for Vergil C++ repos
+# (epic vergil-project/.github#207, T5). Consumed via
+# `cppcheck --enable=all --suppressions-list={configs}/cpp/cppcheck-suppressions.txt`.
+#
+# `--enable=all` turns on categories (information, missingInclude) that report
+# environmental noise rather than defects. These suppressions silence exactly
+# that noise so the gate flags real findings — they are NOT a standing
+# defect-suppression list (per-finding suppressions belong inline via
+# `--inline-suppr`).
+#
+# System headers cppcheck cannot resolve (deps live in the Conan cache, not on
+# cppcheck's include path).
+missingIncludeSystem
+# `--enable=all` implies checks whose config is absent in a bare invocation.
+unmatchedSuppression
+checkersReport
+# cppcheck cannot see across the CMake/Conan boundary for every TU.
+missingInclude

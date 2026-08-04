@@ -272,6 +272,143 @@ def test_rust_audit_commands() -> None:
     assert "cargo deny check" in joined
 
 
+# -- C++ (epic vergil-project/.github#207, T5) --------------------------------
+
+
+def test_cpp_is_supported() -> None:
+    assert "cpp" in supported_languages()
+
+
+def test_cpp_install_commands() -> None:
+    joined = _joined(language_commands("cpp", CheckKind.INSTALL))
+    assert "conan install . --build=missing" in joined
+    # cmake configure exports the compile DB that feeds clang-tidy and threads
+    # the [cpp] std/stdlib in as cache vars.
+    cmake_cmd = [c for c in language_commands("cpp", CheckKind.INSTALL) if c[0] == "cmake"]
+    assert len(cmake_cmd) == 1
+    assert "-DCMAKE_EXPORT_COMPILE_COMMANDS=ON" in cmake_cmd[0]
+    assert "-DVERGIL_CPP_STD=c++20" in cmake_cmd[0]
+    assert "-DVERGIL_CPP_STDLIB=libstdc++" in cmake_cmd[0]
+
+
+def test_cpp_lint_commands() -> None:
+    cmds = language_commands("cpp", CheckKind.LINT)
+    joined = _joined(cmds)
+    assert any("clang-format" in c and "--dry-run --Werror" in c for c in joined)
+    assert any("run-clang-tidy" in c for c in joined)
+    assert any(
+        "cppcheck" in c and "--enable=all" in c and "--error-exitcode=1" in c for c in joined
+    )
+
+
+def test_cpp_lint_uses_packaged_configs() -> None:
+    """Every LINT tool points at a packaged {configs}/cpp/* file that exists."""
+    cmds = language_commands("cpp", CheckKind.LINT)
+    flat = [arg for cmd in cmds for arg in cmd]
+    # No unresolved placeholder survives expansion.
+    assert all("{configs}" not in arg for arg in flat)
+    # clang-format, clang-tidy and cppcheck each reference a real packaged file.
+    referenced = [arg for arg in flat if "/cpp/" in arg]
+    for arg in referenced:
+        # Extract the path token (may be embedded in a --flag=path or sh script).
+        for token in arg.split():
+            if "/cpp/" in token:
+                path = token.split("=", 1)[-1].split(":")[-1]
+                assert Path(path).exists(), f"packaged config missing: {path}"
+
+
+def test_cpp_typecheck_is_the_warnings_build() -> None:
+    cmds = language_commands("cpp", CheckKind.TYPECHECK)
+    joined = _joined(cmds)
+    # A configure carrying the warning flags, then a build.
+    assert any(c.startswith("cmake -S . -B build") for c in joined)
+    assert any("cmake --build build" in c for c in joined)
+
+
+def test_cpp_typecheck_carries_curated_warning_set() -> None:
+    """The floor + curated extras all land on one CMAKE_CXX_FLAGS cache value."""
+    cmds = language_commands("cpp", CheckKind.TYPECHECK)
+    cxx_flags = [arg for cmd in cmds for arg in cmd if arg.startswith("-DCMAKE_CXX_FLAGS=")]
+    assert len(cxx_flags) == 1
+    flags = cxx_flags[0].split("=", 1)[1].split()
+    # Floor (spec §3.2).
+    for floor in ("-Wall", "-Wextra", "-Werror", "-Wpedantic"):
+        assert floor in flags, f"missing floor flag {floor}"
+    # Curated extras owned + tested by this task (T5); T9 only documents them.
+    for extra in (
+        "-Wshadow",
+        "-Wconversion",
+        "-Wsign-conversion",
+        "-Wcast-qual",
+        "-Wold-style-cast",
+        "-Wnon-virtual-dtor",
+        "-Woverloaded-virtual",
+        "-Wdouble-promotion",
+        "-Wformat=2",
+        "-Wimplicit-fallthrough",
+        "-Wnull-dereference",
+    ):
+        assert extra in flags, f"missing curated extra {extra}"
+
+
+def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
+    cmds = language_commands("cpp", CheckKind.TEST)
+    joined = _joined(cmds)
+    # CTest as the framework-agnostic runner.
+    assert any(c.startswith("ctest") and "--output-on-failure" in c for c in joined)
+    # Coverage held to 100% line via gcovr.
+    assert any("gcovr" in c and "--fail-under-line 100" in c for c in joined)
+    # A separate ASan+UBSan build+run in its own build dir.
+    assert any("-DVERGIL_CPP_SANITIZE=address,undefined" in c for c in joined)
+    assert any("cmake --build build-sanitize" in c for c in joined)
+    assert any("ctest --test-dir build-sanitize" in c for c in joined)
+
+
+def test_cpp_audit_commands() -> None:
+    joined = _joined(language_commands("cpp", CheckKind.AUDIT))
+    # conan audit is the CVE scan (provider verified live in T11, spec §4).
+    assert any("conan audit" in c for c in joined)
+    # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
+    assert any("conan graph info" in c for c in joined)
+
+
+def test_cpp_ecosystem_metadata() -> None:
+    info = ecosystem_metadata("cpp")
+    assert info.build_cmd == ["cmake", "--build", "build"]
+    # C++ has no v1 publish target (non-goal §8).
+    assert info.publish_cmd is None
+    assert info.publish_env_var is None
+
+
+def test_cpp_cardinality_lint_and_audit_run_once() -> None:
+    assert check_cardinality("cpp", CheckKind.LINT) is Cardinality.ONCE
+    assert check_cardinality("cpp", CheckKind.AUDIT) is Cardinality.ONCE
+
+
+def test_cpp_cardinality_typecheck_and_test_are_per_version() -> None:
+    assert check_cardinality("cpp", CheckKind.TYPECHECK) is Cardinality.PER_VERSION
+    assert check_cardinality("cpp", CheckKind.TEST) is Cardinality.PER_VERSION
+
+
+def test_cpp_std_stdlib_default_to_v1_pins() -> None:
+    """The two-argument call resolves {std}/{stdlib} to the v1 pins."""
+    for kind in (CheckKind.INSTALL, CheckKind.TYPECHECK, CheckKind.TEST, CheckKind.LINT):
+        for cmd in language_commands("cpp", kind):
+            for arg in cmd:
+                assert "{std}" not in arg and "{stdlib}" not in arg
+
+
+def test_cpp_std_stdlib_are_threaded_from_config() -> None:
+    """An explicit [cpp] std/stdlib overrides the pins in the cache vars."""
+    cmds = language_commands("cpp", CheckKind.INSTALL, cpp_std="c++17", cpp_stdlib="libstdc++")
+    cmake_cmd = [c for c in cmds if c[0] == "cmake"][0]
+    assert "-DVERGIL_CPP_STD=c++17" in cmake_cmd
+    # cppcheck --std is threaded too.
+    lint = language_commands("cpp", CheckKind.LINT, cpp_std="c++17")
+    cppcheck_cmd = [c for c in lint if c[0] == "cppcheck"][0]
+    assert "--std=c++17" in cppcheck_cmd
+
+
 # -- Edge cases ---------------------------------------------------------------
 
 
@@ -312,9 +449,9 @@ def test_configs_placeholder_resolves_to_existing_directory() -> None:
 # -- New API ------------------------------------------------------------------
 
 
-def test_supported_languages_returns_five() -> None:
+def test_supported_languages_includes_cpp() -> None:
     langs = supported_languages()
-    assert langs == frozenset({"python", "go", "java", "ruby", "rust"})
+    assert langs == frozenset({"python", "go", "java", "ruby", "rust", "cpp"})
 
 
 def test_supported_languages_is_frozen() -> None:
@@ -357,13 +494,15 @@ def test_language_commands_still_works_for_unknown() -> None:
 # -- Check cardinality --------------------------------------------------------
 
 
-def test_existing_languages_default_to_per_version_cardinality() -> None:
-    """Every existing language defaults to per-version for every check kind.
+def test_single_image_languages_default_to_per_version_cardinality() -> None:
+    """Every single-image language defaults to per-version for every check kind.
 
     This backward-compatibility guarantee is what keeps their generated CI
-    gates byte-identical after the cardinality concept was introduced.
+    gates byte-identical after the cardinality concept was introduced. C++ is
+    the one matrix language that legitimately declares ONCE kinds, so it is
+    excluded here and covered by the C++-specific cardinality tests.
     """
-    for lang in supported_languages():
+    for lang in supported_languages() - {"cpp"}:
         for kind in CheckKind:
             assert check_cardinality(lang, kind) is Cardinality.PER_VERSION
 

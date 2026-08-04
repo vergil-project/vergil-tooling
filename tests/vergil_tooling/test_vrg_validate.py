@@ -58,7 +58,7 @@ def test_build_stages_full_run_order() -> None:
         patch(_MOD + ".language_commands") as m_cmds,
         patch(_MOD + "._find_custom_validator", return_value=None),
     ):
-        m_cmds.side_effect = lambda lang, kind: [["echo", kind.value]]
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
         stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
     assert [s.name for s in stages] == [
         "common",
@@ -77,7 +77,7 @@ def test_build_stages_full_run_includes_custom() -> None:
         patch(_MOD + ".language_commands") as m_cmds,
         patch(_MOD + "._find_custom_validator", return_value="/path/to/custom"),
     ):
-        m_cmds.side_effect = lambda lang, kind: [["echo", kind.value]]
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
         stages = _build_stages(None, "python", Path("/tmp/r"))  # noqa: S108
     assert stages[-1].name == "custom"
     assert stages[-1].mode == "fail_defer"
@@ -90,14 +90,14 @@ def test_build_stages_check_common_only() -> None:
 
 def test_build_stages_check_lint_runs_install_then_lint() -> None:
     with patch(_MOD + ".language_commands") as m_cmds:
-        m_cmds.side_effect = lambda lang, kind: [["echo", kind.value]]
+        m_cmds.side_effect = lambda lang, kind, **_kw: [["echo", kind.value]]
         stages = _build_stages("lint", "python", Path("/tmp/r"))  # noqa: S108
     assert [s.name for s in stages] == ["install", "lint"]
     assert stages[0].mode == "fail_fast"
 
 
 def test_build_stages_check_lint_no_install_commands() -> None:
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
+    def mock_lang_cmds(lang: str, kind: CheckKind, **_kwargs: object) -> list[list[str]]:
         if kind == CheckKind.INSTALL:
             return []
         if kind == CheckKind.LINT:
@@ -197,7 +197,7 @@ def test_run_all_executes_stages_in_order(tmp_path: Path) -> None:
         order.append(cmd[-1])
         return 0
 
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
+    def mock_lang_cmds(lang: str, kind: CheckKind, **_kwargs: object) -> list[list[str]]:
         return [["echo", kind.value]]
 
     with (
@@ -233,7 +233,7 @@ def test_run_all_language_failure_does_not_stop_later_checks(tmp_path: Path) -> 
     _write_config(tmp_path, "python")
     ran: list[str] = []
 
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
+    def mock_lang_cmds(lang: str, kind: CheckKind, **_kwargs: object) -> list[list[str]]:
         return [["echo", kind.value]]
 
     def mock_run(cmd: list[str], *, check: bool = True) -> int:
@@ -258,7 +258,7 @@ def test_run_all_install_failure_stops_later_checks(tmp_path: Path) -> None:
     _write_config(tmp_path, "python")
     ran: list[str] = []
 
-    def mock_lang_cmds(lang: str, kind: CheckKind) -> list[list[str]]:
+    def mock_lang_cmds(lang: str, kind: CheckKind, **_kwargs: object) -> list[list[str]]:
         return [["echo", kind.value]]
 
     def mock_run(cmd: list[str], *, check: bool = True) -> int:
