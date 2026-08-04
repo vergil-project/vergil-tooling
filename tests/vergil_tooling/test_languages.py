@@ -17,6 +17,7 @@ from vergil_tooling.lib.languages import (
     check_cardinality,
     ecosystem_metadata,
     language_commands,
+    parse_cpp_version_tag,
     supported_languages,
 )
 
@@ -539,3 +540,24 @@ def test_language_may_declare_once_cardinality() -> None:
 def test_cardinality_enum_values() -> None:
     assert Cardinality.PER_VERSION.value == "per-version"
     assert Cardinality.ONCE.value == "once"
+
+
+# -- parse_cpp_version_tag ----------------------------------------------------
+
+
+def test_parse_cpp_version_tag_clang() -> None:
+    assert parse_cpp_version_tag("clang-20") == ("clang", "20")
+
+
+def test_parse_cpp_version_tag_gcc() -> None:
+    assert parse_cpp_version_tag("gcc-15") == ("gcc", "15")
+
+
+def test_parse_cpp_version_tag_unrecognized_prefix_returns_none() -> None:
+    # A tag with no clang-/gcc- prefix carries no compiler family.
+    assert parse_cpp_version_tag("latest") is None
+    assert parse_cpp_version_tag("20") is None
+
+
+def test_parse_cpp_version_tag_empty_returns_none() -> None:
+    assert parse_cpp_version_tag("") is None

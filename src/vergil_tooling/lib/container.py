@@ -21,6 +21,10 @@ _DEFAULT_VERSIONS: dict[str, str] = {
     "go": "1.26",
     "rust": "1.93",
     "java": "21",
+    # C++ carries its compiler family on the version tag (spec
+    # vergil-project/.github#207 §6). The built-in default is the primary Clang
+    # image, so default_image("cpp") resolves to prod-cpp-clang:20.
+    "cpp": "clang-20",
 }
 
 _DEFAULT_PREFIX = "prod"
@@ -31,6 +35,12 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "go": "go test ./...",
     "rust": "cargo test",
     "java": "./mvnw verify",
+    "cpp": (
+        "conan install . --build=missing "
+        "&& cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug "
+        "&& cmake --build build --parallel "
+        "&& ctest --test-dir build --output-on-failure"
+    ),
 }
 
 
@@ -77,6 +87,13 @@ def detect_language(repo_root: Path) -> str:
         return "rust"
     if (repo_root / "pom.xml").is_file() or (repo_root / "mvnw").is_file():
         return "java"
+    # C++ is identified by the pair: a CMakeLists.txt AND a Conan manifest
+    # (spec vergil-project/.github#207 §3.3). Either marker alone is
+    # insufficient — CMake is used far beyond Conan-managed C++ projects.
+    if (repo_root / "CMakeLists.txt").is_file() and (
+        (repo_root / "conanfile.py").is_file() or (repo_root / "conanfile.txt").is_file()
+    ):
+        return "cpp"
     return ""
 
 
@@ -106,6 +123,20 @@ def default_image(
     if not default_version:
         return _fallback_image(prefix) if fallback else ""
     resolved = version or default_version
+    # C++ carries its compiler family on the version tag: `clang-20` resolves to
+    # `prod-cpp-clang:20` — the family rides the image *suffix*, only the numeric
+    # major is the tag (spec vergil-project/.github#207 §6, matching the images
+    # T1/T2 build in vergil-containers). A malformed tag (no clang-/gcc- prefix)
+    # must not build a `prod-cpp-:<ver>` image, so it falls back like an
+    # unknown language.
+    if lang == "cpp":
+        from vergil_tooling.lib.languages import parse_cpp_version_tag
+
+        parsed = parse_cpp_version_tag(resolved)
+        if parsed is None:
+            return _fallback_image(prefix) if fallback else ""
+        family, ver = parsed
+        return f"{_GHCR}/{prefix}-cpp-{family}:{ver}"
     return f"{_GHCR}/{prefix}-{lang}:{resolved}"
 
 

@@ -406,15 +406,19 @@ def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | Non
     ``container-tag`` in generated CI. Returns ``(family, version)`` — e.g.
     ``("clang", "20")`` — or ``None`` when the primary entry carries no
     recognized prefix.
+
+    The tag parse itself is delegated to
+    :func:`languages.parse_cpp_version_tag` — the single source of truth shared
+    with the container image-resolution path so scaffolding and image naming
+    can never drift.
     """
+    # Local import keeps languages a leaf in the import graph (the same
+    # cycle-avoidance idiom already used for language_commands below).
+    from vergil_tooling.lib.languages import parse_cpp_version_tag
+
     if not versions:
         return None
-    primary = versions[0]
-    for family in ("clang", "gcc"):
-        prefix = f"{family}-"
-        if primary.startswith(prefix):
-            return family, primary[len(prefix) :]
-    return None
+    return parse_cpp_version_tag(versions[0])
 
 
 def _container_suffix(language: str | None, versions: list[str] | None = None) -> str:
