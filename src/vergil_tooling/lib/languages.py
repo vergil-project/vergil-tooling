@@ -10,7 +10,7 @@ Replaces the former ``validate_commands`` module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from importlib.resources import files
 
@@ -21,6 +21,21 @@ class CheckKind(Enum):
     TYPECHECK = "typecheck"
     TEST = "test"
     AUDIT = "audit"
+
+
+class Cardinality(Enum):
+    """How many CI gates a check kind yields across the version matrix.
+
+    ``PER_VERSION`` — one required check per configured version (the
+    default, matching every single-image language's historical behavior).
+    ``ONCE`` — a single required check keyed to the primary version, for
+    stages that run once per language rather than once per compiler×version
+    (e.g. a matrix language's lint/audit). This keeps run-once stages from
+    accumulating N redundant, merge-blocking checks in branch protection.
+    """
+
+    PER_VERSION = "per-version"
+    ONCE = "once"
 
 
 @dataclass(frozen=True)
@@ -35,6 +50,12 @@ class Language:
     name: str
     checks: dict[CheckKind, list[list[str]]]
     ecosystem: EcosystemInfo
+    # Per-kind gate cardinality. A kind absent from this mapping defaults to
+    # ``PER_VERSION`` — so the existing single-image languages, which declare
+    # nothing here, keep emitting one gate per version exactly as before. A
+    # matrix language (e.g. C++) declares ``ONCE`` for the kinds it runs a
+    # single time across the compiler×version matrix.
+    cardinality: dict[CheckKind, Cardinality] = field(default_factory=dict)
 
 
 # -- Machine-readable report paths --------------------------------------------
@@ -274,3 +295,18 @@ def language_commands(language: str | None, kind: CheckKind) -> list[list[str]]:
     return [
         [arg.replace("{configs}", configs_dir) for arg in cmd] for cmd in entry.checks.get(kind, [])
     ]
+
+
+def check_cardinality(language: str | None, kind: CheckKind) -> Cardinality:
+    """Return the gate cardinality for a language's check kind.
+
+    Defaults to :attr:`Cardinality.PER_VERSION` when the language is unknown,
+    ``None``, or declares no explicit cardinality for the kind — preserving the
+    historical one-gate-per-version behavior for every existing language.
+    """
+    if language is None:
+        return Cardinality.PER_VERSION
+    entry = _REGISTRY.get(language)
+    if entry is None:
+        return Cardinality.PER_VERSION
+    return entry.cardinality.get(kind, Cardinality.PER_VERSION)

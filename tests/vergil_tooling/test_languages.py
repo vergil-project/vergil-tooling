@@ -10,8 +10,11 @@ from vergil_tooling.lib.languages import (
     LICENSES_REPORT,
     PIP_AUDIT_REPORT,
     PYTHON_REPORT_FILES,
+    Cardinality,
     CheckKind,
     EcosystemInfo,
+    Language,
+    check_cardinality,
     ecosystem_metadata,
     language_commands,
     supported_languages,
@@ -349,3 +352,51 @@ def test_ecosystem_metadata_unknown_raises() -> None:
 def test_language_commands_still_works_for_unknown() -> None:
     cmds = language_commands("unknown", CheckKind.LINT)
     assert cmds == []
+
+
+# -- Check cardinality --------------------------------------------------------
+
+
+def test_existing_languages_default_to_per_version_cardinality() -> None:
+    """Every existing language defaults to per-version for every check kind.
+
+    This backward-compatibility guarantee is what keeps their generated CI
+    gates byte-identical after the cardinality concept was introduced.
+    """
+    for lang in supported_languages():
+        for kind in CheckKind:
+            assert check_cardinality(lang, kind) is Cardinality.PER_VERSION
+
+
+def test_check_cardinality_unknown_language_defaults_per_version() -> None:
+    assert check_cardinality("unknown", CheckKind.LINT) is Cardinality.PER_VERSION
+
+
+def test_check_cardinality_none_language_defaults_per_version() -> None:
+    assert check_cardinality(None, CheckKind.LINT) is Cardinality.PER_VERSION
+
+
+def test_language_cardinality_defaults_to_empty_mapping() -> None:
+    """A Language that declares no cardinality carries an empty mapping."""
+    lang = Language(
+        name="x",
+        checks={},
+        ecosystem=EcosystemInfo(build_cmd=None, publish_cmd=None, publish_env_var=None),
+    )
+    assert lang.cardinality == {}
+
+
+def test_language_may_declare_once_cardinality() -> None:
+    """A language can declare a kind as run-once (e.g. a matrix language)."""
+    lang = Language(
+        name="x",
+        checks={},
+        ecosystem=EcosystemInfo(build_cmd=None, publish_cmd=None, publish_env_var=None),
+        cardinality={CheckKind.LINT: Cardinality.ONCE},
+    )
+    assert lang.cardinality[CheckKind.LINT] is Cardinality.ONCE
+
+
+def test_cardinality_enum_values() -> None:
+    assert Cardinality.PER_VERSION.value == "per-version"
+    assert Cardinality.ONCE.value == "once"
