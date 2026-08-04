@@ -292,17 +292,30 @@ def desired_ci_gates_ruleset(
         checks.append(_make_check("security / codeql"))
         checks.append(_make_ghas_check("CodeQL"))
 
-    # Versioned checks — only emitted when the language has
-    # a command registry entry for the check
+    # Versioned checks — only emitted when the language has a command registry
+    # entry for the check. Each kind's cardinality decides how many gates it
+    # yields: a ``per-version`` kind emits one gate per configured version,
+    # while a ``once`` kind emits a single gate keyed to the primary version
+    # (``ci.versions[0]``) — so a matrix language's run-once stages become one
+    # required check instead of N redundant, merge-blocking ones. Existing
+    # single-image languages declare no ``once`` kinds, so their emitted gates
+    # are byte-identical to the pre-cardinality behavior.
+    from vergil_tooling.lib.languages import Cardinality, CheckKind, check_cardinality
+
+    primary_version = ci.versions[0] if ci.versions else None
+    versioned_kinds: tuple[tuple[str, CheckKind, str], ...] = (
+        ("lint", CheckKind.LINT, "quality / lint / {version}"),
+        ("typecheck", CheckKind.TYPECHECK, "quality / typecheck / {version}"),
+        ("unit", CheckKind.TEST, "test / unit / {version}"),
+        ("dependencies", CheckKind.AUDIT, "audit / dependencies / {version}"),
+    )
     for version in ci.versions:
-        if _lang_has_check(lang, "lint"):
-            checks.append(_make_check(f"quality / lint / {version}"))
-        if _lang_has_check(lang, "typecheck"):
-            checks.append(_make_check(f"quality / typecheck / {version}"))
-        if _lang_has_check(lang, "unit"):
-            checks.append(_make_check(f"test / unit / {version}"))
-        if _lang_has_check(lang, "dependencies"):
-            checks.append(_make_check(f"audit / dependencies / {version}"))
+        for check_key, kind, template in versioned_kinds:
+            if not _lang_has_check(lang, check_key):
+                continue
+            if check_cardinality(lang, kind) is Cardinality.ONCE and version != primary_version:
+                continue
+            checks.append(_make_check(template.format(version=version)))
 
     # Integration tests per version (when enabled)
     if ci.integration_tests:

@@ -362,6 +362,94 @@ def test_lang_has_check_returns_false_for_unknown_check() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Per-kind cardinality tests (issue #2552)
+# ---------------------------------------------------------------------------
+
+
+def test_ci_gates_per_version_kind_emits_one_gate_per_version() -> None:
+    """A per-version kind (the default) yields N gates across N versions."""
+    ci = _ci(versions=["3.12", "3.13", "3.14"])
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
+    lint = [n for n in _check_names(r) if n.startswith("quality / lint")]
+    assert lint == [
+        "quality / lint / 3.12",
+        "quality / lint / 3.13",
+        "quality / lint / 3.14",
+    ]
+
+
+def test_ci_gates_once_kind_emits_single_gate_keyed_to_primary_version(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run-once kind yields exactly one gate, keyed to the primary version.
+
+    Cardinality is language-agnostic infra: no shipping language declares a
+    ``once`` kind yet (that arrives with the C++ registry entry), so the
+    behavior is exercised by declaring LINT run-once for the duration of the
+    test. TYPECHECK stays per-version to prove the two coexist.
+    """
+    from vergil_tooling.lib import languages
+
+    def fake_cardinality(language: str | None, kind: languages.CheckKind) -> languages.Cardinality:
+        if kind is languages.CheckKind.LINT:
+            return languages.Cardinality.ONCE
+        return languages.Cardinality.PER_VERSION
+
+    monkeypatch.setattr(languages, "check_cardinality", fake_cardinality)
+
+    ci = _ci(versions=["3.12", "3.13", "3.14"])
+    r = desired_ci_gates_ruleset(_project(), ci, ghas=True)
+    names = _check_names(r)
+
+    lint = [n for n in names if n.startswith("quality / lint")]
+    assert lint == ["quality / lint / 3.12"]  # single gate, keyed to versions[0]
+
+    typecheck = [n for n in names if n.startswith("quality / typecheck")]
+    assert typecheck == [
+        "quality / typecheck / 3.12",
+        "quality / typecheck / 3.13",
+        "quality / typecheck / 3.14",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Regression snapshot — existing languages' gates must stay byte-identical
+# ---------------------------------------------------------------------------
+#
+# The cardinality refactor (issue #2552) restructured the versioned-gate loop.
+# Every existing language defaults to per-version cardinality, so its generated
+# gates must be byte-identical to the pre-refactor output. This snapshot pins
+# the exact ordered check list for each of the five languages; any drift in the
+# order, naming, or count of the existing languages' gates fails here.
+
+_EXPECTED_GATES_TWO_VERSIONS = [
+    "quality / common",
+    "security / trivy",
+    "security / semgrep",
+    "Trivy",
+    "Semgrep OSS",
+    "security / codeql",
+    "CodeQL",
+    "quality / lint / v1",
+    "quality / typecheck / v1",
+    "test / unit / v1",
+    "audit / dependencies / v1",
+    "quality / lint / v2",
+    "quality / typecheck / v2",
+    "test / unit / v2",
+    "audit / dependencies / v2",
+    "version / version-bump",
+]
+
+
+@pytest.mark.parametrize("language", ["python", "go", "java", "ruby", "rust"])
+def test_ci_gates_existing_languages_snapshot(language: str) -> None:
+    ci = _ci(versions=["v1", "v2"])
+    r = desired_ci_gates_ruleset(_project(language=language), ci, ghas=True)
+    assert _check_names(r) == _EXPECTED_GATES_TWO_VERSIONS
+
+
+# ---------------------------------------------------------------------------
 # compute_desired_state tests
 # ---------------------------------------------------------------------------
 

@@ -69,9 +69,9 @@ class TestPromptChoice:
 
 
 class TestPromptLanguage:
-    # Languages are listed sorted: go, java, python, ruby, rust (so index 3 is python).
+    # Languages are listed sorted: cpp, go, java, python, ruby, rust (index 4 is python).
     def test_selects_language(self) -> None:
-        with patch("builtins.input", return_value="3"):
+        with patch("builtins.input", return_value="4"):
             assert prompt_language() == "python"
 
     def test_none_of_the_above_returns_empty(self) -> None:
@@ -790,13 +790,14 @@ class TestStepGenerateConfig:
         ctx.work_dir = tmp_path
 
         # Indices are alphabetical within each sorted enum:
-        # repository-type: 5=tooling, primary-language: 3=python,
+        # repository-type: 5=tooling; primary-language: 4=python — sorted order
+        # is cpp, go, java, python, ruby, rust;
         # branching-model: 3=library-release, versioning-scheme: 4=semver,
         # release-model: 4=tagged-release
         inputs = iter(
             [
                 "5",  # repository-type: tooling
-                "3",  # primary-language: python
+                "4",  # primary-language: python
                 "3",  # branching-model: library-release
                 "4",  # versioning-scheme: semver
                 "4",  # release-model: tagged-release

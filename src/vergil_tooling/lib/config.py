@@ -27,8 +27,19 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust"},
+    "primary-language": {"python", "go", "java", "ruby", "rust", "cpp"},
 }
+
+# The [cpp] block (epic vergil-project/.github#207 §3.3). The compiler family ×
+# version axis rides [ci].versions (the ``clang-``/``gcc-`` tag prefix); the two
+# cheap in-build axes are single-valued [cpp] keys. v1 pins std = c++20 and
+# stdlib = libstdc++; the wider std set is accepted since it is a free build
+# flag, while libc++ stays on the spec §9 deferral ledger (ledger #2) and is
+# therefore rejected, not silently ignored.
+DEFAULT_CPP_STD = "c++20"
+DEFAULT_CPP_STDLIB = "libstdc++"
+_CPP_STD_VALUES = frozenset({"c++17", "c++20", "c++23"})
+_CPP_STDLIB_VALUES = frozenset({"libstdc++"})
 
 _REQUIRED_PROJECT_FIELDS = (
     "repository-type",
@@ -49,6 +60,7 @@ _KNOWN_SECTIONS = frozenset(
         "container",
         "validation",
         "actions",
+        "cpp",
         "vm",
     },
 )
@@ -62,6 +74,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "container": frozenset({"env-prefixes"}),
     "validation": frozenset({"container-command"}),
     "actions": frozenset({"extra-allowed-patterns"}),
+    "cpp": frozenset({"std", "stdlib"}),
 }
 
 
@@ -108,6 +121,16 @@ class ValidationConfig:
 
 
 @dataclass
+class CppConfig:
+    # The two cheap in-build C++ axes (epic vergil-project/.github#207 §3.3):
+    # ``std`` is the ``-std=`` flag, ``stdlib`` selects the standard library.
+    # Both are single string values in v1; compiler family × version is carried
+    # by [ci].versions, not here.
+    std: str
+    stdlib: str
+
+
+@dataclass
 class ActionsConfig:
     # Extra allowed-action patterns unioned into the repo's GitHub Actions
     # allowed-actions policy, on top of the base + per-language defaults in
@@ -126,6 +149,9 @@ class VergilConfig:
     container: ContainerConfig
     validation: ValidationConfig
     actions: ActionsConfig = field(default_factory=lambda: ActionsConfig(extra_allowed_patterns=[]))
+    cpp: CppConfig = field(
+        default_factory=lambda: CppConfig(std=DEFAULT_CPP_STD, stdlib=DEFAULT_CPP_STDLIB)
+    )
     vm: VmStanza | None = None
 
 
@@ -343,6 +369,39 @@ def parse_vm_stanza(raw: dict[str, Any], source: str = CONFIG_FILE) -> VmStanza 
     )
 
 
+def _parse_cpp_str_value(
+    raw: dict[str, Any], key: str, allowed: frozenset[str], default: str, source: str
+) -> str:
+    """Return a validated single-string [cpp] value, or its default when absent.
+
+    Raises ConfigError if present but non-string, or if it is not one of the
+    ``allowed`` values (rejection, not a silent fallback — a bogus std/stdlib
+    would otherwise be dropped into the build unnoticed).
+    """
+    if key not in raw:
+        return default
+    value = raw[key]
+    if not isinstance(value, str):
+        msg = f"{source}: [cpp].{key} must be a string (got {type(value).__name__})"
+        raise ConfigError(msg)
+    if value not in allowed:
+        allowed_str = ", ".join(sorted(allowed))
+        msg = f"{source}: invalid [cpp].{key} '{value}' (allowed: {allowed_str})"
+        raise ConfigError(msg)
+    return value
+
+
+def _parse_cpp_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> CppConfig:
+    """Parse the ``[cpp]`` block, defaulting to the v1 pins when it is absent."""
+    cpp_raw = raw.get("cpp", {})
+    return CppConfig(
+        std=_parse_cpp_str_value(cpp_raw, "std", _CPP_STD_VALUES, DEFAULT_CPP_STD, source),
+        stdlib=_parse_cpp_str_value(
+            cpp_raw, "stdlib", _CPP_STDLIB_VALUES, DEFAULT_CPP_STDLIB, source
+        ),
+    )
+
+
 def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
@@ -490,6 +549,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         container=container,
         validation=validation,
         actions=actions,
+        cpp=_parse_cpp_config(raw, source),
         vm=parse_vm_stanza(raw, source),
     )
 
