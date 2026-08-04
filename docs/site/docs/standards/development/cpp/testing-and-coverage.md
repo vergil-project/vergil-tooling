@@ -40,9 +40,10 @@ the whole point of the dual-compiler model — the two engines only both protect
 line if the tests actually run that line under both.
 
 The coverage build is instrumented separately from the sanitizer build. TEST
-does a coverage-instrumented build and run, then a **separate** AddressSanitizer
-+ UndefinedBehaviorSanitizer build and run in a distinct build directory, so the
-sanitizer instrumentation never shares object files with the coverage build.
+does a coverage-instrumented build and run, then a **separate** build and run
+under AddressSanitizer plus UndefinedBehaviorSanitizer in a distinct build
+directory, so the sanitizer instrumentation never shares object files with the
+coverage build.
 
 ## Exclusion Discipline
 
