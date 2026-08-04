@@ -9,6 +9,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.lib.container import (
+    _DEFAULT_TEST_COMMANDS,
+    _DEFAULT_VERSIONS,
     assert_docker_available,
     build_container_args,
     build_docker_args,
@@ -86,6 +88,31 @@ def test_detect_ruby_priority(tmp_path: Path) -> None:
     (tmp_path / "Gemfile").write_text("")
     (tmp_path / "pyproject.toml").write_text("")
     assert detect_language(tmp_path) == "ruby"
+
+
+def test_detect_cpp_conanfile_py(tmp_path: Path) -> None:
+    # C++ needs BOTH a CMakeLists.txt and a conanfile — the pair is the marker.
+    (tmp_path / "CMakeLists.txt").write_text("")
+    (tmp_path / "conanfile.py").write_text("")
+    assert detect_language(tmp_path) == "cpp"
+
+
+def test_detect_cpp_conanfile_txt(tmp_path: Path) -> None:
+    (tmp_path / "CMakeLists.txt").write_text("")
+    (tmp_path / "conanfile.txt").write_text("")
+    assert detect_language(tmp_path) == "cpp"
+
+
+def test_detect_cpp_requires_cmakelists(tmp_path: Path) -> None:
+    # A conanfile alone (no CMakeLists.txt) is not enough to claim cpp.
+    (tmp_path / "conanfile.py").write_text("")
+    assert detect_language(tmp_path) == ""
+
+
+def test_detect_cpp_requires_conanfile(tmp_path: Path) -> None:
+    # A CMakeLists.txt alone (no conanfile) is not enough to claim cpp.
+    (tmp_path / "CMakeLists.txt").write_text("")
+    assert detect_language(tmp_path) == ""
 
 
 # -- default_image ------------------------------------------------------------
@@ -190,6 +217,56 @@ def test_default_image_no_language_falls_back_despite_declared_version() -> None
 
 def test_default_image_no_language_no_fallback_ignores_version() -> None:
     assert default_image("", version="latest") == ""
+
+
+# -- cpp compiler-family image resolution -------------------------------------
+
+
+def test_default_image_cpp_uses_builtin_clang_default() -> None:
+    # _DEFAULT_VERSIONS["cpp"] is the primary Clang tag (clang-20), so the
+    # family rides the image suffix and the numeric major is the tag.
+    assert default_image("cpp") == "ghcr.io/vergil-project/prod-cpp-clang:20"
+
+
+def test_default_image_cpp_clang_declared_version() -> None:
+    assert default_image("cpp", version="clang-20") == "ghcr.io/vergil-project/prod-cpp-clang:20"
+
+
+def test_default_image_cpp_gcc_declared_version() -> None:
+    # gcc-15 → prod-cpp-gcc:15, matching the image names T1/T2 produce.
+    assert default_image("cpp", version="gcc-15") == "ghcr.io/vergil-project/prod-cpp-gcc:15"
+
+
+def test_default_image_cpp_respects_prefix() -> None:
+    assert default_image("cpp", prefix="dev", version="clang-20") == (
+        "ghcr.io/vergil-project/dev-cpp-clang:20"
+    )
+
+
+def test_default_image_cpp_unparseable_version_no_fallback() -> None:
+    # A malformed cpp version tag (no clang-/gcc- prefix) must not build a
+    # malformed prod-cpp-:<ver> image — it returns empty without fallback.
+    assert default_image("cpp", version="latest") == ""
+
+
+def test_default_image_cpp_unparseable_version_with_fallback() -> None:
+    assert default_image("cpp", version="latest", fallback=True) == (
+        "ghcr.io/vergil-project/prod-base:latest"
+    )
+
+
+def test_cpp_default_version_is_primary_clang() -> None:
+    # The built-in default drives default_image("cpp") when no [ci].versions
+    # is declared — it must be the primary Clang tag.
+    assert _DEFAULT_VERSIONS["cpp"] == "clang-20"
+
+
+def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
+    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
+    cmd = _DEFAULT_TEST_COMMANDS["cpp"]
+    assert "conan install" in cmd
+    assert "cmake" in cmd
+    assert "ctest" in cmd
 
 
 # -- workspace_mount_args -----------------------------------------------------

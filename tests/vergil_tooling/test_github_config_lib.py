@@ -287,6 +287,16 @@ def test_ci_gates_codeql_for_supported_language() -> None:
     assert "CodeQL" in names
 
 
+def test_ci_gates_codeql_for_cpp() -> None:
+    # cpp is CodeQL-supported (epic vergil-project/.github#207 T7): the
+    # github_config list must stay aligned with repo_init._CODEQL_LANGUAGES,
+    # which already lists cpp.
+    r = desired_ci_gates_ruleset(_project(language="cpp"), _ci(versions=["clang-20"]), ghas=True)
+    names = _check_names(r)
+    assert "security / codeql" in names
+    assert "CodeQL" in names
+
+
 def test_ci_gates_no_codeql_without_language() -> None:
     r = desired_ci_gates_ruleset(_project(language=None), _ci(), ghas=True)
     names = _check_names(r)

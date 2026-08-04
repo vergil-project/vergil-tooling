@@ -396,10 +396,43 @@ def render_gitignore() -> str:
     )
 
 
-def _container_suffix(language: str | None) -> str:
-    """Map primary language to dev container image suffix."""
+def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | None:
+    """Parse the primary cpp compiler family and version from ``[ci].versions``.
+
+    C++ carries its compiler family × version axis on ``[ci].versions`` as a
+    ``clang-``/``gcc-`` prefixed tag (e.g. ``clang-20``), per spec
+    vergil-project/.github#207 §6. The first entry is the representative
+    primary that drives the single top-level ``container-suffix``/
+    ``container-tag`` in generated CI. Returns ``(family, version)`` — e.g.
+    ``("clang", "20")`` — or ``None`` when the primary entry carries no
+    recognized prefix.
+
+    The tag parse itself is delegated to
+    :func:`languages.parse_cpp_version_tag` — the single source of truth shared
+    with the container image-resolution path so scaffolding and image naming
+    can never drift.
+    """
+    # Local import keeps languages a leaf in the import graph (the same
+    # cycle-avoidance idiom already used for language_commands below).
+    from vergil_tooling.lib.languages import parse_cpp_version_tag
+
+    if not versions:
+        return None
+    return parse_cpp_version_tag(versions[0])
+
+
+def _container_suffix(language: str | None, versions: list[str] | None = None) -> str:
+    """Map primary language to dev container image suffix.
+
+    C++ is compiler-family-aware: the suffix resolves to ``cpp-clang`` /
+    ``cpp-gcc`` from the ``clang-``/``gcc-`` prefix on the primary
+    ``[ci].versions`` entry (vergil-project/.github#207 §6).
+    """
     if language is None:
         return "base"
+    if language == "cpp":
+        parsed = _cpp_family_and_version(versions)
+        return f"cpp-{parsed[0]}" if parsed else "base"
     suffix_map = {
         "python": "python",
         "go": "go",
@@ -429,7 +462,16 @@ def _cd_release_secrets(language: str | None) -> list[str]:
 
 
 def _container_tag(language: str | None, versions: list[str]) -> str:
-    """Derive the container tag from language and versions."""
+    """Derive the container tag from language and versions.
+
+    C++ tags carry only the numeric version — the compiler family rides the
+    image *suffix* (``cpp-clang`` / ``cpp-gcc``), so ``clang-20`` resolves to
+    ``prod-cpp-clang:20`` (vergil-project/.github#207 §6). The primary is the
+    first ``[ci].versions`` entry.
+    """
+    if language == "cpp":
+        parsed = _cpp_family_and_version(versions)
+        return parsed[1] if parsed else "latest"
     if language == "python" and versions:
         return versions[-1]
     return "latest"
@@ -460,7 +502,7 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     # `language: {empty}` leaves a trailing space that fails yamllint
     # trailing-spaces (issue #1993).
     lang_line = f"      language: {lang_yaml}\n" if lang_yaml else "      language:\n"
-    suffix = _container_suffix(ctx.primary_language)
+    suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
     tag = _container_tag(ctx.primary_language, ctx.ci_versions)
     versions_json = json.dumps(ctx.ci_versions)
 
@@ -628,7 +670,7 @@ def render_cd_workflow(ctx: RepoInitContext) -> str:
         )
 
     if ctx.publish_release:
-        suffix = _container_suffix(ctx.primary_language)
+        suffix = _container_suffix(ctx.primary_language, ctx.ci_versions)
         tag = _container_tag(ctx.primary_language, ctx.ci_versions)
         lines.append("\n")
         lines.extend(
@@ -815,6 +857,11 @@ def _default_ci_versions(language: str | None) -> str:
         "java": "21",
         "ruby": "3.3",
         "rust": "stable",
+        # C++ carries the compiler family × version axis here as a
+        # ``clang-``/``gcc-`` prefixed tag (vergil-project/.github#207 §6); the
+        # default seeds a single primary Clang image, matching the primary
+        # major built in vergil-containers.
+        "cpp": "clang-20",
     }
     return defaults.get(language, "latest")
 
