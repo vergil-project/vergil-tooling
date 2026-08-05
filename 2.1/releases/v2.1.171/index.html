@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.162/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.160/">
+        <link rel="next" href="../v2.1.170/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.161 - VERGIL Tooling</title>
+        <title>2.1.171 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21161-2026-07-23" class="md-skip">
+        <a href="#release-21171-2026-08-05" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.161
+              2.1.171
             
           </span>
         </div>
@@ -1208,10 +1208,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.171/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.171
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1227,6 +1254,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1488,37 +1557,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.161
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.161/" class="md-nav__link">
         
   
   
@@ -1534,37 +1576,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12622,6 +12633,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -12639,13 +12661,28 @@
 
 
 
-<h1 id="release-21161-2026-07-23">Release 2.1.161 (2026-07-23)<a class="headerlink" href="#release-21161-2026-07-23" title="Permanent link">&para;</a></h1>
+<h1 id="release-21171-2026-08-05">Release 2.1.171 (2026-08-05)<a class="headerlink" href="#release-21171-2026-08-05" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>reclaim anonymous venv mask volume on cache-build cleanup (#2501)</strong>
-The cache-build path creates a build container, commits it, then removes it in the finally block. The cleanup used <code>rm</code> without <code>-v</code>, orphaning the anonymous /workspace/.venv mask volume introduced in #2495 — <code>nerdctl volume ls</code> grew by one per cold build. Add <code>-v</code> so the container's anonymous volumes are reclaimed on removal, matching the run path's <code>run --rm</code> behavior.</li>
+<li><strong>revert C++ AUDIT to conan audit + cppcheck googletest lib (#2581)</strong>
+Revert the #2572 switch of the C++ AUDIT command from conan audit to OSV-Scanner. T11 (#2558) proved OSV.dev carries no ConanCenter package data, so osv-scanner over conan.lock reported a false all-clear. AUDIT returns to [conan, audit, scan, .] (reading its provider token from CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER), keeping the best-effort conan graph info license surface. Decision reversal: vergil-project/.github#209.</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.161/v2.1.161-ci-evidence.tar.gz">Download →</a></p>
+<p>Also add --library=googletest to the cppcheck LINT argv: T11 found cppcheck throws a syntaxError on GoogleTest's TEST() macro, and the images ship googletest.cfg. GoogleTest is the documented default framework.</p>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>inject Conan audit token into VM agent env (#2580)</strong>
+Deliver CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER into the VM agent environment, mirroring the Anthropic-token injection pattern.</p>
+</li>
+<li>
+<p>identity.py: add conan_audit_token_path to the Identity dataclass and parse it from the conan_audit_token_path key in identities.toml (expanded at injection time, like claude_token_path).</p>
+</li>
+<li>vm_guest.py: add _inject_conan_token, called from inject_credentials and gated on identity.conan_audit_token_path. It reads the bare token from the host file and writes a shell-quoted export line into ~/.config/vergil/conan.env (chmod 600), plus an idempotent ~/.bashrc source line. Transport-agnostic, so it serves both Lima and cloud guests.</li>
+<li>vrg_vm.py: _session_inner also sources ~/.config/vergil/conan.env (peer to claude.env) so non-interactive sessions get the token.</li>
+</ul>
+<p>The token value stays in a host file referenced by identities.toml; the code only reads that path and writes an export line, never hardcoding a value.</p>
+<p>Tests mirror the claude-token injection tests across identity parsing, the injector (including shell-quoting), and session sourcing.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.171/v2.1.171-ci-evidence.tar.gz">Download →</a></p>
 
 
 
