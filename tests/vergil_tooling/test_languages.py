@@ -282,7 +282,7 @@ def test_cpp_is_supported() -> None:
 
 def test_cpp_install_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.INSTALL))
-    # A conan.lock is produced so AUDIT (OSV-Scanner) has a lockfile to scan.
+    # A conan.lock is produced to pin the dependency graph for the Debug builds.
     assert any("conan lock create" in c for c in joined)
     # Conan resolves deps in the same build_type (Debug) as the CMake
     # coverage/sanitizer builds — a Release/Debug mismatch broke the cold
@@ -306,8 +306,15 @@ def test_cpp_lint_commands() -> None:
     joined = _joined(cmds)
     assert any("clang-format" in c and "--dry-run --Werror" in c for c in joined)
     assert any("run-clang-tidy" in c for c in joined)
+    # cppcheck runs with --library=googletest so it parses GoogleTest's TEST()
+    # macro instead of throwing a syntaxError on it — GoogleTest is the
+    # documented default framework and the images ship googletest.cfg. (#2579)
     assert any(
-        "cppcheck" in c and "--enable=all" in c and "--error-exitcode=1" in c for c in joined
+        "cppcheck" in c
+        and "--enable=all" in c
+        and "--error-exitcode=1" in c
+        and "--library=googletest" in c
+        for c in joined
     )
 
 
@@ -382,11 +389,13 @@ def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
 
 def test_cpp_audit_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.AUDIT))
-    # OSV-Scanner over conan.lock is the CVE scan — tokenless and scalable,
-    # replacing conan audit (SaaS token, rate-limited). Decision: #209. (#2572)
-    assert "osv-scanner scan source --lockfile=conan.lock" in joined
-    # conan audit is retired here.
-    assert not any("conan audit" in c for c in joined)
+    # conan audit is the CVE scan — it reads ConanCenter advisories using the
+    # CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER env token. OSV-Scanner was reverted
+    # because OSV.dev carries no ConanCenter data, so it produced a false
+    # all-clear (T11 #2558; decision reversal #209). (#2579)
+    assert "conan audit scan ." in joined
+    # OSV-Scanner is retired here.
+    assert not any("osv-scanner" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     assert any("conan graph info" in c for c in joined)
 

@@ -501,6 +501,25 @@ def test_claude_token_path_defaults_empty(config_file: Path) -> None:
     assert cfg.identities["vergil"].claude_token_path == ""
 
 
+def test_conan_audit_token_path_parsed(tmp_path: Path) -> None:
+    p = tmp_path / "identities.toml"
+    p.write_text(
+        textwrap.dedent("""\
+        [identities.vergil]
+        vm_instance = "vergil-agent"
+        conan_audit_token_path = "~/.config/vergil/keys/conan-audit-token"
+    """)
+    )
+    cfg = load_config(p)
+    expected = "~/.config/vergil/keys/conan-audit-token"
+    assert cfg.identities["vergil"].conan_audit_token_path == expected
+
+
+def test_conan_audit_token_path_defaults_empty(config_file: Path) -> None:
+    cfg = load_config(config_file)
+    assert cfg.identities["vergil"].conan_audit_token_path == ""
+
+
 def test_resource_fields_parsed(tmp_path: Path) -> None:
     p = tmp_path / "identities.toml"
     p.write_text(
