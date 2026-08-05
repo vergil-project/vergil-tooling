@@ -424,7 +424,16 @@ _REGISTRY: dict[str, Language] = {
                 ],
                 [
                     "cppcheck",
-                    "--enable=all",
+                    # Curated enable set, NOT ``--enable=all`` (#2585). This drops
+                    # the unreliable ``unusedFunction`` check — a systematic false
+                    # positive on GoogleTest's static-registered ``TEST()``
+                    # functions, which cppcheck reports as dead code because it
+                    # cannot see the cross-TU/static-registration usage — plus the
+                    # noisy ``information``/``missingInclude``. It is deliberate
+                    # tool-tuning of a check that emits systematic false positives,
+                    # not a standing suppression-list entry (§ No Standing
+                    # Suppression List): a real finding is never silenced here.
+                    "--enable=warning,style,performance,portability",
                     "--error-exitcode=1",
                     "--inline-suppr",
                     "--std={std}",
@@ -433,6 +442,14 @@ _REGISTRY: dict[str, Language] = {
                     # macro (T11 #2558). The images ship googletest.cfg. (#2579)
                     "--library=googletest",
                     "--suppressions-list={configs}/cpp/cppcheck-suppressions.txt",
+                    # Never walk CMake's ``build/``/``build-sanitize/`` output —
+                    # its compiler-probe file (``CMakeCXXCompilerId.cpp``) trips
+                    # ``toomanyconfigs`` (#2585). clang-format prunes the same dirs
+                    # via its find driver above; cppcheck excludes them with -i.
+                    "-i",
+                    _CPP_BUILD_DIR,
+                    "-i",
+                    _CPP_SANITIZE_BUILD_DIR,
                     ".",
                 ],
             ],

@@ -104,3 +104,37 @@ The warning set is distinct from the LINT stage, which runs `clang-format`,
 and `cppcheck` once on the primary Clang image. TYPECHECK is the compiler's own
 judgment under both families; LINT is dedicated static analysis. Both gate a
 change; neither substitutes for the other.
+
+### cppcheck's curated enable set
+
+`cppcheck` runs with a **curated** enable set rather than `--enable=all`:
+
+```text
+--enable=warning,style,performance,portability
+```
+
+This deliberately drops three of `all`'s checks:
+
+- **`unusedFunction`** — an *unreliable* check for GoogleTest code. `cppcheck`
+  analyses one translation unit at a time and cannot see the
+  static-registration machinery behind the `TEST()` macro, so it reports every
+  test function as dead code. The finding is a systematic false positive, not a
+  real one.
+- **`information` / `missingInclude`** — diagnostics about `cppcheck`'s own
+  analysis coverage, not about the code. They add noise without gating quality.
+
+Dropping `unusedFunction` is **tool-tuning of a check that emits systematic
+false positives — not a suppression**. It honours the
+[No Standing Suppression List](#no-standing-suppression-list) rule exactly: no
+real finding is silenced, and no standing suppression-list entry is added. The
+distinction is deliberate. A suppression mutes a *true* warning about the code;
+here the check itself is wrong for this codebase's idioms, so the correct fix is
+to stop running the broken check, not to catalogue the findings it fabricates.
+The narrow, local suppression escape hatch (`--inline-suppr` plus the packaged
+`cppcheck-suppressions.txt`) still exists for a genuine, unavoidable finding.
+
+`cppcheck` also excludes the CMake build tree with `-i build -i build-sanitize`.
+Left to walk `.` unfiltered it descends into the compiler-probe file CMake
+generates under `build/` (`CMakeCXXCompilerId.cpp`) and trips `toomanyconfigs` —
+a build artifact, never source. This mirrors the build-dir prune the
+`clang-format` find driver already applies.
