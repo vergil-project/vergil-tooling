@@ -1138,6 +1138,8 @@
       
         
       
+        
+      
     
     
     
@@ -1190,6 +1192,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.170/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.170
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12795,9 +12825,15 @@ manager.</p>
   <code>compile_commands.json</code> (via <code>CMAKE_EXPORT_COMPILE_COMMANDS=ON</code>). That
   compilation database is what <code>clang-tidy</code> and other static-analysis tooling
   read to see each translation unit's exact flags.</li>
-<li><strong>Conan 2</strong> resolves and builds dependencies (<code>conan install . --build=missing</code>).
-  Conan 2 is chosen in part for its built-in <code>conan audit</code> dependency-CVE scan,
-  which the AUDIT stage runs against the resolved dependency graph.</li>
+<li><strong>Conan 2</strong> resolves and builds dependencies
+  (<code>conan install . -s build_type=Debug --build=missing</code>, matching the CMake
+  Debug build so dependency binaries share the same configuration). INSTALL also
+  writes a <code>conan.lock</code> (<code>conan lock create</code>), which the AUDIT stage scans.</li>
+<li>The AUDIT stage runs <strong>OSV-Scanner</strong> over that <code>conan.lock</code>
+  (<code>osv-scanner scan source --lockfile=conan.lock</code>) for dependency CVEs.
+  OSV-Scanner is tokenless, offline-capable, and scales with per-PR volume;
+  <code>conan audit</code> was reconsidered because its hosted provider needs a token and
+  is rate-limited (decision: vergil-project/.github#209).</li>
 </ul>
 <p>vergil-tooling passes <strong>intent</strong> to the project's <code>CMakeLists.txt</code> as CMake
 cache variables rather than raw compiler flags, so every validation command

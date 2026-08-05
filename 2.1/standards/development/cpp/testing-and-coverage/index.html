@@ -1138,6 +1138,8 @@
       
         
       
+        
+      
     
     
     
@@ -1190,6 +1192,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../releases/v2.1.170/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.170
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12699,8 +12729,13 @@ rationale.</p>
 <h2 id="the-100-per-compiler-gate">The 100%-Per-Compiler Gate<a class="headerlink" href="#the-100-per-compiler-gate" title="Permanent link">&para;</a></h2>
 <p>Coverage is measured with <strong>gcovr</strong> and enforced at <strong>100% line coverage, bound
 per compiler (per image) — never on a single merged report</strong>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gcovr<span class="w"> </span>--config<span class="w"> </span>&lt;configs&gt;/cpp/gcovr.cfg<span class="w"> </span>--fail-under-line<span class="w"> </span><span class="m">100</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>gcovr<span class="w"> </span>--config<span class="w"> </span>&lt;configs&gt;/cpp/gcovr.cfg<span class="w"> </span>--root<span class="w"> </span>.<span class="w"> </span>--filter<span class="w"> </span>src/<span class="w"> </span>--fail-under-line<span class="w"> </span><span class="m">100</span>
 </code></pre></div>
+<p><code>--root</code>/<code>--filter</code> are passed on the command line, not in the packaged config
+file: gcovr resolves relative paths inside a config file against the config
+file's own directory, so anchoring them there pointed gcovr at the packaged
+config directory and filtered all coverage out. On the command line they resolve
+against the repo root (the working directory) as intended.</p>
 <p>The image supplies the correct <code>gcov</code> executable for the compiler under test —
 plain <code>gcov</code> on GCC, <code>llvm-cov gcov</code> on Clang — so each family's coverage is
 computed with its own instrumentation.</p>

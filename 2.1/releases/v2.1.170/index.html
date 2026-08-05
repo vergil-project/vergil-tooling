@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.116/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.114/">
+        <link rel="next" href="../v2.1.169/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.115 - VERGIL Tooling</title>
+        <title>2.1.170 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21115-2026-07-05" class="md-skip">
+        <a href="#release-21170-2026-08-05" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.115
+              2.1.170
             
           </span>
         </div>
@@ -1206,10 +1206,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.170/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.170
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1225,6 +1252,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2746,37 +2804,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.115
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.115/" class="md-nav__link">
         
   
   
@@ -2792,37 +2823,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12582,10 +12582,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documentation
+        Bug fixes
       
     </span>
   </a>
@@ -12609,12 +12609,19 @@
 
 
 
-<h1 id="release-21115-2026-07-05">Release 2.1.115 (2026-07-05)<a class="headerlink" href="#release-21115-2026-07-05" title="Permanent link">&para;</a></h1>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<h1 id="release-21170-2026-08-05">Release 2.1.170 (2026-08-05)<a class="headerlink" href="#release-21170-2026-08-05" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>point --epic help at the adhoc sentinel (#2130) (#2169)</strong>
-Epic vergil-project/.github#85, Task 12. The living-doc standing-&gt;ad-hoc sweep found nothing to rename: no living doc or site-docs guide describes the epic/task model (it lived only in the epic specs), and CLAUDE.md's 'standing' is the no-direct-commits policy, unrelated. The one real user-facing item: the --epic help in vrg-issue-create and vrg-epic-move still showed 'standing' as the sentinel; point users at 'adhoc' (standing keeps working as the silent deprecated alias). The comprehensive issue-management site-docs guide the sweep revealed as missing is filed as its own task (#2168) under this epic.</li>
+<li><strong>switch AUDIT to OSV-Scanner, fix Conan build_type + gcovr paths (#2573)</strong></li>
+<li>fix(cpp): switch AUDIT to OSV-Scanner, fix Conan build_type + gcovr paths</li>
 </ul>
+<p>T11 validation (#2558) surfaced three C++ config gaps in the registry and packaged configs. Fix all three:</p>
+<ul>
+<li>AUDIT now runs OSV-Scanner over a conan.lock (tokenless, scalable) instead of conan audit (SaaS token, rate-limited). INSTALL writes the lockfile via 'conan lock create'. Decision: vergil-project/.github#209; tool added image-side in vergil-containers#487.</li>
+<li>Conan resolves deps with -s build_type=Debug so dependency binaries match the CMake Debug coverage/sanitizer builds (was defaulting to Release -&gt; fmt/format.h not found on cold rebuild). Fixed in both the languages registry INSTALL and the container-test default command.</li>
+<li>gcovr --root/--filter move to the command line so they resolve against the repo root; config-relative paths resolved against the packaged config dir and filtered all coverage out. gcovr.cfg keeps only path-independent settings.</li>
+</ul>
+<p>Docs and unit tests updated to match.</p>
 
 
 

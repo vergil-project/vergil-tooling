@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.170/">
       
       
         <link rel="next" href="../v2.1.168/">
@@ -1143,6 +1143,8 @@
       
         
       
+        
+      
     
     
     
@@ -1198,6 +1200,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.170/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.170
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12660,6 +12690,7 @@ Add C++ support to the container-selection path (T6 of epic vergil-project/.gith
 <p>default_image resolves the compiler family from the clang-/gcc- version-tag prefix and builds prod-cpp-<family>:<v> (clang-20 to prod-cpp-clang:20, gcc-15 to prod-cpp-gcc:15), matching the image names T1/T2 produce in vergil-containers. A malformed tag falls back like an unknown language rather than building a prod-cpp-:<ver> image.</p>
 <p>_DEFAULT_VERSIONS["cpp"] is the primary Clang tag (clang-20) and _DEFAULT_TEST_COMMANDS["cpp"] is a conan install &amp;&amp; cmake &amp;&amp; ctest line for vrg-container-test.</p>
 <p>The clang-/gcc- tag parse is extracted to languages.parse_cpp_version_tag as the single source of truth, and repo_init._cpp_family_and_version (added by T7) now delegates to it so image naming and CI scaffolding cannot drift.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.169/v2.1.169-ci-evidence.tar.gz">Download →</a></p>
 
 
 
