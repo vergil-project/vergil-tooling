@@ -164,7 +164,7 @@ Required attributes and accepted values:
 | `branching_model` | `library-release`, `application-promotion`, `docs-single-branch` | Determines which branch prefixes `vrg-commit` allows. |
 | `release_model` | `tagged-release`, `continuous-deploy`, `none` | Affects release-flow tooling expectations. |
 | `supported_release_lines` | integer (commonly `1`) | How many concurrent major lines you support. |
-| `primary_language` | `python`, `go`, `java`, `rust`, `ruby`, `shell`, `none` | Determines which per-language validators run. |
+| `primary_language` | `python`, `go`, `java`, `rust`, `ruby`, `cpp`, `shell`, `none` | Determines which per-language validators run. |
 
 The `AI co-authors` section defines which `Co-Authored-By` trailer
 values `vrg-commit` accepts for `--agent`. Add one line per accepted

@@ -41,10 +41,12 @@ path is slow, non-reproducible, and a supply-chain liability; the dev images
 pin prebuilt stable releases instead.
 
 The target is **two recent majors per family**, taken from whatever is cleanly
-available prebuilt. When the newest majors lack prebuilt binaries, the fallback
-steps back a release while keeping both families present (for example,
-gcc-13/14 and clang-18/19 rather than dropping a compiler). The matrix bends to
-availability; it never drops to one compiler.
+available prebuilt. The shipped v1 matrix is **Clang 20 (primary) and Clang 19**
+plus **GCC 14 (primary) and GCC 13**. GCC illustrates the availability rule: the
+spec's target pair was gcc-15/14, but gcc-15 is not cleanly prebuilt for the
+image base (Debian trixie), so the matrix steps back one release to gcc-13/14
+rather than dropping a compiler. The matrix bends to availability; it never
+drops to one compiler.
 
 ## Build System and Dependency Management
 
@@ -58,12 +60,20 @@ manager.
 - **Conan 2** resolves and builds dependencies
   (`conan install . -s build_type=Debug --build=missing`, matching the CMake
   Debug build so dependency binaries share the same configuration). INSTALL also
-  writes a `conan.lock` (`conan lock create`), which the AUDIT stage scans.
-- The AUDIT stage runs **OSV-Scanner** over that `conan.lock`
-  (`osv-scanner scan source --lockfile=conan.lock`) for dependency CVEs.
-  OSV-Scanner is tokenless, offline-capable, and scales with per-PR volume;
-  `conan audit` was reconsidered because its hosted provider needs a token and
-  is rate-limited (decision: vergil-project/.github#209).
+  writes a `conan.lock` (`conan lock create`) that pins the graph for the Debug
+  builds.
+- The AUDIT stage runs **`conan audit scan .`**, which scans the resolved
+  dependency graph against ConanCenter's advisory database for known CVEs, then
+  `conan graph info . --format=json` to surface dependency licenses (best-effort
+  in v1 — there is no turnkey Conan allowlist gate yet). `conan audit` reads a
+  ConanCenter provider token from the environment; a consuming repo must supply
+  it once (see [ConanCenter Audit Token](#conancenter-audit-token) below).
+
+An earlier iteration briefly switched AUDIT to **OSV-Scanner** over the
+`conan.lock`, but that was **reverted**: OSV.dev carries no ConanCenter package
+data, so the scan reported a false all-clear — it never had the CVE data to find
+anything. `conan audit scan .` is the shipped v1 auditor (decision reversal:
+vergil-project/.github#209).
 
 vergil-tooling passes **intent** to the project's `CMakeLists.txt` as CMake
 cache variables rather than raw compiler flags, so every validation command
@@ -77,6 +87,38 @@ Clang-only and must never appear as a raw flag in a shared command):
 | `VERGIL_CPP_STDLIB` | the `[cpp].stdlib` value (for example, `libstdc++`) |
 | `VERGIL_CPP_COVERAGE` | `ON` selects coverage instrumentation |
 | `VERGIL_CPP_SANITIZE` | the sanitizer list (for example, `address,undefined`) |
+
+## ConanCenter Audit Token
+
+`conan audit scan .` queries ConanCenter's hosted advisory provider, which
+requires an authentication token. The command reads it from the environment
+variable **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`**. Because that variable is
+consumed **inside the dev container**, a consuming C++ repository must arrange
+for it to reach both local runs and CI. Three pieces wire it end to end:
+
+1. **Pass the token into the container.** Add the `CONAN_AUDIT_PROVIDER_TOKEN`
+   prefix to `[container].env-prefixes` in the repo's `vergil.toml`, so
+   `vrg-container-run` forwards the token into the container environment:
+
+   ```toml
+   [container]
+   env-prefixes = ["CONAN_AUDIT_PROVIDER_TOKEN"]
+   ```
+
+2. **Provide the token in CI.** Store the value as the org/CI secret
+   **`CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`** so it is present in the
+   environment on PR CI runs.
+
+3. **Provide the token on VMs / local agents.** Point the agent identity at a
+   host file holding the bare token via the `conan_audit_token_path` key in
+   `identities.toml`. Credential injection reads that file and exports
+   `CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER` into the guest environment (the same
+   mechanism used for the Anthropic token), so agent sessions run AUDIT with the
+   token available.
+
+Without the token, `conan audit scan .` cannot reach the advisory provider and
+the AUDIT stage fails; the three pieces above are the one-time setup that makes
+a consuming C++ repo audit-ready.
 
 ## Testing: CTest Runner, GoogleTest Default
 
