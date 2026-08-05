@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.170] - 2026-08-05
+
+### Bug fixes
+
+- switch AUDIT to OSV-Scanner, fix Conan build_type + gcovr paths (#2573)
+
 ## [2.1.169] - 2026-08-04
 
 ### Bug fixes

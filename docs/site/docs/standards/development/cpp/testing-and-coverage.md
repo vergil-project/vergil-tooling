@@ -25,8 +25,14 @@ Coverage is measured with **gcovr** and enforced at **100% line coverage, bound
 per compiler (per image) — never on a single merged report**:
 
 ```bash
-gcovr --config <configs>/cpp/gcovr.cfg --fail-under-line 100
+gcovr --config <configs>/cpp/gcovr.cfg --root . --filter src/ --fail-under-line 100
 ```
+
+`--root`/`--filter` are passed on the command line, not in the packaged config
+file: gcovr resolves relative paths inside a config file against the config
+file's own directory, so anchoring them there pointed gcovr at the packaged
+config directory and filtered all coverage out. On the command line they resolve
+against the repo root (the working directory) as intended.
 
 The image supplies the correct `gcov` executable for the compiler under test —
 plain `gcov` on GCC, `llvm-cov gcov` on Clang — so each family's coverage is

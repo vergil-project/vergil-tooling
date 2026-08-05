@@ -267,6 +267,10 @@ def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
     assert "conan install" in cmd
     assert "cmake" in cmd
     assert "ctest" in cmd
+    # Conan must resolve deps in the same build_type as the CMake Debug build,
+    # or the Debug config finds no matching binary (fmt/format.h not found). (#2572)
+    assert "conan install . -s build_type=Debug --build=missing" in cmd
+    assert "-DCMAKE_BUILD_TYPE=Debug" in cmd
 
 
 # -- workspace_mount_args -----------------------------------------------------

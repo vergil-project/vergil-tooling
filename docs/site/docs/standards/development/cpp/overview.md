@@ -55,9 +55,15 @@ manager.
   `compile_commands.json` (via `CMAKE_EXPORT_COMPILE_COMMANDS=ON`). That
   compilation database is what `clang-tidy` and other static-analysis tooling
   read to see each translation unit's exact flags.
-- **Conan 2** resolves and builds dependencies (`conan install . --build=missing`).
-  Conan 2 is chosen in part for its built-in `conan audit` dependency-CVE scan,
-  which the AUDIT stage runs against the resolved dependency graph.
+- **Conan 2** resolves and builds dependencies
+  (`conan install . -s build_type=Debug --build=missing`, matching the CMake
+  Debug build so dependency binaries share the same configuration). INSTALL also
+  writes a `conan.lock` (`conan lock create`), which the AUDIT stage scans.
+- The AUDIT stage runs **OSV-Scanner** over that `conan.lock`
+  (`osv-scanner scan source --lockfile=conan.lock`) for dependency CVEs.
+  OSV-Scanner is tokenless, offline-capable, and scales with per-PR volume;
+  `conan audit` was reconsidered because its hosted provider needs a token and
+  is rate-limited (decision: vergil-project/.github#209).
 
 vergil-tooling passes **intent** to the project's `CMakeLists.txt` as CMake
 cache variables rather than raw compiler flags, so every validation command
