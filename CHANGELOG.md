@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.171] - 2026-08-05
+
+### Bug fixes
+
+- revert C++ AUDIT to conan audit + cppcheck googletest lib (#2581)
+
+### Features
+
+- inject Conan audit token into VM agent env (#2580)
+
 ## [2.1.170] - 2026-08-05
 
 ### Bug fixes
