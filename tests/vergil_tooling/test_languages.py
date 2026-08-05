@@ -309,11 +309,21 @@ def test_cpp_lint_commands() -> None:
     # cppcheck runs with --library=googletest so it parses GoogleTest's TEST()
     # macro instead of throwing a syntaxError on it — GoogleTest is the
     # documented default framework and the images ship googletest.cfg. (#2579)
+    #
+    # The enable set is *curated*, not ``--enable=all`` (#2585): it drops the
+    # unreliable ``unusedFunction`` check (a systematic false positive on
+    # GoogleTest's static-registered ``TEST()`` functions — cppcheck cannot see
+    # cross-TU usage) plus the noisy ``information``/``missingInclude``. The
+    # build tree is excluded with ``-i build -i build-sanitize`` so cppcheck
+    # never walks CMake's compiler-probe file and trips ``toomanyconfigs``.
     assert any(
         "cppcheck" in c
-        and "--enable=all" in c
+        and "--enable=warning,style,performance,portability" in c
+        and "--enable=all" not in c
         and "--error-exitcode=1" in c
         and "--library=googletest" in c
+        and "-i build " in c
+        and "-i build-sanitize " in c
         for c in joined
     )
 
