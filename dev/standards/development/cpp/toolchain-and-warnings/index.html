@@ -11319,6 +11319,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Relationship to the Static-Analysis Stage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cppchecks-curated-enable-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cppcheck's curated enable set
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -12746,6 +12763,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Relationship to the Static-Analysis Stage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cppchecks-curated-enable-set" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cppcheck's curated enable set
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -12894,6 +12928,34 @@ acknowledged narrowly and visibly, never blanketed away.</p>
 and <code>cppcheck</code> once on the primary Clang image. TYPECHECK is the compiler's own
 judgment under both families; LINT is dedicated static analysis. Both gate a
 change; neither substitutes for the other.</p>
+<h3 id="cppchecks-curated-enable-set">cppcheck's curated enable set<a class="headerlink" href="#cppchecks-curated-enable-set" title="Permanent link">&para;</a></h3>
+<p><code>cppcheck</code> runs with a <strong>curated</strong> enable set rather than <code>--enable=all</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>--enable=warning,style,performance,portability
+</code></pre></div>
+<p>This deliberately drops three of <code>all</code>'s checks:</p>
+<ul>
+<li><strong><code>unusedFunction</code></strong> — an <em>unreliable</em> check for GoogleTest code. <code>cppcheck</code>
+  analyses one translation unit at a time and cannot see the
+  static-registration machinery behind the <code>TEST()</code> macro, so it reports every
+  test function as dead code. The finding is a systematic false positive, not a
+  real one.</li>
+<li><strong><code>information</code> / <code>missingInclude</code></strong> — diagnostics about <code>cppcheck</code>'s own
+  analysis coverage, not about the code. They add noise without gating quality.</li>
+</ul>
+<p>Dropping <code>unusedFunction</code> is <strong>tool-tuning of a check that emits systematic
+false positives — not a suppression</strong>. It honours the
+<a href="#no-standing-suppression-list">No Standing Suppression List</a> rule exactly: no
+real finding is silenced, and no standing suppression-list entry is added. The
+distinction is deliberate. A suppression mutes a <em>true</em> warning about the code;
+here the check itself is wrong for this codebase's idioms, so the correct fix is
+to stop running the broken check, not to catalogue the findings it fabricates.
+The narrow, local suppression escape hatch (<code>--inline-suppr</code> plus the packaged
+<code>cppcheck-suppressions.txt</code>) still exists for a genuine, unavoidable finding.</p>
+<p><code>cppcheck</code> also excludes the CMake build tree with <code>-i build -i build-sanitize</code>.
+Left to walk <code>.</code> unfiltered it descends into the compiler-probe file CMake
+generates under <code>build/</code> (<code>CMakeCXXCompilerId.cpp</code>) and trips <code>toomanyconfigs</code> —
+a build artifact, never source. This mirrors the build-dir prune the
+<code>clang-format</code> find driver already applies.</p>
 
 
 
