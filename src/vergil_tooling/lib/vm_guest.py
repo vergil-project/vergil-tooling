@@ -105,6 +105,9 @@ def inject_credentials(transport: Transport, identity: Identity) -> None:
     if identity.claude_token_path:
         _inject_claude_token(transport, identity.claude_token_path)
 
+    if identity.conan_audit_token_path:
+        _inject_conan_token(transport, identity.conan_audit_token_path)
+
 
 _BASHRC_MODE_LINE = (
     "[ -f ~/.config/vergil/identity-mode ]"
@@ -167,6 +170,38 @@ def _inject_claude_token(transport: Transport, token_path: str) -> None:
         "cat > ~/.claude.json",
         onboarding + "\n",
     )
+
+
+_BASHRC_CONAN_SOURCE_LINE = "[ -f ~/.config/vergil/conan.env ] && . ~/.config/vergil/conan.env"
+
+
+def _inject_conan_token(transport: Transport, token_path: str) -> None:
+    """Inject the Conan audit provider token as an env file sourced from bashrc.
+
+    Mirrors ``_inject_claude_token``: read the bare token from the host file,
+    write ``export CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER=<token>`` into
+    ``~/.config/vergil/conan.env`` (peer to ``claude.env``), and add an
+    idempotent ``~/.bashrc`` source line so interactive shells pick it up. The
+    token value is shell-quoted so any special characters survive the export.
+    """
+    path = Path(token_path).expanduser()
+    if not path.exists():
+        print(f"ERROR: Conan audit token not found: {path}", file=sys.stderr)
+        raise SystemExit(1)
+
+    token = path.read_text().strip()
+
+    print("  Injecting Conan audit token...")
+    transport.pipe(
+        "cat > ~/.config/vergil/conan.env && chmod 600 ~/.config/vergil/conan.env",
+        f"export CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER={shlex.quote(token)}\n",
+    )
+
+    source_cmd = (
+        f'grep -qF "conan.env" ~/.bashrc 2>/dev/null'
+        f" || echo '{_BASHRC_CONAN_SOURCE_LINE}' >> ~/.bashrc"
+    )
+    transport.run("bash", "-c", source_cmd)
 
 
 def get_tooling_version(transport: Transport) -> str | None:

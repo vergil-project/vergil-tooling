@@ -2357,7 +2357,7 @@ def _session_inner(
     archive_days: int,
 ) -> str:
     """Build the in-VM command: a raw override, or the session resolver."""
-    source = ". ~/.config/vergil/claude.env 2>/dev/null;"
+    source = ". ~/.config/vergil/claude.env 2>/dev/null; . ~/.config/vergil/conan.env 2>/dev/null;"
 
     override = list(args.cmd)
     if override and override[0] == "--":

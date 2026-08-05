@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
@@ -150,6 +151,96 @@ class TestInjectCredentials:
             app_id="12345",
             private_key_path=str(key_file),
             claude_token_path=bad_path,
+        )
+        with pytest.raises(SystemExit):
+            inject_credentials(_transport(), identity)
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_injects_conan_token(self, _mock_id: MagicMock, tmp_path: Path) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        token_file = tmp_path / "conan-audit-token"
+        token_file.write_text("conan-token-xyz789\n")
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            mode="user",
+            app_id="12345",
+            private_key_path=str(key_file),
+            conan_audit_token_path=str(token_file),
+        )
+
+        transport = _transport()
+        inject_credentials(transport, identity)
+
+        # base 3 runs + 1 bashrc source line for conan.env
+        assert transport.run.call_count == 4
+        bashrc_call = transport.run.call_args_list[3]
+        assert "conan.env" in " ".join(str(a) for a in bashrc_call[0])
+
+        # base 3 pipes + 1 conan.env write
+        assert transport.pipe.call_count == 4
+        conan_call = transport.pipe.call_args_list[3]
+        assert "conan.env" in conan_call[0][0]
+        assert "chmod 600" in conan_call[0][0]
+        assert "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER=conan-token-xyz789" in conan_call[0][1]
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_conan_token_value_is_shell_quoted(self, _mock_id: MagicMock, tmp_path: Path) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        token_file = tmp_path / "conan-audit-token"
+        token_file.write_text("tok en$with;special\n")
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            mode="user",
+            app_id="12345",
+            private_key_path=str(key_file),
+            conan_audit_token_path=str(token_file),
+        )
+
+        transport = _transport()
+        inject_credentials(transport, identity)
+
+        conan_call = transport.pipe.call_args_list[3]
+        quoted = shlex.quote("tok en$with;special")
+        assert conan_call[0][1] == f"export CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER={quoted}\n"
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_skips_conan_token_when_not_configured(
+        self, _mock_id: MagicMock, tmp_path: Path
+    ) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            mode="user",
+            app_id="12345",
+            private_key_path=str(key_file),
+        )
+
+        transport = _transport()
+        inject_credentials(transport, identity)
+
+        assert transport.run.call_count == 3
+        assert transport.pipe.call_count == 3
+        for call in transport.pipe.call_args_list:
+            assert "conan.env" not in call[0][0]
+
+    @patch("vergil_tooling.lib.vm_guest._inject_host_git_identity")
+    def test_exits_if_conan_token_missing(self, _mock_id: MagicMock, tmp_path: Path) -> None:
+        key_file = tmp_path / "app.pem"
+        key_file.write_text("-----BEGIN RSA PRIVATE KEY-----\nfakekey\n")
+        bad_path = "/nonexistent/conan-audit-token"  # noqa: S105
+
+        identity = Identity(
+            vm_instance="vergil-agent",
+            mode="user",
+            app_id="12345",
+            private_key_path=str(key_file),
+            conan_audit_token_path=bad_path,
         )
         with pytest.raises(SystemExit):
             inject_credentials(_transport(), identity)

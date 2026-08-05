@@ -2356,6 +2356,17 @@ def test_session_inner_fresh_flag() -> None:
     assert "--fresh" in inner
 
 
+def test_session_inner_sources_conan_env() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
+    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    assert "conan.env" in inner
+    assert "claude.env" in inner
+
+
 def test_session_inner_resume_name() -> None:
     import argparse
 
