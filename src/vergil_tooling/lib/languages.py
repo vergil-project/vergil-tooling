@@ -376,8 +376,8 @@ _REGISTRY: dict[str, Language] = {
     "cpp": Language(
         name="cpp",
         checks={
-            # ``conan lock create`` resolves the dependency graph and writes the
-            # ``conan.lock`` that AUDIT (OSV-Scanner) scans; ``conan install``
+            # ``conan lock create`` resolves the dependency graph and writes a
+            # ``conan.lock`` that pins it for the Debug builds; ``conan install``
             # then materializes the binaries. Both pin ``build_type=Debug`` so
             # Conan builds deps in the *same* configuration as the CMake
             # coverage/sanitizer builds — the container image only bakes a
@@ -428,6 +428,10 @@ _REGISTRY: dict[str, Language] = {
                     "--error-exitcode=1",
                     "--inline-suppr",
                     "--std={std}",
+                    # GoogleTest is the documented default framework; without its
+                    # library config cppcheck throws a syntaxError on the TEST()
+                    # macro (T11 #2558). The images ship googletest.cfg. (#2579)
+                    "--library=googletest",
                     "--suppressions-list={configs}/cpp/cppcheck-suppressions.txt",
                     ".",
                 ],
@@ -500,18 +504,18 @@ _REGISTRY: dict[str, Language] = {
                 ["cmake", "--build", _CPP_SANITIZE_BUILD_DIR, "--parallel"],
                 ["ctest", "--test-dir", _CPP_SANITIZE_BUILD_DIR, "--output-on-failure"],
             ],
-            # AUDIT runs *once* (§3.6). OSV-Scanner scans the ``conan.lock``
-            # produced in INSTALL for CVEs. This replaces ``conan audit``, whose
-            # SaaS provider (audit.conan.io) needs a JFrog token and is
-            # rate-limited — a throughput bottleneck under AI-speed per-PR
-            # scanning. OSV-Scanner is tokenless, offline-capable, and natively
-            # parses ``conan.lock``, so it scales with PR velocity (decision:
-            # vergil-project/.github#209; T11 finding #2558; tool added to the
-            # images image-side in #487). License checking stays best-effort
-            # surfacing in v1 (no turnkey Conan allowlist gate); hardened gating
-            # against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
+            # AUDIT runs *once* (§3.6). ``conan audit`` scans the dependency
+            # graph against ConanCenter's advisory database, reading its provider
+            # token from ``CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER`` in the env.
+            # This *reverts* the #2572 switch to OSV-Scanner: T11 (#2558) proved
+            # OSV.dev carries no ConanCenter package data, so ``osv-scanner`` over
+            # ``conan.lock`` reported a false all-clear — it never had the CVE
+            # data to find anything. The decision was reversed on
+            # vergil-project/.github#209 (#2579). License checking stays
+            # best-effort surfacing in v1 (no turnkey Conan allowlist gate);
+            # hardened gating against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
             CheckKind.AUDIT: [
-                ["osv-scanner", "scan", "source", "--lockfile=conan.lock"],
+                ["conan", "audit", "scan", "."],
                 ["conan", "graph", "info", ".", "--format=json"],
             ],
         },
