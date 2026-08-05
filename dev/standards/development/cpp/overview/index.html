@@ -11313,6 +11313,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#conancenter-audit-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ConanCenter Audit Token
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#testing-ctest-runner-googletest-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12790,6 +12801,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#conancenter-audit-token" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ConanCenter Audit Token
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#testing-ctest-runner-googletest-default" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12873,10 +12895,12 @@ never built from source</strong>. Building a compiler from source in the validat
 path is slow, non-reproducible, and a supply-chain liability; the dev images
 pin prebuilt stable releases instead.</p>
 <p>The target is <strong>two recent majors per family</strong>, taken from whatever is cleanly
-available prebuilt. When the newest majors lack prebuilt binaries, the fallback
-steps back a release while keeping both families present (for example,
-gcc-13/14 and clang-18/19 rather than dropping a compiler). The matrix bends to
-availability; it never drops to one compiler.</p>
+available prebuilt. The shipped v1 matrix is <strong>Clang 20 (primary) and Clang 19</strong>
+plus <strong>GCC 14 (primary) and GCC 13</strong>. GCC illustrates the availability rule: the
+spec's target pair was gcc-15/14, but gcc-15 is not cleanly prebuilt for the
+image base (Debian trixie), so the matrix steps back one release to gcc-13/14
+rather than dropping a compiler. The matrix bends to availability; it never
+drops to one compiler.</p>
 <h2 id="build-system-and-dependency-management">Build System and Dependency Management<a class="headerlink" href="#build-system-and-dependency-management" title="Permanent link">&para;</a></h2>
 <p>The mandated build system is <strong>CMake</strong>, with <strong>Conan 2</strong> as the dependency
 manager.</p>
@@ -12888,13 +12912,20 @@ manager.</p>
 <li><strong>Conan 2</strong> resolves and builds dependencies
   (<code>conan install . -s build_type=Debug --build=missing</code>, matching the CMake
   Debug build so dependency binaries share the same configuration). INSTALL also
-  writes a <code>conan.lock</code> (<code>conan lock create</code>), which the AUDIT stage scans.</li>
-<li>The AUDIT stage runs <strong>OSV-Scanner</strong> over that <code>conan.lock</code>
-  (<code>osv-scanner scan source --lockfile=conan.lock</code>) for dependency CVEs.
-  OSV-Scanner is tokenless, offline-capable, and scales with per-PR volume;
-  <code>conan audit</code> was reconsidered because its hosted provider needs a token and
-  is rate-limited (decision: vergil-project/.github#209).</li>
+  writes a <code>conan.lock</code> (<code>conan lock create</code>) that pins the graph for the Debug
+  builds.</li>
+<li>The AUDIT stage runs <strong><code>conan audit scan .</code></strong>, which scans the resolved
+  dependency graph against ConanCenter's advisory database for known CVEs, then
+  <code>conan graph info . --format=json</code> to surface dependency licenses (best-effort
+  in v1 — there is no turnkey Conan allowlist gate yet). <code>conan audit</code> reads a
+  ConanCenter provider token from the environment; a consuming repo must supply
+  it once (see <a href="#conancenter-audit-token">ConanCenter Audit Token</a> below).</li>
 </ul>
+<p>An earlier iteration briefly switched AUDIT to <strong>OSV-Scanner</strong> over the
+<code>conan.lock</code>, but that was <strong>reverted</strong>: OSV.dev carries no ConanCenter package
+data, so the scan reported a false all-clear — it never had the CVE data to find
+anything. <code>conan audit scan .</code> is the shipped v1 auditor (decision reversal:
+vergil-project/.github#209).</p>
 <p>vergil-tooling passes <strong>intent</strong> to the project's <code>CMakeLists.txt</code> as CMake
 cache variables rather than raw compiler flags, so every validation command
 stays portable across both compiler families. The project's <code>CMakeLists.txt</code>
@@ -12926,6 +12957,38 @@ Clang-only and must never appear as a raw flag in a shared command):</p>
 </tr>
 </tbody>
 </table>
+<h2 id="conancenter-audit-token">ConanCenter Audit Token<a class="headerlink" href="#conancenter-audit-token" title="Permanent link">&para;</a></h2>
+<p><code>conan audit scan .</code> queries ConanCenter's hosted advisory provider, which
+requires an authentication token. The command reads it from the environment
+variable <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong>. Because that variable is
+consumed <strong>inside the dev container</strong>, a consuming C++ repository must arrange
+for it to reach both local runs and CI. Three pieces wire it end to end:</p>
+<ol>
+<li><strong>Pass the token into the container.</strong> Add the <code>CONAN_AUDIT_PROVIDER_TOKEN</code>
+   prefix to <code>[container].env-prefixes</code> in the repo's <code>vergil.toml</code>, so
+   <code>vrg-container-run</code> forwards the token into the container environment:</li>
+</ol>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;CONAN_AUDIT_PROVIDER_TOKEN&quot;</span><span class="p">]</span>
+</code></pre></div>
+<ol>
+<li>
+<p><strong>Provide the token in CI.</strong> Store the value as the org/CI secret
+   <strong><code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code></strong> so it is present in the
+   environment on PR CI runs.</p>
+</li>
+<li>
+<p><strong>Provide the token on VMs / local agents.</strong> Point the agent identity at a
+   host file holding the bare token via the <code>conan_audit_token_path</code> key in
+   <code>identities.toml</code>. Credential injection reads that file and exports
+   <code>CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER</code> into the guest environment (the same
+   mechanism used for the Anthropic token), so agent sessions run AUDIT with the
+   token available.</p>
+</li>
+</ol>
+<p>Without the token, <code>conan audit scan .</code> cannot reach the advisory provider and
+the AUDIT stage fails; the three pieces above are the one-time setup that makes
+a consuming C++ repo audit-ready.</p>
 <h2 id="testing-ctest-runner-googletest-default">Testing: CTest Runner, GoogleTest Default<a class="headerlink" href="#testing-ctest-runner-googletest-default" title="Permanent link">&para;</a></h2>
 <p><strong>CTest is the mandated test runner.</strong> Every C++ repository exposes its tests
 through CTest, and the validation pipeline invokes them with
