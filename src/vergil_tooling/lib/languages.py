@@ -376,8 +376,17 @@ _REGISTRY: dict[str, Language] = {
     "cpp": Language(
         name="cpp",
         checks={
+            # ``conan lock create`` resolves the dependency graph and writes the
+            # ``conan.lock`` that AUDIT (OSV-Scanner) scans; ``conan install``
+            # then materializes the binaries. Both pin ``build_type=Debug`` so
+            # Conan builds deps in the *same* configuration as the CMake
+            # coverage/sanitizer builds — the container image only bakes a
+            # default profile (build_type=Release), and that mismatch broke the
+            # T11 cold rebuild (#2558): ``fmt/format.h`` not found because the
+            # Debug config had no matching Conan binary. (#2572, image side #487)
             CheckKind.INSTALL: [
-                ["conan", "install", ".", "--build=missing"],
+                ["conan", "lock", "create", ".", "-s", "build_type=Debug"],
+                ["conan", "install", ".", "-s", "build_type=Debug", "--build=missing"],
                 [
                     "cmake",
                     "-S",
@@ -460,7 +469,23 @@ _REGISTRY: dict[str, Language] = {
                 ],
                 ["cmake", "--build", _CPP_BUILD_DIR, "--parallel"],
                 ["ctest", "--test-dir", _CPP_BUILD_DIR, "--output-on-failure"],
-                ["gcovr", "--config", "{configs}/cpp/gcovr.cfg", "--fail-under-line", "100"],
+                # ``--root``/``--filter`` are on the command line so they resolve
+                # against the repo root (cwd), not the packaged config file's own
+                # directory. A config-relative ``root``/``filter`` pointed gcovr
+                # at ``{configs}/cpp/`` and filtered *all* coverage out in T11
+                # (#2558); the config file now carries only path-independent
+                # settings. (#2572)
+                [
+                    "gcovr",
+                    "--config",
+                    "{configs}/cpp/gcovr.cfg",
+                    "--root",
+                    ".",
+                    "--filter",
+                    "src/",
+                    "--fail-under-line",
+                    "100",
+                ],
                 [
                     "cmake",
                     "-S",
@@ -475,15 +500,18 @@ _REGISTRY: dict[str, Language] = {
                 ["cmake", "--build", _CPP_SANITIZE_BUILD_DIR, "--parallel"],
                 ["ctest", "--test-dir", _CPP_SANITIZE_BUILD_DIR, "--output-on-failure"],
             ],
-            # AUDIT runs *once* (§3.6). ``conan audit`` scans the dependency
-            # graph for CVEs; its provider/token setup is verified live in T11
-            # (spec §4 acceptance), and if it cannot be shown to *detect* a
-            # known-vulnerable pin the objective trigger is to switch to the
-            # OSV-Scanner-over-``conan.lock`` contingency. License checking is
-            # best-effort surfacing in v1 (no turnkey Conan allowlist gate);
-            # hardened gating against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
+            # AUDIT runs *once* (§3.6). OSV-Scanner scans the ``conan.lock``
+            # produced in INSTALL for CVEs. This replaces ``conan audit``, whose
+            # SaaS provider (audit.conan.io) needs a JFrog token and is
+            # rate-limited — a throughput bottleneck under AI-speed per-PR
+            # scanning. OSV-Scanner is tokenless, offline-capable, and natively
+            # parses ``conan.lock``, so it scales with PR velocity (decision:
+            # vergil-project/.github#209; T11 finding #2558; tool added to the
+            # images image-side in #487). License checking stays best-effort
+            # surfacing in v1 (no turnkey Conan allowlist gate); hardened gating
+            # against ``_CPP_LICENSES_ALLOWLIST`` is ledger #7.
             CheckKind.AUDIT: [
-                ["conan", "audit", "scan", "."],
+                ["osv-scanner", "scan", "source", "--lockfile=conan.lock"],
                 ["conan", "graph", "info", ".", "--format=json"],
             ],
         },

@@ -282,7 +282,16 @@ def test_cpp_is_supported() -> None:
 
 def test_cpp_install_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.INSTALL))
-    assert "conan install . --build=missing" in joined
+    # A conan.lock is produced so AUDIT (OSV-Scanner) has a lockfile to scan.
+    assert any("conan lock create" in c for c in joined)
+    # Conan resolves deps in the same build_type (Debug) as the CMake
+    # coverage/sanitizer builds — a Release/Debug mismatch broke the cold
+    # rebuild in T11 (#2558): fmt/format.h not found. (#2572)
+    assert "conan install . -s build_type=Debug --build=missing" in joined
+    # Both conan steps pin build_type=Debug to stay consistent with the build.
+    for cmd in language_commands("cpp", CheckKind.INSTALL):
+        if cmd and cmd[0] == "conan":
+            assert "build_type=Debug" in cmd
     # cmake configure exports the compile DB that feeds clang-tidy and threads
     # the [cpp] std/stdlib in as cache vars.
     cmake_cmd = [c for c in language_commands("cpp", CheckKind.INSTALL) if c[0] == "cmake"]
@@ -357,8 +366,17 @@ def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
     joined = _joined(cmds)
     # CTest as the framework-agnostic runner.
     assert any(c.startswith("ctest") and "--output-on-failure" in c for c in joined)
-    # Coverage held to 100% line via gcovr.
-    assert any("gcovr" in c and "--fail-under-line 100" in c for c in joined)
+    # Coverage held to 100% line via gcovr. The root/filter that anchor the
+    # search live on the command line so they resolve against the repo root
+    # (cwd), not the packaged config's own dir — a config-relative root/filter
+    # filtered all coverage out in T11 (#2558). (#2572)
+    assert any(
+        "gcovr" in c
+        and "--fail-under-line 100" in c
+        and "--root ." in c
+        and "--filter src/" in c
+        for c in joined
+    )
     # A separate ASan+UBSan build+run in its own build dir.
     assert any("-DVERGIL_CPP_SANITIZE=address,undefined" in c for c in joined)
     assert any("cmake --build build-sanitize" in c for c in joined)
@@ -367,8 +385,11 @@ def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
 
 def test_cpp_audit_commands() -> None:
     joined = _joined(language_commands("cpp", CheckKind.AUDIT))
-    # conan audit is the CVE scan (provider verified live in T11, spec §4).
-    assert any("conan audit" in c for c in joined)
+    # OSV-Scanner over conan.lock is the CVE scan — tokenless and scalable,
+    # replacing conan audit (SaaS token, rate-limited). Decision: #209. (#2572)
+    assert "osv-scanner scan source --lockfile=conan.lock" in joined
+    # conan audit is retired here.
+    assert not any("conan audit" in c for c in joined)
     # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
     assert any("conan graph info" in c for c in joined)
 

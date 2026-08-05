@@ -36,7 +36,9 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "rust": "cargo test",
     "java": "./mvnw verify",
     "cpp": (
-        "conan install . --build=missing "
+        # -s build_type=Debug keeps Conan's dep binaries in the same config as
+        # the CMake Debug build below (else: fmt/format.h not found). (#2572)
+        "conan install . -s build_type=Debug --build=missing "
         "&& cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug "
         "&& cmake --build build --parallel "
         "&& ctest --test-dir build --output-on-failure"
