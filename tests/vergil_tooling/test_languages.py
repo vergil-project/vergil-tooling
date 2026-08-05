@@ -371,10 +371,7 @@ def test_cpp_test_commands_coverage_ctest_and_sanitizers() -> None:
     # (cwd), not the packaged config's own dir — a config-relative root/filter
     # filtered all coverage out in T11 (#2558). (#2572)
     assert any(
-        "gcovr" in c
-        and "--fail-under-line 100" in c
-        and "--root ." in c
-        and "--filter src/" in c
+        "gcovr" in c and "--fail-under-line 100" in c and "--root ." in c and "--filter src/" in c
         for c in joined
     )
     # A separate ASan+UBSan build+run in its own build dir.
