@@ -55,9 +55,12 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
     directory exists, then copies — file-by-file over ``transport.pipe`` — every
     file under the host ``memory/`` directory (including ``MEMORY.md``) to the
     matching guest path under ``~/.claude/projects/<slug>/memory/`` and the global
-    ``~/.claude/CLAUDE.md``. Each pipe clears any prior read-only lock
-    (``chmod u+w`` before ``cat >``) so a re-projection can overwrite a locked
-    cache. If the host has no memory directory for this repo yet, the guest memory
+    ``~/.claude/CLAUDE.md``. Before the copy the whole guest memory subtree is
+    reopened for writing (``chmod -R u+w``) so a re-projection can both overwrite
+    existing files *and* create new ones into a directory a prior
+    ``lock_projection`` froze read-only (issue #2591); each pipe additionally
+    clears the per-file lock (``chmod u+w`` before ``cat >``). If the host has no
+    memory directory for this repo yet, the guest memory
     directory is still created and the memory copy is skipped (not an error — a
     repo may have no memory yet); the global ``CLAUDE.md`` is projected regardless.
 
@@ -84,7 +87,20 @@ def project_memory(transport: Transport, *, claude_dir: Path, host_workdir: str)
         dest = f"{guest_memory_dir}/{rel}"
         guest_dirs.add(dest.rsplit("/", 1)[0])
         copies.append((dest, src))
-    transport.run("bash", "-c", f"mkdir -p {' '.join(sorted(guest_dirs))}")
+    # Reopen the whole memory subtree for writing *before* the copy so a *new*
+    # memory file can be created into a previously-locked projection (issue #2591).
+    # A prior ``lock_projection`` froze the directory itself read-only
+    # (``chmod -R a-w``), and that lock survives a VM rebuild on a persistent guest
+    # disk; the per-file ``chmod u+w`` below only reopens files that *already*
+    # exist, so without this the first host-added-since-last-projection file dies
+    # with EACCES (``cat >`` cannot create it in a ``dr-xr-xr-x`` dir). ``chmod``
+    # runs after ``mkdir`` so the target always exists; on a first projection the
+    # freshly-created dir is already writable and the ``chmod`` is a harmless no-op.
+    transport.run(
+        "bash",
+        "-c",
+        f"mkdir -p {' '.join(sorted(guest_dirs))} && chmod -R u+w {guest_memory_dir}",
+    )
 
     for dest, src in copies:
         transport.pipe(f"chmod u+w {dest} 2>/dev/null; cat > {dest}", src.read_text())
