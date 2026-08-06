@@ -293,6 +293,20 @@ repository.
 :   Base: `golang:<v>`. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.
 
+**`dev-cpp-clang`** (19, 20)
+:   Base: `debian:trixie-slim` + `apt.llvm.org`. Includes clang,
+    clang-tidy, clang-format, lld, llvm (`llvm-cov`), the sanitizer
+    runtime, CMake, Conan 2, cppcheck, and gcovr.
+
+**`dev-cpp-gcc`** (13, 14)
+:   Base: `debian:trixie-slim`. Includes g++, gcov, CMake, Conan 2,
+    cppcheck, and gcovr.
+
+C++ is the one language with a compiler-family axis: it ships **two**
+image families (`dev-cpp-clang` / `dev-cpp-gcc`, and matching `prod-`
+images) so TYPECHECK and TEST run per compiler and per version. The
+family rides the `[ci].versions` tag prefix (`clang-20`, `gcc-14`).
+
 ### Building locally
 
 ```bash

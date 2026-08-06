@@ -25,7 +25,7 @@ The following attributes must be present and non-empty:
 | `branching_model` | `library-release`, `application-promotion` |
 | `release_model` | `tagged-release`, `continuous-deploy` |
 | `supported_release_lines` | `1`, `2` |
-| `primary_language` | `python`, `go`, `java`, `shell` |
+| `primary_language` | `python`, `go`, `java`, `rust`, `ruby`, `cpp`, `shell` |
 
 ## Validation Rules
 
