@@ -55,7 +55,11 @@ from vergil_tooling.lib import (
 )
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
 from vergil_tooling.lib.container import detect_language
-from vergil_tooling.lib.container_cache import clean_branch_images, provision_dev_image
+from vergil_tooling.lib.container_cache import (
+    clean_branch_images,
+    provision_dev_image,
+    prune_orphan_branch_images,
+)
 from vergil_tooling.lib.pr_workflow import batch, github_transport
 from vergil_tooling.lib.progress import Stage
 from vergil_tooling.lib.repo_init import prompt_choice
@@ -307,6 +311,24 @@ def _prune_orphan_relay_refs(*, dry_run: bool) -> None:
             continue
         print(f"  Deleting orphaned relay ref for {branch} (branch no longer exists)")
         github_transport.GitHubTransport(branch).delete()
+
+
+def _prune_orphan_branch_images(*, dry_run: bool) -> None:
+    """Prune cached dev images whose branch no longer exists locally (issue #2600).
+
+    The per-branch cleanup already prunes the finalized branch's cached image
+    (``clean_branch_images``). This is the swept safety net for the branch that
+    was never finalized — abandoned, or its PR closed out of band — whose
+    ~1.3–2G cached image would otherwise linger and fill the VM disk. Mirrors
+    ``_prune_orphan_relay_refs``: keep images for still-live local branches,
+    remove the rest.
+    """
+    if dry_run:
+        print("  [dry-run] prune orphaned cached dev images")
+        return
+    removed = prune_orphan_branch_images(git.local_branches())
+    if removed:
+        print(f"  Pruned {removed} orphaned cached container image(s)")
 
 
 def _delete_branch_and_worktree(
@@ -778,6 +800,9 @@ def _stage_cleanup(ctx: FinalizeContext) -> None:
 
     print("Checking for orphaned pr-workflow relay refs...")
     _prune_orphan_relay_refs(dry_run=args.dry_run)
+
+    print("Checking for orphaned cached dev images...")
+    _prune_orphan_branch_images(dry_run=args.dry_run)
 
     print("Pruning stale remote-tracking references...")
     if args.dry_run:

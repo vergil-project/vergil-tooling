@@ -172,6 +172,19 @@ def commits_ahead(base: str, branch: str) -> int:
     return int(read_output("rev-list", "--count", f"{base}..{branch}"))
 
 
+def local_branches() -> set[str]:
+    """Return the short names of all local branches.
+
+    Used to tell whether a cached per-branch dev image is orphaned: an image is a
+    local artifact of a local branch, so a branch absent here has no live work
+    referencing its image (#2600).
+    """
+    output = read_output("branch", "--format=%(refname:short)")
+    if not output:
+        return set()
+    return set(output.splitlines())
+
+
 def remote_branches(remote: str = "origin") -> set[str]:
     """Return the branch names present on *remote* (via ``ls-remote --heads``).
 

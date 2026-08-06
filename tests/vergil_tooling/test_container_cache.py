@@ -19,6 +19,7 @@ from vergil_tooling.lib.container_cache import (
     ensure_cached_image,
     find_cached_image,
     provision_dev_image,
+    prune_orphan_branch_images,
     resolve_base_digest,
 )
 
@@ -377,6 +378,65 @@ def test_clean_branch_images_docker_error() -> None:
     mock_result = MagicMock(returncode=1, stdout="")
     with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
         assert clean_branch_images("feature/42", runtime="docker") == 0
+
+
+# -- prune_orphan_branch_images -----------------------------------------------
+
+
+def test_prune_orphan_branch_images_removes_only_orphans() -> None:
+    images = (
+        "ghcr.io/r/dev-python:3.14--develop--aaaa1111\n"  # live
+        "ghcr.io/r/dev-python:3.14--feature-300-live--bbbb2222\n"  # live
+        "ghcr.io/r/dev-python:3.14--feature-42-gone--cccc3333\n"  # orphan
+        "ghcr.io/r/dev-go:1.26--feature-9-abandoned--dddd4444\n"  # orphan
+        "ghcr.io/r/dev-python:3.14\n"  # plain base image — never touched
+    )
+    removed_lines: list[str] = []
+
+    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        if len(cmd) >= 2 and cmd[1] == "rmi":
+            removed_lines.append(cmd[2])
+            return MagicMock(returncode=0, stdout="")
+        return MagicMock(returncode=0, stdout=images)
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
+        removed = prune_orphan_branch_images(["develop", "feature/300-live"], runtime="docker")
+
+    assert removed == 2
+    assert removed_lines == [
+        "ghcr.io/r/dev-python:3.14--feature-42-gone--cccc3333",
+        "ghcr.io/r/dev-go:1.26--feature-9-abandoned--dddd4444",
+    ]
+
+
+def test_prune_orphan_branch_images_keeps_all_when_all_live() -> None:
+    images = "ghcr.io/r/dev-python:3.14--develop--aaaa1111\n"
+
+    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        assert not (len(cmd) >= 2 and cmd[1] == "rmi"), "no image should be removed"
+        return MagicMock(returncode=0, stdout=images)
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
+        assert prune_orphan_branch_images(["develop"], runtime="docker") == 0
+
+
+def test_prune_orphan_branch_images_no_live_branches_removes_all_cached() -> None:
+    images = (
+        "ghcr.io/r/dev-python:3.14--feature-1-x--aaaa1111\n"
+        "ghcr.io/r/dev-python:3.14\n"  # base — no `--`, untouched
+    )
+
+    def capture_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        return MagicMock(returncode=0, stdout=images)
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=capture_run):
+        assert prune_orphan_branch_images([], runtime="docker") == 1
+
+
+def test_prune_orphan_branch_images_docker_error() -> None:
+    mock_result = MagicMock(returncode=1, stdout="")
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=mock_result):
+        assert prune_orphan_branch_images(["develop"], runtime="docker") == 0
 
 
 # -- _build_cached_image ------------------------------------------------------

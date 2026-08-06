@@ -19,6 +19,7 @@ from vergil_tooling.lib.container import (
 from vergil_tooling.lib.languages import CheckKind, language_commands
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 _SELF_PROJECT_NAME = "vergil-tooling"
@@ -403,4 +404,46 @@ def clean_branch_images(branch: str, *, runtime: str = "") -> int:
                 capture_output=True,
             )
             removed += 1
+    return removed
+
+
+def prune_orphan_branch_images(live_branches: Iterable[str], *, runtime: str = "") -> int:
+    """Remove cached per-branch images whose branch is no longer live.
+
+    ``clean_branch_images`` prunes only the branch handed to it — the one being
+    finalized. A branch that is never finalized (abandoned, or its PR closed out
+    of band) leaves its ~1.3–2G cached image behind to accumulate and fill the
+    disk (issue #2600). This is the swept safety net, the image analogue of
+    ``vrg_finalize_pr._prune_orphan_relay_refs``: any cached image whose branch
+    segment matches no entry in *live_branches* is orphaned and removed.
+
+    A cached tag is ``<base_tag>--<sanitized_branch>--<cache_hash>``; a plain base
+    tag (``3.14``, ``latest``, ``clang-20``) never contains ``--``, so ``--`` in
+    the tag distinguishes our cached images without needing to know the base repo.
+    Cached images are local artifacts of local branches, so passing the live
+    *local* branches is the correct keep signal — an orphaned image simply
+    rebuilds on demand if its branch is resumed. Returns the count removed.
+    """
+    rt = runtime or detect_runtime()
+    keep = {f"--{_sanitize_branch(b)}--" for b in live_branches}
+    result = subprocess.run(  # noqa: S603
+        [rt, "images", "--format", "{{.Repository}}:{{.Tag}}"],  # noqa: S607
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout:
+        return 0
+
+    removed = 0
+    for line in result.stdout.splitlines():
+        tag = line.rsplit(":", 1)[-1]
+        if "--" not in tag:
+            continue
+        if any(marker in tag for marker in keep):
+            continue
+        subprocess.run(  # noqa: S603
+            [rt, "rmi", line],  # noqa: S607
+            capture_output=True,
+        )
+        removed += 1
     return removed
