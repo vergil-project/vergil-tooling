@@ -73,6 +73,28 @@ def test_project_memory_mkdirs_guest_memory_dir(tmp_path: Path) -> None:
     assert f"mkdir -p ~/.claude/projects/{_SLUG}/memory" in script
 
 
+def test_project_memory_restores_dir_write_before_copy(tmp_path: Path) -> None:
+    # Regression (#2591): a prior projection locked the *directory* read-only
+    # (``lock_projection`` runs ``chmod -R a-w <memory_dir>``), and on a persistent
+    # guest disk that lock survives a VM rebuild. The re-projection restores write
+    # per *file* (``chmod u+w {dest}``) but that only reopens files that already
+    # exist — creating a *new* host-added memory file needs write on the *parent
+    # directory*, which is still ``dr-xr-xr-x``. So the setup step must reopen the
+    # whole memory subtree for writing *before* the copy loop, or the first new
+    # file aborts the cloud session with EACCES.
+    transport = MagicMock()
+    claude = tmp_path / ".claude"
+    _seed_memory(claude)
+
+    vm_memory.project_memory(transport, claude_dir=claude, host_workdir=_WORKDIR)
+
+    # The setup runs first (before any pipe) and reopens the guest memory subtree
+    # recursively so a new file can be created into a previously-locked dir.
+    setup = transport.run.call_args_list[0].args[-1]
+    assert transport.run.call_args_list[0].args[0] == "bash"
+    assert f"chmod -R u+w ~/.claude/projects/{_SLUG}/memory" in setup
+
+
 def test_project_memory_copies_nested_memory_file(tmp_path: Path) -> None:
     transport = MagicMock()
     claude = tmp_path / ".claude"
