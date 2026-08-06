@@ -1142,6 +1142,8 @@
       
         
       
+        
+      
     
     
     
@@ -1194,6 +1196,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.173/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.173
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13485,6 +13515,17 @@ repository.</p>
 <p><strong><code>dev-go</code></strong> (1.25, 1.26)
 :   Base: <code>golang:&lt;v&gt;</code>. Includes golangci-lint,
     govulncheck, go-licenses, gocyclo.</p>
+<p><strong><code>dev-cpp-clang</code></strong> (19, 20)
+:   Base: <code>debian:trixie-slim</code> + <code>apt.llvm.org</code>. Includes clang,
+    clang-tidy, clang-format, lld, llvm (<code>llvm-cov</code>), the sanitizer
+    runtime, CMake, Conan 2, cppcheck, and gcovr.</p>
+<p><strong><code>dev-cpp-gcc</code></strong> (13, 14)
+:   Base: <code>debian:trixie-slim</code>. Includes g++, gcov, CMake, Conan 2,
+    cppcheck, and gcovr.</p>
+<p>C++ is the one language with a compiler-family axis: it ships <strong>two</strong>
+image families (<code>dev-cpp-clang</code> / <code>dev-cpp-gcc</code>, and matching <code>prod-</code>
+images) so TYPECHECK and TEST run per compiler and per version. The
+family rides the <code>[ci].versions</code> tag prefix (<code>clang-20</code>, <code>gcc-14</code>).</p>
 <h3 id="building-locally">Building locally<a class="headerlink" href="#building-locally" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nb">cd</span><span class="w"> </span>../vergil-containers
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>docker/build.sh
