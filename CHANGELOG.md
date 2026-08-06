@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.173] - 2026-08-06
+
+### Bug fixes
+
+- reopen guest memory dir for writing before re-projection copy (#2592)
+
+### Documentation
+
+- correct C++ site docs to final shipped state (#2590)
+
 ## [2.1.172] - 2026-08-05
 
 ### Bug fixes
