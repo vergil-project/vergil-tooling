@@ -271,6 +271,25 @@ Jobs that remain inline keep their names unchanged:
 - `test: unit (<version>)`
 - `test: integration (<version>)`
 
+The docs-build job is a universal reusable-CI job emitted on every
+managed repo with no `if:` guard, so it always runs and surfaces the
+`docs / docs` check.
+
+### Every gate is required — there are no optional PR gates
+
+Every check that can gate a PR is configured as a **required status
+check** on the target branch; there is no tier of checks that runs but
+does not block. `docs / docs` is required alongside the tests, audit,
+release gates, and the `security-and-standards /` checks — the desired
+required-check set is complete, and it is pinned by a test so it cannot
+silently drift.
+
+`vrg-github-repo-config audit` **hard-fails on required-set drift**: if a
+repo's configured required checks diverge from the desired set, the audit
+fails rather than reporting a warning. `vrg-release` gates on that audit,
+so a repo whose required-check set has drifted cannot release until the
+set is reconciled.
+
 ## Dev container images
 
 Published to `ghcr.io/vergil-project/dev-<language>:<version>` from the
