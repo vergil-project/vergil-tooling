@@ -1469,6 +1469,32 @@ def test_submit_batch_rebases_submits_then_finalizes_each_and_releases_once() ->
     assert ("vrg-release",) in finalize_calls
 
 
+def test_submit_batch_summary_labels_by_branch_not_dir(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A worktree whose directory name is a bare slug that hides the issue number
+    # (the issue #2550 scenario). The batch summary must attribute the merge to
+    # the full branch, not the ambiguous directory name.
+    wt = Worktree(
+        path=Path("/repo/.worktrees/authz-apply-tag"), branch="feature/911-authz-apply-tag"
+    )
+    with (
+        patch(_MOD + ".worktrees.rebase_onto"),
+        patch(_MOD + ".os.chdir"),
+        patch(_MOD + ".git.main_worktree_root", return_value=Path("/repo")),
+        patch(_MOD + "._submit_one", return_value="https://x/pull/1"),
+        patch(_MOD + ".confirm", return_value=True),
+    ):
+        rc = _run_submit_batch(
+            [wt], base="develop", finalize=False, release=False, install=False, assume_yes=True
+        )
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "feature/911-authz-apply-tag" in out
+    # The bare directory slug must never appear as a standalone summary label.
+    assert "\n    authz-apply-tag\n" not in out
+
+
 def test_submit_batch_rebase_conflict_stops_batch() -> None:
     a, b = _batch_wt("issue-1-a"), _batch_wt("issue-2-b")
     with (

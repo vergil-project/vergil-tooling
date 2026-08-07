@@ -135,12 +135,21 @@ def has_staged_changes() -> bool:
 
 
 def ref_exists(ref: str) -> bool:
-    """Return True if a git ref exists."""
+    """Return True if a git ref exists.
+
+    Only the return code is consulted, so both streams are discarded: on
+    success ``git rev-parse --verify`` prints the resolved SHA to stdout
+    (``--quiet`` suppresses only the failure diagnostic), which would
+    otherwise leak to the terminal — e.g. above the ``vrg-worktree-status``
+    table when the detached/rebase path probes a ref (issue #2658).
+    """
     args = ("rev-parse", "--verify", "--quiet", ref)
     result = subprocess.run(  # noqa: S603
         ("git", *args),  # noqa: S607
         check=False,
         env=_git_env(args),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
     )
     return result.returncode == 0
 
