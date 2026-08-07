@@ -186,6 +186,37 @@ def test_reserved_name_resolves_before_transcript_or_roster(tmp_path: Path) -> N
     assert resolved.cwd == "/work/repo"  # recorded cwd stands in until registration
 
 
+def test_reservation_only_session_is_not_materialized(tmp_path: Path) -> None:
+    # #2669: a reservation-only session (claude has written no transcript) resolves
+    # by name but is reported materialized=False, so the resume path re-enters it at
+    # its id instead of `claude --resume`ing an id with no conversation.
+    claude = tmp_path / ".claude"
+    (claude / "projects").mkdir(parents=True)
+    (claude / "sessions").mkdir()
+
+    store = ScrapeStore(claude)
+    store.reserve_name("s1", "adhoc-recheck:w", "/work/repo")
+
+    resolved = store.resolve_name("adhoc-recheck:w")
+    assert resolved is not None
+    assert resolved.session_id == "s1"
+    assert resolved.materialized is False
+
+
+def test_session_with_transcript_is_materialized(tmp_path: Path) -> None:
+    # The counterpart: a session claude has written a transcript for is reported
+    # materialized=True, so the resume path uses `claude --resume <id>` (#2669).
+    claude = tmp_path / ".claude"
+    slug = claude / "projects" / "-w"
+    slug.mkdir(parents=True)
+    (claude / "sessions").mkdir()
+    _write_title(slug / "s1.jsonl", "s1", "epic-1:w")
+
+    resolved = ScrapeStore(claude).resolve_name("epic-1:w")
+    assert resolved is not None
+    assert resolved.materialized is True
+
+
 def test_reservation_and_real_transcript_dedup_to_one_row(tmp_path: Path) -> None:
     # Because the reservation is keyed by the id claude adopts (--session-id), once
     # the real transcript appears the two are the SAME row — one session, the

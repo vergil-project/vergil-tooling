@@ -41,6 +41,18 @@ class SessionInfo:
     ``name`` is ``None`` for a live-but-unnamed session (a fresh session that has
     not yet been named); such a row is enumerated but never matches a requested
     name. ``last_active`` is epoch seconds, or ``None`` when the age is unknown.
+
+    ``materialized`` is ``True`` when claude has actually written a transcript for
+    this session id — i.e. ``claude --resume <id>`` will find a conversation. It is
+    ``False`` for a **reservation-only** session: one that ``--label`` minted and
+    reserved a name for, but whose id claude has not yet persisted a conversation
+    to (a created-but-unused session, whose transcript claude writes lazily). The
+    resume path re-enters a reservation-only session *at* its id via
+    ``--session-id`` rather than ``--resume`` (#2669), so the name→id binding
+    stays stable and the resume does not fail with 'No conversation found'. It
+    defaults to ``True`` because only the scrape backend can distinguish the two,
+    and every other constructor (the host-side ``list`` view) neither knows nor
+    consults it; the authoritative value is set by :meth:`ScrapeStore.list_sessions`.
     """
 
     session_id: str
@@ -48,6 +60,7 @@ class SessionInfo:
     cwd: str
     active: bool
     last_active: float | None
+    materialized: bool = True
 
 
 class AmbiguousSessionError(Exception):
@@ -274,6 +287,16 @@ class ScrapeStore:
             transcript_cwd = res.transcript_cwd(res.projects_glob(projects, sid))
             return transcript_cwd or reserved_cwds.get(sid, "")
 
+        def _materialized(sid: str) -> bool:
+            # True iff claude has written a transcript for this id — the exact
+            # signal ``--resume`` needs (and the same one ``_sweep_reservations``
+            # calls "superseded"). A reservation-only session (``--label`` minted
+            # the id and reserved its name, but claude has not yet persisted a
+            # conversation there) has no transcript, so ``--resume`` would fail with
+            # 'No conversation found'; the resume path re-enters it at its id via
+            # ``--session-id`` instead (#2669).
+            return res.projects_glob(projects, sid).exists()
+
         return [
             SessionInfo(
                 session_id=sid,
@@ -281,6 +304,7 @@ class ScrapeStore:
                 cwd=_cwd(sid),
                 active=sid in active,
                 last_active=last_active.get(sid),
+                materialized=_materialized(sid),
             )
             for sid in [*names, *extra]
         ]
