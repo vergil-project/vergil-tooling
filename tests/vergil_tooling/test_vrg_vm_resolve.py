@@ -746,10 +746,17 @@ class _FakeStore:
         raise NotImplementedError
 
 
-def _info(sid: str, name: str | None, active: bool, last: float | None, cwd: str = "/w") -> Any:
+def _info(
+    sid: str,
+    name: str | None,
+    active: bool,
+    last: float | None,
+    cwd: str = "/w",
+    materialized: bool = True,
+) -> Any:
     from vergil_tooling.lib.session_store import SessionInfo
 
-    return SessionInfo(sid, name, cwd, active, last)
+    return SessionInfo(sid, name, cwd, active, last, materialized=materialized)
 
 
 def test_plan_resume_resolves_name_to_id() -> None:
@@ -789,6 +796,48 @@ def test_resume_by_name_execs_with_resolved_id_and_cwd(
     assert chdirs == ["/work/repo"]
     assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
     assert "Resuming session epic-1:w" in capsys.readouterr().err
+
+
+def test_resume_materialized_session_uses_resume(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A session whose transcript claude has written (materialized=True) is attached
+    # with `claude --resume <id>` — the normal path stays intact (#2669).
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0, cwd="/work/repo", materialized=True)])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    monkeypatch.setattr(os, "chdir", lambda _p: None)
+    assert _resolve("id", "w", resume_name="epic-1:w") == 0
+    assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+    assert "Resuming session epic-1:w" in capsys.readouterr().err
+
+
+def test_resume_created_but_unused_session_reenters_at_id_2669(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Regression for #2669: `--label` mints an id and reserves the name, but the
+    # session is left unused so claude never materializes a transcript. On resume
+    # the name still resolves (via the reservation) to that id, but `claude
+    # --resume <id>` would fail with 'No conversation found'. A reservation-only
+    # (materialized=False) session must instead be re-entered AT its id with
+    # `claude --session-id <id> -n <name>`, exactly as it was created — keeping the
+    # name→id binding stable and materializing the conversation on entry.
+    store = _FakeStore(
+        [_info("uuid-1", "adhoc-recheck:w", False, None, cwd="/work/repo", materialized=False)]
+    )
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    chdirs: list[str] = []
+    monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
+    assert _resolve("id", "w", resume_name="adhoc-recheck:w") == 0
+    assert chdirs == ["/work/repo"]
+    # Re-entered at the reserved id, NOT `--resume` (which would 'No conversation found').
+    assert capture_exec == [["claude", "--session-id", "uuid-1", "-n", "adhoc-recheck:w"]]
+    err = capsys.readouterr().err
+    assert "--resume" not in err
+    assert "adhoc-recheck:w" in err
 
 
 def test_no_verb_lists_and_guides(

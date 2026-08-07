@@ -440,12 +440,25 @@ def _resume_by_name(name: str, extra: list[str]) -> int:
     the caller passed, so Claude derives the same memory slug the session was created
     under (#2607). ``-n`` re-asserts the exact name so the prompt-box title is
     restored even when the last transcript naming event is a legacy ``agent-name``.
+
+    A **materialized** session (claude has written its transcript) is attached with
+    ``--resume <id>``. A **reservation-only** session — one that ``--label`` minted
+    and named but whose id claude never persisted a conversation to, because the
+    session was created and left unused (claude writes the transcript lazily) — has
+    no conversation for ``--resume`` to find, so it is re-entered *at* its id with
+    ``--session-id <id> -n <name>``, exactly as the create path launched it. That
+    materializes the conversation under the same id and name, keeping the
+    name→id binding stable, instead of failing with 'No conversation found with
+    session ID: <id>' (#2669).
     """
     info = plan_resume(ScrapeStore(_claude_dir()), name)
     if info.cwd:
         os.chdir(info.cwd)
-    _note(f"Resuming session {name}")
-    return _exec_claude(["--resume", info.session_id, "-n", name, *extra])
+    if info.materialized:
+        _note(f"Resuming session {name}")
+        return _exec_claude(["--resume", info.session_id, "-n", name, *extra])
+    _note(f"Entering created-but-unused session {name}")
+    return _exec_claude(["--session-id", info.session_id, "-n", name, *extra])
 
 
 def _list_and_guide(slug: str) -> int:
