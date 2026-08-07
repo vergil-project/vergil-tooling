@@ -150,6 +150,17 @@ def commit_sha(ref: str) -> str:
     return read_output("rev-parse", ref)
 
 
+def worktree_git_dir(path: str | Path) -> Path:
+    """Return the absolute git-dir for the worktree at *path*.
+
+    For a linked worktree this is ``.git/worktrees/<name>/`` — where the
+    per-worktree state of an in-progress operation lives, including a paused
+    rebase's ``rebase-merge/`` (or ``rebase-apply/``) directory. Used to detect
+    a mid-rebase worktree and recover the branch it is rebuilding (#2634).
+    """
+    return Path(read_output("-C", str(path), "rev-parse", "--absolute-git-dir"))
+
+
 def committer_timestamp(path: str | Path) -> int:
     """Return the committer date (epoch seconds) of *path*'s checked-out HEAD.
 

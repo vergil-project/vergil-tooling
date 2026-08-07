@@ -11,12 +11,17 @@ import pytest
 
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.worktrees import (
+    RawWorktree,
     Worktree,
     WorktreeState,
     WorktreeStatus,
+    _branch_from_worktree_name,
     _newest_mtime,
     _probe_pr_workflow,
+    _rebase_head_name,
     classify_worktree,
+    discover_worktrees,
+    gather_detached_status,
     gather_worktree_status,
     list_worktrees,
     match_worktrees,
@@ -94,6 +99,106 @@ def test_list_worktrees_ignores_detached_worktrees() -> None:
     porcelain = "worktree /repo/.worktrees/issue-5-x\nHEAD 5555\ndetached\n"
     with patch(_MOD + ".git.read_output", return_value=porcelain):
         assert list_worktrees(Path("/repo")) == []
+
+
+_PORCELAIN_WITH_DETACHED = """\
+worktree /repo
+HEAD 1111111111111111111111111111111111111111
+branch refs/heads/develop
+
+worktree /repo/.worktrees/issue-7-foo
+HEAD 2222222222222222222222222222222222222222
+branch refs/heads/feature/7-foo
+
+worktree /repo/.worktrees/issue-9-mid-rebase
+HEAD 3333333333333333333333333333333333333333
+detached
+"""
+
+
+def test_discover_worktrees_keeps_detached() -> None:
+    """Issue #2634: a detached-HEAD canonical worktree (paused mid-rebase) must
+    survive discovery with branch=None, not be dropped like list_worktrees drops
+    it."""
+    with patch(_MOD + ".git.read_output", return_value=_PORCELAIN_WITH_DETACHED):
+        result = discover_worktrees(Path("/repo"))
+    assert result == [
+        RawWorktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo"),
+        RawWorktree(path=Path("/repo/.worktrees/issue-9-mid-rebase"), branch=None),
+    ]
+
+
+def test_list_worktrees_filters_detached_out_of_discovery() -> None:
+    """list_worktrees still excludes the detached worktree discovery keeps, so
+    the finalize/submit sweeps never act on a mid-operation worktree."""
+    with patch(_MOD + ".git.read_output", return_value=_PORCELAIN_WITH_DETACHED):
+        assert list_worktrees(Path("/repo")) == [
+            Worktree(path=Path("/repo/.worktrees/issue-7-foo"), branch="feature/7-foo"),
+        ]
+
+
+def test_branch_from_worktree_name_maps_canonical() -> None:
+    assert _branch_from_worktree_name("issue-2607-resume-attach") == "feature/2607-resume-attach"
+
+
+def test_branch_from_worktree_name_none_for_non_canonical() -> None:
+    assert _branch_from_worktree_name("scratch") is None
+    assert _branch_from_worktree_name("issue-") is None
+
+
+def test_rebase_head_name_empty_file_falls_through(tmp_path: Path) -> None:
+    """An empty head-name is treated as absent — skipped, never returned as an
+    empty branch name."""
+    (tmp_path / "rebase-merge").mkdir()
+    (tmp_path / "rebase-merge" / "head-name").write_text("\n")
+    assert _rebase_head_name(tmp_path) is None
+
+
+def test_gather_detached_status_rebasing_resolves_branch(tmp_path: Path) -> None:
+    """A mid-rebase worktree resolves REBASING and recovers its branch from the
+    paused rebase's head-name metadata (issue #2634)."""
+    git_dir = tmp_path / "gitdir"
+    (git_dir / "rebase-merge").mkdir(parents=True)
+    (git_dir / "rebase-merge" / "head-name").write_text("refs/heads/feature/2607-resume-attach\n")
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-2607-resume-attach"), branch=None)
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+        patch(_MOD + ".git.read_output", return_value=""),
+        patch(_MOD + ".git.ref_exists", return_value=True),
+        patch(_MOD + ".git.commits_ahead", return_value=3),
+        patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+    ):
+        status = gather_detached_status(raw, target="develop")
+    assert status.state is WorktreeState.REBASING
+    assert status.worktree.branch == "feature/2607-resume-attach"
+    assert status.ahead == 3
+    assert status.dirty is False
+    assert status.detail is not None
+    assert "rebase in progress" in status.detail
+
+
+def test_gather_detached_status_falls_back_to_dir_name(tmp_path: Path) -> None:
+    """A detached worktree with no rebase in progress classifies DETACHED and
+    recovers its branch from the issue-<N>-<slug> directory name."""
+    git_dir = tmp_path / "gitdir"
+    git_dir.mkdir()
+    raw = RawWorktree(path=Path("/repo/.worktrees/issue-42-widget"), branch=None)
+    with (
+        patch(_MOD + ".git.worktree_git_dir", return_value=git_dir),
+        patch(_MOD + ".git.read_output", return_value=" M src/x.py"),
+        patch(_MOD + ".git.ref_exists", return_value=False),
+        patch(_MOD + ".git.commits_ahead") as ahead,
+        patch(_MOD + "._probe_pr_workflow", return_value=(None, None, False)),
+    ):
+        status = gather_detached_status(raw, target="develop")
+    assert status.state is WorktreeState.DETACHED
+    assert status.worktree.branch == "feature/42-widget"
+    # Branch ref does not exist, so commits-ahead is skipped, not guessed.
+    ahead.assert_not_called()
+    assert status.ahead == 0
+    assert status.dirty is True
+    assert status.detail is not None
+    assert "detached HEAD" in status.detail
 
 
 def test_worktree_for_branch_found() -> None:
