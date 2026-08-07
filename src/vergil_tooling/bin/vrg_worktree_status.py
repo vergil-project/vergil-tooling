@@ -20,13 +20,17 @@ from vergil_tooling.lib import git, worktrees
 from vergil_tooling.lib.worktrees import WorktreeState, WorktreeStatus
 
 # Live work first, cruft last, so the removable rows group at the bottom.
+# In-flight/mid-operation worktrees (rebasing, detached) sort near the top —
+# they are active work needing a human, never removable cruft (issue #2634).
 _SORT_RANK = {
     WorktreeState.OPEN_PR: 0,
-    WorktreeState.NO_PR: 1,
-    WorktreeState.DRAFT: 2,
-    WorktreeState.UNKNOWN: 3,
-    WorktreeState.MERGED: 4,
-    WorktreeState.CLOSED: 5,
+    WorktreeState.REBASING: 1,
+    WorktreeState.DETACHED: 2,
+    WorktreeState.NO_PR: 3,
+    WorktreeState.DRAFT: 4,
+    WorktreeState.UNKNOWN: 5,
+    WorktreeState.MERGED: 6,
+    WorktreeState.CLOSED: 7,
 }
 
 _COLUMNS = (
@@ -128,10 +132,26 @@ def _summary(statuses: list[WorktreeStatus]) -> str:
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     root = git.repo_root()
-    statuses = [
-        worktrees.gather_worktree_status(wt, target=args.target_branch, with_freshness=True)
-        for wt in worktrees.list_worktrees(root)
-    ]
+    statuses: list[WorktreeStatus] = []
+    for raw in worktrees.discover_worktrees(root):
+        # A detached-HEAD worktree (the normal state during a paused rebase) has
+        # no branch to classify a lifecycle from — it gets its own REBASING /
+        # DETACHED status instead of being dropped, so an in-flight worktree is
+        # never hidden behind "no worktrees found" (issue #2634).
+        if raw.branch is None:
+            statuses.append(
+                worktrees.gather_detached_status(
+                    raw, target=args.target_branch, with_freshness=True
+                )
+            )
+        else:
+            statuses.append(
+                worktrees.gather_worktree_status(
+                    worktrees.Worktree(path=raw.path, branch=raw.branch),
+                    target=args.target_branch,
+                    with_freshness=True,
+                )
+            )
     if not statuses:
         print("No canonical .worktrees/ worktrees found.")
         return 0

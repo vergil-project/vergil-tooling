@@ -128,6 +128,18 @@ def test_repo_root_returns_path() -> None:
     assert result == Path("/var/repo")
 
 
+def test_worktree_git_dir_returns_absolute_path() -> None:
+    with patch(
+        "vergil_tooling.lib.git.read_output",
+        return_value="/repo/.git/worktrees/issue-9-x",
+    ) as read_output:
+        result = git.worktree_git_dir("/repo/.worktrees/issue-9-x")
+    assert result == Path("/repo/.git/worktrees/issue-9-x")
+    read_output.assert_called_once_with(
+        "-C", "/repo/.worktrees/issue-9-x", "rev-parse", "--absolute-git-dir"
+    )
+
+
 def test_current_branch_returns_name() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="feature/test"):
         result = git.current_branch()
