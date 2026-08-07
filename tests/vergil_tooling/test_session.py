@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from vergil_tooling.lib.session import (
     SLOT_MAX,
     AgeBand,
@@ -15,12 +17,14 @@ from vergil_tooling.lib.session import (
     classify_age,
     list_rows,
     make_archived_name,
+    make_label_name,
     make_name,
     parse_archived,
     parse_name,
     plan_session,
     select,
     select_by_name,
+    validate_label,
 )
 
 
@@ -48,6 +52,53 @@ def test_parse_archived_path_with_at_sign() -> None:
 def test_parse_archived_returns_none_for_non_archived() -> None:
     assert parse_archived("vergil:01:a/b") is None
     assert parse_archived("archived@only-two-parts") is None
+
+
+# --- make_label_name / validate_label (issue #2606) ---
+
+
+def test_make_label_name_composes() -> None:
+    assert (
+        make_label_name("epic-213-x", "vergil-project/vergil-tooling")
+        == "epic-213-x:vergil-project/vergil-tooling"
+    )
+
+
+def test_make_label_name_drops_identity() -> None:
+    # The name is purpose:workspace only — no identity segment.
+    assert make_label_name("adhoc-spike", ".") == "adhoc-spike:."
+
+
+def test_validate_label_clean_epic() -> None:
+    assert validate_label("epic-213-x") == []
+
+
+def test_validate_label_clean_adhoc() -> None:
+    assert validate_label("adhoc-spike") == []
+
+
+def test_validate_label_warns_non_convention() -> None:
+    warnings = validate_label("scratch")
+    # Non-empty, and every warning names the epic-/adhoc- convention.
+    assert warnings
+    assert all("epic-" in w or "adhoc-" in w for w in warnings)
+
+
+def test_validate_label_rejects_colon() -> None:
+    with pytest.raises(ValueError, match="':'"):
+        validate_label("bad:name")
+
+
+def test_validate_label_rejects_whitespace() -> None:
+    with pytest.raises(ValueError, match="whitespace"):
+        validate_label("bad name")
+
+
+def test_validate_label_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="empty"):
+        validate_label("")
+    with pytest.raises(ValueError, match="empty"):
+        validate_label("   ")
 
 
 def test_make_name_zero_pads_slot() -> None:

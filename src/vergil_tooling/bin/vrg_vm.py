@@ -2381,6 +2381,8 @@ def _session_inner(
     ]
     if args.resume is not None:
         resolve_cmd += ["--resume-name", args.resume]
+    if getattr(args, "label", None) is not None:
+        resolve_cmd += ["--label", args.label]
     if args.slot is not None:
         resolve_cmd += ["--slot", str(args.slot)]
     if args.fork:
@@ -2460,6 +2462,15 @@ def _cmd_session(args: argparse.Namespace) -> int:
         print(
             "ERROR: --resume selects a session by name and cannot be combined with "
             "--slot/--fork/--fresh (which select by slot).",
+            file=sys.stderr,
+        )
+        return 1
+    if getattr(args, "label", None) is not None and (
+        args.resume is not None or args.slot is not None or args.fork or args.fresh
+    ):
+        print(
+            "ERROR: --label creates a new named session and cannot be combined with "
+            "--resume (attach) or --slot/--fork/--fresh (slot selection).",
             file=sys.stderr,
         )
         return 1
@@ -2809,6 +2820,18 @@ def main(argv: list[str] | None = None) -> int:
             "Resume the session with this exact display name (e.g. an epic "
             "session's renamed title, 'epic-85-centralize-epics-adhoc'), instead "
             "of selecting by slot. Mutually exclusive with --slot/--fork/--fresh."
+        ),
+    )
+    p_session.add_argument(
+        "--label",
+        default=None,
+        metavar="LABEL",
+        help=(
+            "Create a new purpose-named session named '<label>:<workspace>' (e.g. "
+            "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
+            "is the convention (off-convention warns, never blocks). Errors if a "
+            "session of that name already exists. Mutually exclusive with "
+            "--resume/--slot/--fork/--fresh."
         ),
     )
     p_session.add_argument(
