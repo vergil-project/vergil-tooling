@@ -484,6 +484,67 @@ def test_confirm_develop_clean_defers_nothing() -> None:
     assert ctx.deferred_publish_failures == []
 
 
+def test_confirm_main_marks_stage_warn_on_deferral() -> None:
+    """A deferred publish failure downgrades confirm-main's stage row to ⚠."""
+    ctx = _ctx()
+    jobs = [
+        _job("release / release"),
+        _job("docker-publish / publish: prod-base:latest", conclusion="failure"),
+    ]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + "._verify_artifacts"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_main(ctx)
+    mark_warn.assert_called_once()
+    assert "docker-publish" in mark_warn.call_args.args[0]
+
+
+def test_confirm_main_clean_run_does_not_mark_warn() -> None:
+    """A fully-clean confirm-main keeps its ✓ — mark_warn is never called."""
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("123", "https://run/123")),
+        patch(_MOD + "._settled_run_jobs", return_value=_MAIN_JOBS_OK),
+        patch(_MOD + "._verify_artifacts"),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_main(ctx)
+    mark_warn.assert_not_called()
+
+
+def test_confirm_develop_marks_stage_warn_on_deferral() -> None:
+    """A deferred publish failure downgrades confirm-develop's stage row to ⚠,
+    even when the same family was already deferred on main (dedup keeps the
+    list from growing, but the stage still observed a break)."""
+    ctx = _ctx()
+    ctx.deferred_publish_failures = ["docker-publish"]
+    jobs = [_job("docker-publish / publish: dev-base:latest", conclusion="failure")]
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._settled_run_jobs", return_value=jobs),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_develop(ctx)
+    mark_warn.assert_called_once()
+    assert "docker-publish" in mark_warn.call_args.args[0]
+    # dedup: the shared family is not re-appended
+    assert ctx.deferred_publish_failures == ["docker-publish"]
+
+
+def test_confirm_develop_clean_run_does_not_mark_warn() -> None:
+    ctx = _ctx()
+    with (
+        patch(_MOD + "._watch_cd", return_value=("9", "https://run/9")),
+        patch(_MOD + "._settled_run_jobs", return_value=_DEVELOP_JOBS_OK),
+        patch(_MOD + ".progress.mark_warn") as mark_warn,
+    ):
+        confirm_develop(ctx)
+    mark_warn.assert_not_called()
+
+
 def test_settled_run_jobs_exhaust_returns_last_snapshot() -> None:
     """When no expected job ever settles, _settled_run_jobs exhausts all
     attempts and returns the final (unsettled) jobs snapshot."""
