@@ -1146,6 +1146,8 @@
       
         
       
+        
+      
     
     
     
@@ -1198,6 +1200,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.175/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.175
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12762,6 +12792,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CI gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#every-gate-is-required-there-are-no-optional-pr-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every gate is required — there are no optional PR gates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -13154,6 +13201,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="CI gates">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#every-gate-is-required-there-are-no-optional-pr-gates" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Every gate is required — there are no optional PR gates
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -13530,6 +13594,21 @@ their check names gain a <code>security-and-standards /</code> prefix:</p>
 <li><code>test: unit (&lt;version&gt;)</code></li>
 <li><code>test: integration (&lt;version&gt;)</code></li>
 </ul>
+<p>The docs-build job is a universal reusable-CI job emitted on every
+managed repo with no <code>if:</code> guard, so it always runs and surfaces the
+<code>docs / docs</code> check.</p>
+<h3 id="every-gate-is-required-there-are-no-optional-pr-gates">Every gate is required — there are no optional PR gates<a class="headerlink" href="#every-gate-is-required-there-are-no-optional-pr-gates" title="Permanent link">&para;</a></h3>
+<p>Every check that can gate a PR is configured as a <strong>required status
+check</strong> on the target branch; there is no tier of checks that runs but
+does not block. <code>docs / docs</code> is required alongside the tests, audit,
+release gates, and the <code>security-and-standards /</code> checks — the desired
+required-check set is complete, and it is pinned by a test so it cannot
+silently drift.</p>
+<p><code>vrg-github-repo-config audit</code> <strong>hard-fails on required-set drift</strong>: if a
+repo's configured required checks diverge from the desired set, the audit
+fails rather than reporting a warning. <code>vrg-release</code> gates on that audit,
+so a repo whose required-check set has drifted cannot release until the
+set is reconciled.</p>
 <h2 id="dev-container-images">Dev container images<a class="headerlink" href="#dev-container-images" title="Permanent link">&para;</a></h2>
 <p>Published to <code>ghcr.io/vergil-project/dev-&lt;language&gt;:&lt;version&gt;</code> from the
 <a href="https://github.com/vergil-project/vergil-containers">vergil-containers</a>

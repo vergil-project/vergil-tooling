@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.79/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.77/">
+        <link rel="next" href="../v2.1.174/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.78 - VERGIL Tooling</title>
+        <title>2.1.175 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2078-2026-06-01" class="md-skip">
+        <a href="#release-21175-2026-08-07" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.78
+              2.1.175
             
           </span>
         </div>
@@ -1216,10 +1216,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.175/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.175
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1235,6 +1262,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -6144,37 +6224,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.78
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.78/" class="md-nav__link">
         
   
   
@@ -6190,37 +6243,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12742,6 +12764,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#refactoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Refactoring
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -12759,14 +12803,22 @@
 
 
 
-<h1 id="release-2078-2026-06-01">Release 2.0.78 (2026-06-01)<a class="headerlink" href="#release-2078-2026-06-01" title="Permanent link">&para;</a></h1>
+<h1 id="release-21175-2026-08-07">Release 2.1.175 (2026-08-07)<a class="headerlink" href="#release-21175-2026-08-07" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>scope session resolve to the current cwd's project slug</strong>
-<code>vrg-vm session &lt;workspace&gt;</code> could hard-fail with "No conversation found with session ID: <uuid>" — and then refuse to start or resume anything.</li>
+<li><strong>don't crash finalize merge gate when a fresh PR has zero registered checks (#2623) (#2626)</strong></li>
 </ul>
-<p>The in-VM resolver discovered sessions by globbing every project slug and matched them to a workspace by the path embedded in each session's agent-name, never checking that the transcript physically lives under the slug <code>claude --resume</code> searches (the current cwd's slug). A name-path that points elsewhere than its transcript (from an out-of-band <code>/name</code> rename or running the resolver in a different directory) made the resolver build a slot and exec <code>claude --resume &lt;id&gt;</code> from a cwd where the transcript doesn't exist.</p>
-<p>Scope discovery in the resolve path to the current cwd's project slug, the same directory <code>claude --resume</code> reads. <code>list --sessions</code> keeps its full-scan view. This turns the hard failure into the correct fallback: create a fresh session when none is resumable for the workspace.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>verify Claude session-management surface; choose seam backend (#2621)</strong></li>
+<li><strong>document required-gate invariant and finalize orphaned-check handling (#2624)</strong>
+Task A1: every check that can gate a PR is now a required status check (docs / docs included); document the no-optional-PR-gate invariant, the audit hard-fail on required-set drift, and vrg-release gating on it in ci-architecture.md's CI gates section.</li>
+</ul>
+<p>Task B: document finalize's bounded, orphan-resilient check wait in finalize-pr.md — an orphaned check-run (non-terminal over a completed backing run) aborts with recovery guidance instead of hanging, and finalize never merges past a non-terminal check. Update the exit-code 1 description accordingly.</p>
+<h2 id="refactoring">Refactoring<a class="headerlink" href="#refactoring" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>introduce SessionStore seam (scrape backend) for session enumeration/resolution (#2622)</strong></li>
+</ul>
 
 
 
