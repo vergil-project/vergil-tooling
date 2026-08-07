@@ -6,7 +6,7 @@ import json
 import time
 from typing import TYPE_CHECKING, Any
 
-from vergil_tooling.lib import git, github
+from vergil_tooling.lib import git, github, progress
 from vergil_tooling.lib.release.context import ReleaseError
 from vergil_tooling.lib.release.subprocess import watch_workflow
 
@@ -37,6 +37,7 @@ def confirm_main(ctx: ReleaseContext) -> None:
             d for d in deferred if d not in ctx.deferred_publish_failures
         )
         print(f"  Publish deferred (release is valid): {', '.join(deferred)}")
+        progress.mark_warn(f"publish deferred: {', '.join(deferred)}")
     else:
         print("  All CD jobs succeeded.")
 
@@ -57,6 +58,7 @@ def confirm_develop(ctx: ReleaseContext) -> None:
             d for d in deferred if d not in ctx.deferred_publish_failures
         )
         print(f"  Publish deferred on develop: {', '.join(deferred)}")
+        progress.mark_warn(f"publish deferred: {', '.join(deferred)}")
     else:
         print("Develop CD verified.")
 

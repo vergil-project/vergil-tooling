@@ -488,6 +488,56 @@ def test_pipeline_warn_does_not_affect_exit(
     assert "⚠  warnings (non-fatal):" in capsys.readouterr().out
 
 
+def test_mark_warn_downgrades_normal_stage_to_warn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A stage that returns normally but calls mark_warn is recorded ⚠, not ✓,
+    with the reason on its status row — and the run still exits 0."""
+    stages = [
+        Stage(
+            "confirm",
+            lambda ctx: progress.mark_warn("publish deferred: docker-publish"),
+            mode="fail_defer",
+        ),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    out = capsys.readouterr().out
+    assert "⚠ confirm" in out
+    assert "publish deferred: docker-publish" in out
+    assert "✓ confirm" not in out
+
+
+def test_mark_warn_is_isolated_between_stages(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A warn marked in one stage does not leak into a later clean stage."""
+    stages = [
+        Stage("dirty", lambda ctx: progress.mark_warn("deferred"), mode="fail_defer"),
+        Stage("clean", lambda ctx: None, mode="fail_defer"),
+    ]
+    assert _pipeline(tmp_path, stages, _args()) == 0
+    out = capsys.readouterr().out
+    assert "⚠ dirty" in out
+    assert "✓ clean" in out
+
+
+def test_mark_warn_recorded_in_log(tmp_path: Path) -> None:
+    """The downgraded stage is logged as warn with its reason for the full log."""
+    stages = [
+        Stage(
+            "confirm", lambda ctx: progress.mark_warn("publish deferred: docs"), mode="fail_defer"
+        ),
+    ]
+    _pipeline(tmp_path, stages, _args())
+    log_text = next((tmp_path / ".vergil").glob("test-cmd-*.log")).read_text()
+    assert "confirm: warn (publish deferred: docs)" in log_text
+
+
+def test_mark_warn_without_session_is_noop() -> None:
+    """Calling mark_warn outside a running pipeline is a harmless no-op."""
+    progress.mark_warn("nothing is listening")  # must not raise
+
+
 def test_pipeline_skip_flag(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     calls: list[str] = []
     stages = [

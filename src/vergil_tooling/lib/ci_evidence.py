@@ -535,7 +535,7 @@ def resolve_required_gates(repo: str, repo_root: Path) -> tuple[EvidenceGate, ..
     """
     config = read_config(repo_root)
     ghas = ghas_available(config, visibility=github.repo_visibility(repo))
-    return required_evidence_gates(config.project, config.ci, ghas=ghas)
+    return required_evidence_gates(config.project, config.ci, ghas=ghas, docs=config.publish.docs)
 
 
 def _gate_conclusion(checks: Sequence[str], conclusions: Mapping[str, str]) -> str:

@@ -336,6 +336,10 @@ class _Session:
 
     renderer: Any
     log: RunLog
+    # Reason set by ``mark_warn`` during the current stage; ``run_pipeline``
+    # reads and clears it per stage to downgrade a normally-returning stage's
+    # status from ``ok`` to ``warn``.
+    pending_warn: str | None = None
 
     def __post_init__(self) -> None:
         self._lock = threading.Lock()
@@ -356,6 +360,25 @@ def emit(line: str) -> None:
         session.handle_line(line)
     else:
         print(line)
+
+
+def mark_warn(reason: str) -> None:
+    """Signal that the current stage completed but with a non-fatal warning.
+
+    A stage whose ``fn`` returns normally is recorded ``ok`` (✓). Calling this
+    while a stage runs downgrades that stage's recorded status to ``warn`` (⚠),
+    with *reason* shown on its status row and in the summary — **without
+    raising**, so control flow (including ``fail_fast``) is unaffected.
+
+    Used by vrg-release's confirm stages to surface a deferred publish failure
+    at the row where it was observed, not only in the terminal summary (a green
+    ✓ over a deferral reads as full success at a glance). Outside a running
+    pipeline (``_session is None``) it is a harmless no-op; the last call in a
+    stage wins.
+    """
+    session = _session
+    if session is not None:
+        session.pending_warn = reason
 
 
 class _EmitWriter(io.TextIOBase):
@@ -495,7 +518,8 @@ def run_pipeline(
     log = RunLog(command, repo_root)
     fmt = args.output_format or detect_format()
     renderer = _make_renderer(fmt, out, args.output_window)
-    _session = _Session(renderer=renderer, log=log)
+    session = _Session(renderer=renderer, log=log)
+    _session = session
     results: list[StageResult] = []
     interrupted = False
     start_total = time.monotonic()
@@ -510,6 +534,7 @@ def run_pipeline(
                 continue
             renderer.start_stage(stage.name)
             log.write(f"=== {stage.name}: started ===")
+            session.pending_warn = None
             start = time.monotonic()
             try:
                 with (
@@ -548,8 +573,13 @@ def run_pipeline(
                     break
             else:
                 elapsed = time.monotonic() - start
-                result = StageResult(stage.name, "ok", elapsed)
-                log.write(f"=== {stage.name}: ok ({format_elapsed(elapsed)}) ===")
+                warn_reason = session.pending_warn
+                if warn_reason is not None:
+                    result = StageResult(stage.name, "warn", elapsed, warn_reason)
+                    log.write(f"=== {stage.name}: warn ({warn_reason}) ===")
+                else:
+                    result = StageResult(stage.name, "ok", elapsed)
+                    log.write(f"=== {stage.name}: ok ({format_elapsed(elapsed)}) ===")
                 renderer.end_stage(result)
                 results.append(result)
     finally:

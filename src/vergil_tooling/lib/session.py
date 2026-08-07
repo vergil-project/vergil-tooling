@@ -333,7 +333,10 @@ def _select_explicit(identity: str, path: str, slots: dict[int, Slot], slot: int
 def _select_fork(identity: str, path: str, slots: dict[int, Slot], slot: int | None) -> Decision:
     """``--fork``: copy the targeted slot's conversation into a new slot."""
     if slot is None:
-        return Refuse("--fork requires --slot N to identify the session to fork")
+        return Refuse(
+            "--fork has no session to fork; use --resume NAME to attach to a "
+            "session or --label to start a new one"
+        )
     if not SLOT_MIN <= slot <= SLOT_MAX:
         return _bad_range()
     info = slots.get(slot)

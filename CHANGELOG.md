@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.177] - 2026-08-07
+
+### Bug fixes
+
+- name each common-check's scope in its file-count message (#2645)
+- gate `docs / docs` required check on [publish].docs (#2650)
+
+### Documentation
+
+- fix stale --fork help and error text referencing removed --slot (#2649)
+
+### Features
+
+- mark confirm stages ⚠ when they defer a publish failure (#2644)
+
 ## [2.1.176] - 2026-08-07
 
 ### Bug fixes
