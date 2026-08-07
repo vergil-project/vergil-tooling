@@ -27,6 +27,10 @@ def _neutral_signals(monkeypatch: pytest.MonkeyPatch) -> None:
     on where it runs.
     """
     monkeypatch.setattr("platform.system", lambda: "Linux")
+    # Neutralize the hostname probe to a non-Lima value so the low-level
+    # marker tests stay hermetic even when the suite runs *on* a Lima VM
+    # (whose real hostname is lima-<instance>). See issue #2656.
+    monkeypatch.setattr("platform.node", lambda: "test-host")
     monkeypatch.setattr("vergil_tooling.lib.platform_env._vergil_mount_present", lambda: False)
     monkeypatch.setattr("vergil_tooling.lib.platform_env._cloud_metadata_reachable", lambda: False)
     monkeypatch.setattr("vergil_tooling.lib.platform_env._lima_marker_present", lambda: False)
@@ -176,4 +180,25 @@ def test_lima_marker_present_false_when_no_marker_exists(monkeypatch: pytest.Mon
         "vergil_tooling.lib.platform_env._LIMA_MARKERS",
         ("/nonexistent/vrg-lima-marker-should-not-exist",),
     )
+    # hostname is neutralized to a non-Lima value by the autouse fixture.
     assert _REAL_LIMA_MARKER_PRESENT() is False
+
+
+def test_lima_marker_present_true_when_hostname_has_lima_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # vz (Apple Virtualization) backend: no marker mount/device exists, but
+    # Lima sets the guest hostname to lima-<instance>. This is the signal that
+    # was missing, causing --platform to fail-close to cloud-vm (issue #2656).
+    monkeypatch.setattr(
+        "vergil_tooling.lib.platform_env._LIMA_MARKERS",
+        ("/nonexistent/vrg-lima-marker-should-not-exist",),
+    )
+    monkeypatch.setattr("platform.node", lambda: "lima-vergil-user")
+    assert _REAL_LIMA_MARKER_PRESENT() is True
+
+
+def test_lima_cidata_mount_is_a_recognized_marker() -> None:
+    # The vz backend mounts cloud-init data at /mnt/lima-cidata; dropping it
+    # from the marker set reintroduces the fail-closed-to-cloud bug (#2656).
+    assert "/mnt/lima-cidata" in platform_env._LIMA_MARKERS
