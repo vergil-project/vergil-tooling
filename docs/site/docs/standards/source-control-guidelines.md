@@ -82,20 +82,31 @@ references by tag or commit SHA.
 
 ### CI gates
 
-Every CI check must be classified as either a hard gate or a soft gate.
+Every CI gate is a hard gate. There are no soft gates. A check is either
+enforced as a required status check that blocks PR merge, or it is not a
+gate at all — there is no middle tier that runs but does not block. A check
+worth running is worth failing on; a non-blocking gate silently rots and
+gives false confidence.
 
 - Hard gate: blocking. A failing check prevents PR submission and merge.
-- Soft gate: warning-only. A failing check does not block merge, but must be
-  surfaced in the PR with rationale and any follow-up tracking.
+  This is the only kind of gate.
 
-Each repository must explicitly list its checks and their gate type. If a
-check is not classified, treat it as a hard gate until documented.
+Every gate that can block a PR must be enforced as a required status check
+on the target branches, so a failing GitHub Actions check blocks the merge.
+If a check is not worth enforcing as a required status check, it must not
+gate the PR — remove it rather than run it as a non-blocking warning. A
+report-only or "advisory-permanent" check is not an allowed category.
 
-Hard gates must be enforced as required status checks on the target branches
-so failing GitHub Actions block PR merges.
+Each repository must explicitly list its required checks, and the
+required-check set must be pinned (for example, by a test or a config audit)
+so it cannot silently drift. This mirrors the CI implementation, where the
+same configuration that computes a repo's required status checks drives
+branch protection. See the guide
+[CI Architecture](../guides/ci-architecture.md), section "Every gate is
+required — there are no optional PR gates".
 
-Each repository must also document which hard gates apply per branch. Some
-hard gates may be develop-only, while others must run on all eternal branches.
+Each repository must also document which gates apply per branch. Some gates
+may be develop-only, while others must run on all eternal branches.
 
 ## GitHub repository settings
 
