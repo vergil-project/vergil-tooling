@@ -109,35 +109,11 @@ def test_last_activity_skips_bad_timestamp_lines(tmp_path: Path) -> None:
     assert r._last_activity(f) == datetime.datetime(2026, 5, 2, tzinfo=UTC).timestamp()
 
 
-def test_archive_session_append_oserror_is_swallowed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    projects = tmp_path / "projects" / "slug"
-    projects.mkdir(parents=True)
-    (projects / "adir.jsonl").mkdir()  # a directory -> open("a") raises OSError
-    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
-    monkeypatch.setattr(r, "_last_session_name", lambda _t: "vergil:01:p")
-    r._archive_session("adir", "2026-05-30T14:23:07Z")  # must not raise
-
-
-def test_archive_session_appends_archived_name(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    projects = tmp_path / "projects" / "slug"
-    projects.mkdir(parents=True)
-    t = projects / "s1.jsonl"
-    t.write_text('{"type":"agent-name","agentName":"vergil:01:p","sessionId":"s1"}\n')
-    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
-    r._archive_session("s1", "2026-05-30T14:23:07Z")
-    assert r._last_session_name(t) == "archived@2026-05-30T14:23:07Z@vergil:01:p"
-
-
-def test_archive_session_missing_transcript_is_noop(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    (tmp_path / "projects").mkdir()
-    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
-    r._archive_session("ghost", "2026-05-30T14:23:07Z")  # must not raise
+def test_archive_machinery_is_removed() -> None:
+    # Auto-archive/staleness is deleted (issue #2608): no _archive_session,
+    # _run_sweep, _now_iso, or _archived_rows survive on the resolver module.
+    for gone in ("_archive_session", "_run_sweep", "_now_iso", "_archived_rows"):
+        assert not hasattr(r, gone), f"{gone} should be deleted"
 
 
 # --- _last_session_name ---
@@ -294,23 +270,6 @@ def test_name_by_session_reads_custom_title(tmp_path: Path) -> None:
     assert r.name_by_session(tmp_path) == {"s1": "id:01:a"}
 
 
-def test_archive_session_archives_custom_title_named_transcript(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # Archiving must work on transcripts named only via custom-title events
-    # (previously a silent no-op) and must append a custom-title event so
-    # Claude's own resume picker shows the archived label too.
-    projects = tmp_path / "projects" / "slug"
-    projects.mkdir(parents=True)
-    t = projects / "s1.jsonl"
-    t.write_text('{"type":"custom-title","customTitle":"vergil:01:p","sessionId":"s1"}\n')
-    monkeypatch.setattr(r, "_claude_dir", lambda: tmp_path)
-    r._archive_session("s1", "2026-06-07T00:00:00Z")
-    assert r._last_session_name(t) == "archived@2026-06-07T00:00:00Z@vergil:01:p"
-    appended = json.loads(t.read_text().splitlines()[-1])
-    assert appended["type"] == "custom-title"
-
-
 def test_claude_dir_points_at_dot_claude() -> None:
     assert r._claude_dir().name == ".claude"
 
@@ -443,8 +402,6 @@ def _resolve(
         "fork": False,
         "fresh": False,
         "extra": [],
-        "stale_days": 7,
-        "archive_days": 14,
     }
     defaults.update(kw)
     return r.resolve(  # type: ignore[arg-type]
@@ -544,23 +501,18 @@ def test_resolve_refuse(
     assert "ERROR" in capsys.readouterr().err
 
 
-def test_resolve_fresh_creates_after_archiving(
+def test_resolve_fresh_creates_without_archiving(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     capture_exec: list[list[str]],
 ) -> None:
-    # --fresh retains the prior behavior (later reconceived by the epic): the most
-    # recent idle session is archived and a fresh one created in its place.
+    # Auto-archive is deleted (issue #2608): --fresh now just creates a fresh
+    # session in the target slot; nothing is archived (the retire-rename is Task 5).
     now = 100 * DAY
     monkeypatch.setattr(
         r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 1 * DAY})
     )
-    monkeypatch.setattr(r, "_now", lambda: now)
-    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
-    archived: list[str] = []
-    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
     assert _resolve("vergil", "p", fresh=True) == 0
-    assert archived == ["s1"]
     assert capture_exec == [["claude", "-n", "vergil:01:p"]]
 
 
@@ -695,45 +647,50 @@ def test_transcript_cwd_stops_at_line_cap(tmp_path: Path) -> None:
 # --- list_json ---
 
 
-def test_list_json_includes_age_and_state(
+class _ListStore:
+    """Minimal SessionStore exposing only list_sessions for list_json tests."""
+
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def list_sessions(self) -> list[Any]:
+        return list(self._rows)
+
+
+def test_list_json_emits_session_info_rows(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(
-        r,
-        "_read_state",
-        lambda: (
-            {"s1": "vergil:01:p", "a1": "archived@2026-05-01T00:00:00Z@vergil:03:p"},
-            {"s1"},
-            {"s1": 1748000000.0, "a1": 1746000000.0},
-        ),
-    )
+    # list_json now emits raw SessionInfo rows (name/cwd/active/lastActive); the
+    # host applies the recency filter. A legacy archived@ name rides as an opaque
+    # string — no archived state, no archivedAt field.
+    rows = [
+        _info("s1", "epic-1:p", True, 1748000000.0, cwd="/w"),
+        _info("a1", "archived@2026-05-01T00:00:00Z@vergil:03:p", False, 1746000000.0),
+    ]
+    monkeypatch.setattr(r, "_store", lambda *_a, **_k: _ListStore(rows))
     assert r.list_json() == 0
-    rows = json.loads(capsys.readouterr().out)
-    by = {(x["identity"], x["slot"], x["state"]): x for x in rows}
-    assert ("vergil", 1, "active") in by
-    assert by[("vergil", 1, "active")]["lastActive"] == 1748000000.0
-    assert ("vergil", 3, "archived") in by
-    assert by[("vergil", 3, "archived")]["archivedAt"] == "2026-05-01T00:00:00Z"
+    out = json.loads(capsys.readouterr().out)
+    by = {x["sessionId"]: x for x in out}
+    assert by["s1"] == {
+        "sessionId": "s1",
+        "name": "epic-1:p",
+        "cwd": "/w",
+        "active": True,
+        "lastActive": 1748000000.0,
+    }
+    assert by["a1"]["name"] == "archived@2026-05-01T00:00:00Z@vergil:03:p"
+    assert by["a1"]["active"] is False
+    assert "archivedAt" not in by["a1"]
 
 
-def test_list_json_idle_state(
+def test_list_json_includes_unnamed_row(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {}))
+    rows = [_info("s1", None, True, None, cwd="")]
+    monkeypatch.setattr(r, "_store", lambda *_a, **_k: _ListStore(rows))
     assert r.list_json() == 0
-    rows = json.loads(capsys.readouterr().out)
-    assert rows[0]["state"] == "idle"
-
-
-def test_archived_rows_skips_unparseable_original(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    # archived label whose embedded "original" is not a valid slot name
-    monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"a1": "archived@2026-05-01T00:00:00Z@garbage"}, set(), {})
-    )
-    assert r.list_json() == 0
-    assert json.loads(capsys.readouterr().out) == []
+    out = json.loads(capsys.readouterr().out)
+    assert out == [{"sessionId": "s1", "name": None, "cwd": "", "active": True, "lastActive": None}]
 
 
 # --- _read_state integration ---
@@ -800,7 +757,7 @@ def test_read_state_names_roster_session_without_transcript(
 def test_main_list_json(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
+    monkeypatch.setattr(r, "_store", lambda *_a, **_k: _ListStore([]))
     assert r.main(["--list-json"]) == 0
     assert json.loads(capsys.readouterr().out) == []
 
@@ -820,24 +777,10 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
         return 0
 
     monkeypatch.setattr(r, "resolve", fake_resolve)
-    code = r.main(
-        [
-            "--identity",
-            "id",
-            "--path",
-            "p",
-            "--fresh",
-            "--stale-days",
-            "7",
-            "--archive-days",
-            "14",
-            "x",
-        ]
-    )
+    code = r.main(["--identity", "id", "--path", "p", "--fresh", "x"])
     assert code == 0
-    # args order: identity, path, fork, fresh, extra, stale_days,
-    # archive_days, resume_name, label
-    assert seen["args"] == ("id", "p", False, True, ["x"], 7, 14, None, None)
+    # args order: identity, path, fork, fresh, extra, resume_name, label
+    assert seen["args"] == ("id", "p", False, True, ["x"], None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:

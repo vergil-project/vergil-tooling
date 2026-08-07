@@ -14,8 +14,7 @@ from vergil_tooling.lib.identity import (
     resolve_identity,
     resolve_identity_by_name,
     resolve_model,
-    resolve_session_archive_days,
-    resolve_session_stale_days,
+    resolve_session_recent_days,
     resolve_vergil_version,
     resolve_vm_tag,
     resolve_workspace,
@@ -674,61 +673,53 @@ def test_resolve_model_none_configured() -> None:
     assert resolve_model(cfg, Identity(vm_instance="x")) == ""
 
 
-def test_session_thresholds_parsed(tmp_path: Path) -> None:
+def test_session_recent_days_parsed(tmp_path: Path) -> None:
     p = tmp_path / "identities.toml"
     p.write_text(
         textwrap.dedent("""\
-        session_stale_days = 5
-        session_archive_days = 30
+        session_recent_days = 5
         [identities.vergil]
         vm_instance = "vergil-agent"
-        session_stale_days = 2
+        session_recent_days = 2
     """)
     )
     cfg = load_config(p)
-    assert cfg.session_stale_days == 5
-    assert cfg.session_archive_days == 30
-    assert cfg.identities["vergil"].session_stale_days == 2
-    assert cfg.identities["vergil"].session_archive_days is None
+    assert cfg.session_recent_days == 5
+    assert cfg.identities["vergil"].session_recent_days == 2
 
 
-def test_resolve_session_thresholds_cascade() -> None:
-    cfg = IdentityConfig(identities={}, session_stale_days=5, session_archive_days=30)
-    ident = Identity(vm_instance="x", session_stale_days=2)
-    assert resolve_session_stale_days(cfg, ident) == 2  # identity override
-    assert resolve_session_archive_days(cfg, ident) == 30  # falls back to config
-    # identity-level archive override
-    ident2 = Identity(vm_instance="x", session_archive_days=20)
-    assert resolve_session_archive_days(cfg, ident2) == 20
-
-
-def test_resolve_session_thresholds_builtin_defaults() -> None:
-    cfg = IdentityConfig(identities={})
-    ident = Identity(vm_instance="x")
-    assert resolve_session_stale_days(cfg, ident) == 7
-    assert resolve_session_archive_days(cfg, ident) == 14
-
-
-def test_session_archive_days_zero_disables(tmp_path: Path) -> None:
+def test_session_recent_days_defaults_none_per_identity(tmp_path: Path) -> None:
     p = tmp_path / "identities.toml"
     p.write_text(
         textwrap.dedent("""\
-        session_archive_days = 0
         [identities.vergil]
         vm_instance = "vergil-agent"
     """)
     )
-    assert load_config(p).session_archive_days == 0
+    cfg = load_config(p)
+    assert cfg.session_recent_days == 7  # built-in config default
+    assert cfg.identities["vergil"].session_recent_days is None
 
 
-def test_session_archive_days_must_exceed_stale(tmp_path: Path) -> None:
+def test_resolve_session_recent_days_cascade() -> None:
+    cfg = IdentityConfig(identities={}, session_recent_days=5)
+    ident = Identity(vm_instance="x", session_recent_days=2)
+    assert resolve_session_recent_days(cfg, ident) == 2  # identity override
+    assert resolve_session_recent_days(cfg, Identity(vm_instance="x")) == 5  # config fallback
+
+
+def test_resolve_session_recent_days_builtin_default() -> None:
+    cfg = IdentityConfig(identities={})
+    assert resolve_session_recent_days(cfg, Identity(vm_instance="x")) == 7
+
+
+def test_session_recent_days_must_be_positive(tmp_path: Path) -> None:
     p = tmp_path / "identities.toml"
     p.write_text(
         textwrap.dedent("""\
         [identities.vergil]
         vm_instance = "vergil-agent"
-        session_stale_days = 10
-        session_archive_days = 5
+        session_recent_days = 0
     """)
     )
     with pytest.raises(SystemExit):
