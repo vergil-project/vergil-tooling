@@ -412,15 +412,19 @@ def _resolve(
 
 
 class _StubStore:
-    """Minimal SessionStore stub exposing only resolve_name for the label path."""
+    """Minimal SessionStore stub for the label path: resolve_name + reserve_name."""
 
     def __init__(self, result: object) -> None:
         self._result = result
+        self.reserved: list[tuple[str, str]] = []
 
     def resolve_name(self, name: str) -> object:  # noqa: ARG002
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
+
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # noqa: ARG002
+        self.reserved.append((session_id, name))
 
 
 def test_resolve_label_creates_when_name_free(
@@ -428,10 +432,16 @@ def test_resolve_label_creates_when_name_free(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # No visible session holds the composed name -> create label:workspace.
-    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
+    # No visible session holds the composed name -> reserve it, then create.
+    store = _StubStore(None)
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
-    assert capture_exec == [["claude", "-n", "epic-1:vergil-project/tooling"]]
+    assert capture_exec == [
+        ["claude", "--session-id", "SID", "-n", "epic-1:vergil-project/tooling"]
+    ]
+    # The name was reserved against the same id claude is pinned to (#2654).
+    assert store.reserved == [("SID", "epic-1:vergil-project/tooling")]
     assert "Creating session epic-1:vergil-project/tooling" in capsys.readouterr().err
 
 
@@ -467,8 +477,9 @@ def test_resolve_label_warns_off_convention_but_creates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "p", label="scratch") == 0
-    assert capture_exec == [["claude", "-n", "scratch:p"]]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "scratch:p"]]
     assert "convention" in capsys.readouterr().err
 
 
@@ -490,6 +501,40 @@ def test_resolve_label_rejects_invalid_slug(
     assert capture_exec == []
     assert called is False  # validation short-circuits before the uniqueness check
     assert "ERROR" in capsys.readouterr().err
+
+
+def test_resolve_label_detects_collision_before_name_registers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression (#2654): a rapid second --label detects the collision even though
+    the first session's name has not yet reached the transcript or roster.
+
+    Uses a *real* ScrapeStore over a temp claude dir so the reservation the first
+    create writes persists to the second invocation — the cross-process durability
+    the fix depends on. No transcript or roster is ever written, reproducing the
+    registration-latency window in which the old code missed the collision and
+    racily created a duplicate.
+    """
+    claude_dir = tmp_path / ".claude"
+    monkeypatch.setattr(r, "_claude_dir", lambda: claude_dir)
+    ids = iter(["SID-1", "SID-2"])
+    monkeypatch.setattr(r, "_new_session_id", lambda: next(ids))
+
+    # First --label: the name is free, so it reserves the name and execs a create
+    # pinned to SID-1. Nothing writes the transcript/roster (the race window).
+    assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
+    assert capture_exec == [
+        ["claude", "--session-id", "SID-1", "-n", "epic-1:vergil-project/tooling"]
+    ]
+
+    # Second --label for the same name, still inside the window: the reservation
+    # makes the collision visible, so it refuses and never execs a second session.
+    assert _resolve("id", "vergil-project/tooling", label="epic-1") == 1
+    assert len(capture_exec) == 1  # no duplicate create
+    assert "already exists" in capsys.readouterr().err
 
 
 def test_resolve_refuse(
@@ -525,6 +570,13 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
     assert capture_exec == [["claude", "-n", "x"]]
 
 
+def test_new_session_id_is_a_canonical_uuid() -> None:
+    import uuid as _uuid
+
+    sid = r._new_session_id()
+    assert str(_uuid.UUID(sid)) == sid  # parses as, and round-trips to, a canonical UUID
+
+
 # --- --fresh retire-rename (issue #2609) ---
 
 
@@ -539,6 +591,7 @@ class _RenameStore:
     def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
         self.renames: list[tuple[str, str]] = []
+        self.reserved: list[tuple[str, str]] = []
 
     def list_sessions(self) -> list[Any]:
         return list(self._rows)
@@ -550,6 +603,9 @@ class _RenameStore:
 
     def rename(self, session_id: str, new_name: str) -> None:
         self.renames.append((session_id, new_name))
+
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # noqa: ARG002
+        self.reserved.append((session_id, name))
 
 
 def test_retired_name_suffixes_with_stamp() -> None:
@@ -597,9 +653,11 @@ def test_resolve_fresh_label_retires_and_creates(
     store = _RenameStore([_info("old", "epic-1:tooling", False, 10.0)])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
     assert store.renames == [("old", "epic-1:tooling~STAMP")]
-    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+    assert store.reserved == [("SID", "epic-1:tooling")]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:tooling"]]
     err = capsys.readouterr().err
     assert "Retired prior session epic-1:tooling -> epic-1:tooling~STAMP" in err
 
@@ -610,9 +668,11 @@ def test_resolve_fresh_label_creates_when_name_free(
     store = _RenameStore([])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
     assert store.renames == []  # nothing to retire
-    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+    assert store.reserved == [("SID", "epic-1:tooling")]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:tooling"]]
 
 
 def test_resolve_fresh_label_warns_off_convention(
@@ -623,8 +683,9 @@ def test_resolve_fresh_label_warns_off_convention(
     store = _RenameStore([])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="scratch", fresh=True) == 0
-    assert capture_exec == [["claude", "-n", "scratch:tooling"]]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "scratch:tooling"]]
     assert "convention" in capsys.readouterr().err
 
 
@@ -679,6 +740,9 @@ class _FakeStore:
         return resolve_over(self._rows, name)
 
     def rename(self, session_id: str, new_name: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # pragma: no cover
         raise NotImplementedError
 
 
