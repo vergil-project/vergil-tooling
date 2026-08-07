@@ -19,6 +19,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
+    _prune_orphan_branch_images,
     _prune_orphan_relay_refs,
     _resolve_open_prs,
     _resolve_strategy,
@@ -94,6 +95,22 @@ def _relay_refs_inert() -> Iterator[None]:
         patch(_MOD + ".github_transport.GitHubTransport"),
         patch(_MOD + ".github_transport.list_relay_branches", return_value=[]),
         patch(_MOD + ".git.remote_branches", return_value=set()),
+    ):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _branch_images_inert() -> Iterator[None]:
+    """Default: the cached-image sweep touches nothing (issue #2600).
+
+    Cleanup sweeps orphaned per-branch dev images, which lists local branches and
+    shells out to the container runtime. Stub both seams so the many cleanup
+    tests neither hit docker/nerdctl nor need to know about image pruning. Tests
+    that assert sweep behavior re-patch these directly — the innermost patch wins.
+    """
+    with (
+        patch(_MOD + ".prune_orphan_branch_images", return_value=0),
+        patch(_MOD + ".git.local_branches", return_value=set()),
     ):
         yield
 
@@ -2403,6 +2420,33 @@ def test_prune_orphan_relay_refs_skipped_on_dry_run(
     mock_list.assert_not_called()
     mock_transport.assert_not_called()
     assert "[dry-run] prune orphaned" in capsys.readouterr().out
+
+
+def test_prune_orphan_branch_images_sweeps_dead_branches(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Cached images for branches absent locally are swept; live ones kept."""
+    with (
+        patch(_MOD + ".git.local_branches", return_value={"develop", "feature/live"}),
+        patch(_MOD + ".prune_orphan_branch_images", return_value=3) as mock_prune,
+    ):
+        _prune_orphan_branch_images(dry_run=False)
+    mock_prune.assert_called_once_with({"develop", "feature/live"})
+    assert "Pruned 3 orphaned cached container image(s)" in capsys.readouterr().out
+
+
+def test_prune_orphan_branch_images_skipped_on_dry_run(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """--dry-run neither lists local branches nor removes any image."""
+    with (
+        patch(_MOD + ".git.local_branches") as mock_local,
+        patch(_MOD + ".prune_orphan_branch_images") as mock_prune,
+    ):
+        _prune_orphan_branch_images(dry_run=True)
+    mock_local.assert_not_called()
+    mock_prune.assert_not_called()
+    assert "[dry-run] prune orphaned cached dev images" in capsys.readouterr().out
 
 
 def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:
