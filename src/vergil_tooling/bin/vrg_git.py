@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from vergil_tooling.lib import github
+from vergil_tooling.lib import branch_names, github
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
@@ -329,16 +329,47 @@ def _parse_worktree_add_path(args: list[str]) -> str | None:
     return None
 
 
-def _check_worktree_add(args: list[str]) -> str | None:
-    """Reject a ``worktree add`` that would not land directly under .worktrees/.
+def _parse_new_branch(create_flags: tuple[str, ...], args: list[str]) -> str | None:
+    """Return the branch name a ``-b``/``-B``/``-c``/``-C`` flag creates, or None.
 
-    The new worktree's resolved path must be a direct child of
-    ``<main_worktree_root>/.worktrees/``. This one invariant rejects every way
-    the convention gets violated: a relative path resolved from inside another
-    worktree (the nesting bug, #1922), and any absolute or ``../`` path that
-    escapes the canonical container. When the main worktree root cannot be
-    resolved (not in a repo), the guard is skipped so git reports its own
-    error rather than this layer masking it.
+    *create_flags* is the set of new-branch flags for the subcommand (``-b``/
+    ``-B`` for ``worktree add`` and ``checkout``; ``-c``/``-C`` for ``switch``).
+    Returns the token immediately following the first such flag; None when no
+    new branch is being created (existing-branch checkout/adoption).
+    """
+    for index, arg in enumerate(args):
+        if arg in create_flags:
+            return args[index + 1] if index + 1 < len(args) else None
+    return None
+
+
+def _branch_format_error(branch: str) -> str:
+    """The shared refusal for an issue-family branch name missing ``<N>-<slug>``.
+
+    Same rule and wording as the vrg-commit Check-4 guard (both read from
+    lib.branch_names), so a branch rejected at creation and one rejected at
+    commit read identically (issue #2550).
+    """
+    return f"branch name must include a repo issue number ({branch}). {branch_names.FORMAT_HINT}"
+
+
+def _check_worktree_add(args: list[str]) -> str | None:
+    """Reject a ``worktree add`` that violates the work-unit conventions.
+
+    Two invariants, both required for the ``issue -> branch -> worktree`` chain
+    to thread one identifier (issue #2550):
+
+    1. **Anchoring (#1922).** The new worktree's resolved path must be a direct
+       child of ``<main_worktree_root>/.worktrees/``. This rejects a relative
+       path resolved from inside another worktree (the nesting bug) and any
+       absolute or ``../`` path that escapes the canonical container.
+    2. **Branch/directory lockstep (#2550).** When ``-b``/``-B`` creates an
+       issue-family branch, the branch must be a well-formed ``<type>/<N>-<slug>``
+       and the directory must be the ``issue-<N>-<slug>`` derived from it — so the
+       directory name, branch name, and issue number never diverge at the source.
+
+    When the main worktree root cannot be resolved (not in a repo), the guard is
+    skipped so git reports its own error rather than this layer masking it.
     """
     path = _parse_worktree_add_path(args)
     if path is None:
@@ -352,14 +383,50 @@ def _check_worktree_add(args: list[str]) -> str | None:
         target = Path.cwd() / target
     target = target.resolve()
     canonical = (root / ".worktrees").resolve()
-    if target.parent == canonical:
+    if target.parent != canonical:
+        return (
+            f"worktree add target must be a direct child of {canonical} "
+            f"(it resolved to {target}). Run the command from the project root "
+            f"with a relative path like .worktrees/issue-<N>-<slug>; never create "
+            f"a worktree from inside another worktree."
+        )
+
+    # Branch/directory lockstep: only when -b/-B creates an issue-family branch.
+    # A worktree adopting an existing branch (no -b), or creating a release/*
+    # branch, carries no issue number and is left untouched.
+    new_branch = _parse_new_branch(("-b", "-B"), args)
+    if new_branch is None or not branch_names.requires_issue_number(new_branch):
         return None
-    return (
-        f"worktree add target must be a direct child of {canonical} "
-        f"(it resolved to {target}). Run the command from the project root "
-        f"with a relative path like .worktrees/issue-<N>-<slug>; never create "
-        f"a worktree from inside another worktree."
-    )
+    if not branch_names.is_valid_issue_branch(new_branch):
+        return _branch_format_error(new_branch)
+    expected = branch_names.expected_worktree_dirname(new_branch)
+    if target.name != expected:
+        return (
+            f"worktree directory name '{target.name}' does not match branch "
+            f"'{new_branch}'. Use '.worktrees/{expected}' so the directory, "
+            f"branch, and issue number stay in lockstep (issue #2550)."
+        )
+    return None
+
+
+def _check_new_branch_name(subcmd: str, args: list[str]) -> str | None:
+    """Reject ``checkout -b``/``switch -c`` creating a malformed issue branch.
+
+    Extends the issue-number rule to the other creation paths the worktree
+    convention allows inside a secondary worktree, so a non-conforming branch is
+    caught at creation rather than only later at commit (issue #2550). A
+    non-issue branch (e.g. ``release/*``) and a plain checkout/switch of an
+    existing branch are left untouched.
+    """
+    create_flags = {"checkout": ("-b", "-B"), "switch": ("-c", "-C")}.get(subcmd)
+    if create_flags is None:
+        return None
+    new_branch = _parse_new_branch(create_flags, args)
+    if new_branch is None or not branch_names.requires_issue_number(new_branch):
+        return None
+    if not branch_names.is_valid_issue_branch(new_branch):
+        return _branch_format_error(new_branch)
+    return None
 
 
 _WORKFLOW_PERMISSION_RE = re.compile(
@@ -443,6 +510,10 @@ def _print_help() -> None:
         "    (develop, main, release/*).\n"
         "  - Worktree convention: branch switches in the main worktree and\n"
         "    'worktree add' targets outside .worktrees/ are refused.\n"
+        "  - Work-unit identifier: creating an issue-family branch (via\n"
+        "    'worktree add -b', 'checkout -b', 'switch -c') requires the\n"
+        "    <type>/<N>-<slug> form, and 'worktree add' requires the directory\n"
+        "    to be the matching issue-<N>-<slug> (dir/branch stay in lockstep).\n"
         "  - Freeze: a push is refused once the branch was reported ready\n"
         "    (vrg-pr-workflow report-ready); unfreeze deliberately to reopen it.\n"
         "  - Identity: remote ops run with the GitHub App installation token for\n"
@@ -522,6 +593,11 @@ def main(argv: list[str] | None = None) -> int:
     worktree_err = _check_worktree_convention(subcmd, argv[1:])
     if worktree_err:
         print(f"vrg-git: {worktree_err}", file=sys.stderr)
+        return 1
+
+    branch_name_err = _check_new_branch_name(subcmd, argv[1:])
+    if branch_name_err:
+        print(f"vrg-git: {branch_name_err}", file=sys.stderr)
         return 1
 
     if subcmd == "push":

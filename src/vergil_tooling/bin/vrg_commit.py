@@ -14,7 +14,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from vergil_tooling.lib import config, git
+from vergil_tooling.lib import branch_names, config, git
 from vergil_tooling.lib.commit_message import (
     ALLOWED_TYPES,
     build_commit_message,
@@ -39,9 +39,6 @@ _BRANCHING_MODELS: dict[str, tuple[str, str]] = {
     ),
 }
 
-_ISSUE_REQUIRED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
-_ISSUE_FORMAT_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/[0-9]+-[a-z0-9][a-z0-9.-]*$")
-_WORKTREE_SCOPED_RE = re.compile(r"^(feature|bugfix|hotfix|chore)/")
 _WORKTREES_DIRNAME = ".worktrees"
 
 
@@ -121,18 +118,21 @@ def _validate_commit_context(root: Path, branching_model: str) -> int:
             "Rename the branch before committing.",
         )
 
-    # Check 4: feature/bugfix/hotfix/chore branches must include an issue number
-    if _ISSUE_REQUIRED_RE.search(current_branch) and not _ISSUE_FORMAT_RE.match(current_branch):
+    # Check 4: feature/bugfix/hotfix/chore branches must include an issue number.
+    # Shared with the vrg-git creation-time guard via lib.branch_names so the
+    # format cannot drift between the two enforcement points (issue #2550).
+    if branch_names.requires_issue_number(current_branch) and not (
+        branch_names.is_valid_issue_branch(current_branch)
+    ):
         return _reject(
             f"ERROR: branch name must include a repo issue number ({current_branch}).",
-            "Expected format: {type}/{issue}-{description}",
-            "Example: feature/42-add-caching",
+            branch_names.FORMAT_HINT,
         )
 
     # Check 5: feature-branch commits from the main worktree are forbidden
     # when `.worktrees/` is present (worktree-convention rule 3).
     if (
-        _WORKTREE_SCOPED_RE.search(current_branch)
+        branch_names.requires_issue_number(current_branch)
         and (root / _WORKTREES_DIRNAME).is_dir()
         and git.is_main_worktree()
     ):

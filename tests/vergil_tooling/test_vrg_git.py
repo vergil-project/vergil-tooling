@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import subprocess
 from typing import TYPE_CHECKING
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_git import (
+    _check_new_branch_name,
     _noninteractive_rebase_env,
     _org_from_clone_url,
     _parse_branch_target,
+    _parse_new_branch,
     _parse_worktree_add_path,
     _worktree_convention_active,
     main,
@@ -1134,6 +1136,134 @@ class TestWorktreeAddAnchoring:
             rc = main(["worktree", "add", "anything", "origin/develop"])
         assert rc == 0
         mock_run.assert_called_once()
+
+
+# -- work-unit identifier: branch/dir lockstep at creation (#2550) ------------
+
+
+class TestParseNewBranch:
+    """Extract the branch a -b/-B/-c/-C flag creates."""
+
+    def test_worktree_add_b(self) -> None:
+        assert (
+            _parse_new_branch(("-b", "-B"), ["-b", "feature/1-x", ".worktrees/issue-1-x"])
+            == "feature/1-x"
+        )
+
+    def test_switch_c(self) -> None:
+        assert _parse_new_branch(("-c", "-C"), ["-c", "feature/2-y"]) == "feature/2-y"
+
+    def test_no_create_flag_returns_none(self) -> None:
+        assert _parse_new_branch(("-b", "-B"), [".worktrees/issue-1-x", "develop"]) is None
+
+    def test_flag_without_value_returns_none(self) -> None:
+        assert _parse_new_branch(("-b", "-B"), ["-b"]) is None
+
+
+class TestWorktreeAddBranchDirLockstep:
+    """`worktree add -b` enforces branch format and issue-<N>-<slug> directory."""
+
+    @staticmethod
+    def _make_root(tmp_path: Path) -> Path:
+        root = tmp_path / "repo"
+        (root / ".worktrees").mkdir(parents=True)
+        return root
+
+    def _run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, argv: list[str]
+    ) -> tuple[int, MagicMock]:
+        root = self._make_root(tmp_path)
+        monkeypatch.chdir(root)
+        with (
+            patch("vergil_tooling.bin.vrg_git.main_worktree_root", return_value=root),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+        ):
+            mock_run.return_value.returncode = 0
+            rc = main(argv)
+        return rc, mock_run
+
+    def test_matching_branch_and_dir_allowed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        argv = ["worktree", "add", "-b", "feature/9-authz", ".worktrees/issue-9-authz"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv)
+        assert rc == 0
+        mock_run.assert_called_once()
+
+    def test_branch_missing_issue_number_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        argv = ["worktree", "add", "-b", "feature/no-number", ".worktrees/issue-1-x"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv)
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "repo issue number" in capsys.readouterr().err
+
+    def test_dir_not_matching_branch_denied(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        argv = ["worktree", "add", "-b", "feature/9-authz", ".worktrees/authz"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv)
+        assert rc == 1
+        mock_run.assert_not_called()
+        err = capsys.readouterr().err
+        assert "lockstep" in err
+        assert "issue-9-authz" in err
+
+    def test_release_branch_exempt(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A release branch carries no issue number; neither the format nor the
+        # directory rule applies.
+        argv = ["worktree", "add", "-b", "release/2.1.180", ".worktrees/rel"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv)
+        assert rc == 0
+        mock_run.assert_called_once()
+
+    def test_adopt_existing_branch_exempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No -b: adopting an existing branch into a worktree is not a creation,
+        # so the branch/dir lockstep rule does not apply (only anchoring does).
+        argv = ["worktree", "add", ".worktrees/whatever", "feature/9-authz"]
+        rc, mock_run = self._run(tmp_path, monkeypatch, argv)
+        assert rc == 0
+        mock_run.assert_called_once()
+
+
+class TestCheckNewBranchName:
+    """`checkout -b` / `switch -c` enforce the issue-number rule at creation."""
+
+    def test_checkout_b_malformed_rejected(self) -> None:
+        msg = _check_new_branch_name("checkout", ["-b", "feature/no-number"])
+        assert msg is not None
+        assert "repo issue number" in msg
+
+    def test_switch_c_malformed_rejected(self) -> None:
+        assert _check_new_branch_name("switch", ["-c", "bugfix/nope"]) is not None
+
+    def test_checkout_b_valid_allowed(self) -> None:
+        assert _check_new_branch_name("checkout", ["-b", "feature/12-ok"]) is None
+
+    def test_release_branch_allowed(self) -> None:
+        assert _check_new_branch_name("checkout", ["-b", "release/2.1.180"]) is None
+
+    def test_plain_checkout_allowed(self) -> None:
+        assert _check_new_branch_name("checkout", ["develop"]) is None
+
+    def test_other_subcommand_ignored(self) -> None:
+        # `branch` is not a creation path this guard handles.
+        assert _check_new_branch_name("branch", ["-b", "feature/no-number"]) is None
+
+    def test_checkout_b_malformed_denied_via_main(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Run outside a main worktree / convention dir so the convention guard
+        # is inert and this branch-name guard is what fires.
+        monkeypatch.chdir(tmp_path)
+        with patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run:
+            rc = main(["checkout", "-b", "feature/no-number"])
+        assert rc == 1
+        mock_run.assert_not_called()
+        assert "repo issue number" in capsys.readouterr().err
 
 
 # -- non-interactive rebase (#1742) -------------------------------------------
