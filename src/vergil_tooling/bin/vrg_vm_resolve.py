@@ -36,6 +36,7 @@ from vergil_tooling.lib.session import (
     plan_session,
     select_by_name,
 )
+from vergil_tooling.lib.session_store import ScrapeStore
 
 
 def _claude_dir() -> Path:
@@ -282,20 +283,19 @@ def roster_names(roster: list[dict[str, object]]) -> dict[str, str]:
 def _read_state(
     slug: str | None = None,
 ) -> tuple[dict[str, str], set[str], dict[str, float]]:
-    cdir = _claude_dir()
-    projects = cdir / "projects"
-    roster = read_roster(cdir / "sessions")
-    # Roster names are authoritative for live sessions and cover ones with no
-    # transcript yet; transcript names cover dead/archived sessions absent from
-    # the roster. Union them, letting the live roster name win on overlap.
-    names = {**name_by_session(projects, slug), **roster_names(roster)}
-    active = active_session_ids(roster)
-    last_active = _roster_updated_at(roster)
-    for sid in names:
-        if sid not in last_active:
-            ts = _last_activity(projects_glob(projects, sid))
-            if ts is not None:
-                last_active[sid] = ts
+    """Enumerate sessions through the ``SessionStore`` seam.
+
+    The transcript/roster scrape now lives behind :class:`ScrapeStore`; this
+    adapter collapses the seam's :class:`SessionInfo` rows back into the
+    ``(name_by_session, active_ids, last_active)`` tuple the slot machinery still
+    consumes. A ``name=None`` row (a live-but-unnamed session) contributes to the
+    active set and last-activity map but not to the name map — exactly as the
+    prior direct read did.
+    """
+    rows = ScrapeStore(_claude_dir(), slug).list_sessions()
+    names = {row.session_id: row.name for row in rows if row.name is not None}
+    active = {row.session_id for row in rows if row.active}
+    last_active = {row.session_id: row.last_active for row in rows if row.last_active is not None}
     return names, active, last_active
 
 
