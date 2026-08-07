@@ -272,6 +272,47 @@ def test_ci_gates_always_includes_common_and_security() -> None:
     assert "Semgrep OSS" in check_names
 
 
+def test_desired_ci_gates_requires_docs_check() -> None:
+    """`docs / docs` is emitted unconditionally by the reusable CI and must be a
+    required PR gate (present even without GHAS)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    contexts = {
+        str(c["context"])
+        for rule in ruleset.rules
+        for c in cast(
+            "dict[str, list[dict[str, object]]]",
+            rule["parameters"],
+        )["required_status_checks"]
+    }
+    assert "docs / docs" in contexts
+
+
+UNIVERSAL_REUSABLE_CI_CHECKS = frozenset(
+    {
+        "quality / common",
+        "security / trivy",
+        "security / semgrep",
+        "docs / docs",
+        "version / version-bump",
+    }
+)
+
+
+def test_universal_reusable_ci_checks_are_all_required() -> None:
+    """Pins the vergil-actions reusable-CI universal checks. Update this set
+    deliberately when the reusable CI adds/removes a universal PR job."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
+    contexts = {
+        str(c["context"])
+        for rule in ruleset.rules
+        for c in cast(
+            "dict[str, list[dict[str, object]]]",
+            rule["parameters"],
+        )["required_status_checks"]
+    }
+    assert contexts >= UNIVERSAL_REUSABLE_CI_CHECKS
+
+
 def test_ci_gates_ghas_checks_use_ghas_integration_id() -> None:
     r = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
     checks = _checks(r)
@@ -436,6 +477,7 @@ _EXPECTED_GATES_TWO_VERSIONS = [
     "quality / common",
     "security / trivy",
     "security / semgrep",
+    "docs / docs",
     "Trivy",
     "Semgrep OSS",
     "security / codeql",
