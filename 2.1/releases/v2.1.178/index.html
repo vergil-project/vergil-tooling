@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.151/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.149/">
+        <link rel="next" href="../v2.1.177/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.150 - VERGIL Tooling</title>
+        <title>2.1.178 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21150-2026-07-16" class="md-skip">
+        <a href="#release-21178-2026-08-07" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.150
+              2.1.178
             
           </span>
         </div>
@@ -1222,10 +1222,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.178/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.178
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1241,6 +1268,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2006,37 +2064,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.150
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.150/" class="md-nav__link">
         
   
   
@@ -2052,37 +2083,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -12822,10 +12822,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -12849,12 +12849,49 @@
 
 
 
-<h1 id="release-21150-2026-07-16">Release 2.1.150 (2026-07-16)<a class="headerlink" href="#release-21150-2026-07-16" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21178-2026-08-07">Release 2.1.178 (2026-08-07)<a class="headerlink" href="#release-21178-2026-08-07" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>project host memory into cloud session at matching slug (per-session pipe copy) (#2423)</strong></li>
+<li><strong>--resume accepts bare label (validate workspace); remove --fork (#2657)</strong>
+Two changes from epic .github#230 live validation.</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.150/v2.1.150-ci-evidence.tar.gz">Download →</a></p>
+<p>A. --resume is now symmetric with --label. It accepts a bare '<label>' and composes '<label>:<workspace>' from the required workspace positional; a full 'label:workspace' is still accepted for back-compat, but its workspace segment (everything after the final colon, so legacy '<identity>:<NN>:<path>' names resolve too) must equal the command-line positional. A mismatch fails loud rather than silently preferring either side. Composition lives in the resolver (_compose_resume_name) alongside --label's make_label_name.</p>
+<p>B. Remove the orphaned --fork flag and its now-dead plumbing: the CLI flag and its help/guard strings, the resolver --fork exec path, the fork branch in plan_session, and the Fork decision and _select_fork in session.lib. The no-double-attach guardrail (AmbiguousSessionError fail-loud) is independent safety and is retained. Fork-only tests removed; tests added for bare-label resume, full-name workspace match, and mismatch rejection.</p>
+<ul>
+<li><strong>detect --label collision before the name registers (#2654) (#2659)</strong>
+The --label uniqueness check reads store.resolve_name over the transcript
+custom-title and roster name — both written asynchronously by claude after the
+session starts. The create path exec'd claude and relied entirely on those
+async writes, recording nothing itself, so a rapid second --label for the same
+name ran inside the registration-latency window: resolve_name returned None, the
+collision was missed, and a duplicate was created (seconds later the same command
+correctly errored once the name had registered).</li>
+</ul>
+<p>Close the window at the create decision. The --label paths now mint the session
+id, reserve the name against it synchronously via the seam
+(ScrapeStore.reserve_name), then exec claude --session-id <id> -n <name>. The
+reservation is a vrg-owned, VM-local file that list_sessions unions in at lowest
+precedence, so the name is resolvable the instant the create is decided. Pinning
+the reserved id to the one claude adopts makes the reservation and the real
+session dedup to a single row; the authoritative transcript/roster name wins on
+overlap. Reservations self-clean: swept once the session's transcript exists
+(superseded) and ignored/swept past a TTL if the session never materialized.</p>
+<p>Pre-seeding the transcript instead was ruled out empirically: claude
+--session-id rejects a pre-existing transcript at that id ("Session ID ... is
+already in use"), so the reservation must live outside claude's own stores.</p>
+<p>Adds regression coverage: a real ScrapeStore over a temp dir where the first
+create reserves but no transcript/roster is written reproduces the missed-
+collision window and asserts the second --label reliably errors and never execs
+a duplicate; plus seam-level tests for reserve/resolve, same-id dedup,
+supersession sweep, TTL expiry, and idle-not-live reservations.</p>
+<ul>
+<li><strong>recognize Apple/vz Lima VMs so --platform stops fail-closing to cloud-vm (#2660)</strong>
+The Lima markers (/mnt/lima, /dev/virtio-ports/lima) are QEMU-backend artifacts, both absent on the vz (Apple Virtualization) backend. With both missing, resolve_platform fail-closed a real local Lima VM to cloud-vm, misleading platform-aware behavior and any human checking local-vs-cloud.</li>
+</ul>
+<p>Broaden _lima_marker_present to recognize Lima across both backends: add the /mnt/lima-cidata mount and a backend-independent guest-hostname signal (lima-<instance>). The probe runs only after a cloud-metadata miss, so it cannot mask a genuine cloud VM, and the fail-closed default is unchanged for a truly unconfirmable box.</p>
+<p>Verified on the real vz Lima VM: --platform now resolves local-vm (resolved_from=lima-marker) instead of cloud-vm/fail-closed.</p>
+<p>Promoted from triage vergil-project/.github#236.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.178/v2.1.178-ci-evidence.tar.gz">Download →</a></p>
 
 
 

@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.178/">
       
       
         <link rel="next" href="../v2.1.176/">
@@ -1159,6 +1159,8 @@
       
         
       
+        
+      
     
     
     
@@ -1214,6 +1216,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.178/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.178
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -12890,6 +12920,7 @@ A stage whose fn returns normally was always recorded ok (✓), so confirm-main/
 </ul>
 <p>Add progress.mark_warn(reason): a stage can now signal completed-with-warning without raising, downgrading its recorded status ok→warn (⚠) with the reason on its status row. Control flow (including fail_fast) is unaffected and the run still exits 0 on a pure warn.</p>
 <p>Wire confirm_main/confirm_develop to call it when they observe a deferral, so each stage that saw a break shows ⚠ at its own row — including confirm-develop when the same family was already deferred on main (dedup keeps the list from growing, but the stage still observed it). Clean runs keep ✓; publish-status exit-1 and the summary are unchanged.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.177/v2.1.177-ci-evidence.tar.gz">Download →</a></p>
 
 
 
