@@ -272,27 +272,30 @@ def test_ci_gates_always_includes_common_and_security() -> None:
     assert "Semgrep OSS" in check_names
 
 
-def test_desired_ci_gates_requires_docs_check() -> None:
-    """`docs / docs` is emitted unconditionally by the reusable CI and must be a
-    required PR gate (present even without GHAS)."""
-    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False)
-    contexts = {
-        str(c["context"])
-        for rule in ruleset.rules
-        for c in cast(
-            "dict[str, list[dict[str, object]]]",
-            rule["parameters"],
-        )["required_status_checks"]
-    }
-    assert "docs / docs" in contexts
+def test_ci_gates_requires_docs_check_when_publishing_docs() -> None:
+    """A docs-publishing repo (`[publish].docs = true`) emits `docs / docs` from
+    the reusable CI, so it must be a required PR gate (present even without
+    GHAS)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, docs=True)
+    assert "docs / docs" in _check_names(ruleset)
 
 
+def test_ci_gates_omits_docs_check_when_not_publishing_docs() -> None:
+    """A repo with `[publish].docs = false` (e.g. an org `.github` repo) has no
+    docs job in its CI, so `docs / docs` is never reported. Requiring it pins a
+    status that never resolves and blocks every merge with "the base branch
+    policy prohibits the merge" (vergil-project/vergil-tooling#2647)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=False, docs=False)
+    assert "docs / docs" not in _check_names(ruleset)
+
+
+# `docs / docs` is deliberately absent here — it is conditional on
+# `[publish].docs` (see the two tests above), not universal.
 UNIVERSAL_REUSABLE_CI_CHECKS = frozenset(
     {
         "quality / common",
         "security / trivy",
         "security / semgrep",
-        "docs / docs",
         "version / version-bump",
     }
 )
@@ -512,13 +515,14 @@ def _vergil_config(
     release_model: str = "tagged-release",
     versions: list[str] | None = None,
     integration_tests: bool = False,
+    docs: bool = True,
 ) -> VergilConfig:
     return VergilConfig(
         project=_project(language=language, release_model=release_model),
         dependencies={"vergil": "v1.4"},
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
-        publish=PublishConfig(release=False, docs=True, consumer_refresh=None),
+        publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
         container=ContainerConfig(env_prefixes=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
@@ -545,6 +549,21 @@ def test_compute_desired_state_has_three_rulesets() -> None:
     assert "Branch protection" in names
     assert "Tag protection" in names
     assert "CI gates" in names
+
+
+def test_compute_desired_state_omits_docs_gate_when_publish_docs_false() -> None:
+    """`[publish].docs = false` must flow through to the CI-gates ruleset, so a
+    non-docs repo's branch protection never requires the never-reported
+    `docs / docs` check (vergil-project/vergil-tooling#2647)."""
+    state = compute_desired_state(_vergil_config(docs=False), visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "docs / docs" not in _check_names(gates)
+
+
+def test_compute_desired_state_keeps_docs_gate_when_publish_docs_true() -> None:
+    state = compute_desired_state(_vergil_config(docs=True), visibility="public", is_org=True)
+    gates = next(r for r in state.rulesets if r.name == "CI gates")
+    assert "docs / docs" in _check_names(gates)
 
 
 def test_compute_desired_state_private_without_ghas_drops_alert_checks() -> None:

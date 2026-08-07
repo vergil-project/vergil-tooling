@@ -383,7 +383,7 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     from vergil_tooling.lib.github_config import EvidenceGate
 
-    cfg = SimpleNamespace(project="PROJECT", ci="CI")
+    cfg = SimpleNamespace(project="PROJECT", ci="CI", publish=SimpleNamespace(docs=False))
     monkeypatch.setattr(ci_evidence, "read_config", lambda _root: cfg)
     monkeypatch.setattr(github, "repo_visibility", lambda _repo: "public")
 
@@ -398,8 +398,8 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
 
     sentinel = (EvidenceGate(name="test", checks=("test / unit",)),)
 
-    def fake_required(project: Any, ci: Any, *, ghas: bool) -> Any:
-        captured["derivation_args"] = (project, ci, ghas)
+    def fake_required(project: Any, ci: Any, *, ghas: bool, docs: bool) -> Any:
+        captured["derivation_args"] = (project, ci, ghas, docs)
         return sentinel
 
     monkeypatch.setattr(ci_evidence, "required_evidence_gates", fake_required)
@@ -409,7 +409,8 @@ def test_resolve_required_gates_wires_config_ghas_and_derivation(
     assert result is sentinel
     assert captured["ghas_config"] is cfg
     assert captured["visibility"] == "public"
-    assert captured["derivation_args"] == ("PROJECT", "CI", True)
+    # docs is wired from config.publish.docs (here False) alongside ghas.
+    assert captured["derivation_args"] == ("PROJECT", "CI", True, False)
 
 
 # --- _gate_conclusion ---------------------------------------------------
