@@ -2455,12 +2455,11 @@ def _cmd_session(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    if getattr(args, "label", None) is not None and (
-        args.resume is not None or args.fork or args.fresh
-    ):
+    if getattr(args, "label", None) is not None and (args.resume is not None or args.fork):
         print(
             "ERROR: --label creates a new named session and cannot be combined with "
-            "--resume (attach) or --fork/--fresh.",
+            "--resume (attach) or --fork. (Pair it with --fresh to retire a prior "
+            "same-named session and start clean.)",
             file=sys.stderr,
         )
         return 1
@@ -2818,8 +2817,8 @@ def main(argv: list[str] | None = None) -> int:
             "Create a new purpose-named session named '<label>:<workspace>' (e.g. "
             "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
             "is the convention (off-convention warns, never blocks). Errors if a "
-            "session of that name already exists. Mutually exclusive with "
-            "--resume/--fork/--fresh."
+            "session of that name already exists (add --fresh to retire that prior "
+            "session and start clean). Mutually exclusive with --resume/--fork."
         ),
     )
     p_session.add_argument(
@@ -2830,7 +2829,10 @@ def main(argv: list[str] | None = None) -> int:
     p_session.add_argument(
         "--fresh",
         action="store_true",
-        help="Start a brand-new session in the workspace's next slot",
+        help=(
+            "With --label: retire any prior session of that name (rename to "
+            "'<name>~<datestamp>', never delete) and start a fresh one in its place."
+        ),
     )
     p_session.add_argument(
         "--model",

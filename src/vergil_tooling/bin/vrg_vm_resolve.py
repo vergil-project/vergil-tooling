@@ -18,6 +18,7 @@ import datetime
 import json
 import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from vergil_tooling.lib.session import (
@@ -464,6 +465,90 @@ def _resolve_label(path: str, label: str, extra: list[str]) -> int:
     return _execute(Create(name), extra)
 
 
+def retired_name(name: str, stamp: str) -> str:
+    """Compose the retired name for a session being replaced by ``--fresh``.
+
+    A retired session keeps its full history under a suffixed name
+    ``<name>~<stamp>``. The ``~`` separates the original name from the retire
+    stamp and never appears in a live ``label:workspace`` name, so a retired name
+    never collides with — nor resolves as — an active one. Nothing is deleted; the
+    transcript lives on under this name (the supported retire-rename, #2609).
+    """
+    return f"{name}~{stamp}"
+
+
+def _now_stamp() -> str:
+    """A compact UTC timestamp (``YYYYMMDDThhmmssZ``) for a retired-session suffix.
+
+    Supplied by the CLI layer so the pure planning (:func:`plan_fresh`,
+    :func:`retired_name`) never reaches for the wall clock itself.
+    """
+    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%dT%H%M%SZ")
+
+
+@dataclass(frozen=True)
+class FreshPlan:
+    """The plan for a ``--fresh --label`` launch.
+
+    ``name`` is the clean ``label:workspace`` name to create. ``retire`` is
+    ``(old_session_id, retired_name)`` when a visible session already holds
+    ``name`` and must be renamed out of the way first, or ``None`` when the name
+    is free (nothing to retire — a plain create).
+    """
+
+    name: str
+    retire: tuple[str, str] | None
+
+
+def plan_fresh(store: SessionStore, name: str, stamp: str) -> FreshPlan:
+    """Plan a ``--fresh --label`` launch: retire-rename the prior session, then create.
+
+    Resolves the prior visible session named ``name`` through the seam. If one
+    exists, the plan retires it to :func:`retired_name` — carried out by the
+    caller via ``store.rename`` (a *supported* rename, never a deletion) — and
+    then a fresh session with the clean ``name`` is created. If no visible session
+    holds the name, the plan is a plain create. Ambiguity (two co-equal live
+    sessions) propagates as :class:`AmbiguousSessionError`: ``--fresh`` never
+    guesses which live session to retire (fail loud).
+    """
+    existing = store.resolve_name(name)
+    if existing is None:
+        return FreshPlan(name=name, retire=None)
+    return FreshPlan(name=name, retire=(existing.session_id, retired_name(name, stamp)))
+
+
+def _resolve_fresh(path: str, label: str, stamp: str, extra: list[str]) -> int:
+    """Create a fresh ``label:workspace`` session, retiring any prior one by name.
+
+    The ``--fresh --label`` path: validate the label (soft-warn an off-convention
+    prefix, fail loud on a structurally invalid slug), compose ``label:workspace``,
+    and plan a retire-rename via the seam. A prior visible session of that name is
+    renamed to ``<name>~<stamp>`` through ``store.rename`` — a supported rename,
+    so the transcript is never deleted — then a fresh session with the clean name
+    is created. Ambiguity fails loud (never renames when it cannot tell which
+    session to retire).
+    """
+    try:
+        warnings = validate_label(label)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    name = make_label_name(label, path)
+    store = _store(_project_slug(str(Path.cwd())))
+    try:
+        plan = plan_fresh(store, name, stamp)
+    except AmbiguousSessionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    if plan.retire is not None:
+        old_session_id, retired = plan.retire
+        store.rename(old_session_id, retired)
+        _note(f"Retired prior session {name} -> {retired}")
+    return _execute(Create(plan.name), extra)
+
+
 def resolve(
     identity: str,
     path: str,
@@ -477,17 +562,22 @@ def resolve(
 
     ``label`` short-circuits into the named-creation path (``--label``): it
     composes and uniqueness-checks ``label:workspace`` and creates that session
-    (see :func:`_resolve_label`), bypassing the slot machinery entirely.
+    (see :func:`_resolve_label`), bypassing the slot machinery entirely. Combined
+    with ``fresh`` (``--fresh --label``) it instead *retires* any prior visible
+    session of that name via a supported rename and creates a fresh one in its
+    place (see :func:`_resolve_fresh`) — the transcript is never deleted (#2609).
 
     ``resume_name`` (``--resume``) resolves an exact session name to a session id
     through the ``SessionStore`` seam and attaches to it, deriving the bootstrap
     cwd from the resolved session (#2607). With no verb the recency list + the two
     verbs are printed and a nonzero code returned — there is no auto-resume-most-
-    recent / auto-create default and no ``--slot``. ``fork`` / ``fresh`` retain the
-    legacy slot machinery (reconceived by later tasks in the epic); auto-archive
-    and the staleness sweep are gone (#2608).
+    recent / auto-create default and no ``--slot``. ``fork`` (and ``fresh`` without
+    a ``label``) retain the legacy slot machinery; auto-archive and the staleness
+    sweep are gone (#2608).
     """
     if label is not None:
+        if fresh:
+            return _resolve_fresh(path, label, _now_stamp(), extra)
         return _resolve_label(path, label, extra)
     if resume_name is not None:
         return _resume_by_name(resume_name, extra)

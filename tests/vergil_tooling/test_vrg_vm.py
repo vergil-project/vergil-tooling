@@ -2385,12 +2385,36 @@ def test_session_inner_label() -> None:
     assert "--label epic-1" in inner
 
 
+def test_session_inner_fresh_with_label() -> None:
+    # --fresh --label (issue #2609): both flags reach the resolver, which retires
+    # the prior same-named session and creates a fresh one.
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fork=False, fresh=True, resume=None, label="epic-1")
+    inner = _session_inner(ns, "vergil", "p", "")
+    assert "--label epic-1" in inner
+    assert "--fresh" in inner
+
+
 def test_cmd_session_rejects_label_with_resume() -> None:
     import argparse
 
     from vergil_tooling.bin.vrg_vm import _cmd_session
 
     ns = argparse.Namespace(resume="epic-85", fork=False, fresh=False, label="epic-1")
+    assert _cmd_session(ns) == 1
+
+
+def test_cmd_session_rejects_label_with_fork() -> None:
+    # --label + --fork stays rejected (fork is a distinct verb); only --fresh now
+    # combines with --label (issue #2609).
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume=None, fork=True, fresh=False, label="epic-1")
     assert _cmd_session(ns) == 1
 
 
