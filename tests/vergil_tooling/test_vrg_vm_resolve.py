@@ -396,7 +396,13 @@ def capture_exec(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
 DAY = 86400.0
 
 
-def _resolve(identity: str, path: str, resume_name: str | None = None, **kw: object) -> int:
+def _resolve(
+    identity: str,
+    path: str,
+    resume_name: str | None = None,
+    label: str | None = None,
+    **kw: object,
+) -> int:
     defaults: dict[str, object] = {
         "requested_slot": None,
         "fork": False,
@@ -406,7 +412,9 @@ def _resolve(identity: str, path: str, resume_name: str | None = None, **kw: obj
         "archive_days": 14,
     }
     defaults.update(kw)
-    return r.resolve(identity, path, resume_name=resume_name, **defaults)  # type: ignore[arg-type]
+    return r.resolve(  # type: ignore[arg-type]
+        identity, path, resume_name=resume_name, label=label, **defaults
+    )
 
 
 def test_resolve_create(
@@ -452,6 +460,90 @@ def test_resolve_by_name_refuses_unknown_name(
     monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
     assert _resolve("id", "p", resume_name="ghost") == 1
     assert "no session named 'ghost'" in capsys.readouterr().err
+
+
+# --- --label (named creation, issue #2606) ---
+
+
+class _FakeStore:
+    """Minimal SessionStore stub exposing only resolve_name for the label path."""
+
+    def __init__(self, result: object) -> None:
+        self._result = result
+
+    def resolve_name(self, name: str) -> object:  # noqa: ARG002
+        if isinstance(self._result, Exception):
+            raise self._result
+        return self._result
+
+
+def test_resolve_label_creates_when_name_free(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # No visible session holds the composed name -> create label:workspace.
+    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(None))
+    assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
+    assert capture_exec == [["claude", "-n", "epic-1:vergil-project/tooling"]]
+    assert "Creating session epic-1:vergil-project/tooling" in capsys.readouterr().err
+
+
+def test_resolve_label_rejects_existing_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from vergil_tooling.lib.session_store import SessionInfo
+
+    hit = SessionInfo("s1", "epic-1:p", "/w", active=True, last_active=None)
+    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(hit))
+    assert _resolve("id", "p", label="epic-1") == 1
+    assert capture_exec == []  # uniqueness collision -> never execs
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_resolve_label_rejects_ambiguous_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Two live sessions hold the name -> the seam fails loud; still a collision.
+    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(r.AmbiguousSessionError("boom")))
+    assert _resolve("id", "p", label="epic-1") == 1
+    assert capture_exec == []
+    assert "already exists" in capsys.readouterr().err
+
+
+def test_resolve_label_warns_off_convention_but_creates(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(None))
+    assert _resolve("id", "p", label="scratch") == 0
+    assert capture_exec == [["claude", "-n", "scratch:p"]]
+    assert "convention" in capsys.readouterr().err
+
+
+def test_resolve_label_rejects_invalid_slug(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A ':' in the label is structurally invalid -> fail loud before any store read.
+    called = False
+
+    def _boom(*_a: object) -> object:
+        nonlocal called
+        called = True
+        return _FakeStore(None)
+
+    monkeypatch.setattr(r, "_store", _boom)
+    assert _resolve("id", "p", label="bad:name") == 1
+    assert capture_exec == []
+    assert called is False  # validation short-circuits before the uniqueness check
+    assert "ERROR" in capsys.readouterr().err
 
 
 def test_resolve_fork(
@@ -709,18 +801,28 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     assert code == 0
     # args order: identity, path, slot, fork, fresh, extra, stale_days,
-    # archive_days, resume_name
-    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14, None)
+    # archive_days, resume_name, label
+    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14, None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
     seen: dict[str, object] = {}
     monkeypatch.setattr(r, "resolve", lambda *args: seen.update(args=args) or 0)
     r.main(["--identity", "id", "--path", "p", "--resume-name", "epic-85-adhoc"])
-    # resume_name is the final positional arg.
+    # resume_name is the penultimate positional arg (label is last).
     passed = seen["args"]
     assert isinstance(passed, tuple)
-    assert passed[-1] == "epic-85-adhoc"
+    assert passed[-2] == "epic-85-adhoc"
+    assert passed[-1] is None  # label unset
+
+
+def test_main_passes_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(r, "resolve", lambda *args: seen.update(args=args) or 0)
+    r.main(["--identity", "id", "--path", "p", "--label", "epic-1"])
+    passed = seen["args"]
+    assert isinstance(passed, tuple)
+    assert passed[-1] == "epic-1"  # label is the final positional arg
 
 
 def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> None:

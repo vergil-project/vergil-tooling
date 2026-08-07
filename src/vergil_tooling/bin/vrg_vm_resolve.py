@@ -31,12 +31,14 @@ from vergil_tooling.lib.session import (
     build_slots,
     list_rows,
     make_archived_name,
+    make_label_name,
     parse_archived,
     parse_name,
     plan_session,
     select_by_name,
+    validate_label,
 )
-from vergil_tooling.lib.session_store import ScrapeStore
+from vergil_tooling.lib.session_store import AmbiguousSessionError, ScrapeStore
 
 
 def _claude_dir() -> Path:
@@ -280,6 +282,16 @@ def roster_names(roster: list[dict[str, object]]) -> dict[str, str]:
     return out
 
 
+def _store(slug: str | None = None) -> ScrapeStore:
+    """Build the ``SessionStore`` backend the resolver enumerates/resolves through.
+
+    A single seam constructor so every resolver path (state read, label
+    uniqueness check) goes through the same backend — and tests can substitute a
+    fake store by patching this one function.
+    """
+    return ScrapeStore(_claude_dir(), slug)
+
+
 def _read_state(
     slug: str | None = None,
 ) -> tuple[dict[str, str], set[str], dict[str, float]]:
@@ -292,7 +304,7 @@ def _read_state(
     active set and last-activity map but not to the name map — exactly as the
     prior direct read did.
     """
-    rows = ScrapeStore(_claude_dir(), slug).list_sessions()
+    rows = _store(slug).list_sessions()
     names = {row.session_id: row.name for row in rows if row.name is not None}
     active = {row.session_id for row in rows if row.active}
     last_active = {row.session_id: row.last_active for row in rows if row.last_active is not None}
@@ -399,6 +411,40 @@ def _execute(path: str, action: PlanAction, extra: list[str], names: dict[str, s
     return _exec_claude(["--resume", prompt.session_id, "-n", prompt.name, *extra])
 
 
+def _resolve_label(path: str, label: str, extra: list[str]) -> int:
+    """Create a purpose-named ``label:workspace`` session, enforcing uniqueness.
+
+    The named-creation path (``--label``): validate the label slug (soft-warning
+    an off-convention prefix, failing loud on a structurally invalid one), compose
+    ``label:workspace``, and refuse if a **visible** session already holds that
+    name — creation must never silently shadow an existing session, so a collision
+    (one match, or ambiguously many) is an error directing the user to ``--resume``
+    it or pick another label. Otherwise exec the existing ``Create`` path.
+    """
+    try:
+        warnings = validate_label(label)
+    except ValueError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    for warning in warnings:
+        print(f"WARNING: {warning}", file=sys.stderr)
+    name = make_label_name(label, path)
+    store = _store(_project_slug(str(Path.cwd())))
+    try:
+        # A single match, or ambiguously many (the seam fails loud), both mean the
+        # name is taken — creation must never silently shadow an existing session.
+        collision = store.resolve_name(name) is not None
+    except AmbiguousSessionError:
+        collision = True
+    if collision:
+        print(
+            f"ERROR: a session named {name!r} already exists; --resume it or pick another label",
+            file=sys.stderr,
+        )
+        return 1
+    return _execute(path, Create(name), extra, {})
+
+
 def resolve(
     identity: str,
     path: str,
@@ -409,14 +455,21 @@ def resolve(
     stale_days: int,
     archive_days: int,
     resume_name: str | None = None,
+    label: str | None = None,
 ) -> int:
     """Plan, auto-archive stale cold slots, then exec Claude for one identity + path.
+
+    ``label`` short-circuits into the named-creation path (``--label``): it
+    composes and uniqueness-checks ``label:workspace`` and creates that session
+    (see :func:`_resolve_label`), bypassing the slot machinery entirely.
 
     ``resume_name`` short-circuits the slot machinery: it resumes the session with
     that exact display name (an epic-renamed title that does not fit the slot
     scheme), with no staleness sweep or prompt — the caller named the session
     explicitly, so it is resumed as-is.
     """
+    if label is not None:
+        return _resolve_label(path, label, extra)
     names, active, last_active = _read_state(_project_slug(str(Path.cwd())))
     if resume_name is not None:
         return _execute(path, select_by_name(resume_name, names, active, last_active), extra, names)
@@ -481,6 +534,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fork", action="store_true")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--resume-name", dest="resume_name", default=None)
+    parser.add_argument("--label", dest="label", default=None)
     parser.add_argument("--stale-days", type=int, default=7, dest="stale_days")
     parser.add_argument("--archive-days", type=int, default=14, dest="archive_days")
     parser.add_argument("--list-json", action="store_true", dest="list_json")
@@ -507,6 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         args.stale_days,
         args.archive_days,
         args.resume_name,
+        args.label,
     )
 
 

@@ -2377,6 +2377,34 @@ def test_session_inner_resume_name() -> None:
     assert "--resume-name epic-85-adhoc" in inner
 
 
+def test_session_inner_label() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None, label="epic-1")
+    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    assert "--label epic-1" in inner
+
+
+def test_cmd_session_rejects_label_with_slot() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume=None, slot=3, fork=False, fresh=False, label="epic-1")
+    assert _cmd_session(ns) == 1
+
+
+def test_cmd_session_rejects_label_with_resume() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume="epic-85", slot=None, fork=False, fresh=False, label="epic-1")
+    assert _cmd_session(ns) == 1
+
+
 def test_cmd_session_rejects_resume_with_slot() -> None:
     import argparse
 

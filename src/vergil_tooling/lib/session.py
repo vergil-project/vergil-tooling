@@ -28,6 +28,53 @@ def make_name(identity: str, slot: int, path: str) -> str:
     return f"{identity}:{slot:02d}:{path}"
 
 
+_LABEL_CONVENTION_PREFIXES = ("epic-", "adhoc-")
+
+
+def make_label_name(label: str, workspace: str) -> str:
+    """Compose a purpose-named session name ``<label>:<workspace>``.
+
+    The name drops identity entirely — a session is named by *what it is for*
+    (its ``label``) scoped to *where it runs* (its ``workspace`` path), joined by
+    the same unambiguous colon delimiter the slot scheme used. ``label`` is a
+    clean slug (validated by :func:`validate_label`); ``workspace`` is the
+    workspace-relative path, e.g. ``vergil-project/vergil-tooling``.
+    """
+    return f"{label}:{workspace}"
+
+
+def validate_label(label: str) -> list[str]:
+    """Validate a session ``label`` slug, returning non-fatal warnings.
+
+    Two tiers, mirroring the spec's "clean slug required, convention soft":
+
+    - **Hard (raises :class:`ValueError`).** The label must be a clean slug: a
+      ``:`` would break the ``label:workspace`` delimiter, and whitespace or an
+      empty/blank label is never a valid name. These are structural — the name
+      cannot be formed — so they fail loud.
+    - **Soft (returned as a warning, never rejected).** A label that is not
+      prefixed ``epic-``/``adhoc-`` is off-convention but still usable; it yields
+      one warning string so the caller can surface it without blocking creation.
+
+    Returns an empty list for a clean, on-convention label.
+    """
+    if not label or not label.strip():
+        msg = "label must not be empty"
+        raise ValueError(msg)
+    if ":" in label:
+        msg = "label must not contain ':' (the label:workspace delimiter)"
+        raise ValueError(msg)
+    if any(ch.isspace() for ch in label):
+        msg = "label must not contain whitespace"
+        raise ValueError(msg)
+    warnings: list[str] = []
+    if not label.startswith(_LABEL_CONVENTION_PREFIXES):
+        warnings.append(
+            f"label {label!r} does not follow the epic-/adhoc- naming convention (using it anyway)"
+        )
+    return warnings
+
+
 def make_archived_name(name: str, timestamp: str) -> str:
     """Archived label: ``archived@<timestamp>@<original-name>``."""
     return f"{_ARCHIVED_PREFIX}{timestamp}@{name}"
