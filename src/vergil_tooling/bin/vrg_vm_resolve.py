@@ -349,12 +349,12 @@ def _note(message: str) -> None:
 
 
 def _execute(action: Decision, extra: list[str]) -> int:
-    """Carry out a ``--fork`` / ``--fresh`` plan action.
+    """Carry out a ``--fresh`` plan action.
 
     With ``--slot`` and the auto-resume-most-recent default gone (#2607), the only
     actions that still reach here are ``Create`` (``--fresh`` creating a fresh
-    session in the target slot) and ``Refuse`` (``--fork`` with no slot to
-    target). Exact-name attach (``--resume``) resolves through the seam in
+    session in the target slot) and ``Refuse`` (``--fresh`` over a live or
+    exhausted slot). Exact-name attach (``--resume``) resolves through the seam in
     :func:`_resume_by_name`, not here.
     """
     if isinstance(action, Refuse):
@@ -363,8 +363,8 @@ def _execute(action: Decision, extra: list[str]) -> int:
     if isinstance(action, Create):
         _note(f"Creating session {action.name}")
         return _exec_claude(["-n", action.name, *extra])
-    # Resume/Fork were the other slot-selection outcomes; neither is reachable
-    # now that selection is by exact name. Guard loudly rather than mis-exec.
+    # Resume was the other slot-selection outcome; it is not reachable now that
+    # selection is by exact name. Guard loudly rather than mis-exec.
     raise RuntimeError(f"unexpected session action {type(action).__name__}")  # pragma: no cover
 
 
@@ -387,6 +387,31 @@ def plan_resume(store: SessionStore, name: str) -> SessionInfo:
         print(f"ERROR: no session named {name!r} — create it with --label", file=sys.stderr)
         raise SystemExit(1)
     return info
+
+
+def _compose_resume_name(resume_name: str, path: str) -> str:
+    """Resolve a ``--resume`` argument to the exact session name to attach to.
+
+    ``--resume`` is symmetric with ``--label``: it accepts a **bare** ``<label>``
+    and composes ``<label>:<workspace>`` from the required workspace positional
+    (``path``). A **full** ``label:workspace`` name is still accepted for
+    back-compat, but its workspace segment (everything after the final ``:``, so
+    a legacy ``<identity>:<NN>:<path>`` name resolves correctly too) MUST equal
+    the command-line workspace positional. On a mismatch this fails loud rather
+    than silently preferring either the name's workspace or the positional.
+    """
+    if ":" not in resume_name:
+        return make_label_name(resume_name, path)
+    _label, workspace = resume_name.rsplit(":", 1)
+    if workspace != path:
+        print(
+            f"ERROR: --resume {resume_name!r} targets workspace {workspace!r}, but the "
+            f"command line names workspace {path!r}; they must match. Pass just the bare "
+            f"label to compose the name from the workspace positional.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+    return resume_name
 
 
 def _resume_by_name(name: str, extra: list[str]) -> int:
@@ -552,7 +577,6 @@ def _resolve_fresh(path: str, label: str, stamp: str, extra: list[str]) -> int:
 def resolve(
     identity: str,
     path: str,
-    fork: bool,
     fresh: bool,
     extra: list[str],
     resume_name: str | None = None,
@@ -567,26 +591,28 @@ def resolve(
     session of that name via a supported rename and creates a fresh one in its
     place (see :func:`_resolve_fresh`) — the transcript is never deleted (#2609).
 
-    ``resume_name`` (``--resume``) resolves an exact session name to a session id
-    through the ``SessionStore`` seam and attaches to it, deriving the bootstrap
-    cwd from the resolved session (#2607). With no verb the recency list + the two
-    verbs are printed and a nonzero code returned — there is no auto-resume-most-
-    recent / auto-create default and no ``--slot``. ``fork`` (and ``fresh`` without
-    a ``label``) retain the legacy slot machinery; auto-archive and the staleness
-    sweep are gone (#2608).
+    ``resume_name`` (``--resume``) accepts a bare ``<label>`` (composed with the
+    workspace positional, symmetric with ``--label``) or a full ``label:workspace``
+    whose workspace segment must match the positional (see
+    :func:`_compose_resume_name`); it then resolves that exact name to a session id
+    through the ``SessionStore`` seam and attaches, deriving the bootstrap cwd from
+    the resolved session (#2607). With no verb the recency list + the two verbs are
+    printed and a nonzero code returned — there is no auto-resume-most-recent /
+    auto-create default and no ``--slot``. ``fresh`` (without a ``label``) retains
+    the legacy slot machinery; auto-archive and the staleness sweep are gone (#2608).
     """
     if label is not None:
         if fresh:
             return _resolve_fresh(path, label, _now_stamp(), extra)
         return _resolve_label(path, label, extra)
     if resume_name is not None:
-        return _resume_by_name(resume_name, extra)
+        return _resume_by_name(_compose_resume_name(resume_name, path), extra)
     slug = _project_slug(str(Path.cwd()))
-    if not fork and not fresh:
+    if not fresh:
         return _list_and_guide(slug)
     names, active, last_active = _read_state(slug)
     slots = build_slots(identity, path, names, active, last_active)
-    action = plan_session(identity, path, slots, None, fork, fresh)
+    action = plan_session(identity, path, slots, None, fresh)
     return _execute(action, extra)
 
 
@@ -617,7 +643,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vrg-vm-resolve-session")
     parser.add_argument("--identity")
     parser.add_argument("--path")
-    parser.add_argument("--fork", action="store_true")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--resume-name", dest="resume_name", default=None)
     parser.add_argument("--label", dest="label", default=None)
@@ -638,7 +663,6 @@ def main(argv: list[str] | None = None) -> int:
     return resolve(
         args.identity,
         args.path,
-        args.fork,
         args.fresh,
         extra,
         args.resume_name,

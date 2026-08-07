@@ -2378,8 +2378,6 @@ def _session_inner(
         resolve_cmd += ["--resume-name", args.resume]
     if getattr(args, "label", None) is not None:
         resolve_cmd += ["--label", args.label]
-    if args.fork:
-        resolve_cmd += ["--fork"]
     if args.fresh:
         resolve_cmd += ["--fresh"]
     if extra:
@@ -2448,18 +2446,18 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    if args.resume is not None and (args.fork or args.fresh):
+    if args.resume is not None and args.fresh:
         print(
             "ERROR: --resume attaches to a session by its exact name and cannot be "
-            "combined with --fork/--fresh.",
+            "combined with --fresh.",
             file=sys.stderr,
         )
         return 1
-    if getattr(args, "label", None) is not None and (args.resume is not None or args.fork):
+    if getattr(args, "label", None) is not None and args.resume is not None:
         print(
             "ERROR: --label creates a new named session and cannot be combined with "
-            "--resume (attach) or --fork. (Pair it with --fresh to retire a prior "
-            "same-named session and start clean.)",
+            "--resume (attach). (Pair it with --fresh to retire a prior same-named "
+            "session and start clean.)",
             file=sys.stderr,
         )
         return 1
@@ -2802,11 +2800,13 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         metavar="NAME",
         help=(
-            "Attach to the session with this exact name (e.g. "
-            "'epic-85-centralize-epics:vergil-project/tooling'). Resolves the name to "
-            "one session and derives its working directory from that session. With no "
-            "verb, the workspace's sessions are listed and --label/--resume are named. "
-            "Mutually exclusive with --fork/--fresh."
+            "Attach to a session by name. Accepts a bare label (e.g. "
+            "'epic-85-centralize-epics'), composed with the workspace positional into "
+            "'<label>:<workspace>' — symmetric with --label. A full 'label:workspace' is "
+            "also accepted, but its workspace segment must match the workspace positional. "
+            "Resolves the name to one session and derives its working directory from that "
+            "session. With no verb, the workspace's sessions are listed and --label/--resume "
+            "are named. Mutually exclusive with --fresh."
         ),
     )
     p_session.add_argument(
@@ -2818,13 +2818,8 @@ def main(argv: list[str] | None = None) -> int:
             "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
             "is the convention (off-convention warns, never blocks). Errors if a "
             "session of that name already exists (add --fresh to retire that prior "
-            "session and start clean). Mutually exclusive with --resume/--fork."
+            "session and start clean). Mutually exclusive with --resume."
         ),
-    )
-    p_session.add_argument(
-        "--fork",
-        action="store_true",
-        help="Fork the resolved session into a new session instead of resuming it",
     )
     p_session.add_argument(
         "--fresh",

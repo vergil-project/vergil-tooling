@@ -5,7 +5,6 @@ import pytest
 from vergil_tooling.lib.session import (
     SLOT_MAX,
     Create,
-    Fork,
     Refuse,
     Resume,
     SessionRow,
@@ -115,7 +114,7 @@ def test_parse_name_rejects_out_of_range_slot() -> None:
     assert parse_name("id:00:path") is None
 
 
-# --- default selection (no --slot, no --fork) ---
+# --- default selection (no --slot) ---
 
 
 def test_default_creates_first_slot_when_none_exist() -> None:
@@ -155,48 +154,16 @@ def test_explicit_resumes_idle_slot() -> None:
     assert select("vergil", "p", slots, requested_slot=3) == Resume("sid-3")
 
 
-def test_explicit_refuses_active_slot_with_fork_hint() -> None:
+def test_explicit_refuses_active_slot() -> None:
     slots = {3: Slot(3, "sid-3", active=True)}
     result = select("vergil", "p", slots, requested_slot=3)
     assert isinstance(result, Refuse)
-    assert "--fork" in result.message
+    assert "active" in result.message
 
 
 def test_explicit_rejects_out_of_range_slot() -> None:
     assert isinstance(select("vergil", "p", {}, requested_slot=0), Refuse)
     assert isinstance(select("vergil", "p", {}, requested_slot=100), Refuse)
-
-
-# --- --fork ---
-
-
-def test_fork_without_target_refuses() -> None:
-    result = select("vergil", "p", {}, fork=True)
-    assert isinstance(result, Refuse)
-    assert "--slot" not in result.message
-    assert "--fork" in result.message
-
-
-def test_fork_rejects_out_of_range_slot() -> None:
-    assert isinstance(select("vergil", "p", {}, requested_slot=0, fork=True), Refuse)
-
-
-def test_fork_refuses_nonexistent_slot() -> None:
-    result = select("vergil", "p", {}, requested_slot=2, fork=True)
-    assert isinstance(result, Refuse)
-    assert "does not exist" in result.message
-
-
-def test_fork_branches_active_slot_into_next_free() -> None:
-    slots = {1: Slot(1, "sid-1", active=True)}
-    assert select("vergil", "p", slots, requested_slot=1, fork=True) == Fork("sid-1", "vergil:02:p")
-
-
-def test_fork_refuses_when_all_slots_in_use() -> None:
-    slots = {n: Slot(n, f"sid-{n}", active=True) for n in range(1, SLOT_MAX + 1)}
-    result = select("vergil", "p", slots, requested_slot=1, fork=True)
-    assert isinstance(result, Refuse)
-    assert "all 99 slots" in result.message
 
 
 # --- build_slots ---
@@ -401,7 +368,7 @@ def test_filter_recent_boundary_is_inclusive() -> None:
     assert filter_recent(rows, NOW, 7) == rows
 
 
-# --- plan_session (legacy --fork / --fresh slot machinery; archive removed) ---
+# --- plan_session (legacy --fresh slot machinery; archive removed) ---
 
 
 def _slot(n: int, sid: str, active: bool = False, age_days: float = 0.0) -> Slot:
@@ -411,7 +378,6 @@ def _slot(n: int, sid: str, active: bool = False, age_days: float = 0.0) -> Slot
 def _plan(slots: dict[int, Slot], **kw: object) -> object:
     defaults: dict[str, object] = {
         "requested_slot": None,
-        "fork": False,
         "fresh": False,
     }
     defaults.update(kw)
@@ -455,11 +421,6 @@ def test_plan_fresh_bad_range_refused() -> None:
 def test_plan_fresh_all_slots_in_use() -> None:
     slots = {n: _slot(n, f"s{n}", active=True, age_days=1) for n in range(1, SLOT_MAX + 1)}
     assert isinstance(_plan(slots, fresh=True), Refuse)
-
-
-def test_plan_fork_unchanged() -> None:
-    plan = _plan({1: _slot(1, "s1", active=True, age_days=1)}, requested_slot=1, fork=True)
-    assert plan == Fork("s1", "vergil:02:p")
 
 
 def test_plan_no_slots_creates_first() -> None:
