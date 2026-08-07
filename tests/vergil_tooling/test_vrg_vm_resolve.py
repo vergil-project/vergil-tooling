@@ -455,7 +455,7 @@ def _resolve(
 # --- --label (named creation, issue #2606) ---
 
 
-class _FakeStore:
+class _StubStore:
     """Minimal SessionStore stub exposing only resolve_name for the label path."""
 
     def __init__(self, result: object) -> None:
@@ -473,7 +473,7 @@ def test_resolve_label_creates_when_name_free(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # No visible session holds the composed name -> create label:workspace.
-    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(None))
+    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
     assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
     assert capture_exec == [["claude", "-n", "epic-1:vergil-project/tooling"]]
     assert "Creating session epic-1:vergil-project/tooling" in capsys.readouterr().err
@@ -487,7 +487,7 @@ def test_resolve_label_rejects_existing_name(
     from vergil_tooling.lib.session_store import SessionInfo
 
     hit = SessionInfo("s1", "epic-1:p", "/w", active=True, last_active=None)
-    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(hit))
+    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(hit))
     assert _resolve("id", "p", label="epic-1") == 1
     assert capture_exec == []  # uniqueness collision -> never execs
     assert "already exists" in capsys.readouterr().err
@@ -499,7 +499,7 @@ def test_resolve_label_rejects_ambiguous_name(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     # Two live sessions hold the name -> the seam fails loud; still a collision.
-    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(r.AmbiguousSessionError("boom")))
+    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(r.AmbiguousSessionError("boom")))
     assert _resolve("id", "p", label="epic-1") == 1
     assert capture_exec == []
     assert "already exists" in capsys.readouterr().err
@@ -510,7 +510,7 @@ def test_resolve_label_warns_off_convention_but_creates(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(r, "_store", lambda *_a: _FakeStore(None))
+    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
     assert _resolve("id", "p", label="scratch") == 0
     assert capture_exec == [["claude", "-n", "scratch:p"]]
     assert "convention" in capsys.readouterr().err
@@ -527,7 +527,7 @@ def test_resolve_label_rejects_invalid_slug(
     def _boom(*_a: object) -> object:
         nonlocal called
         called = True
-        return _FakeStore(None)
+        return _StubStore(None)
 
     monkeypatch.setattr(r, "_store", _boom)
     assert _resolve("id", "p", label="bad:name") == 1
