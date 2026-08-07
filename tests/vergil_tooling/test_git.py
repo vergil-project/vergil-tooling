@@ -200,6 +200,10 @@ def test_ref_exists_true() -> None:
     # Even this local op disables the prompt so it can never hang (#1830).
     _, kwargs = mock_run.call_args
     assert kwargs["env"]["GIT_TERMINAL_PROMPT"] == "0"
+    # `git rev-parse --verify` prints the resolved SHA to stdout on success;
+    # both streams must be discarded so it never leaks to the terminal (#2658).
+    assert kwargs["stdout"] == subprocess.DEVNULL
+    assert kwargs["stderr"] == subprocess.DEVNULL
 
 
 def test_ref_exists_false() -> None:
