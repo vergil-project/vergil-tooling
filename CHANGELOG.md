@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.178] - 2026-08-07
+
+### Bug fixes
+
+- --resume accepts bare label (validate workspace); remove --fork (#2657)
+- detect --label collision before the name registers (#2654) (#2659)
+- recognize Apple/vz Lima VMs so --platform stops fail-closing to cloud-vm (#2660)
+
 ## [2.1.177] - 2026-08-07
 
 ### Bug fixes
