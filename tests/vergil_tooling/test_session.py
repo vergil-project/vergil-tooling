@@ -170,10 +170,11 @@ def test_explicit_rejects_out_of_range_slot() -> None:
 # --- --fork ---
 
 
-def test_fork_requires_slot() -> None:
+def test_fork_without_target_refuses() -> None:
     result = select("vergil", "p", {}, fork=True)
     assert isinstance(result, Refuse)
-    assert "--slot" in result.message
+    assert "--slot" not in result.message
+    assert "--fork" in result.message
 
 
 def test_fork_rejects_out_of_range_slot() -> None:

@@ -2824,7 +2824,7 @@ def main(argv: list[str] | None = None) -> int:
     p_session.add_argument(
         "--fork",
         action="store_true",
-        help="Fork the targeted --slot into a new session instead of resuming it",
+        help="Fork the resolved session into a new session instead of resuming it",
     )
     p_session.add_argument(
         "--fresh",
