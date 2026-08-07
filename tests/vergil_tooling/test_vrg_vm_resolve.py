@@ -775,6 +775,91 @@ def test_transcript_cwd_stops_at_line_cap(tmp_path: Path) -> None:
     assert r.transcript_cwd(f) is None
 
 
+# --- selection correctness: archived names never leak in (issue #2602) ---
+#
+# #2602: reconnecting to the base VM landed in an *archived* session — the title
+# bar showed the full ``archived@<ts>@<orig>`` name instead of the requested one,
+# silently pulling stale context into what should have been a clean resume. The
+# structural fix (Stages A/B) made attach resolve by *exact name* through the seam
+# (``resolve_over`` matches ``row.name == name`` only) and re-assert that name with
+# ``-n``. These tests pin that: a legacy ``archived@`` row — deliberately the most
+# recent and live, i.e. exactly what the old slot machinery would have picked — is
+# invisible to a request for the clean name, and the no-verb path never auto-selects.
+
+_REQUESTED = "vergil-user:02:vergil-project/vergil-tooling"
+_ARCHIVED = "archived@2026-05-01T00:00:00Z@vergil-user:02:vergil-project/vergil-tooling"
+
+
+def test_resume_selects_requested_not_archived_2602() -> None:
+    # The archived row is live and more recent than the requested one; the old
+    # recency-based selection would have picked it. Exact-name resolution filters
+    # it out entirely (its name is a different string), so the requested idle
+    # session is the only match and wins.
+    store = _FakeStore(
+        [
+            _info("arch", _ARCHIVED, active=True, last=999.0),
+            _info("want", _REQUESTED, active=False, last=1.0),
+        ]
+    )
+    info = r.plan_resume(store, _REQUESTED)
+    assert info.session_id == "want"
+    assert info.name == _REQUESTED  # never the archived candidate
+
+
+def test_resume_requested_absent_does_not_fall_back_to_archived_2602(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # If only the archived session exists, requesting the clean name must fail
+    # loud (create it with --label) — it must NOT silently attach the archived
+    # one. This is the exact #2602 harm: no fallback into stale context.
+    store = _FakeStore([_info("arch", _ARCHIVED, active=True, last=999.0)])
+    with pytest.raises(SystemExit):
+        r.plan_resume(store, _REQUESTED)
+    assert "no session named" in capsys.readouterr().err
+
+
+def test_resume_by_name_reasserts_requested_title_over_archived_2602(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # End to end: the exec resumes the requested session's id and re-asserts the
+    # requested name via -n, so the title bar shows the requested name — never the
+    # archived candidate's id or name (the #2602 title-bar tell).
+    store = _FakeStore(
+        [
+            _info("arch", _ARCHIVED, active=True, last=999.0, cwd="/stale"),
+            _info("want", _REQUESTED, active=False, last=1.0, cwd="/work/repo"),
+        ]
+    )
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    chdirs: list[str] = []
+    monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
+    assert _resolve("id", "p", resume_name=_REQUESTED) == 0
+    assert chdirs == ["/work/repo"]  # requested session's cwd, not the archived /stale
+    assert capture_exec == [["claude", "--resume", "want", "-n", _REQUESTED]]
+    assert _ARCHIVED not in capsys.readouterr().err
+
+
+def test_no_verb_never_auto_selects_even_with_archived_2602(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+) -> None:
+    # No verb: even with a live, most-recent archived session present, nothing is
+    # auto-selected. The old auto-resume-most-recent default (which is how #2602
+    # landed in the archived session) is gone — list-and-guide, exit nonzero, and
+    # never exec claude.
+    store = _FakeStore(
+        [
+            _info("arch", _ARCHIVED, active=True, last=999.0),
+            _info("want", _REQUESTED, active=False, last=1.0),
+        ]
+    )
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    assert _resolve("id", "p") == 1
+    assert capture_exec == []  # never auto-selects
+
+
 # --- list_json ---
 
 
