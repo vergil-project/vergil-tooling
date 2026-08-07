@@ -231,6 +231,21 @@ def test_remote_branches_empty() -> None:
         assert git.remote_branches() == set()
 
 
+def test_local_branches_returns_set() -> None:
+    with patch(
+        "vergil_tooling.lib.git.read_output",
+        return_value="develop\nfeature/12-x\nfeature/13-y",
+    ) as mock:
+        result = git.local_branches()
+    assert result == {"develop", "feature/12-x", "feature/13-y"}
+    mock.assert_called_once_with("branch", "--format=%(refname:short)")
+
+
+def test_local_branches_empty() -> None:
+    with patch("vergil_tooling.lib.git.read_output", return_value=""):
+        assert git.local_branches() == set()
+
+
 def test_working_tree_status_returns_porcelain_output() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="?? orphan.md") as mock:
         result = git.working_tree_status()

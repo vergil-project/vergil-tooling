@@ -279,6 +279,9 @@ def desired_ci_gates_ruleset(
     checks.append(_make_check("quality / common"))
     checks.append(_make_check("security / trivy"))
     checks.append(_make_check("security / semgrep"))
+    # docs / docs is emitted unconditionally by the reusable CI (no if: guard),
+    # so it must be a required PR gate — otherwise it can silently be optional.
+    checks.append(_make_check("docs / docs"))
 
     # GHAS check runs — created by GitHub Advanced Security (app 57789)
     # when workflows upload SARIF via codeql-action/upload-sarif.  These

@@ -24,7 +24,7 @@ from vergil_tooling.lib import github
 
 # Imported directly (not via the module) so the `except` clause holds the
 # real class even when tests replace the whole `github` module with a mock.
-from vergil_tooling.lib.github import GitHubAPIError
+from vergil_tooling.lib.github import GitHubAPIError, OrphanedCheckError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,7 +87,16 @@ def wait_and_merge(
             continue
 
         print(f"Waiting for checks on {pr}...")
-        wait(pr)
+        try:
+            wait(pr)
+        except OrphanedCheckError as exc:
+            msg = (
+                f"PR {pr} cannot be merged: GitHub left a check-run non-terminal "
+                "after its backing workflow run completed (orphaned check-run). "
+                "Close and reopen the PR to re-run the gate, then re-run "
+                "vrg-finalize-pr."
+            )
+            raise MergeAbortError(msg) from exc
 
         failed = github.failed_check_names(pr)
         if failed:
