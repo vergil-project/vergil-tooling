@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.179] - 2026-08-07
+
+### Bug fixes
+
+- discard ref_exists subprocess streams so rev-parse's SHA doesn't leak to stdout (#2664)
+- thread one work-unit identifier across branch, dir, and summary (#2665)
+
 ## [2.1.178] - 2026-08-07
 
 ### Bug fixes
