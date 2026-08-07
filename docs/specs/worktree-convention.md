@@ -330,6 +330,17 @@ tracked separately):
 - **`vrg-finalize-pr` worktree removal** (implemented). Removes the
   worktree when finalizing the branch for that worktree, covering the
   cleanup failure mode structurally.
+- **`vrg-git` creation-time naming guard** (implemented, issue #2550).
+  When an issue-family branch is created — `worktree add -b`,
+  `checkout -b`, `switch -c` — the branch must take the
+  `<type>/<N>-<slug>` form, and `worktree add` additionally requires the
+  directory to be the matching `issue-<N>-<slug>`. This enforces the
+  issue-number rule at branch creation rather than only later at
+  `vrg-commit`, and keeps the worktree directory, branch name, and issue
+  number in lockstep from the start (the divergence was the directory
+  being chosen at `worktree add` time and never re-checked). The shared
+  format lives in `lib/branch_names.py` so the creation guard and the
+  commit guard cannot drift.
 - **`vrg-worktree-prompt` helper.** Emits the canonical prompt
   template given an issue number and slug, so operators don't
   hand-author the prompt each time.

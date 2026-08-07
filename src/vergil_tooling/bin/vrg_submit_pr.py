@@ -564,7 +564,12 @@ def _run_submit_batch(
     report = batch.run_batch(
         selected,
         _process,
-        label=lambda wt: wt.path.name,
+        # Label the batch summary by the full branch name, not the worktree
+        # directory name. The directory name can be a bare slug that hides the
+        # issue number (e.g. `authz-apply-tag`), making a correct merge look
+        # unattributable; the branch (`feature/<N>-<slug>`) is unambiguous and
+        # round-trippable back to the issue (issue #2550).
+        label=lambda wt: wt.branch,
         plan=plan,
         assume_yes=assume_yes,
         post_steps=post_steps,
