@@ -148,11 +148,20 @@ class ScrapeStore:
         # session id — a live-but-unnamed session, or one carrying only a roster
         # last-activity — as a name=None row so the seam surfaces every session.
         extra = sorted(sid for sid in (active | set(last_active)) if sid not in names)
+
+        def _cwd(sid: str) -> str:
+            # The live roster is authoritative; for an idle session absent from it
+            # the transcript's recorded cwd stands in, so ``--resume`` can still
+            # derive that session's memory slug (#2607). Unknown ⇒ "".
+            if sid in cwds:
+                return cwds[sid]
+            return res.transcript_cwd(res.projects_glob(projects, sid)) or ""
+
         return [
             SessionInfo(
                 session_id=sid,
                 name=names.get(sid),
-                cwd=cwds.get(sid, ""),
+                cwd=_cwd(sid),
                 active=sid in active,
                 last_active=last_active.get(sid),
             )

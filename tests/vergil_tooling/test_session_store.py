@@ -121,6 +121,24 @@ def test_scrape_store_surfaces_roster_cwd_and_active(tmp_path: Path) -> None:
     assert rows["s1"].last_active == 1748000000.0
 
 
+def test_scrape_store_derives_idle_cwd_from_transcript(tmp_path: Path) -> None:
+    # An idle session (no live roster entry) still reports its cwd, read from the
+    # transcript, so --resume can derive that session's memory slug (#2607).
+    claude = tmp_path / ".claude"
+    slug = claude / "projects" / "-work-repo"
+    slug.mkdir(parents=True)
+    (slug / "s1.jsonl").write_text(
+        '{"type":"user","cwd":"/work/repo","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"custom-title","customTitle":"epic-1:w","sessionId":"s1"}\n'
+    )
+    (claude / "sessions").mkdir()
+
+    rows = {r.session_id: r for r in ScrapeStore(claude).list_sessions()}
+    assert rows["s1"].name == "epic-1:w"
+    assert rows["s1"].active is False
+    assert rows["s1"].cwd == "/work/repo"
+
+
 def test_scrape_store_resolve_name_uses_resolve_over(tmp_path: Path) -> None:
     claude = tmp_path / ".claude"
     slug = claude / "projects" / "-w"

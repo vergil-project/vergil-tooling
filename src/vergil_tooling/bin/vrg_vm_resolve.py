@@ -22,11 +22,8 @@ from pathlib import Path
 
 from vergil_tooling.lib.session import (
     Create,
-    Fork,
     PlanAction,
-    PromptStale,
     Refuse,
-    Resume,
     Slot,
     build_slots,
     list_rows,
@@ -35,10 +32,14 @@ from vergil_tooling.lib.session import (
     parse_archived,
     parse_name,
     plan_session,
-    select_by_name,
     validate_label,
 )
-from vergil_tooling.lib.session_store import AmbiguousSessionError, ScrapeStore
+from vergil_tooling.lib.session_store import (
+    AmbiguousSessionError,
+    ScrapeStore,
+    SessionInfo,
+    SessionStore,
+)
 
 
 def _claude_dir() -> Path:
@@ -180,6 +181,37 @@ def _last_activity(transcript: Path) -> float | None:
                     ts = _parse_ts(entry.get("timestamp"))
                     if ts is not None:
                         return ts
+    except OSError:
+        return None
+    return None
+
+
+def transcript_cwd(transcript: Path) -> str | None:
+    """The working directory a session ran in, from its transcript, or ``None``.
+
+    Every substantive transcript entry records the ``cwd`` it executed in. The
+    first one found (read forward and bounded — a leading ``summary`` entry
+    carries none, but the first real turn does) is authoritative and stable for
+    the session, so a large transcript need not be read in full. This is what
+    lets the seam report a cwd for an *idle* session absent from the live roster,
+    so ``--resume`` can derive its memory slug from the resolved session (#2607).
+    """
+    try:
+        with transcript.open("rb") as fh:
+            for _ in range(200):
+                raw = fh.readline()
+                if not raw:
+                    break
+                line = raw.strip()
+                if not line or b'"cwd"' not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                cwd = entry.get("cwd")
+                if isinstance(cwd, str) and cwd:
+                    return cwd
     except OSError:
         return None
     return None
@@ -346,18 +378,6 @@ def _now_iso() -> str:
     return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _prompt_stale(path: str, slot: int, age_days: int) -> str:
-    """Return ``'r'`` (resume), ``'f'`` (fresh), or ``'c'`` (cancel). Non-TTY -> ``'r'``."""
-    if not sys.stdin.isatty():
-        return "r"
-    print(
-        f"Slot {slot:02d} for {path} was last active {age_days} days ago.",
-        file=sys.stderr,
-    )
-    answer = input("[r]esume / [f]resh / [c]ancel? ").strip().lower()
-    return {"r": "r", "f": "f", "c": "c"}.get(answer[:1], "c")
-
-
 def _run_sweep(slots: list[Slot]) -> None:
     timestamp = _now_iso()
     for slot in slots:
@@ -365,50 +385,90 @@ def _run_sweep(slots: list[Slot]) -> None:
         _archive_session(slot.session_id, timestamp)
 
 
-def _slot_num(name: str) -> int:
-    parsed = parse_name(name)
-    return parsed[1] if parsed else 0
-
-
 def _note(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _execute(path: str, action: PlanAction, extra: list[str], names: dict[str, str]) -> int:
+def _execute(action: PlanAction, extra: list[str]) -> int:
+    """Carry out a ``--fork`` / ``--fresh`` plan action.
+
+    With ``--slot`` and the auto-resume-most-recent default gone (#2607), the only
+    actions that still reach here are ``Create`` (``--fresh`` reclaiming its name)
+    and ``Refuse`` (``--fork`` with no slot to target). Exact-name attach
+    (``--resume``) resolves through the seam in :func:`_resume_by_name`, not here.
+    """
     if isinstance(action, Refuse):
         print(f"ERROR: {action.message}", file=sys.stderr)
         return 1
     if isinstance(action, Create):
         _note(f"Creating session {action.name}")
         return _exec_claude(["-n", action.name, *extra])
-    if isinstance(action, Resume):
-        name = names.get(action.session_id)
-        _note(f"Resuming session {name or action.session_id}")
-        # Re-assert -n on every resume so Claude restores the prompt-box
-        # title. Claude derives the displayed title from the last naming
-        # event in the transcript; sessions last named by a transitional
-        # Claude version end on a legacy ``agent-name`` event that current
-        # Claude no longer recognizes, leaving the label blank. Passing -n
-        # sets the live title directly, independent of transcript history.
-        rename = ["-n", name] if name else []
-        return _exec_claude(["--resume", action.session_id, *rename, *extra])
-    if isinstance(action, Fork):
-        _note(f"Forking session {names.get(action.session_id, action.session_id)} -> {action.name}")
-        return _exec_claude(
-            ["--resume", action.session_id, "--fork-session", "-n", action.name, *extra]
-        )
-    prompt: PromptStale = action
-    choice = _prompt_stale(path, _slot_num(prompt.name), prompt.age_days)
-    if choice == "c":
-        return 0
-    if choice == "f":
-        _note(f"Archiving session {prompt.name}")
-        _archive_session(prompt.session_id, _now_iso())
-        _note(f"Creating session {prompt.name}")
-        return _exec_claude(["-n", prompt.name, *extra])
-    _note(f"Resuming session {prompt.name}")
-    # Re-assert -n on resume (see the Resume branch above).
-    return _exec_claude(["--resume", prompt.session_id, "-n", prompt.name, *extra])
+    # Resume/Fork/PromptStale were the slot-selection outcomes; none is reachable
+    # now that selection is by exact name. Guard loudly rather than mis-exec.
+    raise RuntimeError(f"unexpected session action {type(action).__name__}")  # pragma: no cover
+
+
+def plan_resume(store: SessionStore, name: str) -> SessionInfo:
+    """Resolve an exact session name to the session to resume, via the seam.
+
+    Delegates to ``store.resolve_name`` and applies the fail-loud contract of
+    exact-name attach (#2607): a name that resolves to **no** visible session and
+    a name that resolves to **two or more co-equal live** sessions both abort with
+    a nonzero exit and an actionable message — the resolver never guesses which
+    session the caller meant. On success the resolved :class:`SessionInfo` carries
+    both the session id (for ``--resume``) and the cwd (for memory-slug parity).
+    """
+    try:
+        info = store.resolve_name(name)
+    except AmbiguousSessionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    if info is None:
+        print(f"ERROR: no session named {name!r} — create it with --label", file=sys.stderr)
+        raise SystemExit(1)
+    return info
+
+
+def _resume_by_name(name: str, extra: list[str]) -> int:
+    """Attach to the session named ``name`` exactly, deriving cwd from it.
+
+    The store is unscoped (every slug) so the name resolves globally; the bootstrap
+    cwd is then taken from the resolved session's own cwd rather than any positional
+    the caller passed, so Claude derives the same memory slug the session was created
+    under (#2607). ``-n`` re-asserts the exact name so the prompt-box title is
+    restored even when the last transcript naming event is a legacy ``agent-name``.
+    """
+    info = plan_resume(ScrapeStore(_claude_dir()), name)
+    if info.cwd:
+        os.chdir(info.cwd)
+    _note(f"Resuming session {name}")
+    return _exec_claude(["--resume", info.session_id, "-n", name, *extra])
+
+
+def _list_and_guide(slug: str) -> int:
+    """No verb given: show this workspace's sessions by recency, name the two verbs.
+
+    The old no-arg behavior — auto-resume the most-recent idle session, else create
+    one — is gone (#2607). A session is now addressed explicitly: ``--label`` to
+    create ``label:workspace`` (Task 2) or ``--resume`` to attach by exact name.
+    Returns nonzero: no session was launched.
+    """
+    rows = [row for row in ScrapeStore(_claude_dir(), slug).list_sessions() if row.name is not None]
+    rows.sort(key=lambda row: (row.last_active is not None, row.last_active or 0.0), reverse=True)
+    if rows:
+        print("Sessions for this workspace (most recent first):", file=sys.stderr)
+        for row in rows:
+            marker = "* " if row.active else "  "
+            print(f"  {marker}{row.name}", file=sys.stderr)
+    else:
+        print("No sessions yet for this workspace.", file=sys.stderr)
+    print(
+        "\nName the session you want — choose one verb:\n"
+        "  --label <label>   start a new session named <label>:<workspace>\n"
+        "  --resume <name>   attach to an existing session by its exact name",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def _resolve_label(path: str, label: str, extra: list[str]) -> int:
@@ -442,13 +502,12 @@ def _resolve_label(path: str, label: str, extra: list[str]) -> int:
             file=sys.stderr,
         )
         return 1
-    return _execute(path, Create(name), extra, {})
+    return _execute(Create(name), extra)
 
 
 def resolve(
     identity: str,
     path: str,
-    requested_slot: int | None,
     fork: bool,
     fresh: bool,
     extra: list[str],
@@ -457,28 +516,31 @@ def resolve(
     resume_name: str | None = None,
     label: str | None = None,
 ) -> int:
-    """Plan, auto-archive stale cold slots, then exec Claude for one identity + path.
+    """Attach a named session, or (no verb) list this workspace and guide.
 
     ``label`` short-circuits into the named-creation path (``--label``): it
     composes and uniqueness-checks ``label:workspace`` and creates that session
     (see :func:`_resolve_label`), bypassing the slot machinery entirely.
 
-    ``resume_name`` short-circuits the slot machinery: it resumes the session with
-    that exact display name (an epic-renamed title that does not fit the slot
-    scheme), with no staleness sweep or prompt — the caller named the session
-    explicitly, so it is resumed as-is.
+    ``resume_name`` (``--resume``) resolves an exact session name to a session id
+    through the ``SessionStore`` seam and attaches to it, deriving the bootstrap
+    cwd from the resolved session (#2607). With no verb the recency list + the two
+    verbs are printed and a nonzero code returned — there is no auto-resume-most-
+    recent / auto-create default and no ``--slot``. ``fork`` / ``fresh`` retain the
+    prior slot machinery (removed/reconceived by later tasks in the epic).
     """
     if label is not None:
         return _resolve_label(path, label, extra)
-    names, active, last_active = _read_state(_project_slug(str(Path.cwd())))
     if resume_name is not None:
-        return _execute(path, select_by_name(resume_name, names, active, last_active), extra, names)
+        return _resume_by_name(resume_name, extra)
+    slug = _project_slug(str(Path.cwd()))
+    if not fork and not fresh:
+        return _list_and_guide(slug)
+    names, active, last_active = _read_state(slug)
     slots = build_slots(identity, path, names, active, last_active)
-    plan = plan_session(
-        identity, path, slots, _now(), stale_days, archive_days, requested_slot, fork, fresh
-    )
+    plan = plan_session(identity, path, slots, _now(), stale_days, archive_days, None, fork, fresh)
     _run_sweep(plan.auto_archive)
-    return _execute(path, plan.action, extra, names)
+    return _execute(plan.action, extra)
 
 
 def _archived_rows(names: dict[str, str], last_active: dict[str, float]) -> list[dict[str, object]]:
@@ -530,7 +592,6 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vrg-vm-resolve-session")
     parser.add_argument("--identity")
     parser.add_argument("--path")
-    parser.add_argument("--slot", type=int)
     parser.add_argument("--fork", action="store_true")
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--resume-name", dest="resume_name", default=None)
@@ -554,7 +615,6 @@ def main(argv: list[str] | None = None) -> int:
     return resolve(
         args.identity,
         args.path,
-        args.slot,
         args.fork,
         args.fresh,
         extra,
