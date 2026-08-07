@@ -521,6 +521,137 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
     assert capture_exec == [["claude", "-n", "x"]]
 
 
+# --- --fresh retire-rename (issue #2609) ---
+
+
+class _RenameStore:
+    """A SessionStore fake that records rename calls for the --fresh path.
+
+    ``resolve_name`` delegates to the pure ``resolve_over`` so it reproduces the
+    seam's real fail-loud/None semantics; ``rename`` just records the call so a
+    test can assert the retire-rename happened (and never a deletion).
+    """
+
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+        self.renames: list[tuple[str, str]] = []
+
+    def list_sessions(self) -> list[Any]:
+        return list(self._rows)
+
+    def resolve_name(self, name: str) -> Any:
+        from vergil_tooling.lib.session_store import resolve_over
+
+        return resolve_over(self._rows, name)
+
+    def rename(self, session_id: str, new_name: str) -> None:
+        self.renames.append((session_id, new_name))
+
+
+def test_retired_name_suffixes_with_stamp() -> None:
+    assert r.retired_name("epic-1:w", "20260807T101500Z") == "epic-1:w~20260807T101500Z"
+
+
+def test_now_stamp_is_compact_utc() -> None:
+    import re
+
+    assert re.fullmatch(r"\d{8}T\d{6}Z", r._now_stamp())
+
+
+def test_plan_fresh_retires_existing_then_creates() -> None:
+    # A visible idle session holds the name: the plan retires it to <name>~<stamp>
+    # and then creates a fresh session with the clean name.
+    store = _RenameStore([_info("old", "epic-1:w", False, 10.0)])
+    plan = r.plan_fresh(store, "epic-1:w", "STAMP")
+    assert plan.name == "epic-1:w"
+    assert plan.retire == ("old", "epic-1:w~STAMP")
+
+
+def test_plan_fresh_no_retire_when_name_free() -> None:
+    # No visible session of that name: nothing to retire, just create.
+    store = _RenameStore([_info("other", "epic-2:w", True, 10.0)])
+    plan = r.plan_fresh(store, "epic-1:w", "STAMP")
+    assert plan.retire is None
+    assert plan.name == "epic-1:w"
+
+
+def test_plan_fresh_fails_loud_on_ambiguous() -> None:
+    # Two co-equal live sessions hold the name -> --fresh never guesses which to
+    # retire; the seam's fail-loud propagates.
+    store = _RenameStore([_info("a", "epic-1:w", True, 1.0), _info("b", "epic-1:w", True, 2.0)])
+    with pytest.raises(r.AmbiguousSessionError):
+        r.plan_fresh(store, "epic-1:w", "STAMP")
+
+
+def test_resolve_fresh_label_retires_and_creates(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --fresh --label: retire the prior visible session via store.rename (never a
+    # deletion), then exec a fresh session with the clean composed name.
+    store = _RenameStore([_info("old", "epic-1:tooling", False, 10.0)])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
+    assert store.renames == [("old", "epic-1:tooling~STAMP")]
+    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+    err = capsys.readouterr().err
+    assert "Retired prior session epic-1:tooling -> epic-1:tooling~STAMP" in err
+
+
+def test_resolve_fresh_label_creates_when_name_free(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    store = _RenameStore([])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
+    assert store.renames == []  # nothing to retire
+    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+
+
+def test_resolve_fresh_label_warns_off_convention(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    assert _resolve("id", "tooling", label="scratch", fresh=True) == 0
+    assert capture_exec == [["claude", "-n", "scratch:tooling"]]
+    assert "convention" in capsys.readouterr().err
+
+
+def test_resolve_fresh_label_rejects_invalid_slug(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore([])
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    assert _resolve("id", "tooling", label="bad:name", fresh=True) == 1
+    assert store.renames == []
+    assert capture_exec == []
+    assert "ERROR" in capsys.readouterr().err
+
+
+def test_resolve_fresh_label_fails_loud_on_ambiguous(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    store = _RenameStore(
+        [_info("a", "epic-1:tooling", True, 1.0), _info("b", "epic-1:tooling", True, 2.0)]
+    )
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    assert _resolve("id", "tooling", label="epic-1", fresh=True) == 1
+    assert store.renames == []  # never renames when it cannot tell which to retire
+    assert capture_exec == []
+    assert "live sessions" in capsys.readouterr().err
+
+
 # --- plan_resume (seam-based exact-name attach, issue #2607) ---
 
 
