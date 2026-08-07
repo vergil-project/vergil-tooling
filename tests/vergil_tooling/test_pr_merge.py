@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vergil_tooling.lib.github import GitHubAPIError
+from vergil_tooling.lib.github import GitHubAPIError, OrphanedCheckError
 from vergil_tooling.lib.pr_merge import MergeAbortError, wait_and_merge
 
 _MOD = "vergil_tooling.lib.pr_merge"
@@ -85,6 +85,14 @@ def test_check_failure_aborts_with_names() -> None:
     gh = _gh(failed=["ci / test", "vergil-audit/approved"])
     with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="ci / test"):
         wait_and_merge("99", strategy="squash")
+    gh.merge.assert_not_called()
+
+
+def test_wait_and_merge_aborts_on_orphaned_check() -> None:
+    gh = _gh()
+    gh.wait_for_checks.side_effect = OrphanedCheckError("docs / docs")
+    with patch(_MOD + ".github", gh), pytest.raises(MergeAbortError, match="orphan"):
+        wait_and_merge("934", strategy="squash")
     gh.merge.assert_not_called()
 
 

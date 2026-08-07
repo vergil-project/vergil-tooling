@@ -14,6 +14,7 @@ import functools
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -576,28 +577,94 @@ def _poll_and_watch_checks(
             return
 
 
+class OrphanedCheckError(Exception):
+    """A required check is stuck non-terminal after its backing run completed.
+
+    GitHub occasionally leaves a check-run in a non-terminal state
+    (``queued``/``in_progress``) even though the workflow run that owns it has
+    finished. ``gh pr checks --watch`` would block on such a check forever, so
+    the bounded watch surfaces it as this error instead of hanging (and never
+    merges past it). The message tells the operator how to recover.
+    """
+
+
+# A check ``link`` for an Actions job looks like
+# ``https://github.com/<owner>/<repo>/actions/runs/<run_id>/job/<job_id>``.
+# App-posted statuses (CodeQL/Semgrep/Trivy) use a different, non-Actions link
+# with no run id to probe, so they never match.
+_ACTIONS_RUN_LINK_RE = re.compile(r"/actions/runs/(\d+)/job/")
+
+
+def run_completed(run_id: str) -> bool:
+    """True if the workflow run has reached a terminal status."""
+    data = read_json("run", "view", run_id, "--json", "status")
+    return isinstance(data, dict) and data.get("status") == "completed"
+
+
+def all_checks_terminal(pr: str) -> bool:
+    """True when no check on *pr* is still ``pending`` (gh's non-terminal bucket)."""
+    return all(c.get("bucket") != "pending" for c in pr_checks(pr))
+
+
+def orphaned_check_names(pr: str) -> list[str]:
+    """Return names of non-terminal checks whose backing Actions run is completed.
+
+    A still-``pending`` check whose backing workflow run has already finished is
+    a GitHub orphan — it will never reach a terminal state on its own. Only
+    checks whose ``link`` is an Actions job link are probed; app-posted statuses
+    (no ``/actions/runs/.../job/`` link) have no run to query and are excluded.
+    """
+    orphans: list[str] = []
+    for check in pr_checks(pr):
+        if check.get("bucket") != "pending":
+            continue
+        match = _ACTIONS_RUN_LINK_RE.search(check.get("link") or "")
+        if match is None:
+            continue
+        if run_completed(match.group(1)):
+            orphans.append(str(check.get("name")))
+    return orphans
+
+
 def wait_for_checks(
     pr: str,
     *,
     poll_interval: int = _POLL_INTERVAL_SECS,
     poll_timeout: int = _POLL_TIMEOUT_SECS,
 ) -> None:
-    """Block until all checks on *pr* reach a terminal state.
+    """Block until all checks on *pr* reach a terminal state, bounded by a deadline.
 
-    Polls the GitHub REST API until at least one check run exists for
-    the PR's current head commit, then hands off to ``gh pr checks
-    --watch`` which blocks until every check completes.  Resilient to
-    the head moving mid-wait (see ``_poll_and_watch_checks``).
+    Polls ``gh pr checks`` until every check is terminal, then returns — leaving
+    ``pr_merge``'s ``failed_check_names`` gate to catch any failure. If the
+    deadline elapses with checks still pending, each still-pending check is
+    cross-checked against its backing workflow run via ``gh run view``: a
+    non-terminal check over a *completed* run is a GitHub orphan and raises
+    :class:`OrphanedCheckError` (never hang, never merge past it). If nothing is
+    orphaned (e.g. app-posted statuses genuinely still running), a plain timeout
+    :class:`GitHubAPIError` is raised instead.
 
     Transient GitHub API errors (401/502/503/504/429) are retried
     automatically via the library-level retry wrapper.
     """
-    _poll_and_watch_checks(
-        pr,
-        lambda: run("pr", "checks", pr, "--watch"),
-        poll_interval=poll_interval,
-        poll_timeout=poll_timeout,
-    )
+    deadline = time.monotonic() + poll_timeout
+    while True:
+        if all_checks_terminal(pr):
+            return  # let pr_merge.failed_check_names catch any failure
+        if time.monotonic() >= deadline:
+            orphans = orphaned_check_names(pr)
+            if orphans:
+                raise OrphanedCheckError(
+                    f"GitHub left {', '.join(orphans)} non-terminal after its "
+                    "backing workflow run completed (orphaned check-run). Close "
+                    "and reopen the PR to re-run the gate, then re-run "
+                    "vrg-finalize-pr."
+                )
+            raise GitHubAPIError(
+                1,
+                ("gh", "pr", "checks", pr),
+                stderr=f"checks still pending after {poll_timeout}s",
+            )
+        time.sleep(poll_interval)
 
 
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
@@ -630,7 +697,7 @@ def failed_check_names(pr: str) -> list[str]:
 
 
 def pr_checks(pr: str) -> list[dict[str, str]]:
-    """Return the PR's checks as ``{name, bucket, state}`` dicts.
+    """Return the PR's checks as ``{name, bucket, state, link}`` dicts.
 
     ``gh pr checks`` exits non-zero while checks are failing or pending but
     still emits the requested JSON, so the verdict is derived from the data,
@@ -638,8 +705,11 @@ def pr_checks(pr: str) -> list[dict[str, str]]:
     ``gh`` prints nothing and reports "no checks reported"; that is a valid
     empty result (checks may not have started), distinct from a transient API
     error, which is surfaced.
+
+    ``link`` is included so orphan detection can map a still-pending check
+    back to its backing Actions run (see :func:`orphaned_check_names`).
     """
-    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,state")
+    cmd = ("gh", "pr", "checks", pr, "--json", "name,bucket,state,link")
     result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
     out = result.stdout.strip()
     if out:

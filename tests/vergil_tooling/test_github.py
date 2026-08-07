@@ -141,161 +141,156 @@ def test_edit_pr_body_cleans_up_temp_file() -> None:
     assert paths and not paths[0].exists()
 
 
-def test_wait_for_checks_resolves_sha_and_watches() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123") as mock_sha,
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        github.wait_for_checks("https://github.com/pr/1")
-    mock_sha.assert_called_once_with("https://github.com/pr/1")
-    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
-
-
-def test_wait_for_checks_polls_until_registered() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch(
-            "vergil_tooling.lib.github._checks_registered",
-            side_effect=[False, False, True, True],
-        ),
-        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-    assert mock_sleep.call_count == 2
-    mock_sleep.assert_called_with(5)
-    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
-
-
-def test_wait_for_checks_passes_repo_and_sha_to_checks_registered() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True) as mock_reg,
-        patch("vergil_tooling.lib.github.run"),
-    ):
-        github.wait_for_checks("https://github.com/pr/1")
-    mock_reg.assert_called_with("owner/repo", "abc123")
-
-
-def test_wait_for_checks_raises_after_timeout_with_sha() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123def456"),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=False),
-        patch(
-            "vergil_tooling.lib.github.time.monotonic",
-            side_effect=[0.0, 0.0, 61.0],
-        ),
-        patch("vergil_tooling.lib.github.time.sleep"),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-        pytest.raises(github.GitHubAPIError, match="abc123de"),
-    ):
-        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-    mock_run.assert_not_called()
-
-
-def test_wait_for_checks_uses_poll_interval_for_sleep() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch(
-            "vergil_tooling.lib.github._checks_registered",
-            side_effect=[False, True, True],
-        ),
-        patch("vergil_tooling.lib.github.time.sleep") as mock_sleep,
-        patch("vergil_tooling.lib.github.run"),
-    ):
-        github.wait_for_checks("https://github.com/pr/1", poll_interval=10, poll_timeout=60)
-    mock_sleep.assert_called_once_with(10)
-
-
-def test_wait_for_checks_does_not_use_fail_fast() -> None:
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        github.wait_for_checks("https://github.com/pr/1")
-    call_args = mock_run.call_args[0]
-    assert "--fail-fast" not in call_args
-
-
-def test_wait_for_checks_reresolves_head_while_polling() -> None:
-    """The head SHA is re-resolved each poll — update-branch can move it (#1490)."""
-
-    def registered(_repo: str, sha: str) -> bool:
-        return sha == "new"
-
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", side_effect=["old", "new"]) as mock_sha,
-        patch("vergil_tooling.lib.github._checks_registered", side_effect=registered) as mock_reg,
-        patch("vergil_tooling.lib.github.time.sleep"),
-        patch("vergil_tooling.lib.github.run") as mock_run,
-    ):
-        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-    assert mock_sha.call_count == 2
-    assert mock_reg.call_args[0] == ("owner/repo", "new")
-    mock_run.assert_called_once_with("pr", "checks", "https://github.com/pr/1", "--watch")
-
-
-def test_wait_for_checks_restarts_watch_on_no_checks_reported() -> None:
-    """A watch killed by "no checks reported" (head moved mid-watch) restarts (#1490)."""
-    no_checks = github.GitHubAPIError(
-        1,
-        ("gh", "pr", "checks", "1", "--watch"),
-        None,
-        "no checks reported on the 'feature/x' branch",
+def test_run_completed_true_when_status_completed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github, "read_json", lambda *a, **k: {"status": "completed", "conclusion": "success"}
     )
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", side_effect=["old", "new"]),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
-        patch("vergil_tooling.lib.github.time.sleep"),
-        patch("vergil_tooling.lib.github.run", side_effect=[no_checks, None]) as mock_run,
-    ):
-        github.wait_for_checks("https://github.com/pr/1")
-    assert mock_run.call_count == 2
+    assert github.run_completed("31101639453") is True
 
 
-def test_wait_for_checks_propagates_other_watch_failures() -> None:
-    """Only the "no checks reported" watch failure is transient; the rest raise."""
-    boom = github.GitHubAPIError(1, ("gh",), None, "HTTP 401: Bad credentials")
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
-        patch("vergil_tooling.lib.github.run", side_effect=boom) as mock_run,
-        pytest.raises(github.GitHubAPIError, match="Bad credentials"),
-    ):
-        github.wait_for_checks("https://github.com/pr/1")
-    mock_run.assert_called_once()
+def test_run_completed_false_when_in_progress(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "read_json", lambda *a, **k: {"status": "in_progress"})
+    assert github.run_completed("31101639453") is False
 
 
-def test_wait_for_checks_watch_restart_bounded_by_deadline() -> None:
-    """The no-checks restart shares the poll deadline — past it, the error raises (#1490)."""
-    no_checks = github.GitHubAPIError(
-        1,
-        ("gh", "pr", "checks", "1", "--watch"),
-        None,
-        "no checks reported on the 'feature/x' branch",
+def test_run_completed_queries_run_status(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_read_json(*args: str) -> dict[str, object]:
+        calls.append(args)
+        return {"status": "completed"}
+
+    monkeypatch.setattr(github, "read_json", fake_read_json)
+    github.run_completed("999")
+    assert calls == [("run", "view", "999", "--json", "status")]
+
+
+def test_orphaned_check_names_flags_completed_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {
+                "name": "docs / docs",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": "https://github.com/o/r/actions/runs/999/job/1",
+            },
+            {
+                "name": "quality / common",
+                "bucket": "pass",
+                "state": "SUCCESS",
+                "link": "https://github.com/o/r/actions/runs/999/job/2",
+            },
+        ],
     )
-    with (
-        patch("vergil_tooling.lib.github.current_repo", return_value="owner/repo"),
-        patch("vergil_tooling.lib.github.head_sha", return_value="abc123"),
-        patch("vergil_tooling.lib.github._checks_registered", return_value=True),
-        patch("vergil_tooling.lib.github.time.monotonic", side_effect=[0.0, 61.0]),
-        patch("vergil_tooling.lib.github.time.sleep"),
-        patch("vergil_tooling.lib.github.run", side_effect=no_checks) as mock_run,
-        pytest.raises(github.GitHubAPIError, match="no checks reported"),
-    ):
-        github.wait_for_checks("https://github.com/pr/1", poll_interval=5, poll_timeout=60)
-    mock_run.assert_called_once()
+    monkeypatch.setattr(github, "run_completed", lambda rid: True)
+    assert github.orphaned_check_names("934") == ["docs / docs"]
+
+
+def test_orphaned_check_names_ignores_running_and_app_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {
+                "name": "docs / docs",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": "https://github.com/o/r/actions/runs/999/job/1",
+            },
+            {
+                "name": "CodeQL",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": "https://github.com/o/r/runs/5",  # app-posted: no /actions/runs
+            },
+        ],
+    )
+    monkeypatch.setattr(github, "run_completed", lambda rid: False)
+    assert github.orphaned_check_names("934") == []
+
+
+def test_orphaned_check_names_parses_run_id_from_link(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {
+                "name": "docs / docs",
+                "bucket": "pending",
+                "state": "IN_PROGRESS",
+                "link": "https://github.com/o/r/actions/runs/31101639453/job/77",
+            },
+        ],
+    )
+    monkeypatch.setattr(github, "run_completed", lambda rid: bool(seen.append(rid)) or True)
+    github.orphaned_check_names("934")
+    assert seen == ["31101639453"]
+
+
+def test_all_checks_terminal_true_when_no_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {"name": "a", "bucket": "pass", "state": "SUCCESS", "link": ""},
+            {"name": "b", "bucket": "fail", "state": "FAILURE", "link": ""},
+        ],
+    )
+    assert github.all_checks_terminal("934") is True
+
+
+def test_all_checks_terminal_false_when_pending(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        github,
+        "pr_checks",
+        lambda pr: [
+            {"name": "a", "bucket": "pending", "state": "IN_PROGRESS", "link": ""},
+        ],
+    )
+    assert github.all_checks_terminal("934") is False
+
+
+def test_wait_for_checks_returns_when_all_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(github, "all_checks_terminal", lambda pr: True)
+    # must not consult orphan logic or raise when everything is terminal
+    monkeypatch.setattr(
+        github,
+        "orphaned_check_names",
+        lambda pr: pytest.fail("orphan check must not run when all terminal"),
+    )
+    assert github.wait_for_checks("934", poll_timeout=0, poll_interval=0) is None
+
+
+def test_wait_for_checks_raises_on_orphan(monkeypatch: pytest.MonkeyPatch) -> None:
+    # checks never all-terminal; timeout elapses; orphan detected
+    monkeypatch.setattr(github, "all_checks_terminal", lambda pr: False)
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: ["docs / docs"])
+    with pytest.raises(github.OrphanedCheckError, match="docs / docs"):
+        github.wait_for_checks("934", poll_timeout=0, poll_interval=0)
+
+
+def test_wait_for_checks_timeout_without_orphan_raises_api_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # pending but nothing orphaned (e.g. app-posted status still running)
+    monkeypatch.setattr(github, "all_checks_terminal", lambda pr: False)
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    with pytest.raises(github.GitHubAPIError, match="still pending"):
+        github.wait_for_checks("934", poll_timeout=0, poll_interval=0)
+
+
+def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    terminal_states = iter([False, False, True])
+    sleeps: list[int] = []
+    monkeypatch.setattr(github, "all_checks_terminal", lambda pr: next(terminal_states))
+    monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
+    github.wait_for_checks("934", poll_interval=7, poll_timeout=1000)
+    assert sleeps == [7, 7]
 
 
 def test_failed_check_names_returns_failing_checks() -> None:
@@ -350,19 +345,19 @@ def test_failed_check_names_raises_on_empty_output() -> None:
 def test_pr_checks_returns_parsed_checks() -> None:
     payload = json.dumps(
         [
-            {"name": "build", "bucket": "pass", "state": "SUCCESS"},
-            {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS"},
+            {"name": "build", "bucket": "pass", "state": "SUCCESS", "link": "https://x/1"},
+            {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS", "link": "https://x/2"},
         ]
     )
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
         mock_run.return_value = _completed(returncode=8, stdout=payload)
         result = github.pr_checks("https://github.com/pr/1")
     assert result == [
-        {"name": "build", "bucket": "pass", "state": "SUCCESS"},
-        {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS"},
+        {"name": "build", "bucket": "pass", "state": "SUCCESS", "link": "https://x/1"},
+        {"name": "deploy", "bucket": "pending", "state": "IN_PROGRESS", "link": "https://x/2"},
     ]
     mock_run.assert_called_once_with(
-        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket,state"),
+        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket,state,link"),
         check=False,
         text=True,
         capture_output=True,
