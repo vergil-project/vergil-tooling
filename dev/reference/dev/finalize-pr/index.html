@@ -13177,10 +13177,23 @@ worktrees, which is unsafe when the calling shell's CWD is inside one.</p>
 <h2 id="waiting-for-green">Waiting for green<a class="headerlink" href="#waiting-for-green" title="Permanent link">&para;</a></h2>
 <p>When the PR's checks are not finished, <code>vrg-finalize-pr</code> waits for
 them and merges automatically once everything is green and current.
-Doomed outcomes abort immediately rather than after the wait: a draft
-PR, merge conflicts, a failed check (named in the error), or a branch
-still behind after five update attempts. A branch that is merely
-behind the target is updated automatically and the wait restarts.</p>
+The wait is <strong>bounded</strong> by a deadline — it never blocks forever — and
+it never merges past a non-terminal check. Doomed outcomes abort
+immediately rather than after the wait: a draft PR, merge conflicts, a
+failed check (named in the error), or a branch still behind after five
+update attempts. A branch that is merely behind the target is updated
+automatically and the wait restarts.</p>
+<p><strong>Orphaned check-runs.</strong> GitHub occasionally leaves a check-run
+non-terminal (<code>queued</code>/<code>in_progress</code>) even though the workflow run that
+owns it has already completed — an <em>orphan</em> that would never go green on
+its own. When the deadline elapses with checks still pending, finalize
+cross-checks each one against its backing run (<code>gh run view</code>). A
+non-terminal check over a completed run is an orphan, so finalize
+<strong>aborts with recovery guidance</strong> — close and reopen the PR to re-run the
+gate, then re-run <code>vrg-finalize-pr</code> — rather than hanging. Genuinely
+still-running checks are waited on as normal; if the deadline elapses
+with nothing orphaned (for example an app-posted status that is legitimately
+slow), finalize fails with a plain timeout error instead.</p>
 <p>After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from <code>git branch --merged</code>),
 followed by the usual sweep, pull, and prune.</p>
@@ -13380,7 +13393,7 @@ release — the batch runs those once at the end.</p>
 </tr>
 <tr>
 <td>1</td>
-<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed</td>
+<td>Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed</td>
 </tr>
 </tbody>
 </table>
