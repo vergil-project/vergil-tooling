@@ -23,7 +23,10 @@ and long-term survivability across repositories.
 ## CI Gates
 
 See [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
-for hard gate and soft gate definitions.
+for the hard-gates-only standard: every CI check is a hard gate, and the only
+sanctioned non-blocking category is the advisory-on-unsupported-versions
+carve-out (see the
+[Runtime Version Support Policy](../runtime-version-support-policy.md)).
 
 Required checks for Python repositories are maintained in the
 [standard-actions CI gates documentation](https://vergil-project.github.io/standard-actions/ci-gates/required-checks/).

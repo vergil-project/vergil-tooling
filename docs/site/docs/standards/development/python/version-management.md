@@ -61,7 +61,14 @@ When the next Python minor series transitions from pre-release to bugfix
    `bugfix-<version>`, `preview-<version>`, and (when applicable)
    `security-<version>`.
 3. Keep `bugfix-<version>` jobs as the only hard gate. The
-   `preview-<version>` check is advisory and must not block merges.
+   `preview-<version>` check is non-blocking under the
+   advisory-on-unsupported-versions carve-out — advisory *because* the preview
+   minor is not yet in the supported set, not because it is a generic soft
+   gate. See the
+   [Runtime Version Support Policy](../runtime-version-support-policy.md) for
+   the carve-out and
+   [Source Control Guidelines](../../source-control-guidelines.md#ci-gates)
+   for the hard-gates-only standard.
 4. Record any failures in the preview check and track them as issues, but do
    not block PRs unless a bugfix-tier job fails.
 
@@ -77,9 +84,12 @@ threshold:
 2. Make the new minor the required (hard-gate) CI runtime and relabel it as
    `bugfix-<version>`.
 3. Relabel the prior bugfix minor as `security-<version>` and keep it
-   advisory to preserve rollback capability.
-4. Keep `security-<version>` advisory until humans explicitly decide to drop
-   it. Do not auto-remove based on elapsed cycles alone.
+   non-blocking under the advisory-on-unsupported-versions carve-out to
+   preserve rollback capability — advisory *because* the minor has left the
+   primary supported set, not as a generic soft gate.
+4. Keep `security-<version>` advisory under the same carve-out until humans
+   explicitly decide to drop it. Do not auto-remove based on elapsed cycles
+   alone.
 
 ### Stability tracking
 
