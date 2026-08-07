@@ -1,8 +1,8 @@
 """Deterministic Claude Code session naming and slot selection.
 
-Pure logic: given the existing slots for an identity + workspace path and the
-caller's ``--slot`` / ``--fork`` choices, decide whether to create, resume, or
-fork a session — or refuse. No I/O lives here, so every rule is unit-testable.
+Pure logic: given the existing slots for an identity + workspace path, decide
+whether to create or resume a session — or refuse. No I/O lives here, so every
+rule is unit-testable.
 
 Naming scheme::
 
@@ -129,21 +129,13 @@ class Resume:
 
 
 @dataclass(frozen=True)
-class Fork:
-    """Fork an existing session into a new named session."""
-
-    session_id: str
-    name: str
-
-
-@dataclass(frozen=True)
 class Refuse:
     """Refuse to act, with a user-facing reason."""
 
     message: str
 
 
-Decision = Create | Resume | Fork | Refuse
+Decision = Create | Resume | Refuse
 
 
 @dataclass(frozen=True)
@@ -293,15 +285,12 @@ def select(
     path: str,
     slots: dict[int, Slot],
     requested_slot: int | None = None,
-    fork: bool = False,
 ) -> Decision:
     """Decide what to do for ``identity`` + ``path`` given existing ``slots``.
 
     ``slots`` maps slot number to :class:`Slot`. ``requested_slot`` is the
-    explicit ``--slot N`` (or ``None``). ``fork`` is the ``--fork`` flag.
+    explicit ``--slot N`` (or ``None``).
     """
-    if fork:
-        return _select_fork(identity, path, slots, requested_slot)
     if requested_slot is not None:
         return _select_explicit(identity, path, slots, requested_slot)
     return _select_default(identity, path, slots)
@@ -326,26 +315,8 @@ def _select_explicit(identity: str, path: str, slots: dict[int, Slot], slot: int
     if info is None:
         return Create(make_name(identity, slot, path))
     if info.active:
-        return Refuse(f"slot {slot:02d} is active; use --fork to branch it into a new session")
+        return Refuse(f"slot {slot:02d} is active")
     return Resume(info.session_id)
-
-
-def _select_fork(identity: str, path: str, slots: dict[int, Slot], slot: int | None) -> Decision:
-    """``--fork``: copy the targeted slot's conversation into a new slot."""
-    if slot is None:
-        return Refuse(
-            "--fork has no session to fork; use --resume NAME to attach to a "
-            "session or --label to start a new one"
-        )
-    if not SLOT_MIN <= slot <= SLOT_MAX:
-        return _bad_range()
-    info = slots.get(slot)
-    if info is None:
-        return Refuse(f"slot {slot:02d} does not exist; nothing to fork")
-    free = _lowest_free(slots)
-    if free is None:
-        return _all_in_use(identity, path)
-    return Fork(info.session_id, make_name(identity, free, path))
 
 
 def select_by_name(
@@ -396,20 +367,17 @@ def plan_session(
     path: str,
     slots: dict[int, Slot],
     requested_slot: int | None = None,
-    fork: bool = False,
     fresh: bool = False,
 ) -> Decision:
-    """Plan a ``--fork`` / ``--fresh`` session launch (legacy slot machinery).
+    """Plan a ``--fresh`` session launch (legacy slot machinery).
 
     Auto-archive and the staleness bands are gone (issue #2608), so a plan is now
     a single :class:`Decision` — there is no set of cold slots to sweep. The only
-    remaining callers are ``--fork`` and ``--fresh`` (create/resume-by-name is the
-    supported path via the seam); the no-verb default is handled by the resolver.
-    ``--fresh`` here simply creates a fresh session in the target slot — the
-    supported *retire-rename* of the prior session is a separate change (Task 5).
+    remaining caller is ``--fresh`` (create/resume-by-name is the supported path
+    via the seam); the no-verb default is handled by the resolver. ``--fresh``
+    here simply creates a fresh session in the target slot — the supported
+    *retire-rename* of the prior session is a separate change (Task 5).
     """
-    if fork:
-        return _select_fork(identity, path, slots, requested_slot)
     if fresh:
         return _plan_fresh(identity, path, slots, requested_slot)
     if requested_slot is not None:

@@ -2224,7 +2224,7 @@ class TestSession:
         with pytest.raises(SystemExit):
             main(["session", "--config", str(config_file), "--slot", "3", "vergil-tooling"])
 
-    def test_session_fork_passed_to_resolver(
+    def test_session_fork_flag_removed(
         self,
         _age: MagicMock,
         _copy: MagicMock,
@@ -2232,10 +2232,9 @@ class TestSession:
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file), "--fork", "vergil-tooling"])
-        inner = self._inner(mock_exec)
-        assert "--fork" in inner
-        assert "--slot" not in inner
+        # --fork is removed (#2653): argparse rejects it as an unrecognized flag.
+        with pytest.raises(SystemExit):
+            main(["session", "--config", str(config_file), "--fork", "vergil-tooling"])
 
     def test_session_resume_passed_to_resolver(
         self,
@@ -2314,7 +2313,7 @@ def test_session_inner_strips_leading_double_dash() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "")
     assert "exec bash" in inner
     assert "vrg-vm-resolve-session" not in inner
@@ -2325,7 +2324,7 @@ def test_session_inner_raw_override_ignores_model() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
+    ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "opus")
     assert "exec bash" in inner
     assert "--model" not in inner
@@ -2336,7 +2335,7 @@ def test_session_inner_omits_deleted_thresholds() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
+    ns = argparse.Namespace(cmd=[], slot=None, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "")
     # session_stale_days / session_archive_days are deleted (#2608): the resolver
     # is no longer handed any staleness thresholds.
@@ -2349,7 +2348,7 @@ def test_session_inner_fresh_flag() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=True, resume=None)
+    ns = argparse.Namespace(cmd=[], slot=None, fresh=True, resume=None)
     inner = _session_inner(ns, "vergil", "p", "")
     assert "--fresh" in inner
 
@@ -2359,7 +2358,7 @@ def test_session_inner_sources_conan_env() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
+    ns = argparse.Namespace(cmd=[], slot=None, fresh=False, resume=None)
     inner = _session_inner(ns, "vergil", "p", "")
     assert "conan.env" in inner
     assert "claude.env" in inner
@@ -2370,7 +2369,7 @@ def test_session_inner_resume_name() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume="epic-85-adhoc")
+    ns = argparse.Namespace(cmd=[], slot=None, fresh=False, resume="epic-85-adhoc")
     inner = _session_inner(ns, "vergil", "p", "")
     assert "--resume-name epic-85-adhoc" in inner
 
@@ -2380,7 +2379,7 @@ def test_session_inner_label() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], fork=False, fresh=False, resume=None, label="epic-1")
+    ns = argparse.Namespace(cmd=[], fresh=False, resume=None, label="epic-1")
     inner = _session_inner(ns, "vergil", "p", "")
     assert "--label epic-1" in inner
 
@@ -2392,7 +2391,7 @@ def test_session_inner_fresh_with_label() -> None:
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
-    ns = argparse.Namespace(cmd=[], fork=False, fresh=True, resume=None, label="epic-1")
+    ns = argparse.Namespace(cmd=[], fresh=True, resume=None, label="epic-1")
     inner = _session_inner(ns, "vergil", "p", "")
     assert "--label epic-1" in inner
     assert "--fresh" in inner
@@ -2403,27 +2402,16 @@ def test_cmd_session_rejects_label_with_resume() -> None:
 
     from vergil_tooling.bin.vrg_vm import _cmd_session
 
-    ns = argparse.Namespace(resume="epic-85", fork=False, fresh=False, label="epic-1")
+    ns = argparse.Namespace(resume="epic-85", fresh=False, label="epic-1")
     assert _cmd_session(ns) == 1
 
 
-def test_cmd_session_rejects_label_with_fork() -> None:
-    # --label + --fork stays rejected (fork is a distinct verb); only --fresh now
-    # combines with --label (issue #2609).
+def test_cmd_session_rejects_resume_with_fresh() -> None:
     import argparse
 
     from vergil_tooling.bin.vrg_vm import _cmd_session
 
-    ns = argparse.Namespace(resume=None, fork=True, fresh=False, label="epic-1")
-    assert _cmd_session(ns) == 1
-
-
-def test_cmd_session_rejects_resume_with_fork() -> None:
-    import argparse
-
-    from vergil_tooling.bin.vrg_vm import _cmd_session
-
-    ns = argparse.Namespace(resume="epic-85", fork=True, fresh=False)
+    ns = argparse.Namespace(resume="epic-85", fresh=True, label=None)
     assert _cmd_session(ns) == 1
 
 

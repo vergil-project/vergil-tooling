@@ -399,7 +399,6 @@ def _resolve(
     **kw: object,
 ) -> int:
     defaults: dict[str, object] = {
-        "fork": False,
         "fresh": False,
         "extra": [],
     }
@@ -496,8 +495,13 @@ def test_resolve_label_rejects_invalid_slug(
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A Refuse from the plan (e.g. --fresh with every slot in use) prints ERROR and
+    # exits 1 without ever exec'ing claude.
+    from vergil_tooling.lib.session import Refuse
+
     monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
-    assert _resolve("id", "p", fork=True) == 1  # fork without slot refuses (no --slot)
+    monkeypatch.setattr(r, "plan_session", lambda *_a, **_k: Refuse("all 99 slots are in use"))
+    assert _resolve("vergil", "p", fresh=True) == 1
     assert "ERROR" in capsys.readouterr().err
 
 
@@ -717,7 +721,7 @@ def test_resume_by_name_execs_with_resolved_id_and_cwd(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert _resolve("id", "w", resume_name="epic-1:w") == 0
     assert chdirs == ["/work/repo"]
     assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
     assert "Resuming session epic-1:w" in capsys.readouterr().err
@@ -750,9 +754,78 @@ def test_resume_by_name_skips_chdir_when_cwd_unknown(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert _resolve("id", "w", resume_name="epic-1:w") == 0
     assert chdirs == []
     assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+
+
+# --- --resume argument composition (issue #2653: bare label + workspace match) ---
+
+
+def test_compose_resume_name_composes_bare_label() -> None:
+    # A bare label (no ':') is composed with the workspace positional, symmetric
+    # with --label.
+    assert r._compose_resume_name("epic-1", "vergil-project/tooling") == (
+        "epic-1:vergil-project/tooling"
+    )
+
+
+def test_compose_resume_name_accepts_full_name_matching_workspace() -> None:
+    # A full 'label:workspace' whose workspace segment equals the positional is
+    # accepted unchanged (back-compat).
+    assert r._compose_resume_name("epic-1:w", "w") == "epic-1:w"
+
+
+def test_compose_resume_name_accepts_legacy_multicolon_matching_workspace() -> None:
+    # A legacy '<identity>:<NN>:<path>' name has two colons; the workspace segment
+    # is the part after the FINAL ':', so it still matches its positional.
+    name = "vergil-user:02:vergil-project/vergil-tooling"
+    assert r._compose_resume_name(name, "vergil-project/vergil-tooling") == name
+
+
+def test_compose_resume_name_rejects_mismatched_workspace(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A full name whose workspace segment disagrees with the positional fails loud
+    # rather than silently preferring either side.
+    with pytest.raises(SystemExit):
+        r._compose_resume_name("epic-1:other", "w")
+    err = capsys.readouterr().err
+    assert "must match" in err
+    assert "'other'" in err
+    assert "'w'" in err
+
+
+def test_resume_bare_label_composes_and_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # End to end: --resume with a bare label composes '<label>:<workspace>' from the
+    # workspace positional, resolves it through the seam, and execs the resume.
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0, cwd="/work/repo")])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    monkeypatch.setattr(os, "chdir", lambda _p: None)
+    assert _resolve("id", "w", resume_name="epic-1") == 0
+    assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+    assert "Resuming session epic-1:w" in capsys.readouterr().err
+
+
+def test_resume_full_name_mismatched_workspace_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A full name whose workspace disagrees with the positional aborts before any
+    # store read or exec.
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("store must not be consulted on a workspace mismatch")
+
+    monkeypatch.setattr(r, "ScrapeStore", _boom)
+    with pytest.raises(SystemExit):
+        _resolve("id", "w", resume_name="epic-1:other")
+    assert capture_exec == []
+    assert "must match" in capsys.readouterr().err
 
 
 def test_no_verb_guide_when_no_sessions(
@@ -835,7 +908,7 @@ def test_resume_by_name_reasserts_requested_title_over_archived_2602(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name=_REQUESTED) == 0
+    assert _resolve("id", "vergil-project/vergil-tooling", resume_name=_REQUESTED) == 0
     assert chdirs == ["/work/repo"]  # requested session's cwd, not the archived /stale
     assert capture_exec == [["claude", "--resume", "want", "-n", _REQUESTED]]
     assert _ARCHIVED not in capsys.readouterr().err
@@ -995,8 +1068,8 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(r, "resolve", fake_resolve)
     code = r.main(["--identity", "id", "--path", "p", "--fresh", "x"])
     assert code == 0
-    # args order: identity, path, fork, fresh, extra, resume_name, label
-    assert seen["args"] == ("id", "p", False, True, ["x"], None, None)
+    # args order: identity, path, fresh, extra, resume_name, label
+    assert seen["args"] == ("id", "p", True, ["x"], None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1024,7 +1097,7 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         r,
         "resolve",
-        lambda *args: captured.update(extra=args[4]) or 0,  # noqa: ARG005
+        lambda *args: captured.update(extra=args[3]) or 0,  # noqa: ARG005
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]
@@ -1072,7 +1145,10 @@ def test_resume_by_name_scans_all_slugs_and_derives_cwd(
     monkeypatch.setattr(r, "_claude_dir", lambda: claude)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "somewhere-else", resume_name="epic-7:tool") == 0
+    # The workspace positional matches the name's workspace segment ("tool"), but the
+    # session's transcript-recorded cwd ("/work/tool") is a different path and is what
+    # the resolver chdirs to — the memory slug follows the session, not the positional.
+    assert _resolve("id", "tool", resume_name="epic-7:tool") == 0
     assert chdirs == ["/work/tool"]
     assert capture_exec == [["claude", "--resume", "good", "-n", "epic-7:tool"]]
 
