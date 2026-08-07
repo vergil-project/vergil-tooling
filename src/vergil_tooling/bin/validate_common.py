@@ -200,8 +200,13 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     cfg = read_config(repo_root)
     md_files = _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    # The "(N files ...)" counts below name their fixed discovery scope on
+    # purpose: each check lints a scoped slice of the working tree (published
+    # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
+    # "(N files)" as "N markdown files I changed" and reporting a phantom
+    # off-by-one when a changed file fell outside the scope (issue #2601).
     if md_files:
-        print(f"Running: markdownlint ({len(md_files)} files)")
+        print(f"Running: markdownlint ({len(md_files)} files in docs/site/, README.md)")
         config = files("vergil_tooling.configs") / "markdownlint.yaml"
         cmd: list[str] = ["markdownlint", "--config", str(config), *md_files]
         result = subprocess.run(cmd, check=False)  # noqa: S603, S607
@@ -210,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     shell_files = _find_shell_files(repo_root)
     if shell_files:
-        print(f"Running: shellcheck ({len(shell_files)} files)")
+        print(f"Running: shellcheck ({len(shell_files)} files in scripts/)")
         result = subprocess.run(  # noqa: S603
             ["shellcheck", *shell_files],  # noqa: S607
             check=False,
@@ -220,7 +225,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     yaml_files = _find_yaml_files(repo_root)
     if yaml_files:
-        print(f"Running: yamllint ({len(yaml_files)} files)")
+        print(
+            f"Running: yamllint ({len(yaml_files)} files in "
+            ".github/, repo root, docs/site/mkdocs.yml)"
+        )
         yaml_config = files("vergil_tooling.configs") / "yamllint.yaml"
         result = subprocess.run(  # noqa: S603
             ["yamllint", "--config-file", str(yaml_config), *yaml_files],  # noqa: S607
@@ -231,7 +239,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
 
     dockerfile_files = _find_dockerfiles(repo_root)
     if dockerfile_files:
-        print(f"Running: hadolint ({len(dockerfile_files)} files)")
+        print(f"Running: hadolint ({len(dockerfile_files)} Dockerfile* in repo root)")
         result = subprocess.run(  # noqa: S603
             ["hadolint", *dockerfile_files],  # noqa: S607
             check=False,
