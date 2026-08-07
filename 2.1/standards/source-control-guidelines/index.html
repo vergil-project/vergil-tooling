@@ -1150,6 +1150,8 @@
       
         
       
+        
+      
     
     
     
@@ -1202,6 +1204,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.176/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.176
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13150,18 +13180,29 @@ behavior.</p>
 <p>Prefer a shared actions library for reusable workflow logic and pin action
 references by tag or commit SHA.</p>
 <h3 id="ci-gates">CI gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h3>
-<p>Every CI check must be classified as either a hard gate or a soft gate.</p>
+<p>Every CI gate is a hard gate. There are no soft gates. A check is either
+enforced as a required status check that blocks PR merge, or it is not a
+gate at all — there is no middle tier that runs but does not block. A check
+worth running is worth failing on; a non-blocking gate silently rots and
+gives false confidence.</p>
 <ul>
-<li>Hard gate: blocking. A failing check prevents PR submission and merge.</li>
-<li>Soft gate: warning-only. A failing check does not block merge, but must be
-  surfaced in the PR with rationale and any follow-up tracking.</li>
+<li>Hard gate: blocking. A failing check prevents PR submission and merge.
+  This is the only kind of gate.</li>
 </ul>
-<p>Each repository must explicitly list its checks and their gate type. If a
-check is not classified, treat it as a hard gate until documented.</p>
-<p>Hard gates must be enforced as required status checks on the target branches
-so failing GitHub Actions block PR merges.</p>
-<p>Each repository must also document which hard gates apply per branch. Some
-hard gates may be develop-only, while others must run on all eternal branches.</p>
+<p>Every gate that can block a PR must be enforced as a required status check
+on the target branches, so a failing GitHub Actions check blocks the merge.
+If a check is not worth enforcing as a required status check, it must not
+gate the PR — remove it rather than run it as a non-blocking warning. A
+report-only or "advisory-permanent" check is not an allowed category.</p>
+<p>Each repository must explicitly list its required checks, and the
+required-check set must be pinned (for example, by a test or a config audit)
+so it cannot silently drift. This mirrors the CI implementation, where the
+same configuration that computes a repo's required status checks drives
+branch protection. See the guide
+<a href="../../guides/ci-architecture/">CI Architecture</a>, section "Every gate is
+required — there are no optional PR gates".</p>
+<p>Each repository must also document which gates apply per branch. Some gates
+may be develop-only, while others must run on all eternal branches.</p>
 <h2 id="github-repository-settings">GitHub repository settings<a class="headerlink" href="#github-repository-settings" title="Permanent link">&para;</a></h2>
 <p>The following settings are required defaults for all repositories hosted on
 GitHub.</p>

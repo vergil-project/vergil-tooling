@@ -1150,6 +1150,8 @@
       
         
       
+        
+      
     
     
     
@@ -1202,6 +1204,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../releases/v2.1.176/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.176
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13248,12 +13278,20 @@ management standard; it does not replace them.</p>
   patches, with no further bug fixes.</li>
 <li><strong>EOL (end of life)</strong>: A release series no longer receiving any patches from
   the upstream maintainer.</li>
-<li><strong>Hard gate</strong>: A CI check that blocks PR merge when it fails.</li>
-<li><strong>Soft gate</strong>: A CI check that surfaces warnings but does not block PR merge.
-  Failures must be documented in the PR with rationale and any follow-up
-  tracking.</li>
-<li><strong>Advisory</strong>: A CI check run for informational purposes only. Failures are
-  logged but carry no merge or follow-up obligations.</li>
+<li><strong>Hard gate</strong>: A CI check that blocks PR merge when it fails. Every CI gate
+  is a hard gate — a check either blocks as a required status check or it is
+  not a gate. See
+  <a href="../../source-control-guidelines/#ci-gates">Source Control Guidelines</a> and the
+  <a href="../../../guides/ci-architecture/">CI Architecture</a> guide for the
+  hard-gates-only standard.</li>
+<li><strong>Advisory-on-unsupported-versions carve-out</strong>: The single sanctioned
+  non-blocking category. A check is advisory <em>only because</em> the runtime version
+  it runs against is outside the supported set — a preview version not yet
+  promoted into the supported set, or an EOL version past upstream support. The
+  version, not the check, is what makes it non-blocking; the same check on a
+  supported version is a hard gate. This is deliberately distinct from a
+  generic soft gate on a supported check, which the hard-gates-only standard
+  does not permit.</li>
 </ul>
 <h2 id="support-tiers">Support tiers<a class="headerlink" href="#support-tiers" title="Permanent link">&para;</a></h2>
 <p>Each runtime version in a CI matrix must be assigned to exactly one tier.</p>
@@ -13269,7 +13307,9 @@ deployment, and release artifacts.</p>
 <p>The upcoming version that has entered GA but has not yet been promoted to the
 primary development version.</p>
 <ul>
-<li>Gate type: soft gate (non-blocking).</li>
+<li>Gate type: advisory under the advisory-on-unsupported-versions carve-out —
+  non-blocking <em>because</em> the version is not yet in the supported set, not
+  because the check itself is a soft gate.</li>
 <li>Failures are tracked as issues but do not block PRs.</li>
 <li>Purpose: early detection of incompatibilities before the next version becomes
   Tier 1.</li>
@@ -13285,7 +13325,8 @@ Relevant primarily for libraries that must support consumers on older runtimes.<
 <h3 id="tier-4-eol">Tier 4 — EOL<a class="headerlink" href="#tier-4-eol" title="Permanent link">&para;</a></h3>
 <p>A version that has reached end of life upstream.</p>
 <ul>
-<li>Gate type: advisory (best-effort).</li>
+<li>Gate type: advisory under the advisory-on-unsupported-versions carve-out —
+  non-blocking <em>because</em> the version has left the supported set.</li>
 <li>Failures are logged but never block merges.</li>
 <li>Do not invest effort maintaining compatibility with EOL versions.</li>
 </ul>
@@ -13309,7 +13350,7 @@ Relevant primarily for libraries that must support consumers on older runtimes.<
 <tr>
 <td>2 — next development</td>
 <td><code>preview-&lt;version&gt;</code></td>
-<td>Soft gate</td>
+<td>Advisory (unsupported-version carve-out)</td>
 <td>Warning only</td>
 </tr>
 <tr>
@@ -13321,7 +13362,7 @@ Relevant primarily for libraries that must support consumers on older runtimes.<
 <tr>
 <td>4 — EOL</td>
 <td><code>eol-&lt;version&gt;</code></td>
-<td>Advisory</td>
+<td>Advisory (unsupported-version carve-out)</td>
 <td>No impact</td>
 </tr>
 </tbody>
@@ -13343,8 +13384,9 @@ backward compatibility with older runtimes.</p>
 versions to support consumers on older runtimes.</p>
 <ul>
 <li>CI matrix: Tier 1 (hard gate), Tier 3 if consumers require it (hard gate),
-  Tier 2 (soft gate).</li>
-<li>Tier 4 is advisory and included only when the cost is negligible.</li>
+  Tier 2 (advisory under the unsupported-version carve-out).</li>
+<li>Tier 4 is advisory under the same carve-out and included only when the cost
+  is negligible.</li>
 </ul>
 <h2 id="drop-criteria">Drop criteria<a class="headerlink" href="#drop-criteria" title="Permanent link">&para;</a></h2>
 <p>A runtime version should be considered for removal from the CI matrix when any
