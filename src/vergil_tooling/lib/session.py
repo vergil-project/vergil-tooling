@@ -14,13 +14,16 @@ workspace paths, even though dashes and slashes are common inside both fields.
 
 from __future__ import annotations
 
-import enum
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+
+    from vergil_tooling.lib.session_store import SessionInfo
 
 SLOT_MIN = 1
 SLOT_MAX = 99
-
-_ARCHIVED_PREFIX = "archived@"
 
 
 def make_name(identity: str, slot: int, path: str) -> str:
@@ -28,32 +31,64 @@ def make_name(identity: str, slot: int, path: str) -> str:
     return f"{identity}:{slot:02d}:{path}"
 
 
-def make_archived_name(name: str, timestamp: str) -> str:
-    """Archived label: ``archived@<timestamp>@<original-name>``."""
-    return f"{_ARCHIVED_PREFIX}{timestamp}@{name}"
+_LABEL_CONVENTION_PREFIXES = ("epic-", "adhoc-")
 
 
-def parse_archived(name: str) -> tuple[str, str] | None:
-    """Parse an archived label into ``(timestamp, original_name)`` or ``None``.
+def make_label_name(label: str, workspace: str) -> str:
+    """Compose a purpose-named session name ``<label>:<workspace>``.
 
-    Splits on the first two ``@`` so a workspace path containing ``@`` is safe.
+    The name drops identity entirely — a session is named by *what it is for*
+    (its ``label``) scoped to *where it runs* (its ``workspace`` path), joined by
+    the same unambiguous colon delimiter the slot scheme used. ``label`` is a
+    clean slug (validated by :func:`validate_label`); ``workspace`` is the
+    workspace-relative path, e.g. ``vergil-project/vergil-tooling``.
     """
-    if not name.startswith(_ARCHIVED_PREFIX):
-        return None
-    parts = name.split("@", 2)
-    if len(parts) != 3:
-        return None
-    return parts[1], parts[2]
+    return f"{label}:{workspace}"
+
+
+def validate_label(label: str) -> list[str]:
+    """Validate a session ``label`` slug, returning non-fatal warnings.
+
+    Two tiers, mirroring the spec's "clean slug required, convention soft":
+
+    - **Hard (raises :class:`ValueError`).** The label must be a clean slug: a
+      ``:`` would break the ``label:workspace`` delimiter, and whitespace or an
+      empty/blank label is never a valid name. These are structural — the name
+      cannot be formed — so they fail loud.
+    - **Soft (returned as a warning, never rejected).** A label that is not
+      prefixed ``epic-``/``adhoc-`` is off-convention but still usable; it yields
+      one warning string so the caller can surface it without blocking creation.
+
+    Returns an empty list for a clean, on-convention label.
+    """
+    if not label or not label.strip():
+        msg = "label must not be empty"
+        raise ValueError(msg)
+    if ":" in label:
+        msg = "label must not contain ':' (the label:workspace delimiter)"
+        raise ValueError(msg)
+    if any(ch.isspace() for ch in label):
+        msg = "label must not contain whitespace"
+        raise ValueError(msg)
+    warnings: list[str] = []
+    if not label.startswith(_LABEL_CONVENTION_PREFIXES):
+        warnings.append(
+            f"label {label!r} does not follow the epic-/adhoc- naming convention (using it anyway)"
+        )
+    return warnings
 
 
 def parse_name(name: str) -> tuple[str, int, str] | None:
     """Parse ``<identity>:<NN>:<path>`` into its fields.
 
-    Returns ``None`` for any string that does not match the scheme (an archived
-    label, wrong field count, empty identity/path, or a slot that is not a
-    two-digit number in range).
+    Returns ``None`` for any string that does not match the scheme (wrong field
+    count, empty identity/path, or a slot that is not a two-digit number in
+    range). A legacy ``archived@…`` name is an **opaque** string — the archive
+    behavior is gone, but such a name must never misparse into a phantom slot
+    (its embedded timestamp colons would otherwise read as ``<id>:<NN>:<path>``),
+    so it is rejected here too.
     """
-    if name.startswith(_ARCHIVED_PREFIX):
+    if name.startswith("archived@"):
         return None
     parts = name.split(":", 2)
     if len(parts) != 3:
@@ -210,24 +245,31 @@ def list_rows(
     return sorted(best.values(), key=lambda r: (r.identity, r.slot, r.path))
 
 
-class AgeBand(enum.Enum):
-    FRESH = "fresh"
-    WARN = "warn"
-    STALE = "stale"
+def filter_recent(
+    rows: Iterable[SessionInfo],
+    now: float,
+    recent_days: int,
+    all: bool = False,  # noqa: A002 — the CLI flag this mirrors is literally ``--all``
+) -> list[SessionInfo]:
+    """Keep only sessions active within ``recent_days`` (the display recency band).
 
+    This is the replacement for the deleted staleness bands: it does not touch,
+    rename, or delete anything — it purely decides which rows a listing shows.
 
-def classify_age(
-    now: float, last_active: float | None, stale_days: int, archive_days: int
-) -> AgeBand:
-    """Classify a session's age. Unknown age is treated as FRESH (never swept)."""
-    if last_active is None:
-        return AgeBand.FRESH
-    age_days = (now - last_active) / 86400.0
-    if age_days < stale_days:
-        return AgeBand.FRESH
-    if archive_days != 0 and age_days >= archive_days:
-        return AgeBand.STALE
-    return AgeBand.WARN
+    - ``all=True`` returns every row unchanged (the ``--all`` escape hatch).
+    - A **live** session is always kept (a session in use is always relevant,
+      regardless of its last-activity timestamp).
+    - An **unknown** ``last_active`` is kept (age unknown ⇒ shown, never hidden —
+      the same "unknown is fresh" bias the old bands used).
+    - Otherwise the row is kept iff it was last active no more than
+      ``recent_days`` days before ``now``.
+    """
+    if all:
+        return list(rows)
+    cutoff = now - recent_days * 86400.0
+    return [
+        row for row in rows if row.active or row.last_active is None or row.last_active >= cutoff
+    ]
 
 
 def _lowest_free(slots: dict[int, Slot]) -> int | None:
@@ -336,26 +378,6 @@ def select_by_name(
     return Resume(best[0])
 
 
-@dataclass(frozen=True)
-class PromptStale:
-    """Warn-band: the resolver must prompt resume/fresh/cancel, then act."""
-
-    session_id: str  # resume this on [r]
-    name: str  # reclaim this name on [f] (archive session_id, then create name)
-    age_days: int
-
-
-PlanAction = Create | Resume | Fork | Refuse | PromptStale
-
-
-@dataclass(frozen=True)
-class SessionPlan:
-    """A full session decision: cold slots to auto-archive, then an action."""
-
-    auto_archive: list[Slot]
-    action: PlanAction
-
-
 def _idle_by_recency(slots: dict[int, Slot]) -> list[Slot]:
     """Idle slots, most-recently-active first (unknown age sorts oldest)."""
     idle = [s for s in slots.values() if not s.active]
@@ -370,62 +392,41 @@ def plan_session(
     identity: str,
     path: str,
     slots: dict[int, Slot],
-    now: float,
-    stale_days: int,
-    archive_days: int,
     requested_slot: int | None = None,
     fork: bool = False,
     fresh: bool = False,
-) -> SessionPlan:
-    """Plan a session launch: which cold slots to archive, then what to do."""
+) -> Decision:
+    """Plan a ``--fork`` / ``--fresh`` session launch (legacy slot machinery).
+
+    Auto-archive and the staleness bands are gone (issue #2608), so a plan is now
+    a single :class:`Decision` — there is no set of cold slots to sweep. The only
+    remaining callers are ``--fork`` and ``--fresh`` (create/resume-by-name is the
+    supported path via the seam); the no-verb default is handled by the resolver.
+    ``--fresh`` here simply creates a fresh session in the target slot — the
+    supported *retire-rename* of the prior session is a separate change (Task 5).
+    """
     if fork:
-        return SessionPlan([], _select_fork(identity, path, slots, requested_slot))
+        return _select_fork(identity, path, slots, requested_slot)
     if fresh:
         return _plan_fresh(identity, path, slots, requested_slot)
     if requested_slot is not None:
-        return SessionPlan([], _select_explicit(identity, path, slots, requested_slot))
-
-    sweep = [
-        s
-        for s in slots.values()
-        if not s.active
-        and classify_age(now, s.last_active, stale_days, archive_days) == AgeBand.STALE
-    ]
-    swept = {s.slot for s in sweep}
-    remaining = {n: s for n, s in slots.items() if n not in swept}
-    return SessionPlan(
-        sweep, _select_auto(identity, path, remaining, now, stale_days, archive_days)
-    )
-
-
-def _select_auto(
-    identity: str,
-    path: str,
-    slots: dict[int, Slot],
-    now: float,
-    stale_days: int,
-    archive_days: int,
-) -> PlanAction:
-    """Most-recent idle in FRESH resumes; in WARN prompts; else create free."""
-    for slot in _idle_by_recency(slots):
-        band = classify_age(now, slot.last_active, stale_days, archive_days)
-        if band == AgeBand.FRESH:
-            return Resume(slot.session_id)
-        age_days = int((now - (slot.last_active or now)) / 86400.0)
-        return PromptStale(slot.session_id, make_name(identity, slot.slot, path), age_days)
-    free = _lowest_free(slots)
-    if free is None:
-        return _all_in_use(identity, path)
-    return Create(make_name(identity, free, path))
+        return _select_explicit(identity, path, slots, requested_slot)
+    return _select_default(identity, path, slots)
 
 
 def _plan_fresh(
     identity: str, path: str, slots: dict[int, Slot], requested_slot: int | None
-) -> SessionPlan:
-    """``--fresh``: archive the (cold) target and create fresh in that slot."""
+) -> Decision:
+    """``--fresh``: create a fresh session in the (cold) target slot.
+
+    Picks the target slot (explicit, else the most-recent idle, else the lowest
+    free) and creates a new session there. The prior session is left untouched —
+    reclaiming its name via a supported rename is Task 5's retire-rename, not this
+    interim create.
+    """
     if requested_slot is not None:
         if not SLOT_MIN <= requested_slot <= SLOT_MAX:
-            return SessionPlan([], _bad_range())
+            return _bad_range()
         target = slots.get(requested_slot)
         slot_no = requested_slot
     else:
@@ -433,10 +434,7 @@ def _plan_fresh(
         target = idle[0] if idle else None
         slot_no = target.slot if target else (_lowest_free(slots) or 0)
     if slot_no == 0:
-        return SessionPlan([], _all_in_use(identity, path))
+        return _all_in_use(identity, path)
     if target is not None and target.active:
-        return SessionPlan(
-            [], Refuse(f"slot {slot_no:02d} is active; cannot start fresh over a live session")
-        )
-    archive = [target] if target is not None else []
-    return SessionPlan(archive, Create(make_name(identity, slot_no, path)))
+        return Refuse(f"slot {slot_no:02d} is active; cannot start fresh over a live session")
+    return Create(make_name(identity, slot_no, path))

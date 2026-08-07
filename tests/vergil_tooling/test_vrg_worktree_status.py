@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from vergil_tooling.bin.vrg_worktree_status import _format_age, _row, main
-from vergil_tooling.lib.worktrees import Worktree, WorktreeState, WorktreeStatus
+from vergil_tooling.lib.worktrees import RawWorktree, Worktree, WorktreeState, WorktreeStatus
 
 if TYPE_CHECKING:
     import pytest
@@ -55,6 +55,12 @@ _LAST_MODIFIED_COL = 8
 _NOW = 1_700_000_000.0
 
 
+def _raws(statuses: list[WorktreeStatus]) -> list[RawWorktree]:
+    """Mirror a list of branched statuses as the RawWorktree records
+    discover_worktrees would return for them."""
+    return [RawWorktree(path=s.worktree.path, branch=s.worktree.branch) for s in statuses]
+
+
 def test_row_renders_loaded_workflow_status_verbatim() -> None:
     row = _row(
         _status("feature/1-x", WorktreeState.NO_PR, ahead=1, workflow_status="approved"), _NOW
@@ -87,7 +93,7 @@ def test_main_summary_reports_prepared_count(capsys: pytest.CaptureFixture[str])
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -103,7 +109,7 @@ def test_main_surfaces_workflow_read_error_note(capsys: pytest.CaptureFixture[st
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -123,7 +129,7 @@ def test_main_groups_cruft_last_and_summarizes(capsys: pytest.CaptureFixture[str
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -140,18 +146,43 @@ def test_main_groups_cruft_last_and_summarizes(capsys: pytest.CaptureFixture[str
 def test_main_empty_reports_none(capsys: pytest.CaptureFixture[str]) -> None:
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=[]),
     ):
         rc = main([])
     assert rc == 0
     assert "No canonical" in capsys.readouterr().out
 
 
+def test_main_surfaces_rebasing_worktree_not_none(capsys: pytest.CaptureFixture[str]) -> None:
+    """Issue #2634: a detached-HEAD / mid-rebase worktree must be listed with a
+    REBASING state and its resolved branch — never hidden behind "none"."""
+    rebasing = _status(
+        "feature/2607-resume-attach",
+        WorktreeState.REBASING,
+        ahead=3,
+        detail="rebase in progress (detached HEAD) — resolve conflicts and continue",
+    )
+    raw = RawWorktree(path=rebasing.worktree.path, branch=None)
+    with (
+        patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=[raw]),
+        patch(_MOD + ".worktrees.gather_detached_status", return_value=rebasing),
+    ):
+        rc = main([])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "No canonical" not in out
+    assert "rebasing" in out
+    assert "feature/2607-resume-attach" in out
+    assert "note: feature/2607-resume-attach:" in out
+    assert "rebase in progress" in out
+
+
 def test_main_surfaces_unknown_detail(capsys: pytest.CaptureFixture[str]) -> None:
     statuses = [_status("feature/9-x", WorktreeState.UNKNOWN, detail="gh boom")]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -176,7 +207,7 @@ def test_main_surfaces_reused_branch_detail(capsys: pytest.CaptureFixture[str]) 
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -208,7 +239,7 @@ def test_main_merged_dirty_is_needs_attention_not_active(
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -242,7 +273,7 @@ def test_main_four_merged_dirty_never_reported_all_active(
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -268,7 +299,7 @@ def test_main_reused_branch_is_needs_attention_not_stalled(
     ]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])
@@ -304,7 +335,7 @@ def test_main_includes_timestamp_headers(capsys: pytest.CaptureFixture[str]) -> 
     statuses = [_status("feature/1-a", WorktreeState.NO_PR, ahead=1)]
     with (
         patch(_MOD + ".git.repo_root", return_value=Path("/repo")),
-        patch(_MOD + ".worktrees.list_worktrees", return_value=[s.worktree for s in statuses]),
+        patch(_MOD + ".worktrees.discover_worktrees", return_value=_raws(statuses)),
         patch(_MOD + ".worktrees.gather_worktree_status", side_effect=statuses),
     ):
         rc = main([])

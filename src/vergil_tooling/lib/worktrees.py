@@ -29,10 +29,26 @@ class Worktree:
     branch: str
 
 
+@dataclass(frozen=True)
+class RawWorktree:
+    """A worktree under the canonical container exactly as git reports it.
+
+    Unlike ``Worktree``, this keeps **detached-HEAD** worktrees — ``branch`` is
+    ``None`` when no branch is checked out, the normal state during a paused
+    rebase. Discovery retains them so a status view can surface an in-flight
+    worktree rather than dropping it and reporting "none" (issue #2634).
+    """
+
+    path: Path
+    branch: str | None
+
+
 class WorktreeState(StrEnum):
     """Lifecycle state of a canonical worktree, derived from PR + local signals."""
 
     OPEN_PR = "open-pr"
+    REBASING = "rebasing"
+    DETACHED = "detached"
     NO_PR = "no-pr"
     DRAFT = "draft"
     MERGED = "merged"
@@ -329,30 +345,163 @@ def gather_worktree_status(
     )
 
 
-def list_worktrees(repo_root: Path) -> list[Worktree]:
-    """Return worktrees under ``repo_root/.worktrees/`` with their branches.
+def discover_worktrees(repo_root: Path) -> list[RawWorktree]:
+    """Return every worktree under ``repo_root/.worktrees/``, detached included.
 
-    Detached worktrees (no ``branch`` line in the porcelain output) and
-    worktrees outside the canonical container are excluded.
+    Parses ``git worktree list --porcelain`` and keeps one ``RawWorktree`` per
+    worktree inside the canonical container. ``branch`` is the checked-out
+    branch, or ``None`` when HEAD is detached (a worktree paused mid-rebase).
+    Worktrees outside the canonical container are ignored, as with
+    ``list_worktrees``.
+
+    This is the full-fidelity discovery a status view needs: a detached-HEAD
+    worktree still physically exists and must never be silently dropped
+    (issue #2634). ``list_worktrees`` layers the branch-only filter on top for
+    the callers (finalize/submit sweeps) that must not act on a mid-operation
+    worktree.
     """
     output = git.read_output("worktree", "list", "--porcelain")
     canonical_root = (repo_root / ".worktrees").resolve()
 
-    worktrees: list[Worktree] = []
+    records: list[RawWorktree] = []
     current_path: Path | None = None
-    for line in output.splitlines():
-        if line.startswith("worktree "):
-            current_path = Path(line.removeprefix("worktree ").strip())
-        elif line.startswith("branch ") and current_path is not None:
-            ref = line.removeprefix("branch ").strip()
+    current_branch: str | None = None
+
+    def flush() -> None:
+        nonlocal current_path, current_branch
+        if current_path is not None:
             resolved = current_path.resolve()
-            current_path = None
             try:
                 resolved.relative_to(canonical_root)
             except ValueError:
-                continue
-            worktrees.append(Worktree(path=resolved, branch=ref.removeprefix("refs/heads/")))
-    return worktrees
+                pass
+            else:
+                records.append(RawWorktree(path=resolved, branch=current_branch))
+        current_path = None
+        current_branch = None
+
+    # Porcelain output is one blank-line-separated block per worktree, each
+    # opening with a `worktree <path>` line; `branch` is present only when a
+    # branch is checked out (absent for detached HEAD). Flush the previous
+    # block when a new `worktree` line opens the next, and once more at the end.
+    for line in output.splitlines():
+        if line.startswith("worktree "):
+            flush()
+            current_path = Path(line.removeprefix("worktree ").strip())
+        elif line.startswith("branch ") and current_path is not None:
+            ref = line.removeprefix("branch ").strip()
+            current_branch = ref.removeprefix("refs/heads/")
+    flush()
+    return records
+
+
+def list_worktrees(repo_root: Path) -> list[Worktree]:
+    """Return worktrees under ``repo_root/.worktrees/`` with their branches.
+
+    Detached worktrees (no ``branch`` line in the porcelain output) and
+    worktrees outside the canonical container are excluded — a mid-operation
+    worktree is deliberately not a finalize/submit candidate. Use
+    ``discover_worktrees`` when detached worktrees must be surfaced too.
+    """
+    return [
+        Worktree(path=raw.path, branch=raw.branch)
+        for raw in discover_worktrees(repo_root)
+        if raw.branch is not None
+    ]
+
+
+def _branch_from_worktree_name(name: str) -> str | None:
+    """Map a canonical worktree directory name to its feature branch.
+
+    ``issue-<N>-<slug>`` -> ``feature/<N>-<slug>``. Returns ``None`` for a name
+    that does not follow the convention, so a caller can fall back rather than
+    inventing a branch. Used to recover the intended branch of a detached
+    worktree from its directory name (issue #2634).
+    """
+    remainder = name.removeprefix("issue-")
+    if remainder == name or not remainder:
+        return None
+    return f"feature/{remainder}"
+
+
+def _rebase_head_name(git_dir: Path) -> str | None:
+    """Return the branch a paused rebase is rebuilding, or ``None``.
+
+    Git records the original branch as ``refs/heads/<branch>`` in the
+    ``head-name`` file of the in-progress rebase state directory —
+    ``rebase-merge/`` (merge backend, the modern default) or ``rebase-apply/``
+    (apply backend). Returns the short branch name, or ``None`` when no rebase
+    is in progress or the file is absent/empty.
+    """
+    for backend in ("rebase-merge", "rebase-apply"):
+        try:
+            ref = (git_dir / backend / "head-name").read_text().strip()
+        except OSError:
+            continue
+        if ref:
+            return ref.removeprefix("refs/heads/")
+    return None
+
+
+def _rebase_in_progress(git_dir: Path) -> bool:
+    """Return True when *git_dir* holds an in-progress rebase's state directory."""
+    return (git_dir / "rebase-merge").is_dir() or (git_dir / "rebase-apply").is_dir()
+
+
+def gather_detached_status(
+    raw: RawWorktree, *, target: str, with_freshness: bool = False
+) -> WorktreeStatus:
+    """Classify a detached-HEAD worktree — the state a paused rebase leaves.
+
+    A detached worktree has no checked-out branch, so it never resolves to a
+    lifecycle state via ``gather_worktree_status``; without this it would be
+    dropped from discovery entirely and the worktree would look like it
+    vanished (issue #2634). The intended branch is recovered from the paused
+    rebase's ``head-name`` metadata, falling back to the ``issue-<N>-<slug>``
+    directory name, and the state is ``REBASING`` when a rebase is in progress
+    or ``DETACHED`` otherwise. A PR lookup is deliberately skipped: the point is
+    to *surface* the in-flight worktree with an actionable note, not to derive a
+    lifecycle it does not yet have.
+
+    Freshness timestamps mirror ``gather_worktree_status`` — gathered only when
+    ``with_freshness`` is set (``vrg-worktree-status``).
+    """
+    git_dir = git.worktree_git_dir(raw.path)
+    rebasing = _rebase_in_progress(git_dir)
+    branch = _rebase_head_name(git_dir) or _branch_from_worktree_name(raw.path.name)
+    worktree = Worktree(path=raw.path, branch=branch or "(detached)")
+
+    porcelain = git.read_output("-C", str(raw.path), "status", "--porcelain")
+    dirty = bool(porcelain)
+    # The branch ref still points at its pre-rebase tip during a rebase, so
+    # commits-ahead is meaningful — but only when the resolved branch actually
+    # exists; a name recovered solely from the directory may not.
+    ahead = git.commits_ahead(target, branch) if branch and git.ref_exists(branch) else 0
+    workflow_status, workflow_error, pr_prepared = _probe_pr_workflow(worktree)
+    last_commit_ts = git.committer_timestamp(raw.path) if with_freshness else None
+    last_modified_ts = _newest_mtime(raw.path) if with_freshness else None
+
+    if rebasing:
+        detail = (
+            "rebase in progress (detached HEAD) — resolve conflicts and run "
+            "'vrg-git rebase --continue', or 'vrg-git rebase --abort' to undo"
+        )
+    else:
+        detail = "detached HEAD — no branch checked out; check out a branch to resume work"
+
+    return WorktreeStatus(
+        worktree=worktree,
+        state=WorktreeState.REBASING if rebasing else WorktreeState.DETACHED,
+        pr_number=None,
+        ahead=ahead,
+        dirty=dirty,
+        detail=detail,
+        workflow_status=workflow_status,
+        workflow_error=workflow_error,
+        pr_prepared=pr_prepared,
+        last_commit_ts=last_commit_ts,
+        last_modified_ts=last_modified_ts,
+    )
 
 
 def worktree_for_branch(branch: str, repo_root: Path) -> Path | None:

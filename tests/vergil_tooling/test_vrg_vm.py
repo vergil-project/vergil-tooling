@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import types
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -969,24 +970,18 @@ class TestList:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        # The VM's --list-json now emits SessionInfo rows; only the live one is
+        # kept by _vm_active_sessions. The idle session comes from the host
+        # transcript scan (name_by_session). --all so the old idle row is shown.
         mock_shell.return_value = MagicMock(
             stdout=json.dumps(
                 [
                     {
-                        "identity": "vergil",
-                        "slot": 1,
-                        "path": "vergil-project/vm",
                         "sessionId": "s1",
-                        "state": "active",
+                        "name": "vergil:01:vergil-project/vm",
+                        "cwd": "",
+                        "active": True,
                         "lastActive": 1748000000.0,
-                    },
-                    {
-                        "identity": "vergil",
-                        "slot": 2,
-                        "path": "vergil-project/tooling",
-                        "sessionId": "s2",
-                        "state": "idle",
-                        "lastActive": 1700000000.0,
                     },
                 ]
             )
@@ -995,10 +990,10 @@ class TestList:
             "s1": "vergil:01:vergil-project/vm",
             "s2": "vergil:02:tooling",
         }
-        result = main(["list", "--sessions", "--config", str(config_file)])
+        result = main(["list", "--sessions", "--all", "--config", str(config_file)])
         assert result == 0
         out = capsys.readouterr().out
-        assert "WORKSPACE" in out
+        assert "NAME" in out
         assert "LAST ACTIVE" in out
         assert "vergil-project/vm" in out
         assert "active" in out
@@ -1025,11 +1020,10 @@ class TestList:
             stdout=json.dumps(
                 [
                     {
-                        "identity": "vergil",
-                        "slot": 2,
-                        "path": "vergil-project/tooling",
                         "sessionId": "s2",
-                        "state": "active",
+                        "name": "vergil:02:vergil-project/tooling",
+                        "cwd": "",
+                        "active": True,
                         "lastActive": 1748000000.0,
                     }
                 ]
@@ -1045,7 +1039,7 @@ class TestList:
     @patch("vergil_tooling.bin.vrg_vm.name_by_session")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
-    def test_list_sessions_archived_filter(
+    def test_list_sessions_legacy_archived_name_is_opaque(
         self,
         mock_list: MagicMock,
         mock_shell: MagicMock,
@@ -1054,22 +1048,76 @@ class TestList:
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
+        # The archive behavior is gone (#2608). A legacy archived@ name is no
+        # longer special-cased into an "archived" state — it renders verbatim as
+        # an opaque session name, listed like any other (unknown age ⇒ shown).
         mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
         mock_shell.return_value = MagicMock(stdout=json.dumps([]))
         mock_names.return_value = {
             "s1": "vergil:01:vergil-project/vm",
             "a1": "archived@2026-05-01T00:00:00Z@vergil:03:tooling",
         }
-        # default view hides archived
         assert main(["list", "--sessions", "--config", str(config_file)]) == 0
         out = capsys.readouterr().out
-        assert "vergil-project/vm" in out
-        assert "tooling" not in out
-        # --archived shows only archived
-        assert main(["list", "--sessions", "--archived", "--config", str(config_file)]) == 0
-        out = capsys.readouterr().out
-        assert "tooling" in out
-        assert "archived" in out
+        assert "vergil:01:vergil-project/vm" in out
+        assert "archived@2026-05-01T00:00:00Z@vergil:03:tooling" in out
+
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_unnamed_live_session_renders(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        _names: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # A live-but-unnamed session (name=None) is still listed, as "(unnamed)".
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(
+            stdout=json.dumps(
+                [{"sessionId": "s1", "name": None, "cwd": "", "active": True, "lastActive": None}]
+            )
+        )
+        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        assert "(unnamed)" in capsys.readouterr().out
+
+    def test_list_sessions_archived_flag_removed(self, config_file: Path) -> None:
+        # --archived is gone; argparse rejects the unknown flag.
+        with pytest.raises(SystemExit):
+            main(["list", "--sessions", "--archived", "--config", str(config_file)])
+
+    @patch("vergil_tooling.bin.vrg_vm.name_by_session")
+    @patch("vergil_tooling.bin.vrg_vm.shell_run")
+    @patch("vergil_tooling.bin.vrg_vm.list_vms")
+    def test_list_sessions_recency_hides_old_idle(
+        self,
+        mock_list: MagicMock,
+        mock_shell: MagicMock,
+        mock_names: MagicMock,
+        config_file: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Idle sessions older than session_recent_days (default 7) are hidden by
+        # default and revealed by --all.
+        now = time.time()
+        mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
+        mock_shell.return_value = MagicMock(stdout=json.dumps([]))
+        mock_names.return_value = {"recent": "epic-recent:vm", "old": "epic-old:vm"}
+        ages = {"recent": now - 1 * 86400.0, "old": now - 30 * 86400.0}
+        with patch(
+            "vergil_tooling.bin.vrg_vm._last_activity",
+            side_effect=lambda path: ages[Path(path).stem],
+        ):
+            assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+            out = capsys.readouterr().out
+            assert "epic-recent:vm" in out
+            assert "epic-old:vm" not in out
+            assert main(["list", "--sessions", "--all", "--config", str(config_file)]) == 0
+            out = capsys.readouterr().out
+            assert "epic-recent:vm" in out
+            assert "epic-old:vm" in out
 
     @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
@@ -1090,7 +1138,7 @@ class TestList:
     @patch("vergil_tooling.bin.vrg_vm.name_by_session")
     @patch("vergil_tooling.bin.vrg_vm.shell_run")
     @patch("vergil_tooling.bin.vrg_vm.list_vms")
-    def test_list_sessions_workspace_column_fits_long_paths(
+    def test_list_sessions_name_column_fits_long_names(
         self,
         mock_list: MagicMock,
         mock_shell: MagicMock,
@@ -1099,44 +1147,39 @@ class TestList:
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # A workspace longer than the historical 36-char column must render in
-        # full and must not shove STATE / LAST ACTIVE out of alignment.
-        long_path = "logical-minds-foundry/mq-cluster-tooling"  # 40 chars
-        assert len(long_path) > 36
+        # A name longer than the historical 36-char column must render in full and
+        # must not shove STATE / LAST ACTIVE out of alignment.
+        long_name = "epic-213-explicit-sessions:logical-minds-foundry/mq-cluster-tooling"
+        assert len(long_name) > 36
         mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
         mock_shell.return_value = MagicMock(
             stdout=json.dumps(
                 [
                     {
-                        "identity": "vergil",
-                        "slot": 1,
-                        "path": "vergil-project/vm",
                         "sessionId": "s1",
-                        "state": "active",
+                        "name": "epic-1:vergil-project/vm",
+                        "cwd": "",
+                        "active": True,
                         "lastActive": 1748000000.0,
                     },
                     {
-                        "identity": "vergil-user",
-                        "slot": 1,
-                        "path": long_path,
                         "sessionId": "s2",
-                        "state": "idle",
+                        "name": long_name,
+                        "cwd": "",
+                        "active": True,
                         "lastActive": 1748000000.0,
                     },
                 ]
             )
         )
-        mock_names.return_value = {
-            "s1": "vergil:01:vergil-project/vm",
-            "s2": "vergil-user:01:" + long_path,
-        }
+        mock_names.return_value = {}
         assert main(["list", "--sessions", "--config", str(config_file)]) == 0
         out = capsys.readouterr().out
         lines = [line for line in out.splitlines() if line.strip()]
         header = lines[0]
         state_col = header.index("STATE")
-        # The full long path is rendered, never truncated.
-        assert long_path in out
+        # The full long name is rendered, never truncated.
+        assert long_name in out
         # STATE begins at the same offset on every data row (header + divider
         # are lines[0] and lines[1]; data rows follow).
         for row in lines[2:]:
@@ -1155,61 +1198,25 @@ class TestList:
         config_file: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        # Columns render IDENTITY -> WORKSPACE -> SLOT, and rows sort by
-        # workspace first then slot (identity is only the final tiebreaker).
+        # Columns render NAME -> STATE -> LAST ACTIVE, and rows sort by name.
         mock_list.return_value = [{"name": "vergil-agent", "status": "Running"}]
-        mock_shell.return_value = MagicMock(
-            stdout=json.dumps(
-                [
-                    {
-                        "identity": "vergil-user",
-                        "slot": 2,
-                        "path": "alpha/repo",
-                        "sessionId": "s1",
-                        "state": "idle",
-                        "lastActive": 1700000000.0,
-                    },
-                    {
-                        "identity": "vergil",
-                        "slot": 1,
-                        "path": "beta/repo",
-                        "sessionId": "s2",
-                        "state": "idle",
-                        "lastActive": 1700000000.0,
-                    },
-                    {
-                        "identity": "vergil-user",
-                        "slot": 1,
-                        "path": "alpha/repo",
-                        "sessionId": "s3",
-                        "state": "idle",
-                        "lastActive": 1700000000.0,
-                    },
-                ]
-            )
-        )
+        mock_shell.return_value = MagicMock(stdout=json.dumps([]))
         mock_names.return_value = {
-            "s1": "vergil-user:02:alpha/repo",
-            "s2": "vergil:01:beta/repo",
-            "s3": "vergil-user:01:alpha/repo",
+            "s1": "epic-b:alpha/repo",
+            "s2": "epic-c:beta/repo",
+            "s3": "epic-a:alpha/repo",
         }
-        assert main(["list", "--sessions", "--config", str(config_file)]) == 0
+        assert main(["list", "--sessions", "--all", "--config", str(config_file)]) == 0
         out = capsys.readouterr().out
         lines = [line for line in out.splitlines() if line.strip()]
         header = lines[0]
-        # Column order: IDENTITY, then WORKSPACE, then SLOT, then STATE.
-        assert (
-            header.index("IDENTITY")
-            < header.index("WORKSPACE")
-            < header.index("SLOT")
-            < header.index("STATE")
-        )
-        # Data rows (after header + divider) sort by workspace then slot:
-        # both alpha/repo rows precede beta/repo, slot 01 before slot 02.
+        # Column order: NAME, then STATE, then LAST ACTIVE.
+        assert header.index("NAME") < header.index("STATE") < header.index("LAST ACTIVE")
+        # Data rows (after header + divider) sort by name: epic-a, epic-b, epic-c.
         data = lines[2:]
-        assert "alpha/repo" in data[0] and "01" in data[0]
-        assert "alpha/repo" in data[1] and "02" in data[1]
-        assert "beta/repo" in data[2]
+        assert "epic-a:alpha/repo" in data[0]
+        assert "epic-b:alpha/repo" in data[1]
+        assert "epic-c:beta/repo" in data[2]
 
     @patch("vergil_tooling.bin.vrg_vm._last_activity", return_value=None)
     @patch("vergil_tooling.bin.vrg_vm.name_by_session", return_value={})
@@ -1244,11 +1251,10 @@ class TestList:
         ]
         mock_cloud_sessions.return_value = {
             "c1": {
-                "identity": "vergil",
-                "slot": 1,
-                "path": "lmf/cloud",
                 "sessionId": "c1",
-                "state": "active",
+                "name": "epic-1:lmf/cloud",
+                "cwd": "",
+                "active": True,
                 "lastActive": 1748000000.0,
             }
         }
@@ -2206,17 +2212,17 @@ class TestSession:
                 ]
             )
 
-    def test_session_slot_passed_to_resolver(
+    def test_session_no_slot_flag(
         self,
         _age: MagicMock,
         _copy: MagicMock,
         _link: MagicMock,
-        mock_exec: MagicMock,
+        _exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(["session", "--config", str(config_file), "--slot", "3", "vergil-tooling"])
-        inner = self._inner(mock_exec)
-        assert "--slot 3" in inner
+        # --slot is removed (#2607): sessions are addressed by name, not slot.
+        with pytest.raises(SystemExit):
+            main(["session", "--config", str(config_file), "--slot", "3", "vergil-tooling"])
 
     def test_session_fork_passed_to_resolver(
         self,
@@ -2226,20 +2232,10 @@ class TestSession:
         mock_exec: MagicMock,
         config_file: Path,
     ) -> None:
-        main(
-            [
-                "session",
-                "--config",
-                str(config_file),
-                "--slot",
-                "2",
-                "--fork",
-                "vergil-tooling",
-            ]
-        )
+        main(["session", "--config", str(config_file), "--fork", "vergil-tooling"])
         inner = self._inner(mock_exec)
         assert "--fork" in inner
-        assert "--slot 2" in inner
+        assert "--slot" not in inner
 
     def test_session_resume_passed_to_resolver(
         self,
@@ -2319,7 +2315,7 @@ def test_session_inner_strips_leading_double_dash() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
-    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    inner = _session_inner(ns, "vergil", "p", "")
     assert "exec bash" in inner
     assert "vrg-vm-resolve-session" not in inner
 
@@ -2330,20 +2326,22 @@ def test_session_inner_raw_override_ignores_model() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=["--", "bash"], slot=None, fork=False, fresh=False, resume=None)
-    inner = _session_inner(ns, "vergil", "p", "opus", 7, 14)
+    inner = _session_inner(ns, "vergil", "p", "opus")
     assert "exec bash" in inner
     assert "--model" not in inner
 
 
-def test_session_inner_includes_thresholds() -> None:
+def test_session_inner_omits_deleted_thresholds() -> None:
     import argparse
 
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
-    inner = _session_inner(ns, "vergil", "p", "", 5, 30)
-    assert "--stale-days 5" in inner
-    assert "--archive-days 30" in inner
+    inner = _session_inner(ns, "vergil", "p", "")
+    # session_stale_days / session_archive_days are deleted (#2608): the resolver
+    # is no longer handed any staleness thresholds.
+    assert "--stale-days" not in inner
+    assert "--archive-days" not in inner
 
 
 def test_session_inner_fresh_flag() -> None:
@@ -2352,7 +2350,7 @@ def test_session_inner_fresh_flag() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=True, resume=None)
-    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    inner = _session_inner(ns, "vergil", "p", "")
     assert "--fresh" in inner
 
 
@@ -2362,7 +2360,7 @@ def test_session_inner_sources_conan_env() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume=None)
-    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    inner = _session_inner(ns, "vergil", "p", "")
     assert "conan.env" in inner
     assert "claude.env" in inner
 
@@ -2373,16 +2371,50 @@ def test_session_inner_resume_name() -> None:
     from vergil_tooling.bin.vrg_vm import _session_inner
 
     ns = argparse.Namespace(cmd=[], slot=None, fork=False, fresh=False, resume="epic-85-adhoc")
-    inner = _session_inner(ns, "vergil", "p", "", 7, 14)
+    inner = _session_inner(ns, "vergil", "p", "")
     assert "--resume-name epic-85-adhoc" in inner
 
 
-def test_cmd_session_rejects_resume_with_slot() -> None:
+def test_session_inner_label() -> None:
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fork=False, fresh=False, resume=None, label="epic-1")
+    inner = _session_inner(ns, "vergil", "p", "")
+    assert "--label epic-1" in inner
+
+
+def test_session_inner_fresh_with_label() -> None:
+    # --fresh --label (issue #2609): both flags reach the resolver, which retires
+    # the prior same-named session and creates a fresh one.
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _session_inner
+
+    ns = argparse.Namespace(cmd=[], fork=False, fresh=True, resume=None, label="epic-1")
+    inner = _session_inner(ns, "vergil", "p", "")
+    assert "--label epic-1" in inner
+    assert "--fresh" in inner
+
+
+def test_cmd_session_rejects_label_with_resume() -> None:
     import argparse
 
     from vergil_tooling.bin.vrg_vm import _cmd_session
 
-    ns = argparse.Namespace(resume="epic-85", slot=3, fork=False, fresh=False)
+    ns = argparse.Namespace(resume="epic-85", fork=False, fresh=False, label="epic-1")
+    assert _cmd_session(ns) == 1
+
+
+def test_cmd_session_rejects_label_with_fork() -> None:
+    # --label + --fork stays rejected (fork is a distinct verb); only --fresh now
+    # combines with --label (issue #2609).
+    import argparse
+
+    from vergil_tooling.bin.vrg_vm import _cmd_session
+
+    ns = argparse.Namespace(resume=None, fork=True, fresh=False, label="epic-1")
     assert _cmd_session(ns) == 1
 
 
@@ -2391,7 +2423,7 @@ def test_cmd_session_rejects_resume_with_fork() -> None:
 
     from vergil_tooling.bin.vrg_vm import _cmd_session
 
-    ns = argparse.Namespace(resume="epic-85", slot=None, fork=True, fresh=False)
+    ns = argparse.Namespace(resume="epic-85", fork=True, fresh=False)
     assert _cmd_session(ns) == 1
 
 
@@ -2410,14 +2442,14 @@ def test_selected_states() -> None:
     from vergil_tooling.bin.vrg_vm import _selected_states
 
     def ns(**kw: bool) -> argparse.Namespace:
-        base = {"all": False, "active": False, "idle": False, "archived": False}
+        base = {"all": False, "active": False, "idle": False}
         base.update(kw)
         return argparse.Namespace(**base)
 
     assert _selected_states(ns()) == {"active", "idle"}  # default
-    assert _selected_states(ns(all=True)) == {"active", "idle", "archived"}
+    assert _selected_states(ns(all=True)) == {"active", "idle"}  # --all is recency, not state
     assert _selected_states(ns(active=True)) == {"active"}
-    assert _selected_states(ns(idle=True, archived=True)) == {"idle", "archived"}
+    assert _selected_states(ns(idle=True)) == {"idle"}
 
 
 # -- _resolve_target (issue #99) ----------------------------------------------
@@ -4656,8 +4688,8 @@ class TestCloudList:
         transport.run.return_value = MagicMock(
             stdout=json.dumps(
                 [
-                    {"sessionId": "c1", "state": "active", "path": "lmf/cloud"},
-                    {"sessionId": "c2", "state": "idle", "path": "lmf/cloud"},
+                    {"sessionId": "c1", "name": "epic-1:lmf/cloud", "active": True},
+                    {"sessionId": "c2", "name": "epic-2:lmf/cloud", "active": False},
                 ]
             )
         )
