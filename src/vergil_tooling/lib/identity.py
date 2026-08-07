@@ -11,8 +11,7 @@ from pathlib import Path
 
 _SIZE_PATTERN = re.compile(r"^\d+GiB$")
 
-_DEFAULT_SESSION_STALE_DAYS = 7
-_DEFAULT_SESSION_ARCHIVE_DAYS = 14
+_DEFAULT_SESSION_RECENT_DAYS = 7
 
 
 @dataclass
@@ -28,8 +27,7 @@ class Identity:
     vergil: str = ""
     vergil_vm: str = ""
     model: str = ""
-    session_stale_days: int | None = None
-    session_archive_days: int | None = None
+    session_recent_days: int | None = None
     cpus: int | None = None
     memory: str | None = None
     disk: str | None = None
@@ -43,21 +41,16 @@ class IdentityConfig:
     vergil: str = ""
     vergil_vm: str = ""
     model: str = ""
-    session_stale_days: int = 7
-    session_archive_days: int = 14
+    session_recent_days: int = 7
 
 
-def _validate_session_thresholds(
-    name: str, identity: Identity, cfg_stale: int, cfg_archive: int
-) -> None:
-    stale = identity.session_stale_days if identity.session_stale_days is not None else cfg_stale
-    archive = (
-        identity.session_archive_days if identity.session_archive_days is not None else cfg_archive
+def _validate_session_recent_days(name: str, identity: Identity, cfg_recent: int) -> None:
+    recent = (
+        identity.session_recent_days if identity.session_recent_days is not None else cfg_recent
     )
-    if archive != 0 and archive <= stale:
+    if recent < 1:
         print(
-            f"ERROR: identity '{name}': session_archive_days ({archive}) must be 0 "
-            f"or greater than session_stale_days ({stale})",
+            f"ERROR: identity '{name}': session_recent_days ({recent}) must be at least 1",
             file=sys.stderr,
         )
         raise SystemExit(1)
@@ -122,8 +115,7 @@ def load_config(path: Path) -> IdentityConfig:
     vergil = raw.get("vergil", "")
     vergil_vm = raw.get("vergil-vm", "")
     model = raw.get("model", "")
-    session_stale_days = raw.get("session_stale_days", _DEFAULT_SESSION_STALE_DAYS)
-    session_archive_days = raw.get("session_archive_days", _DEFAULT_SESSION_ARCHIVE_DAYS)
+    session_recent_days = raw.get("session_recent_days", _DEFAULT_SESSION_RECENT_DAYS)
 
     identities: dict[str, Identity] = {}
     for name, data in raw.get("identities", {}).items():
@@ -156,8 +148,7 @@ def load_config(path: Path) -> IdentityConfig:
             vergil=data.get("vergil", ""),
             vergil_vm=data.get("vergil-vm", ""),
             model=data.get("model", ""),
-            session_stale_days=data.get("session_stale_days"),
-            session_archive_days=data.get("session_archive_days"),
+            session_recent_days=data.get("session_recent_days"),
             cpus=data.get("cpus"),
             memory=data.get("memory"),
             disk=data.get("disk"),
@@ -165,17 +156,14 @@ def load_config(path: Path) -> IdentityConfig:
         )
         _validate_auth_type(name, identities[name])
         _validate_identity_resources(name, identities[name])
-        _validate_session_thresholds(
-            name, identities[name], session_stale_days, session_archive_days
-        )
+        _validate_session_recent_days(name, identities[name], session_recent_days)
     return IdentityConfig(
         identities=identities,
         default_identity=default_identity,
         vergil=vergil,
         vergil_vm=vergil_vm,
         model=model,
-        session_stale_days=session_stale_days,
-        session_archive_days=session_archive_days,
+        session_recent_days=session_recent_days,
     )
 
 
@@ -269,18 +257,11 @@ def resolve_model(config: IdentityConfig, identity: Identity, cli_model: str = "
     return config.model
 
 
-def resolve_session_stale_days(config: IdentityConfig, identity: Identity) -> int:
-    """Days idle before a session warns: identity, then config-level."""
-    if identity.session_stale_days is not None:
-        return identity.session_stale_days
-    return config.session_stale_days
-
-
-def resolve_session_archive_days(config: IdentityConfig, identity: Identity) -> int:
-    """Days idle before a session auto-archives (0 disables): identity, then config."""
-    if identity.session_archive_days is not None:
-        return identity.session_archive_days
-    return config.session_archive_days
+def resolve_session_recent_days(config: IdentityConfig, identity: Identity) -> int:
+    """Days a session stays in the default ``list`` recency band: identity, then config."""
+    if identity.session_recent_days is not None:
+        return identity.session_recent_days
+    return config.session_recent_days
 
 
 def resolve_workspace(path: str, projects_dir: str) -> str:

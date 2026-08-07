@@ -22,15 +22,10 @@ from pathlib import Path
 
 from vergil_tooling.lib.session import (
     Create,
-    PlanAction,
+    Decision,
     Refuse,
-    Slot,
     build_slots,
-    list_rows,
-    make_archived_name,
     make_label_name,
-    parse_archived,
-    parse_name,
     plan_session,
     validate_label,
 )
@@ -343,59 +338,23 @@ def _read_state(
     return names, active, last_active
 
 
-def _archive_session(session_id: str, timestamp: str) -> None:
-    """Relabel a cold session by appending an archived ``custom-title`` entry.
-
-    ``custom-title`` is the event type current Claude Code writes, so the
-    archived label also shows up in Claude's own resume picker.
-    """
-    transcript = projects_glob(_claude_dir() / "projects", session_id)
-    current = _last_session_name(transcript)
-    if current is None:
-        return
-    entry = {
-        "type": "custom-title",
-        "customTitle": make_archived_name(current, timestamp),
-        "sessionId": session_id,
-    }
-    try:
-        with transcript.open("a") as fh:
-            fh.write(json.dumps(entry) + "\n")
-    except OSError:
-        return
-
-
 def _exec_claude(args: list[str]) -> int:
     os.execvp("claude", ["claude", *args])  # noqa: S606, S607
     return 0  # reached only when execvp is stubbed (tests)
-
-
-def _now() -> float:
-    return datetime.datetime.now(tz=datetime.UTC).timestamp()
-
-
-def _now_iso() -> str:
-    return datetime.datetime.now(tz=datetime.UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _run_sweep(slots: list[Slot]) -> None:
-    timestamp = _now_iso()
-    for slot in slots:
-        print(f"auto-archiving slot {slot.slot:02d} ({slot.session_id})…", file=sys.stderr)
-        _archive_session(slot.session_id, timestamp)
 
 
 def _note(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _execute(action: PlanAction, extra: list[str]) -> int:
+def _execute(action: Decision, extra: list[str]) -> int:
     """Carry out a ``--fork`` / ``--fresh`` plan action.
 
     With ``--slot`` and the auto-resume-most-recent default gone (#2607), the only
-    actions that still reach here are ``Create`` (``--fresh`` reclaiming its name)
-    and ``Refuse`` (``--fork`` with no slot to target). Exact-name attach
-    (``--resume``) resolves through the seam in :func:`_resume_by_name`, not here.
+    actions that still reach here are ``Create`` (``--fresh`` creating a fresh
+    session in the target slot) and ``Refuse`` (``--fork`` with no slot to
+    target). Exact-name attach (``--resume``) resolves through the seam in
+    :func:`_resume_by_name`, not here.
     """
     if isinstance(action, Refuse):
         print(f"ERROR: {action.message}", file=sys.stderr)
@@ -403,7 +362,7 @@ def _execute(action: PlanAction, extra: list[str]) -> int:
     if isinstance(action, Create):
         _note(f"Creating session {action.name}")
         return _exec_claude(["-n", action.name, *extra])
-    # Resume/Fork/PromptStale were the slot-selection outcomes; none is reachable
+    # Resume/Fork were the other slot-selection outcomes; neither is reachable
     # now that selection is by exact name. Guard loudly rather than mis-exec.
     raise RuntimeError(f"unexpected session action {type(action).__name__}")  # pragma: no cover
 
@@ -511,8 +470,6 @@ def resolve(
     fork: bool,
     fresh: bool,
     extra: list[str],
-    stale_days: int,
-    archive_days: int,
     resume_name: str | None = None,
     label: str | None = None,
 ) -> int:
@@ -527,7 +484,8 @@ def resolve(
     cwd from the resolved session (#2607). With no verb the recency list + the two
     verbs are printed and a nonzero code returned — there is no auto-resume-most-
     recent / auto-create default and no ``--slot``. ``fork`` / ``fresh`` retain the
-    prior slot machinery (removed/reconceived by later tasks in the epic).
+    legacy slot machinery (reconceived by later tasks in the epic); auto-archive
+    and the staleness sweep are gone (#2608).
     """
     if label is not None:
         return _resolve_label(path, label, extra)
@@ -538,52 +496,29 @@ def resolve(
         return _list_and_guide(slug)
     names, active, last_active = _read_state(slug)
     slots = build_slots(identity, path, names, active, last_active)
-    plan = plan_session(identity, path, slots, _now(), stale_days, archive_days, None, fork, fresh)
-    _run_sweep(plan.auto_archive)
-    return _execute(plan.action, extra)
-
-
-def _archived_rows(names: dict[str, str], last_active: dict[str, float]) -> list[dict[str, object]]:
-    """Rows for archived sessions, parsed from ``archived@`` labels."""
-    out: list[dict[str, object]] = []
-    for session_id, name in names.items():
-        parsed = parse_archived(name)
-        if parsed is None:
-            continue
-        timestamp, original = parsed
-        slot = parse_name(original)
-        if slot is None:
-            continue
-        identity, num, path = slot
-        out.append(
-            {
-                "identity": identity,
-                "slot": num,
-                "path": path,
-                "sessionId": session_id,
-                "state": "archived",
-                "archivedAt": timestamp,
-                "lastActive": last_active.get(session_id),
-            }
-        )
-    return out
+    action = plan_session(identity, path, slots, None, fork, fresh)
+    return _execute(action, extra)
 
 
 def list_json() -> int:
-    """Print every named session's state as JSON (for ``list --sessions``)."""
-    names, active, last_active = _read_state()
-    rows: list[dict[str, object]] = [
+    """Print every session the seam sees as JSON (for ``list --sessions``).
+
+    Emits :class:`SessionInfo`-shaped rows straight from the store — session id,
+    name (``None`` for a live-but-unnamed session), cwd, liveness, and
+    last-activity. A legacy ``archived@…`` name rides through as an opaque string;
+    the archive *behavior* is gone (#2608), but the seam still lists and resolves
+    such a name. The host applies the recency display-filter; this only enumerates.
+    """
+    rows = [
         {
-            "identity": row.identity,
-            "slot": row.slot,
-            "path": row.path,
             "sessionId": row.session_id,
-            "state": "active" if row.active else "idle",
+            "name": row.name,
+            "cwd": row.cwd,
+            "active": row.active,
             "lastActive": row.last_active,
         }
-        for row in list_rows(names, active, last_active)
+        for row in _store().list_sessions()
     ]
-    rows.extend(_archived_rows(names, last_active))
     print(json.dumps(rows))
     return 0
 
@@ -596,8 +531,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fresh", action="store_true")
     parser.add_argument("--resume-name", dest="resume_name", default=None)
     parser.add_argument("--label", dest="label", default=None)
-    parser.add_argument("--stale-days", type=int, default=7, dest="stale_days")
-    parser.add_argument("--archive-days", type=int, default=14, dest="archive_days")
     parser.add_argument("--list-json", action="store_true", dest="list_json")
     parser.add_argument("extra", nargs=argparse.REMAINDER)
     args = parser.parse_args(argv)
@@ -618,8 +551,6 @@ def main(argv: list[str] | None = None) -> int:
         args.fork,
         args.fresh,
         extra,
-        args.stale_days,
-        args.archive_days,
         args.resume_name,
         args.label,
     )

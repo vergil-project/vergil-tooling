@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from vergil_tooling.lib.vm_transport import Transport
 
 from vergil_tooling.bin.vrg_vm_resolve import (
-    _archived_rows,
     _last_activity,
     name_by_session,
     projects_glob,
@@ -39,8 +38,6 @@ from vergil_tooling.lib.identity import (
     load_config,
     resolve_identity_by_name,
     resolve_model,
-    resolve_session_archive_days,
-    resolve_session_stale_days,
     resolve_vergil_version,
     resolve_vm_tag,
     resolve_workspace,
@@ -60,7 +57,8 @@ from vergil_tooling.lib.lima import (
     write_instance_meta,
 )
 from vergil_tooling.lib.progress import Stage
-from vergil_tooling.lib.session import list_rows, make_name
+from vergil_tooling.lib.session import filter_recent
+from vergil_tooling.lib.session_store import SessionInfo
 from vergil_tooling.lib.vm_backend import select_backend
 from vergil_tooling.lib.vm_guest import (
     copy_claude_config,
@@ -2229,12 +2227,12 @@ def _vm_active_sessions(instance: str) -> dict[str, dict[str, object]]:
 
     A running VM owns its roster, so it is the only place a live session's name
     is known — including a freshly created session that has no host transcript
-    yet. The full row (identity, slot, path, lastActive) is returned so the host
+    yet. The full SessionInfo row (name, cwd, lastActive) is returned so the host
     can both name and age such sessions.
     """
     result = shell_run(instance, "vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
-    return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
+    return {row["sessionId"]: row for row in rows if row.get("active")}
 
 
 def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, object]]:
@@ -2248,7 +2246,7 @@ def _off_platform_active_sessions(vm: OffPlatformVm) -> dict[str, dict[str, obje
     transport = vm_cloud.off_platform_transport(vm.cloud_name, vm.state_dir, vm.provider)
     result = transport.run("vrg-vm-resolve-session", "--list-json")
     rows = json.loads(result.stdout)
-    return {row["sessionId"]: row for row in rows if row.get("state") == "active"}
+    return {row["sessionId"]: row for row in rows if row.get("active")}
 
 
 def _format_age(last_active: float | None, now: float) -> str:
@@ -2261,19 +2259,21 @@ def _format_age(last_active: float | None, now: float) -> str:
 
 
 def _selected_states(args: argparse.Namespace) -> set[str]:
-    if args.all:
-        return {"active", "idle", "archived"}
-    states = {s for s in ("active", "idle", "archived") if getattr(args, s)}
+    states = {s for s in ("active", "idle") if getattr(args, s)}
     return states or {"active", "idle"}
 
 
 def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
-    """List named Claude sessions across all identity VMs.
+    """List Claude sessions across all identity VMs, by name and recency.
 
-    Transcripts are shared (host-backed), so idle ages and archived rows come
-    from the host store; active liveness, names, and updatedAt are queried per
-    running VM, since each VM owns its own roster. A live session is named from
-    that roster, so the VM is the only source for one with no host transcript.
+    Transcripts are shared (host-backed), so a session's name and idle age come
+    from the host store; active liveness, roster names, and updatedAt are queried
+    per running VM, since each VM owns its own roster. A live session is named
+    from that roster, so the VM is the only source for one with no host transcript
+    yet. By default the listing shows only sessions active within
+    ``session_recent_days``; ``--all`` shows every session regardless of age. A
+    legacy ``archived@…`` name renders as-is — an opaque string, its archive
+    behavior gone (#2608).
     """
     vm_map = {vm["name"]: vm["status"] for vm in list_vms()}
     active_rows: dict[str, dict[str, object]] = {}
@@ -2297,14 +2297,12 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
             )
 
     projects = Path.home() / ".claude" / "projects"
-    names = name_by_session(projects)
-    # Adopt the VM-reported name for any active session the host has no
-    # transcript for (e.g. a brand-new session with zero turns); the host store
-    # alone would drop it entirely.
+    names: dict[str, str | None] = dict(name_by_session(projects))
+    # Adopt the VM-reported name for any live session the host has no transcript
+    # for (e.g. a brand-new session with zero turns); the host store alone would
+    # drop it entirely.
     for sid, row in active_rows.items():
-        names.setdefault(
-            sid, make_name(str(row["identity"]), cast("int", row["slot"]), str(row["path"]))
-        )
+        names.setdefault(sid, cast("str | None", row.get("name")))
     last_active: dict[str, float] = {
         sid: cast("float", row.get("lastActive") or 0.0) for sid, row in active_rows.items()
     }
@@ -2315,35 +2313,34 @@ def _list_sessions(config: IdentityConfig, args: argparse.Namespace) -> int:
                 last_active[sid] = ts
 
     active = set(active_rows)
-    rows: list[dict[str, object]] = [
-        {
-            "identity": row.identity,
-            "slot": row.slot,
-            "path": row.path,
-            "state": "active" if row.active else "idle",
-            "lastActive": row.last_active,
-        }
-        for row in list_rows(names, active, last_active)
+    infos = [
+        SessionInfo(
+            session_id=sid,
+            name=name,
+            cwd="",
+            active=sid in active,
+            last_active=last_active.get(sid),
+        )
+        for sid, name in names.items()
     ]
-    rows.extend(_archived_rows(names, last_active))
-
-    wanted = _selected_states(args)
-    rows = [r for r in rows if r["state"] in wanted]
-    # Group by workspace first, then slot within a workspace; identity is the
-    # final tiebreaker so same-workspace/same-slot rows stay stably ordered.
-    rows.sort(key=lambda r: (str(r["path"]), cast("int", r["slot"]), str(r["identity"])))
 
     now = datetime.datetime.now(tz=datetime.UTC).timestamp()
-    # Size the WORKSPACE column to the longest path present (36 floor), so a
-    # path wider than the historical fixed width keeps SLOT/STATE/LAST ACTIVE
-    # aligned.
-    ws = max([36, *(len(str(r["path"])) for r in rows)])
-    print(f"{'IDENTITY':<16} {'WORKSPACE':<{ws}} {'SLOT':<6} {'STATE':<9} {'LAST ACTIVE':<12}")
-    print(f"{'─' * 16} {'─' * ws} {'─' * 6} {'─' * 9} {'─' * 12}")
-    for r in rows:
-        slot = f"{cast('int', r['slot']):02d}"
-        age = _format_age(cast("float | None", r.get("lastActive")), now)
-        print(f"{r['identity']!s:<16} {r['path']!s:<{ws}} {slot:<6} {r['state']!s:<9} {age:<12}")
+    infos = filter_recent(infos, now, config.session_recent_days, all=args.all)
+    wanted = _selected_states(args)
+    infos = [i for i in infos if ("active" if i.active else "idle") in wanted]
+    # Sort by name (unnamed rows last), so same-workspace sessions group together.
+    infos.sort(key=lambda i: (i.name is None, i.name or "", i.session_id))
+
+    # Size the NAME column to the longest name present (36 floor), so a name wider
+    # than the historical fixed width keeps STATE / LAST ACTIVE aligned.
+    display_names = [i.name or "(unnamed)" for i in infos]
+    nw = max([36, *(len(n) for n in display_names)])
+    print(f"{'NAME':<{nw}} {'STATE':<9} {'LAST ACTIVE':<12}")
+    print(f"{'─' * nw} {'─' * 9} {'─' * 12}")
+    for info, display in zip(infos, display_names, strict=True):
+        state = "active" if info.active else "idle"
+        age = _format_age(info.last_active, now)
+        print(f"{display:<{nw}} {state:<9} {age:<12}")
 
     return 0
 
@@ -2353,8 +2350,6 @@ def _session_inner(
     identity_name: str,
     rel_path: str,
     model: str,
-    stale_days: int,
-    archive_days: int,
 ) -> str:
     """Build the in-VM command: a raw override, or the session resolver."""
     source = ". ~/.config/vergil/claude.env 2>/dev/null; . ~/.config/vergil/conan.env 2>/dev/null;"
@@ -2387,7 +2382,6 @@ def _session_inner(
         resolve_cmd += ["--fork"]
     if args.fresh:
         resolve_cmd += ["--fresh"]
-    resolve_cmd += ["--stale-days", str(stale_days), "--archive-days", str(archive_days)]
     if extra:
         resolve_cmd += ["--", *extra]
     return f"{source} exec {shlex.join(resolve_cmd)}"
@@ -2448,8 +2442,6 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
         name,
         rel_path,
         resolve_model(config, identity, args.model),
-        resolve_session_stale_days(config, identity),
-        resolve_session_archive_days(config, identity),
     )
     transport.exec_session(workdir=workdir, inner=inner)
     return 0  # unreachable, keeps the type checker happy
@@ -2514,8 +2506,6 @@ def _cmd_session(args: argparse.Namespace) -> int:
         name,
         rel_path,
         resolve_model(config, identity, args.model),
-        resolve_session_stale_days(config, identity),
-        resolve_session_archive_days(config, identity),
     )
     cmd = [
         "limactl",
@@ -2768,8 +2758,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_list.add_argument("--active", action="store_true", help="With --sessions: only active")
     p_list.add_argument("--idle", action="store_true", help="With --sessions: only idle")
-    p_list.add_argument("--archived", action="store_true", help="With --sessions: only archived")
-    p_list.add_argument("--all", action="store_true", help="With --sessions: include archived too")
+    p_list.add_argument(
+        "--all",
+        action="store_true",
+        help="With --sessions: include sessions older than the recency window",
+    )
 
     p_volumes = sub.add_parser(
         "volumes",
@@ -2837,7 +2830,7 @@ def main(argv: list[str] | None = None) -> int:
     p_session.add_argument(
         "--fresh",
         action="store_true",
-        help="Start a brand-new session, archiving the old one and reclaiming its name",
+        help="Start a brand-new session in the workspace's next slot",
     )
     p_session.add_argument(
         "--model",
