@@ -47,10 +47,24 @@ worktrees, which is unsafe when the calling shell's CWD is inside one.
 
 When the PR's checks are not finished, `vrg-finalize-pr` waits for
 them and merges automatically once everything is green and current.
-Doomed outcomes abort immediately rather than after the wait: a draft
-PR, merge conflicts, a failed check (named in the error), or a branch
-still behind after five update attempts. A branch that is merely
-behind the target is updated automatically and the wait restarts.
+The wait is **bounded** by a deadline — it never blocks forever — and
+it never merges past a non-terminal check. Doomed outcomes abort
+immediately rather than after the wait: a draft PR, merge conflicts, a
+failed check (named in the error), or a branch still behind after five
+update attempts. A branch that is merely behind the target is updated
+automatically and the wait restarts.
+
+**Orphaned check-runs.** GitHub occasionally leaves a check-run
+non-terminal (`queued`/`in_progress`) even though the workflow run that
+owns it has already completed — an *orphan* that would never go green on
+its own. When the deadline elapses with checks still pending, finalize
+cross-checks each one against its backing run (`gh run view`). A
+non-terminal check over a completed run is an orphan, so finalize
+**aborts with recovery guidance** — close and reopen the PR to re-run the
+gate, then re-run `vrg-finalize-pr` — rather than hanging. Genuinely
+still-running checks are waited on as normal; if the deadline elapses
+with nothing orphaned (for example an app-posted status that is legitimately
+slow), finalize fails with a plain timeout error instead.
 
 After the merge, the PR's own branch and worktree are cleaned up
 explicitly (a squash merge hides them from `git branch --merged`),
@@ -231,4 +245,4 @@ release — the batch runs those once at the end.
 | Code | Meaning |
 | ---- | ------- |
 | 0 | Finalization complete, or declined at a confirmation prompt |
-| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed |
+| 1 | Provenance violation, unmergeable PR (draft, conflicts, failed checks, stuck behind, orphaned check-run, or wait timeout), not run from main worktree, non-TTY stdin or stdout in inference mode, dirty working tree, failed validation, failed CD run, or a batch item failed |
