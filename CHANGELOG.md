@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.175] - 2026-08-07
+
+### Bug fixes
+
+- don't crash finalize merge gate when a fresh PR has zero registered checks (#2623) (#2626)
+
+### Documentation
+
+- verify Claude session-management surface; choose seam backend (#2621)
+- document required-gate invariant and finalize orphaned-check handling (#2624)
+
+### Refactoring
+
+- introduce SessionStore seam (scrape backend) for session enumeration/resolution (#2622)
+
 ## [2.1.174] - 2026-08-07
 
 ### Bug fixes
