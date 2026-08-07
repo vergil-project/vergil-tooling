@@ -602,8 +602,19 @@ def run_completed(run_id: str) -> bool:
 
 
 def all_checks_terminal(pr: str) -> bool:
-    """True when no check on *pr* is still ``pending`` (gh's non-terminal bucket)."""
-    return all(c.get("bucket") != "pending" for c in pr_checks(pr))
+    """True when *pr* has at least one check and none is still ``pending``.
+
+    An empty check set is deliberately **not** terminal. Zero registered checks
+    means CI has not registered yet — transient right after PR creation or a head
+    move — so the waiter must keep waiting rather than conclude "all done" from a
+    vacuous ``all([])`` and hand a check-less PR straight to the merge gate. That
+    vacuous-true short-circuit was the primary defect behind the finalize
+    registration-race crash (#2623): GitHub's post-outage timing widened the
+    window where a freshly-created PR briefly has no checks, and the old
+    ``all([]) is True`` made ``wait_for_checks`` return immediately.
+    """
+    checks = pr_checks(pr)
+    return bool(checks) and all(c.get("bucket") != "pending" for c in checks)
 
 
 def orphaned_check_names(pr: str) -> list[str]:
@@ -691,6 +702,13 @@ def failed_check_names(pr: str) -> list[str]:
     result = _run_with_retry(cmd, check=False, text=True, capture_output=True)  # noqa: S607
     out = result.stdout.strip()
     if not out:
+        if _NO_CHECKS_MARKER in (result.stderr or "").lower():
+            # Zero checks registered for the head — transient (right after PR
+            # creation or a head move), not a real API error. No checks means no
+            # *known* failures, mirroring pr_checks' handling of the same marker.
+            # Raising here (instead of tolerating) was the defect that crashed the
+            # finalize merge gate during the registration race (#2623).
+            return []
         raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
     checks = json.loads(out)
     return [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]

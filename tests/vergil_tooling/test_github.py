@@ -255,6 +255,29 @@ def test_all_checks_terminal_false_when_pending(monkeypatch: pytest.MonkeyPatch)
     assert github.all_checks_terminal("934") is False
 
 
+def test_all_checks_terminal_false_when_no_checks_registered(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Zero registered checks (freshly-created PR) must NOT read as terminal — the
+    # vacuous all([]) short-circuit was the finalize registration-race bug (#2623).
+    monkeypatch.setattr(github, "pr_checks", lambda pr: [])
+    assert github.all_checks_terminal("934") is False
+
+
+def test_wait_for_checks_does_not_return_early_on_zero_checks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (#2623): with no checks registered yet, the waiter must keep
+    # polling until checks appear, then return once they are terminal — not
+    # return immediately on the empty set.
+    check_batches = iter([[], [], [{"name": "a", "bucket": "pass", "state": "S", "link": ""}]])
+    monkeypatch.setattr(github, "pr_checks", lambda pr: next(check_batches))
+    sleeps: list[int] = []
+    monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
+    github.wait_for_checks("934", poll_interval=5, poll_timeout=1000)
+    assert sleeps == [5, 5]  # waited through the two zero-check polls
+
+
 def test_wait_for_checks_returns_when_all_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(github, "all_checks_terminal", lambda pr: True)
     # must not consult orphan logic or raise when everything is terminal
@@ -340,6 +363,19 @@ def test_failed_check_names_raises_on_empty_output() -> None:
     ):
         mock_run.return_value = _completed(returncode=1, stdout="", stderr="boom")
         github.failed_check_names("https://github.com/pr/1")
+
+
+def test_failed_check_names_tolerates_no_checks_reported() -> None:
+    # Regression (#2623): empty output with gh's "no checks reported" stderr is a
+    # freshly-created-PR / head-moved race, not a failure. It must yield no failing
+    # checks rather than raising and crashing the finalize merge gate.
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(
+            returncode=1,
+            stdout="",
+            stderr="no checks reported on the 'feature/x' branch",
+        )
+        assert github.failed_check_names("https://github.com/pr/1") == []
 
 
 def test_pr_checks_returns_parsed_checks() -> None:
