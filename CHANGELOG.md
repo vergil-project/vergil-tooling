@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.180] - 2026-08-07
+
+### Bug fixes
+
+- re-enter a created-but-unused session at its id on resume (#2670)
+
 ## [2.1.179] - 2026-08-07
 
 ### Bug fixes
