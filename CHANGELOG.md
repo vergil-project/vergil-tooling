@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.174] - 2026-08-07
+
+### Bug fixes
+
+- require docs / docs check + pin universal reusable-CI set (#2614)
+- raise on GitHub-orphaned check-run instead of hanging (#2615)
+- sweep orphaned cached dev images for abandoned branches (#2616)
+
 ## [2.1.173] - 2026-08-06
 
 ### Bug fixes
