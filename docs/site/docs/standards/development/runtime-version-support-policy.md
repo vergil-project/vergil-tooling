@@ -24,12 +24,20 @@ management standard; it does not replace them.
   patches, with no further bug fixes.
 - **EOL (end of life)**: A release series no longer receiving any patches from
   the upstream maintainer.
-- **Hard gate**: A CI check that blocks PR merge when it fails.
-- **Soft gate**: A CI check that surfaces warnings but does not block PR merge.
-  Failures must be documented in the PR with rationale and any follow-up
-  tracking.
-- **Advisory**: A CI check run for informational purposes only. Failures are
-  logged but carry no merge or follow-up obligations.
+- **Hard gate**: A CI check that blocks PR merge when it fails. Every CI gate
+  is a hard gate — a check either blocks as a required status check or it is
+  not a gate. See
+  [Source Control Guidelines](../source-control-guidelines.md#ci-gates) and the
+  [CI Architecture](../../guides/ci-architecture.md) guide for the
+  hard-gates-only standard.
+- **Advisory-on-unsupported-versions carve-out**: The single sanctioned
+  non-blocking category. A check is advisory *only because* the runtime version
+  it runs against is outside the supported set — a preview version not yet
+  promoted into the supported set, or an EOL version past upstream support. The
+  version, not the check, is what makes it non-blocking; the same check on a
+  supported version is a hard gate. This is deliberately distinct from a
+  generic soft gate on a supported check, which the hard-gates-only standard
+  does not permit.
 
 ## Support tiers
 
@@ -49,7 +57,9 @@ deployment, and release artifacts.
 The upcoming version that has entered GA but has not yet been promoted to the
 primary development version.
 
-- Gate type: soft gate (non-blocking).
+- Gate type: advisory under the advisory-on-unsupported-versions carve-out —
+  non-blocking *because* the version is not yet in the supported set, not
+  because the check itself is a soft gate.
 - Failures are tracked as issues but do not block PRs.
 - Purpose: early detection of incompatibilities before the next version becomes
   Tier 1.
@@ -67,7 +77,8 @@ Relevant primarily for libraries that must support consumers on older runtimes.
 
 A version that has reached end of life upstream.
 
-- Gate type: advisory (best-effort).
+- Gate type: advisory under the advisory-on-unsupported-versions carve-out —
+  non-blocking *because* the version has left the supported set.
 - Failures are logged but never block merges.
 - Do not invest effort maintaining compatibility with EOL versions.
 
@@ -76,9 +87,9 @@ A version that has reached end of life upstream.
 | Tier | CI job label | Gate type | Merge impact |
 | --- | --- | --- | --- |
 | 1 — active bugfix | `bugfix-<version>` | Hard gate | Blocks merge |
-| 2 — next development | `preview-<version>` | Soft gate | Warning only |
+| 2 — next development | `preview-<version>` | Advisory (unsupported-version carve-out) | Warning only |
 | 3 — security-fix-only | `security-<version>` | Hard gate | Blocks merge |
-| 4 — EOL | `eol-<version>` | Advisory | No impact |
+| 4 — EOL | `eol-<version>` | Advisory (unsupported-version carve-out) | No impact |
 
 Every label includes the version because each tier may contain more than one
 version simultaneously.
@@ -102,8 +113,9 @@ Libraries test against all Tier 1 versions and conditionally against Tier 3
 versions to support consumers on older runtimes.
 
 - CI matrix: Tier 1 (hard gate), Tier 3 if consumers require it (hard gate),
-  Tier 2 (soft gate).
-- Tier 4 is advisory and included only when the cost is negligible.
+  Tier 2 (advisory under the unsupported-version carve-out).
+- Tier 4 is advisory under the same carve-out and included only when the cost
+  is negligible.
 
 ## Drop criteria
 
