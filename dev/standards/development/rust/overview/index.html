@@ -12888,26 +12888,29 @@ maintainability, and long-term survivability across repositories.</p>
 <li>If a repository uses different tools, document the reason and equivalents.</li>
 </ul>
 <h2 id="ci-gates">CI Gates<a class="headerlink" href="#ci-gates" title="Permanent link">&para;</a></h2>
-<p>Every CI check is classified as a hard gate or soft gate.</p>
+<p>Every CI check is a hard gate. See
+<a href="../../../source-control-guidelines/#ci-gates">Source Control Guidelines</a> for the
+hard-gates-only standard and the
+<a href="../../../../guides/ci-architecture/">CI Architecture</a> guide for how required
+status checks are configured.</p>
 <p>Hard gate definition:</p>
 <ul>
 <li>Merge-blocking. A required status check must be configured on the target
   branch. Any failure blocks merge until a new commit passes.</li>
 </ul>
-<p>Soft gate definition:</p>
-<ul>
-<li>Warning-only. The check can fail without blocking merge, but failures must be
-  surfaced with rationale and follow-up tracking when applicable.</li>
-</ul>
+<p>The only sanctioned non-blocking category is the
+<strong>advisory-on-unsupported-versions carve-out</strong>: a check is advisory <em>because</em>
+the runtime version it runs against is outside the supported set (a preview
+version not yet promoted, or an EOL version past upstream support), not because
+the check itself is a generic soft gate. See the
+<a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a> for the
+carve-out. Rust runs no version-matrix advisory jobs today, so all of its gates
+are hard gates.</p>
 <p>Hard gates (all are required status checks):</p>
 <ul>
 <li><code>test: unit (current)</code></li>
 <li><code>test: integration</code></li>
 <li><code>ci: dependency-audit</code></li>
-</ul>
-<p>Soft gates:</p>
-<ul>
-<li>None (default to hard gate until documented).</li>
 </ul>
 <p>Branch applicability:</p>
 <ul>

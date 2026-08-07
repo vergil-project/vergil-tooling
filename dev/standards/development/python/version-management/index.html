@@ -13182,7 +13182,14 @@ failure evidence.</p>
    <code>bugfix-&lt;version&gt;</code>, <code>preview-&lt;version&gt;</code>, and (when applicable)
    <code>security-&lt;version&gt;</code>.</li>
 <li>Keep <code>bugfix-&lt;version&gt;</code> jobs as the only hard gate. The
-   <code>preview-&lt;version&gt;</code> check is advisory and must not block merges.</li>
+   <code>preview-&lt;version&gt;</code> check is non-blocking under the
+   advisory-on-unsupported-versions carve-out — advisory <em>because</em> the preview
+   minor is not yet in the supported set, not because it is a generic soft
+   gate. See the
+   <a href="../../runtime-version-support-policy/">Runtime Version Support Policy</a> for
+   the carve-out and
+   <a href="../../../source-control-guidelines/#ci-gates">Source Control Guidelines</a>
+   for the hard-gates-only standard.</li>
 <li>Record any failures in the preview check and track them as issues, but do
    not block PRs unless a bugfix-tier job fails.</li>
 </ol>
@@ -13196,9 +13203,12 @@ threshold:</p>
 <li>Make the new minor the required (hard-gate) CI runtime and relabel it as
    <code>bugfix-&lt;version&gt;</code>.</li>
 <li>Relabel the prior bugfix minor as <code>security-&lt;version&gt;</code> and keep it
-   advisory to preserve rollback capability.</li>
-<li>Keep <code>security-&lt;version&gt;</code> advisory until humans explicitly decide to drop
-   it. Do not auto-remove based on elapsed cycles alone.</li>
+   non-blocking under the advisory-on-unsupported-versions carve-out to
+   preserve rollback capability — advisory <em>because</em> the minor has left the
+   primary supported set, not as a generic soft gate.</li>
+<li>Keep <code>security-&lt;version&gt;</code> advisory under the same carve-out until humans
+   explicitly decide to drop it. Do not auto-remove based on elapsed cycles
+   alone.</li>
 </ol>
 <h3 id="stability-tracking">Stability tracking<a class="headerlink" href="#stability-tracking" title="Permanent link">&para;</a></h3>
 <p>Once dual-CI begins, record stability status at the start of each development
