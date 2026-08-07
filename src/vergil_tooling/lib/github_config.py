@@ -270,8 +270,17 @@ def desired_ci_gates_ruleset(
     ci: CiConfig,
     *,
     ghas: bool,
+    docs: bool = True,
 ) -> DesiredRuleset:
-    """Derive the CI gates ruleset from project identity and CI config."""
+    """Derive the CI gates ruleset from project identity and CI config.
+
+    ``docs`` mirrors ``[publish].docs``: the ``docs / docs`` gate is only
+    emitted by a repo whose ``ci.yml`` invokes ``ci-docs.yml``, which repos do
+    only when they publish docs. Requiring it on a non-docs repo (e.g. an org
+    ``.github`` repo with ``[publish].docs = false``) pins a status that never
+    reports, permanently blocking every merge with "the base branch policy
+    prohibits the merge" (vergil-project/vergil-tooling#2647).
+    """
     checks: list[dict[str, object]] = []
     lang = project.primary_language
 
@@ -279,9 +288,10 @@ def desired_ci_gates_ruleset(
     checks.append(_make_check("quality / common"))
     checks.append(_make_check("security / trivy"))
     checks.append(_make_check("security / semgrep"))
-    # docs / docs is emitted unconditionally by the reusable CI (no if: guard),
-    # so it must be a required PR gate — otherwise it can silently be optional.
-    checks.append(_make_check("docs / docs"))
+    # docs / docs is emitted only when the repo publishes docs; requiring it on
+    # a non-docs repo blocks every merge (its CI never reports the context).
+    if docs:
+        checks.append(_make_check("docs / docs"))
 
     # GHAS check runs — created by GitHub Advanced Security (app 57789)
     # when workflows upload SARIF via codeql-action/upload-sarif.  These
@@ -412,14 +422,16 @@ def required_evidence_gates(
     ci: CiConfig,
     *,
     ghas: bool,
+    docs: bool = True,
 ) -> tuple[EvidenceGate, ...]:
     """The evidence-producing gates this repo MUST emit.
 
     Derived from the same required-status-check computation that drives branch
     protection (:func:`desired_ci_gates_ruleset`), so the enforced gates and the
-    evidence-required gates cannot drift apart.
+    evidence-required gates cannot drift apart. ``docs`` is threaded through
+    identically for the same reason.
     """
-    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas)
+    ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
     checks = _extract_status_checks(ruleset.rules) or []
 
     grouped: dict[str, list[str]] = {}
@@ -446,7 +458,9 @@ def compute_desired_state(
 
     rulesets.append(desired_branch_protection_ruleset())
     rulesets.append(desired_tag_protection_ruleset())
-    rulesets.append(desired_ci_gates_ruleset(config.project, config.ci, ghas=ghas))
+    rulesets.append(
+        desired_ci_gates_ruleset(config.project, config.ci, ghas=ghas, docs=config.publish.docs)
+    )
 
     if app_mode:
         for rs in rulesets:
