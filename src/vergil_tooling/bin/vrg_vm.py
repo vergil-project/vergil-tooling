@@ -2383,8 +2383,6 @@ def _session_inner(
         resolve_cmd += ["--resume-name", args.resume]
     if getattr(args, "label", None) is not None:
         resolve_cmd += ["--label", args.label]
-    if args.slot is not None:
-        resolve_cmd += ["--slot", str(args.slot)]
     if args.fork:
         resolve_cmd += ["--fork"]
     if args.fresh:
@@ -2458,19 +2456,19 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
 
 
 def _cmd_session(args: argparse.Namespace) -> int:
-    if args.resume is not None and (args.slot is not None or args.fork or args.fresh):
+    if args.resume is not None and (args.fork or args.fresh):
         print(
-            "ERROR: --resume selects a session by name and cannot be combined with "
-            "--slot/--fork/--fresh (which select by slot).",
+            "ERROR: --resume attaches to a session by its exact name and cannot be "
+            "combined with --fork/--fresh.",
             file=sys.stderr,
         )
         return 1
     if getattr(args, "label", None) is not None and (
-        args.resume is not None or args.slot is not None or args.fork or args.fresh
+        args.resume is not None or args.fork or args.fresh
     ):
         print(
             "ERROR: --label creates a new named session and cannot be combined with "
-            "--resume (attach) or --slot/--fork/--fresh (slot selection).",
+            "--resume (attach) or --fork/--fresh.",
             file=sys.stderr,
         )
         return 1
@@ -2808,18 +2806,15 @@ def main(argv: list[str] | None = None) -> int:
         help="Connect even if the VM exceeds the staleness threshold",
     )
     p_session.add_argument(
-        "--slot",
-        type=int,
-        help="Session slot number (1-99); default picks the lowest idle/free slot",
-    )
-    p_session.add_argument(
         "--resume",
         default=None,
         metavar="NAME",
         help=(
-            "Resume the session with this exact display name (e.g. an epic "
-            "session's renamed title, 'epic-85-centralize-epics-adhoc'), instead "
-            "of selecting by slot. Mutually exclusive with --slot/--fork/--fresh."
+            "Attach to the session with this exact name (e.g. "
+            "'epic-85-centralize-epics:vergil-project/tooling'). Resolves the name to "
+            "one session and derives its working directory from that session. With no "
+            "verb, the workspace's sessions are listed and --label/--resume are named. "
+            "Mutually exclusive with --fork/--fresh."
         ),
     )
     p_session.add_argument(
@@ -2831,7 +2826,7 @@ def main(argv: list[str] | None = None) -> int:
             "--label epic-213-x). The label is a clean slug; an epic-/adhoc- prefix "
             "is the convention (off-convention warns, never blocks). Errors if a "
             "session of that name already exists. Mutually exclusive with "
-            "--resume/--slot/--fork/--fresh."
+            "--resume/--fork/--fresh."
         ),
     )
     p_session.add_argument(

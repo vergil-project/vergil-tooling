@@ -57,6 +57,42 @@ def test_last_activity_handles_large_file_via_tail(tmp_path: Path) -> None:
     assert r._last_activity(f) == datetime.datetime(2026, 5, 30, 12, tzinfo=UTC).timestamp()
 
 
+# --- transcript_cwd (issue #2607) ---
+
+
+def test_transcript_cwd_returns_first_recorded(tmp_path: Path) -> None:
+    # A leading entry without cwd is skipped; the first entry carrying a cwd wins.
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        '{"type":"summary","leafUuid":"x"}\n'
+        '{"type":"user","cwd":"/work/repo","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"user","cwd":"/other","timestamp":"2026-05-03T00:00:00.000Z"}\n'
+    )
+    assert r.transcript_cwd(f) == "/work/repo"
+
+
+def test_transcript_cwd_skips_malformed_then_matches(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"x","cwd": BROKEN}\n{"type":"user","cwd":"/good"}\n')
+    assert r.transcript_cwd(f) == "/good"
+
+
+def test_transcript_cwd_ignores_non_string_or_empty(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"a","cwd":123}\n{"type":"b","cwd":""}\n{"type":"c","cwd":"/w"}\n')
+    assert r.transcript_cwd(f) == "/w"
+
+
+def test_transcript_cwd_none_when_absent(tmp_path: Path) -> None:
+    f = tmp_path / "s.jsonl"
+    f.write_text('{"type":"user","message":"hi"}\n')
+    assert r.transcript_cwd(f) is None
+
+
+def test_transcript_cwd_missing_file(tmp_path: Path) -> None:
+    assert r.transcript_cwd(tmp_path / "nope.jsonl") is None
+
+
 def test_parse_ts_invalid_returns_none() -> None:
     assert r._parse_ts("not a date") is None
     assert r._parse_ts(12345) is None
@@ -404,7 +440,6 @@ def _resolve(
     **kw: object,
 ) -> int:
     defaults: dict[str, object] = {
-        "requested_slot": None,
         "fork": False,
         "fresh": False,
         "extra": [],
@@ -415,51 +450,6 @@ def _resolve(
     return r.resolve(  # type: ignore[arg-type]
         identity, path, resume_name=resume_name, label=label, **defaults
     )
-
-
-def test_resolve_create(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
-    assert _resolve("id", "p", extra=["--model", "opus"]) == 0
-    assert capture_exec == [["claude", "-n", "id:01:p", "--model", "opus"]]
-    assert "Creating session id:01:p" in capsys.readouterr().err
-
-
-def test_resolve_resume(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
-    assert _resolve("id", "p") == 0
-    # -n is re-asserted on resume so Claude restores the prompt-box title.
-    assert capture_exec == [["claude", "--resume", "s1", "-n", "id:01:p"]]
-    assert "Resuming session id:01:p" in capsys.readouterr().err
-
-
-def test_resolve_by_name_resumes_named_session(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"s1": "epic-85-adhoc", "s2": "id:01:p"}, set(), {})
-    )
-    assert _resolve("id", "p", resume_name="epic-85-adhoc") == 0
-    # Resume-by-name bypasses the slot machinery; -n restores the title.
-    assert capture_exec == [["claude", "--resume", "s1", "-n", "epic-85-adhoc"]]
-    assert "Resuming session epic-85-adhoc" in capsys.readouterr().err
-
-
-def test_resolve_by_name_refuses_unknown_name(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, set(), {}))
-    assert _resolve("id", "p", resume_name="ghost") == 1
-    assert "no session named 'ghost'" in capsys.readouterr().err
 
 
 # --- --label (named creation, issue #2606) ---
@@ -546,113 +536,160 @@ def test_resolve_label_rejects_invalid_slug(
     assert "ERROR" in capsys.readouterr().err
 
 
-def test_resolve_fork(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setattr(r, "_read_state", lambda *_a: ({"s1": "id:01:p"}, {"s1"}, {}))
-    assert _resolve("id", "p", requested_slot=1, fork=True) == 0
-    assert capture_exec == [["claude", "--resume", "s1", "--fork-session", "-n", "id:02:p"]]
-    assert "Forking session id:01:p -> id:02:p" in capsys.readouterr().err
-
-
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
-    assert _resolve("id", "p", fork=True) == 1  # fork without slot
+    assert _resolve("id", "p", fork=True) == 1  # fork without slot refuses (no --slot)
     assert "ERROR" in capsys.readouterr().err
 
 
-def test_resolve_sweeps_stale_and_creates(
+def test_resolve_fresh_creates_after_archiving(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     capture_exec: list[list[str]],
 ) -> None:
+    # --fresh retains the prior behavior (later reconceived by the epic): the most
+    # recent idle session is archived and a fresh one created in its place.
     now = 100 * DAY
     monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"old": "vergil:01:p"}, set(), {"old": now - 20 * DAY})
+        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 1 * DAY})
     )
     monkeypatch.setattr(r, "_now", lambda: now)
     monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
     archived: list[str] = []
     monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
-    assert _resolve("vergil", "p") == 0
-    assert archived == ["old"]
-    assert capture_exec == [["claude", "-n", "vergil:01:p"]]
-    err = capsys.readouterr().err
-    assert "auto-archiving" in err
-    assert "Creating session vergil:01:p" in err
-
-
-def test_resolve_warn_prompt_resume(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    now = 100 * DAY
-    monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
-    )
-    monkeypatch.setattr(r, "_now", lambda: now)
-    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "r")
-    assert _resolve("vergil", "p") == 0
-    assert capture_exec == [["claude", "--resume", "s1", "-n", "vergil:01:p"]]
-    assert "Resuming session vergil:01:p" in capsys.readouterr().err
-
-
-def test_resolve_warn_prompt_fresh(
-    monkeypatch: pytest.MonkeyPatch,
-    capture_exec: list[list[str]],
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    now = 100 * DAY
-    monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
-    )
-    monkeypatch.setattr(r, "_now", lambda: now)
-    monkeypatch.setattr(r, "_now_iso", lambda: "2026-05-30T00:00:00Z")
-    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "f")
-    archived: list[str] = []
-    monkeypatch.setattr(r, "_archive_session", lambda sid, _ts: archived.append(sid))
-    assert _resolve("vergil", "p") == 0
+    assert _resolve("vergil", "p", fresh=True) == 0
     assert archived == ["s1"]
     assert capture_exec == [["claude", "-n", "vergil:01:p"]]
-    err = capsys.readouterr().err
-    assert "Archiving session vergil:01:p" in err
-    assert "Creating session vergil:01:p" in err
-
-
-def test_resolve_warn_prompt_cancel(
-    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
-) -> None:
-    now = 100 * DAY
-    monkeypatch.setattr(
-        r, "_read_state", lambda *_a: ({"s1": "vergil:01:p"}, set(), {"s1": now - 9 * DAY})
-    )
-    monkeypatch.setattr(r, "_now", lambda: now)
-    monkeypatch.setattr(r, "_prompt_stale", lambda *_a: "c")
-    assert _resolve("vergil", "p") == 0
-    assert capture_exec == []
-
-
-def test_prompt_stale_non_tty_returns_resume(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: False)
-    assert r._prompt_stale("vergil-project/p", 1, 9) == "r"
-
-
-def test_prompt_stale_tty_reads_choice(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(r.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda _p: "f")
-    assert r._prompt_stale("vergil-project/p", 1, 9) == "f"
-    monkeypatch.setattr("builtins.input", lambda _p: "")  # unrecognized -> cancel
-    assert r._prompt_stale("vergil-project/p", 1, 9) == "c"
 
 
 def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
     assert r._exec_claude(["-n", "x"]) == 0
     assert capture_exec == [["claude", "-n", "x"]]
+
+
+# --- plan_resume (seam-based exact-name attach, issue #2607) ---
+
+
+class _FakeStore:
+    """A minimal SessionStore for plan_resume tests.
+
+    ``resolve_name`` delegates to the pure ``resolve_over`` over the supplied
+    rows, so it reproduces the seam's real fail-loud/None semantics without any
+    transcript I/O.
+    """
+
+    def __init__(self, rows: list[Any]) -> None:
+        self._rows = rows
+
+    def list_sessions(self) -> list[Any]:
+        return list(self._rows)
+
+    def resolve_name(self, name: str) -> Any:
+        from vergil_tooling.lib.session_store import resolve_over
+
+        return resolve_over(self._rows, name)
+
+    def rename(self, session_id: str, new_name: str) -> None:  # pragma: no cover
+        raise NotImplementedError
+
+
+def _info(sid: str, name: str | None, active: bool, last: float | None, cwd: str = "/w") -> Any:
+    from vergil_tooling.lib.session_store import SessionInfo
+
+    return SessionInfo(sid, name, cwd, active, last)
+
+
+def test_plan_resume_resolves_name_to_id() -> None:
+    store = _FakeStore([_info("a", "epic-1:w", False, 10.0), _info("b", "epic-1:w", True, 5.0)])
+    action = r.plan_resume(store, "epic-1:w")
+    assert action.session_id == "b"  # the active one wins
+    assert action.cwd == "/w"
+
+
+def test_plan_resume_errors_when_absent(capsys: pytest.CaptureFixture[str]) -> None:
+    store = _FakeStore([_info("a", "other:w", True, 1.0)])
+    with pytest.raises(SystemExit):
+        r.plan_resume(store, "nope:w")
+    assert "no session named 'nope:w'" in capsys.readouterr().err
+
+
+def test_plan_resume_fails_loud_on_ambiguous(capsys: pytest.CaptureFixture[str]) -> None:
+    store = _FakeStore([_info("a", "epic-1:w", True, 10.0), _info("b", "epic-1:w", True, 20.0)])
+    with pytest.raises(SystemExit):
+        r.plan_resume(store, "epic-1:w")
+    assert "live sessions" in capsys.readouterr().err
+
+
+def test_resume_by_name_execs_with_resolved_id_and_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # --resume resolves the name to a session via the seam, chdirs to the
+    # resolved session's cwd (memory-slug parity), then execs claude --resume
+    # with -n re-asserting the exact name.
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0, cwd="/work/repo")])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    chdirs: list[str] = []
+    monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
+    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert chdirs == ["/work/repo"]
+    assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+    assert "Resuming session epic-1:w" in capsys.readouterr().err
+
+
+def test_no_verb_lists_and_guides(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # No --resume (and no fork/fresh): the old auto-resume-most-recent/create
+    # default is gone. Print the recency list + the two verbs and exit non-zero;
+    # never exec claude.
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0), _info("a", "epic-2:w", True, 50.0)])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    assert _resolve("id", "p") == 1
+    err = capsys.readouterr().err
+    assert "--label" in err
+    assert "--resume" in err
+    assert "epic-2:w" in err  # most-recent first
+    assert capture_exec == []
+
+
+def test_resume_by_name_skips_chdir_when_cwd_unknown(
+    monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
+) -> None:
+    # An idle session whose cwd could not be recovered (empty) is still resumed;
+    # the resolver simply does not chdir (the launch cwd stands in).
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0, cwd="")])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    chdirs: list[str] = []
+    monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
+    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert chdirs == []
+    assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+
+
+def test_no_verb_guide_when_no_sessions(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # With nothing to list, the guide still names the two verbs and exits nonzero.
+    store = _FakeStore([_info("a", None, True, 1.0)])  # unnamed rows are filtered out
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    assert _resolve("id", "p") == 1
+    err = capsys.readouterr().err
+    assert "No sessions yet" in err
+    assert "--label" in err
+
+
+def test_transcript_cwd_stops_at_line_cap(tmp_path: Path) -> None:
+    # No cwd within the bounded line budget ⇒ None (a huge cwd-less transcript is
+    # not read in full).
+    f = tmp_path / "s.jsonl"
+    f.write_text("".join('{"type":"user","message":"x"}\n' for _ in range(250)))
+    assert r.transcript_cwd(f) is None
 
 
 # --- list_json ---
@@ -789,8 +826,6 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
             "id",
             "--path",
             "p",
-            "--slot",
-            "2",
             "--fresh",
             "--stale-days",
             "7",
@@ -800,9 +835,9 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     assert code == 0
-    # args order: identity, path, slot, fork, fresh, extra, stale_days,
+    # args order: identity, path, fork, fresh, extra, stale_days,
     # archive_days, resume_name, label
-    assert seen["args"] == ("id", "p", 2, False, True, ["x"], 7, 14, None, None)
+    assert seen["args"] == ("id", "p", False, True, ["x"], 7, 14, None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -830,7 +865,7 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         r,
         "resolve",
-        lambda *args: captured.update(extra=args[5]) or 0,  # noqa: ARG005
+        lambda *args: captured.update(extra=args[4]) or 0,  # noqa: ARG005
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]
@@ -861,43 +896,26 @@ def test_name_by_session_scoped_to_one_slug(tmp_path: Path) -> None:
     assert r.name_by_session(tmp_path) == {"s1": "id:01:a", "s2": "id:01:b"}
 
 
-def test_resolve_ignores_session_under_other_slug(
+def test_resume_by_name_scans_all_slugs_and_derives_cwd(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
 ) -> None:
-    # A session whose NAME claims path "tool" but whose transcript physically
-    # lives under a different workspace's slug must be ignored: claude --resume
-    # is scoped to the current cwd's slug, so resuming it would hard-fail.
-    claude = tmp_path / ".claude"
-    projects = claude / "projects"
-    (projects / "-work-tool").mkdir(parents=True)
-    (projects / "-work-vm").mkdir(parents=True)
-    (projects / "-work-vm" / "mis.jsonl").write_text(
-        '{"type":"agent-name","agentName":"id:01:tool","sessionId":"mis"}\n'
-    )
-    (claude / "sessions").mkdir()
-    monkeypatch.setattr(r, "_claude_dir", lambda: claude)
-    monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
-    assert _resolve("id", "tool") == 0
-    assert capture_exec == [["claude", "-n", "id:01:tool"]]
-
-
-def test_resolve_resumes_session_under_current_slug(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capture_exec: list[list[str]]
-) -> None:
-    # Regression guard: a session whose transcript lives under the current cwd's
-    # slug is still resumable after scoping. Its name lives in a legacy
-    # ``agent-name`` event, so resume must re-assert -n to restore the title.
+    # --resume resolves the exact name across every slug (not just the launch
+    # cwd's) and chdirs to the resolved session's transcript-recorded cwd, so the
+    # memory slug follows the session rather than any positional (#2607).
     claude = tmp_path / ".claude"
     projects = claude / "projects"
     (projects / "-work-tool").mkdir(parents=True)
     (projects / "-work-tool" / "good.jsonl").write_text(
-        '{"type":"agent-name","agentName":"id:01:tool","sessionId":"good"}\n'
+        '{"type":"user","cwd":"/work/tool","timestamp":"2026-05-02T00:00:00.000Z"}\n'
+        '{"type":"custom-title","customTitle":"epic-7:tool","sessionId":"good"}\n'
     )
     (claude / "sessions").mkdir()
     monkeypatch.setattr(r, "_claude_dir", lambda: claude)
-    monkeypatch.setattr(os, "getcwd", lambda: "/work/tool")
-    assert _resolve("id", "tool") == 0
-    assert capture_exec == [["claude", "--resume", "good", "-n", "id:01:tool"]]
+    chdirs: list[str] = []
+    monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
+    assert _resolve("id", "somewhere-else", resume_name="epic-7:tool") == 0
+    assert chdirs == ["/work/tool"]
+    assert capture_exec == [["claude", "--resume", "good", "-n", "epic-7:tool"]]
 
 
 # --- _resolve_target / _resolve_instance named-instance tests (issue #1831) ---
