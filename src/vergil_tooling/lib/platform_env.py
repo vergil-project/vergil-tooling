@@ -16,7 +16,8 @@ no written marker file.** Candidate signals, in precedence order:
 1. macOS (``platform.system() == "Darwin"``) and no ``/vergil`` mount ⇒
    ``PHYSICAL_HOST``.
 2. ``/vergil`` mount present ⇒ in a VM. A reachable cloud metadata
-   endpoint ⇒ ``CLOUD_VM``; else Lima markers ⇒ ``LOCAL_VM``.
+   endpoint ⇒ ``CLOUD_VM``; else a Lima marker — a marker mount/device or
+   the ``lima-`` guest hostname, covering both Lima backends ⇒ ``LOCAL_VM``.
 3. **Fail closed:** any VM signal present (or a box that cannot be
    positively confirmed as the physical host) that is not positively
    confirmed ``LOCAL_VM`` ⇒ ``CLOUD_VM``. The resolver never falls
@@ -72,7 +73,13 @@ _METADATA_PORT = 80
 _METADATA_TIMEOUT_S = 0.25
 
 _VERGIL_MOUNT = "/vergil"
-_LIMA_MARKERS = ("/mnt/lima", "/dev/virtio-ports/lima")
+# Lima markers span both backends. The QEMU backend exposes
+# ``/dev/virtio-ports/lima``; the vz (Apple Virtualization) backend exposes
+# neither that device nor ``/mnt/lima`` but does mount cloud-init data at
+# ``/mnt/lima-cidata`` (issue #2656). The hostname prefix below is the
+# backend-independent signal — Lima names the guest ``lima-<instance>``.
+_LIMA_MARKERS = ("/mnt/lima", "/mnt/lima-cidata", "/dev/virtio-ports/lima")
+_LIMA_HOSTNAME_PREFIX = "lima-"
 
 
 @dataclass(frozen=True)
@@ -110,10 +117,21 @@ def _cloud_metadata_reachable() -> bool:
 
 
 def _lima_marker_present() -> bool:
-    """True when a Lima-specific marker is present (a local-VM signal)."""
+    """True when a Lima-specific marker is present (a local-VM signal).
+
+    Recognizes a Lima VM across both backends: a marker mount/device
+    (``_LIMA_MARKERS``) or the Lima-assigned guest hostname
+    (``lima-<instance>``). The vz (Apple Virtualization) backend exposes no
+    ``/dev/virtio-ports/lima`` device and no ``/mnt/lima``, so before this
+    fix both markers missed and a real local VM fail-closed to ``cloud-vm``
+    (issue #2656). This probe is only consulted after a cloud-metadata miss,
+    so it cannot mask a genuine cloud VM.
+    """
     from pathlib import Path
 
-    return any(Path(marker).exists() for marker in _LIMA_MARKERS)
+    if any(Path(marker).exists() for marker in _LIMA_MARKERS):
+        return True
+    return _platform_mod.node().startswith(_LIMA_HOSTNAME_PREFIX)
 
 
 def _identity_is_agent() -> bool:

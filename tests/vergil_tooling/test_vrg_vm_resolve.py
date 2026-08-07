@@ -399,7 +399,6 @@ def _resolve(
     **kw: object,
 ) -> int:
     defaults: dict[str, object] = {
-        "fork": False,
         "fresh": False,
         "extra": [],
     }
@@ -413,15 +412,19 @@ def _resolve(
 
 
 class _StubStore:
-    """Minimal SessionStore stub exposing only resolve_name for the label path."""
+    """Minimal SessionStore stub for the label path: resolve_name + reserve_name."""
 
     def __init__(self, result: object) -> None:
         self._result = result
+        self.reserved: list[tuple[str, str]] = []
 
     def resolve_name(self, name: str) -> object:  # noqa: ARG002
         if isinstance(self._result, Exception):
             raise self._result
         return self._result
+
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # noqa: ARG002
+        self.reserved.append((session_id, name))
 
 
 def test_resolve_label_creates_when_name_free(
@@ -429,10 +432,16 @@ def test_resolve_label_creates_when_name_free(
     capture_exec: list[list[str]],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # No visible session holds the composed name -> create label:workspace.
-    monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
+    # No visible session holds the composed name -> reserve it, then create.
+    store = _StubStore(None)
+    monkeypatch.setattr(r, "_store", lambda *_a: store)
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
-    assert capture_exec == [["claude", "-n", "epic-1:vergil-project/tooling"]]
+    assert capture_exec == [
+        ["claude", "--session-id", "SID", "-n", "epic-1:vergil-project/tooling"]
+    ]
+    # The name was reserved against the same id claude is pinned to (#2654).
+    assert store.reserved == [("SID", "epic-1:vergil-project/tooling")]
     assert "Creating session epic-1:vergil-project/tooling" in capsys.readouterr().err
 
 
@@ -468,8 +477,9 @@ def test_resolve_label_warns_off_convention_but_creates(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     monkeypatch.setattr(r, "_store", lambda *_a: _StubStore(None))
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "p", label="scratch") == 0
-    assert capture_exec == [["claude", "-n", "scratch:p"]]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "scratch:p"]]
     assert "convention" in capsys.readouterr().err
 
 
@@ -493,11 +503,50 @@ def test_resolve_label_rejects_invalid_slug(
     assert "ERROR" in capsys.readouterr().err
 
 
+def test_resolve_label_detects_collision_before_name_registers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Regression (#2654): a rapid second --label detects the collision even though
+    the first session's name has not yet reached the transcript or roster.
+
+    Uses a *real* ScrapeStore over a temp claude dir so the reservation the first
+    create writes persists to the second invocation — the cross-process durability
+    the fix depends on. No transcript or roster is ever written, reproducing the
+    registration-latency window in which the old code missed the collision and
+    racily created a duplicate.
+    """
+    claude_dir = tmp_path / ".claude"
+    monkeypatch.setattr(r, "_claude_dir", lambda: claude_dir)
+    ids = iter(["SID-1", "SID-2"])
+    monkeypatch.setattr(r, "_new_session_id", lambda: next(ids))
+
+    # First --label: the name is free, so it reserves the name and execs a create
+    # pinned to SID-1. Nothing writes the transcript/roster (the race window).
+    assert _resolve("id", "vergil-project/tooling", label="epic-1") == 0
+    assert capture_exec == [
+        ["claude", "--session-id", "SID-1", "-n", "epic-1:vergil-project/tooling"]
+    ]
+
+    # Second --label for the same name, still inside the window: the reservation
+    # makes the collision visible, so it refuses and never execs a second session.
+    assert _resolve("id", "vergil-project/tooling", label="epic-1") == 1
+    assert len(capture_exec) == 1  # no duplicate create
+    assert "already exists" in capsys.readouterr().err
+
+
 def test_resolve_refuse(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    # A Refuse from the plan (e.g. --fresh with every slot in use) prints ERROR and
+    # exits 1 without ever exec'ing claude.
+    from vergil_tooling.lib.session import Refuse
+
     monkeypatch.setattr(r, "_read_state", lambda *_a: ({}, set(), {}))
-    assert _resolve("id", "p", fork=True) == 1  # fork without slot refuses (no --slot)
+    monkeypatch.setattr(r, "plan_session", lambda *_a, **_k: Refuse("all 99 slots are in use"))
+    assert _resolve("vergil", "p", fresh=True) == 1
     assert "ERROR" in capsys.readouterr().err
 
 
@@ -521,6 +570,13 @@ def test_exec_claude_invokes_execvp(capture_exec: list[list[str]]) -> None:
     assert capture_exec == [["claude", "-n", "x"]]
 
 
+def test_new_session_id_is_a_canonical_uuid() -> None:
+    import uuid as _uuid
+
+    sid = r._new_session_id()
+    assert str(_uuid.UUID(sid)) == sid  # parses as, and round-trips to, a canonical UUID
+
+
 # --- --fresh retire-rename (issue #2609) ---
 
 
@@ -535,6 +591,7 @@ class _RenameStore:
     def __init__(self, rows: list[Any]) -> None:
         self._rows = rows
         self.renames: list[tuple[str, str]] = []
+        self.reserved: list[tuple[str, str]] = []
 
     def list_sessions(self) -> list[Any]:
         return list(self._rows)
@@ -546,6 +603,9 @@ class _RenameStore:
 
     def rename(self, session_id: str, new_name: str) -> None:
         self.renames.append((session_id, new_name))
+
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # noqa: ARG002
+        self.reserved.append((session_id, name))
 
 
 def test_retired_name_suffixes_with_stamp() -> None:
@@ -593,9 +653,11 @@ def test_resolve_fresh_label_retires_and_creates(
     store = _RenameStore([_info("old", "epic-1:tooling", False, 10.0)])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
     assert store.renames == [("old", "epic-1:tooling~STAMP")]
-    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+    assert store.reserved == [("SID", "epic-1:tooling")]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:tooling"]]
     err = capsys.readouterr().err
     assert "Retired prior session epic-1:tooling -> epic-1:tooling~STAMP" in err
 
@@ -606,9 +668,11 @@ def test_resolve_fresh_label_creates_when_name_free(
     store = _RenameStore([])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="epic-1", fresh=True) == 0
     assert store.renames == []  # nothing to retire
-    assert capture_exec == [["claude", "-n", "epic-1:tooling"]]
+    assert store.reserved == [("SID", "epic-1:tooling")]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "epic-1:tooling"]]
 
 
 def test_resolve_fresh_label_warns_off_convention(
@@ -619,8 +683,9 @@ def test_resolve_fresh_label_warns_off_convention(
     store = _RenameStore([])
     monkeypatch.setattr(r, "_store", lambda *_a: store)
     monkeypatch.setattr(r, "_now_stamp", lambda: "STAMP")
+    monkeypatch.setattr(r, "_new_session_id", lambda: "SID")
     assert _resolve("id", "tooling", label="scratch", fresh=True) == 0
-    assert capture_exec == [["claude", "-n", "scratch:tooling"]]
+    assert capture_exec == [["claude", "--session-id", "SID", "-n", "scratch:tooling"]]
     assert "convention" in capsys.readouterr().err
 
 
@@ -677,6 +742,9 @@ class _FakeStore:
     def rename(self, session_id: str, new_name: str) -> None:  # pragma: no cover
         raise NotImplementedError
 
+    def reserve_name(self, session_id: str, name: str, cwd: str = "") -> None:  # pragma: no cover
+        raise NotImplementedError
+
 
 def _info(sid: str, name: str | None, active: bool, last: float | None, cwd: str = "/w") -> Any:
     from vergil_tooling.lib.session_store import SessionInfo
@@ -717,7 +785,7 @@ def test_resume_by_name_execs_with_resolved_id_and_cwd(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert _resolve("id", "w", resume_name="epic-1:w") == 0
     assert chdirs == ["/work/repo"]
     assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
     assert "Resuming session epic-1:w" in capsys.readouterr().err
@@ -750,9 +818,78 @@ def test_resume_by_name_skips_chdir_when_cwd_unknown(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name="epic-1:w") == 0
+    assert _resolve("id", "w", resume_name="epic-1:w") == 0
     assert chdirs == []
     assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+
+
+# --- --resume argument composition (issue #2653: bare label + workspace match) ---
+
+
+def test_compose_resume_name_composes_bare_label() -> None:
+    # A bare label (no ':') is composed with the workspace positional, symmetric
+    # with --label.
+    assert r._compose_resume_name("epic-1", "vergil-project/tooling") == (
+        "epic-1:vergil-project/tooling"
+    )
+
+
+def test_compose_resume_name_accepts_full_name_matching_workspace() -> None:
+    # A full 'label:workspace' whose workspace segment equals the positional is
+    # accepted unchanged (back-compat).
+    assert r._compose_resume_name("epic-1:w", "w") == "epic-1:w"
+
+
+def test_compose_resume_name_accepts_legacy_multicolon_matching_workspace() -> None:
+    # A legacy '<identity>:<NN>:<path>' name has two colons; the workspace segment
+    # is the part after the FINAL ':', so it still matches its positional.
+    name = "vergil-user:02:vergil-project/vergil-tooling"
+    assert r._compose_resume_name(name, "vergil-project/vergil-tooling") == name
+
+
+def test_compose_resume_name_rejects_mismatched_workspace(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A full name whose workspace segment disagrees with the positional fails loud
+    # rather than silently preferring either side.
+    with pytest.raises(SystemExit):
+        r._compose_resume_name("epic-1:other", "w")
+    err = capsys.readouterr().err
+    assert "must match" in err
+    assert "'other'" in err
+    assert "'w'" in err
+
+
+def test_resume_bare_label_composes_and_resolves(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # End to end: --resume with a bare label composes '<label>:<workspace>' from the
+    # workspace positional, resolves it through the seam, and execs the resume.
+    store = _FakeStore([_info("b", "epic-1:w", False, 5.0, cwd="/work/repo")])
+    monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
+    monkeypatch.setattr(os, "chdir", lambda _p: None)
+    assert _resolve("id", "w", resume_name="epic-1") == 0
+    assert capture_exec == [["claude", "--resume", "b", "-n", "epic-1:w"]]
+    assert "Resuming session epic-1:w" in capsys.readouterr().err
+
+
+def test_resume_full_name_mismatched_workspace_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    capture_exec: list[list[str]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # A full name whose workspace disagrees with the positional aborts before any
+    # store read or exec.
+    def _boom(*_a: object, **_k: object) -> object:
+        raise AssertionError("store must not be consulted on a workspace mismatch")
+
+    monkeypatch.setattr(r, "ScrapeStore", _boom)
+    with pytest.raises(SystemExit):
+        _resolve("id", "w", resume_name="epic-1:other")
+    assert capture_exec == []
+    assert "must match" in capsys.readouterr().err
 
 
 def test_no_verb_guide_when_no_sessions(
@@ -835,7 +972,7 @@ def test_resume_by_name_reasserts_requested_title_over_archived_2602(
     monkeypatch.setattr(r, "ScrapeStore", lambda *_a, **_k: store)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "p", resume_name=_REQUESTED) == 0
+    assert _resolve("id", "vergil-project/vergil-tooling", resume_name=_REQUESTED) == 0
     assert chdirs == ["/work/repo"]  # requested session's cwd, not the archived /stale
     assert capture_exec == [["claude", "--resume", "want", "-n", _REQUESTED]]
     assert _ARCHIVED not in capsys.readouterr().err
@@ -995,8 +1132,8 @@ def test_main_dispatches_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(r, "resolve", fake_resolve)
     code = r.main(["--identity", "id", "--path", "p", "--fresh", "x"])
     assert code == 0
-    # args order: identity, path, fork, fresh, extra, resume_name, label
-    assert seen["args"] == ("id", "p", False, True, ["x"], None, None)
+    # args order: identity, path, fresh, extra, resume_name, label
+    assert seen["args"] == ("id", "p", True, ["x"], None, None)
 
 
 def test_main_passes_resume_name(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1024,7 +1161,7 @@ def test_main_strips_leading_double_dash(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(
         r,
         "resolve",
-        lambda *args: captured.update(extra=args[4]) or 0,  # noqa: ARG005
+        lambda *args: captured.update(extra=args[3]) or 0,  # noqa: ARG005
     )
     r.main(["--identity", "id", "--path", "p", "--", "claude", "--model", "opus"])
     assert captured["extra"] == ["claude", "--model", "opus"]
@@ -1072,7 +1209,10 @@ def test_resume_by_name_scans_all_slugs_and_derives_cwd(
     monkeypatch.setattr(r, "_claude_dir", lambda: claude)
     chdirs: list[str] = []
     monkeypatch.setattr(os, "chdir", lambda p: chdirs.append(p))
-    assert _resolve("id", "somewhere-else", resume_name="epic-7:tool") == 0
+    # The workspace positional matches the name's workspace segment ("tool"), but the
+    # session's transcript-recorded cwd ("/work/tool") is a different path and is what
+    # the resolver chdirs to — the memory slug follows the session, not the positional.
+    assert _resolve("id", "tool", resume_name="epic-7:tool") == 0
     assert chdirs == ["/work/tool"]
     assert capture_exec == [["claude", "--resume", "good", "-n", "epic-7:tool"]]
 
