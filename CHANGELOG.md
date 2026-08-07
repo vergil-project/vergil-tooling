@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.176] - 2026-08-07
+
+### Bug fixes
+
+- surface detached-HEAD / mid-rebase worktrees instead of hiding them (#2640)
+
+### Chores
+
+- one-time cosmetic strip of legacy archived@ markers (#2639)
+
+### Documentation
+
+- require hard gates only — eliminate soft gates (#2631)
+- reframe preview/eol advisory gates as an unsupported-version carve-out (#2632)
+
+### Features
+
+- add --label for named session creation (label:workspace); soft-warn convention (#2633)
+- promote --resume to exact-name attach; remove --slot and auto-resume (#2635)
+- delete session archive + staleness; add recency display-filter (#2636)
+- reconceive --fresh as supported retire-rename (never delete) (#2637)
+
+### Testing
+
+- regression: reconnect selects only the exactly-named session (#2602) (#2638)
+
 ## [2.1.175] - 2026-08-07
 
 ### Bug fixes
