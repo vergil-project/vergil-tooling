@@ -156,6 +156,14 @@ mutation($parent: ID!, $child: ID!) {
 }
 """
 
+_REPARENT_SUBISSUE = """
+mutation($parent: ID!, $child: ID!) {
+  addSubIssue(input: {issueId: $parent, subIssueId: $child, replaceParent: true}) {
+    subIssue { number }
+  }
+}
+"""
+
 
 def _issue_endpoint(ref: IssueRef) -> str:
     return f"repos/{ref.owner}/{ref.repo}/issues/{ref.number}"
@@ -320,6 +328,19 @@ def add_child(epic: IssueRef, task: IssueRef) -> None:
 def remove_child(epic: IssueRef, task: IssueRef) -> None:
     """Unlink *task* from *epic* (remove the native sub-issue relationship)."""
     github.graphql(_REMOVE_SUBISSUE, parent=_node_id(epic), child=_node_id(task))
+
+
+def reparent_child(new_parent: IssueRef, task: IssueRef) -> None:
+    """Atomically move *task* from its current parent under *new_parent*.
+
+    GitHub's native sub-issues enforce a single parent, so an add-before-remove
+    re-parent is rejected while the child is still linked to its old parent
+    ("Sub issue may only have one parent"). ``replaceParent: true`` performs the
+    move in one call — no orphan window, no separate remove (issue #2691, proven
+    live via #2677). Only ever targets the current-quarter archive, which is
+    always open, so no reopen-if-closed is needed here.
+    """
+    github.graphql(_REPARENT_SUBISSUE, parent=_node_id(new_parent), child=_node_id(task))
 
 
 def all_children_closed(epic: IssueRef) -> bool:
@@ -558,19 +579,19 @@ def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
 
 
 def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
-    """Execute *plan*: ensure each archive, re-parent add-before-remove, close past.
+    """Execute *plan*: ensure each archive, atomically re-parent, close past.
 
-    Each closed child is added to its quarter's archive before being removed from
-    the live epic, so it is never orphaned under neither. Past archives are then
-    closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in the
-    plan is a correct "quarter is past" test.
+    Each closed child is atomically re-parented from the live epic into its
+    quarter's archive via :func:`reparent_child` (``replaceParent: true``) — one
+    call, no orphan window, no separate remove (issue #2691). Past archives are
+    then closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in
+    the plan is a correct "quarter is past" test.
     """
     for child, quarter in plan.moves:
         archive = ensure_adhoc_archive(target_repo, quarter)
         if archive == plan.live:
             continue  # defensive: never re-parent into the live epic
-        add_child(archive, child)  # add before remove: never orphan-under-neither
-        remove_child(plan.live, child)
+        reparent_child(archive, child)
     for archive in plan.close:
         github.run(
             "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
@@ -691,8 +712,7 @@ def rollup(task: IssueRef) -> None:
             return
         archive = ensure_adhoc_archive(f"{owner}/{home_repo}", quarter_of(closed_at))
         if archive != parent:
-            add_child(archive, task)
-            remove_child(parent, task)
+            reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")
