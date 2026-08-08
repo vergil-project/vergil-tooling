@@ -24,6 +24,7 @@ def test_main_repo_scopes_to_resolved_home() -> None:
         patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
         patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]) as stray,
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]) as ceoc,
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main(["--repo", "org/lab"])
     assert rc == 0
@@ -91,6 +92,7 @@ def test_main_prints_audit(capsys: pytest.CaptureFixture[str]) -> None:
         patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
         patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main([])
     out = capsys.readouterr().out
@@ -117,6 +119,7 @@ def test_main_reports_invariant_violations(capsys: pytest.CaptureFixture[str]) -
             return_value=["vergil-project/.github#7"],
         ),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main([])
     out = capsys.readouterr().out
@@ -144,6 +147,7 @@ def test_window_days_controls_since() -> None:
         patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
         patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main(["--window-days", "7"])
     assert rc == 0
@@ -191,6 +195,7 @@ def test_close_allowed_for_scheduled_sweep(capsys: pytest.CaptureFixture[str]) -
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main(["--close"])
     assert rc == 0
@@ -212,6 +217,7 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
         patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
         patch(f"{_MOD}.epic_audit.close_drift", close_drift),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main(["--close"])
     assert rc == 0
@@ -221,6 +227,100 @@ def test_close_as_human_closes_and_summarizes(capsys: pytest.CaptureFixture[str]
     out = capsys.readouterr().out
     assert "closed" in out.lower()
     assert "o/r#1" in out
+
+
+def test_close_sweep_also_drains_adhoc(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("VRG_EPIC_SWEEP", "1")
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
+        patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]) as mock_drain,
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    assert mock_drain.call_args.args[0] == "org"
+    assert mock_drain.call_args.kwargs["apply"] is True
+
+
+def test_close_sweep_drain_scoped_to_org(capsys: pytest.CaptureFixture[str]) -> None:
+    # The write-path drain mutates issues in the org's home, so its token must be
+    # scoped to the org (spec §7) — main() has no other org scope, so the drain
+    # must be wrapped explicitly.
+    order: list[str] = []
+    scope = MagicMock()
+    scope.return_value.__enter__ = lambda *_: order.append("enter")
+    scope.return_value.__exit__ = lambda *_: order.append("exit") or False
+
+    def _drain(_org: str, *, apply: bool, now: datetime) -> list[object]:
+        order.append("drain")
+        return []
+
+    plan = MagicMock()
+    plan.moves = [object()]
+    plan.close = []
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.target_org", scope),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
+        patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
+        patch(f"{_MOD}.epics.drain_adhoc_org", side_effect=_drain),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    assert scope.call_args.args[0] == "org"
+    assert order == ["enter", "drain", "exit"]
+
+
+def test_close_sweep_drain_summary(capsys: pytest.CaptureFixture[str]) -> None:
+    plan = MagicMock()
+    plan.moves = [object(), object()]
+    plan.close = [object()]
+    with (
+        patch(f"{_MOD}.identity_mode.is_human", return_value=True),
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", return_value=[]),
+        patch(f"{_MOD}.epic_audit.render_closed", return_value=""),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[plan]),
+    ):
+        rc = main(["--close"])
+    assert rc == 0
+    assert (
+        "Ad-hoc drain: 2 child(ren) archived, 1 past archive(s) closed." in capsys.readouterr().out
+    )
+
+
+def test_report_path_previews_adhoc_drain(capsys: pytest.CaptureFixture[str]) -> None:
+    plan = MagicMock()
+    plan.moves = [object(), object()]
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="vergil-project"),
+        patch(f"{_MOD}.epic_audit.operational_pending", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_operational_without_success", return_value=[]),
+        patch(f"{_MOD}.epic_audit.task_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_drift", return_value=[]),
+        patch(f"{_MOD}.epic_audit.epic_outside_dotgithub", return_value=[]),
+        patch(f"{_MOD}.epic_audit.stray_dotgithub_issue", return_value=[]),
+        patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=[]),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[plan]) as mock_drain,
+    ):
+        rc = main([])
+    assert rc == 0
+    assert mock_drain.call_args.kwargs["apply"] is False
+    assert "Ad-hoc drain (preview): 2 child(ren) would be archived." in capsys.readouterr().out
 
 
 def test_close_reopens_closed_epic_with_open_child(capsys: pytest.CaptureFixture[str]) -> None:
@@ -236,6 +336,7 @@ def test_close_reopens_closed_epic_with_open_child(capsys: pytest.CaptureFixture
         patch(f"{_MOD}.epic_audit.closed_epic_open_child", return_value=violations),
         patch(f"{_MOD}.epic_audit.close_drift", return_value=[]),
         patch(f"{_MOD}.epic_audit.reopen_epics_with_open_children", reopen),
+        patch(f"{_MOD}.epics.drain_adhoc_org", return_value=[]),
     ):
         rc = main(["--close"])
     assert rc == 0

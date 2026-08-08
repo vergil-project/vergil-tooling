@@ -160,6 +160,17 @@ def main(argv: list[str] | None = None) -> int:
         # Remediate the closed-epic-with-open-child invariant (issue #2259): reopen
         # each epic that was wrongly closed while a child was still open.
         reopened = epic_audit.reopen_epics_with_open_children(closed_epic_open_children)
+        # Backstop ad-hoc drain (epic #238): drain closed children of every live
+        # ad-hoc epic into per-quarter archives and close past archives. main() has
+        # no other org scope, so scope the App token to the org before this
+        # mutation (spec §7), matching vrg-adhoc-epic and vrg-epic-move.
+        with github.target_org(org):
+            drained = epics.drain_adhoc_org(org, apply=True, now=datetime.now(UTC))
+        moved = sum(len(p.moves) for p in drained)
+        closed_archives = sum(len(p.close) for p in drained)
+        print(
+            f"Ad-hoc drain: {moved} child(ren) archived, {closed_archives} past archive(s) closed."
+        )
         print(
             epic_audit.render_closed(
                 closed, org=org, window_days=args.window_days, home=home, reopened=reopened
@@ -170,6 +181,11 @@ def main(argv: list[str] | None = None) -> int:
     stray = epic_audit.stray_dotgithub_issue(org, home=home)
     pending_operational = epic_audit.operational_pending(org, home=home)
     closed_operational_no_success = epic_audit.closed_operational_without_success(org)
+    # Read-only preview of the ad-hoc drain the --close sweep would perform (epic
+    # #238): apply=False mutates nothing, so no org scope is needed.
+    preview = epics.drain_adhoc_org(org, apply=False, now=datetime.now(UTC))
+    pmoved = sum(len(p.moves) for p in preview)
+    print(f"Ad-hoc drain (preview): {pmoved} child(ren) would be archived.")
     print(
         epic_audit.render(
             tasks,
