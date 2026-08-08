@@ -334,6 +334,18 @@ def test_issue_state_uppercases() -> None:
         assert epics._issue_state(EPIC) == "CLOSED"
 
 
+def test_issue_title_reads_via_rest() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="Epic (ad hoc): repo") as m:
+        assert epics._issue_title(EPIC) == "Epic (ad hoc): repo"
+    assert m.call_args.args == ("api", "repos/org/.github/issues/40", "--jq", ".title")
+
+
+def test_issue_closed_at_reads_via_rest() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="2026-05-01T00:00:00Z") as m:
+        assert epics._issue_closed_at(TASK) == "2026-05-01T00:00:00Z"
+    assert m.call_args.args == ("api", "repos/org/repo-a/issues/101", "--jq", '.closed_at // ""')
+
+
 def test_reflink_skips_results_without_repo() -> None:
     search = [
         {
@@ -548,16 +560,72 @@ def test_rollup_holds_epic_open_while_validation_child_open() -> None:
     mock_run.assert_not_called()  # epic stays open — a validation child is still open
 
 
-def test_rollup_skips_adhoc_epic() -> None:
+def test_rollup_archives_closed_child_under_live_adhoc() -> None:
+    task = IssueRef("org", ".github", 101)
+    live = IssueRef("org", ".github", 40)
+    arch = IssueRef("org", ".github", 88)
     with (
-        patch("vergil_tooling.lib.epics.parent_of", return_value=EPIC),
-        patch("vergil_tooling.lib.epics.is_epic", return_value=True),
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
-        patch("vergil_tooling.lib.epics.all_children_closed", return_value=True),
-        patch("vergil_tooling.lib.github.run") as mock_run,
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+    ):
+        epics.rollup(task)
+    mock_ens.assert_called_once_with("org/.github", "2026-Q2")
+    mock_add.assert_called_once_with(arch, task)
+    mock_rm.assert_called_once_with(live, task)
+
+
+def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
+    task = IssueRef("org", ".github", 101)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 88)),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch(
+            "vergil_tooling.lib.epics._issue_title",
+            return_value="Epic (ad hoc): .github — 2026-Q2",
+        ),
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+    ):
+        epics.rollup(task)
+    mock_add.assert_not_called()
+
+
+def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
+    # Defensive: a rollup event with no resolvable closed_at drains nothing.
+    live = IssueRef("org", ".github", 40)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
     ):
         epics.rollup(TASK)
-    mock_run.assert_not_called()
+    mock_ens.assert_not_called()
+    mock_add.assert_not_called()
+
+
+def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
+    # Defensive guard: if the resolved archive is the live epic itself, never
+    # re-parent the child into its own parent (add_child/remove_child skipped).
+    live = IssueRef("org", ".github", 40)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+    ):
+        epics.rollup(TASK)
+    mock_add.assert_not_called()
+    mock_rm.assert_not_called()
 
 
 def test_rollup_skips_when_children_remain_open() -> None:
