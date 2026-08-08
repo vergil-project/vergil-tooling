@@ -212,10 +212,11 @@ class VmStanza:
 # Recognized keys in a [vm] / [vm.<role>] table. apt_repos is a list of tables
 # (key + apt source line); vagrant_plugins is a list of plugin names. The
 # vergil-vm template owns *how* these install — repos never supply a script.
-# port_forwards is a list of "<port>|<host:port>" records the template relays
-# via systemd-socket-proxyd (vergil-vm #170). nested enables Lima nested
-# virtualization for the profile (issue #1447); default off, requires macOS 15+
-# on M3-or-later Apple silicon at create time.
+# port_forwards is a list of "<port>|<host:port>" records the vergil-vm
+# template relays via a per-forward socat service (vergil-vm #170; the relay
+# proxy was switched from systemd-socket-proxyd to socat in vergil-vm #298).
+# nested enables Lima nested virtualization for the profile (issue #1447);
+# default off, requires macOS 15+ on M3-or-later Apple silicon at create time.
 _VM_KEYS = frozenset(
     {
         "cpus",
