@@ -835,3 +835,165 @@ def test_resolve_epic_home_fails_loud() -> None:
         pytest.raises(github.GitHubAPIError),
     ):
         epics.resolve_epic_home("org", "missing")
+
+
+# --- Task 4: per-repo drain (plan + apply) ---
+
+NOW = datetime(2026, 8, 8, tzinfo=UTC)  # 2026-Q3
+
+
+def _child(n: int, state: str, closed_at: str = "") -> ChildState:
+    return ChildState(IssueRef("org", ".github", n), state, "t", closed_at)
+
+
+def test_plan_drain_moves_closed_buckets_by_quarter_and_closes_past() -> None:
+    live = IssueRef("org", ".github", 40)
+    kids = [
+        _child(101, "CLOSED", "2026-05-10T00:00:00Z"),  # Q2
+        _child(102, "CLOSED", "2026-07-02T00:00:00Z"),  # Q3
+        _child(103, "OPEN"),  # stays
+    ]
+    with (
+        patch("vergil_tooling.lib.epics.find_adhoc_epic", return_value=live),
+        patch("vergil_tooling.lib.epics.child_states", return_value=kids),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch(
+            "vergil_tooling.lib.epics.list_open_adhoc_archives",
+            return_value=[
+                (IssueRef("org", ".github", 88), "2026-Q2"),
+                (IssueRef("org", ".github", 91), "2026-Q3"),
+            ],
+        ),
+    ):
+        plan = epics.plan_adhoc_drain("org/tooling", now=NOW)
+    assert plan is not None
+    assert (IssueRef("org", ".github", 101), "2026-Q2") in plan.moves
+    assert (IssueRef("org", ".github", 102), "2026-Q3") in plan.moves
+    assert all(ref.number != 103 for ref, _ in plan.moves)  # open child not moved
+    assert plan.close == [IssueRef("org", ".github", 88)]  # Q2 < Q3 -> close; Q3 stays open
+
+
+def test_plan_drain_none_when_no_live_epic() -> None:
+    with patch("vergil_tooling.lib.epics.find_adhoc_epic", return_value=None):
+        assert epics.plan_adhoc_drain("org/tooling", now=NOW) is None
+
+
+def test_apply_drain_ensures_archive_moves_then_closes() -> None:
+    live = IssueRef("org", ".github", 40)
+    plan = epics.DrainPlan(
+        live=live,
+        moves=[(IssueRef("org", ".github", 101), "2026-Q2")],
+        close=[IssueRef("org", ".github", 88)],
+    )
+    arch = IssueRef("org", ".github", 88)
+    calls: list[tuple[str, IssueRef, IssueRef]] = []
+    with (
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch(
+            "vergil_tooling.lib.epics.add_child",
+            side_effect=lambda e, t: calls.append(("add", e, t)),
+        ),
+        patch(
+            "vergil_tooling.lib.epics.remove_child",
+            side_effect=lambda e, t: calls.append(("rm", e, t)),
+        ),
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
+    # add_child before remove_child (never orphan-under-neither)
+    assert calls == [
+        ("add", arch, IssueRef("org", ".github", 101)),
+        ("rm", live, IssueRef("org", ".github", 101)),
+    ]
+    assert mock_run.call_args.args[:2] == ("issue", "close")
+    assert "88" in mock_run.call_args.args
+
+
+def test_apply_drain_skips_archive_equal_to_live() -> None:
+    live = IssueRef("org", ".github", 40)
+    plan = epics.DrainPlan(
+        live=live,
+        moves=[(IssueRef("org", ".github", 101), "2026-Q2")],
+        close=[],
+    )
+    with (
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    mock_add.assert_not_called()  # defensive: never re-parent into the live epic
+    mock_rm.assert_not_called()
+    mock_run.assert_not_called()
+
+
+def test_drain_adhoc_repo_applies_when_apply_true() -> None:
+    plan = epics.DrainPlan(IssueRef("org", ".github", 40), moves=[], close=[])
+    with (
+        patch("vergil_tooling.lib.epics.plan_adhoc_drain", return_value=plan) as mock_plan,
+        patch("vergil_tooling.lib.epics.apply_adhoc_drain") as mock_apply,
+    ):
+        result = epics.drain_adhoc_repo("org/tooling", apply=True, now=NOW)
+    assert result is plan
+    mock_apply.assert_called_once_with("org/tooling", plan)
+    assert mock_plan.call_args.kwargs["now"] == NOW
+
+
+def test_drain_adhoc_repo_dry_run_does_not_apply() -> None:
+    plan = epics.DrainPlan(IssueRef("org", ".github", 40), moves=[], close=[])
+    with (
+        patch("vergil_tooling.lib.epics.plan_adhoc_drain", return_value=plan),
+        patch("vergil_tooling.lib.epics.apply_adhoc_drain") as mock_apply,
+    ):
+        result = epics.drain_adhoc_repo("org/tooling", apply=False, now=NOW)
+    assert result is plan
+    mock_apply.assert_not_called()
+
+
+def test_drain_adhoc_repo_none_plan_never_applies() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.plan_adhoc_drain", return_value=None),
+        patch("vergil_tooling.lib.epics.apply_adhoc_drain") as mock_apply,
+    ):
+        result = epics.drain_adhoc_repo("org/tooling", apply=True, now=NOW)
+    assert result is None
+    mock_apply.assert_not_called()
+
+
+# --- Task 5: org-wide drain (visibility-aware) ---
+
+
+def test_drain_adhoc_org_iterates_repos_visibility_aware() -> None:
+    seen: list[tuple[str, bool]] = []
+
+    def fake_repo(target_repo: str, *, apply: bool, now: datetime) -> None:
+        seen.append((target_repo, apply))
+        return None
+
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "priv"]),
+        patch("vergil_tooling.lib.epics.drain_adhoc_repo", side_effect=fake_repo),
+    ):
+        epics.drain_adhoc_org("org", apply=True, now=NOW)
+    assert ("org/tooling", True) in seen and ("org/priv", True) in seen
+
+
+def test_drain_adhoc_org_skips_repo_that_raises() -> None:
+    good = epics.DrainPlan(IssueRef("org", ".github", 40), moves=[], close=[])
+    seen: list[str] = []
+
+    def fake(target_repo: str, *, apply: bool, now: datetime) -> epics.DrainPlan:
+        seen.append(target_repo)
+        if target_repo == "org/bad":
+            raise ValueError("multiple ad-hoc epics — corruption")
+        return good
+
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["bad", "good"]),
+        patch("vergil_tooling.lib.epics.drain_adhoc_repo", side_effect=fake),
+    ):
+        plans = epics.drain_adhoc_org("org", apply=True, now=NOW)  # must NOT raise
+    assert seen == ["org/bad", "org/good"]  # continued past the failure
+    assert plans == [good]  # the healthy repo still drained

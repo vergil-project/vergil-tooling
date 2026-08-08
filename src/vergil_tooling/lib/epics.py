@@ -15,6 +15,7 @@ mock the ``github`` boundary; real GraphQL/REST correctness is exercised in use.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -508,6 +509,96 @@ def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
         if m:
             out.append((IssueRef(owner, home_repo, int(r["number"])), m.group("quarter")))
     return out
+
+
+@dataclass(frozen=True)
+class DrainPlan:
+    """A per-repo ad-hoc drain: what to re-parent and what to close.
+
+    ``live`` is the canonical (unstamped) ad-hoc epic. ``moves`` pairs each
+    closed child with its close-quarter (``YYYY-Qn``) archive bucket. ``close``
+    lists open archive epics whose quarter is now past and should be closed.
+    """
+
+    live: IssueRef
+    moves: list[tuple[IssueRef, str]]  # (closed child, its close-quarter)
+    close: list[IssueRef]  # open archives whose quarter is now past
+
+
+def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
+    """Plan *target_repo*'s ad-hoc drain, or None if it has no live ad-hoc epic.
+
+    Buckets each closed child of the live epic by its close-quarter and lists the
+    open archive epics whose quarter is strictly before the current quarter (so
+    they are eligible to close). Pure/read-only: no mutation happens here.
+    """
+    live = find_adhoc_epic(target_repo)
+    if live is None:
+        return None
+    moves = [
+        (c.ref, quarter_of(c.closed_at))
+        for c in child_states(live)
+        if c.state == "CLOSED" and c.closed_at
+    ]
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    cur = current_quarter(now)
+    close = [ref for ref, q in list_open_adhoc_archives(home) if q < cur]
+    return DrainPlan(live=live, moves=moves, close=close)
+
+
+def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
+    """Execute *plan*: ensure each archive, re-parent add-before-remove, close past.
+
+    Each closed child is added to its quarter's archive before being removed from
+    the live epic, so it is never orphaned under neither. Past archives are then
+    closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in the
+    plan is a correct "quarter is past" test.
+    """
+    for child, quarter in plan.moves:
+        archive = ensure_adhoc_archive(target_repo, quarter)
+        if archive == plan.live:
+            continue  # defensive: never re-parent into the live epic
+        add_child(archive, child)  # add before remove: never orphan-under-neither
+        remove_child(plan.live, child)
+    for archive in plan.close:
+        github.run(
+            "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
+        )
+
+
+def drain_adhoc_repo(target_repo: str, *, apply: bool, now: datetime) -> DrainPlan | None:
+    """Plan *target_repo*'s ad-hoc drain, applying it when *apply* is True.
+
+    Returns the plan (None if *target_repo* has no live ad-hoc epic). With
+    ``apply=False`` this is a pure dry-run.
+    """
+    plan = plan_adhoc_drain(target_repo, now=now)
+    if plan is not None and apply:
+        apply_adhoc_drain(target_repo, plan)
+    return plan
+
+
+def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
+    """Drain every repo in *org*, isolating per-repo failures (spec §7).
+
+    Each repo resolves its own epic home via :func:`drain_adhoc_repo` →
+    :func:`find_adhoc_epic` → :func:`resolve_epic_home`, so public
+    (``.github``-homed) and private (self-homed) ad-hoc epics are both covered. A
+    corrupted repo (e.g. two ad-hoc epics sharing a title) is reported and
+    skipped — never aborting the whole sweep. Returns one plan per repo that has
+    a live ad-hoc epic.
+    """
+    plans: list[DrainPlan] = []
+    for bare in github.list_org_repos(org):
+        try:
+            plan = drain_adhoc_repo(f"{org}/{bare}", apply=apply, now=now)
+        except (ValueError, RuntimeError) as exc:
+            print(f"skipped {org}/{bare}: {exc}", file=sys.stderr)
+            continue
+        if plan is not None:
+            plans.append(plan)
+    return plans
 
 
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
