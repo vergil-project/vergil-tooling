@@ -570,13 +570,16 @@ def test_rollup_archives_closed_child_under_live_adhoc() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.epics.add_child") as mock_add,
         patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
     ):
         epics.rollup(task)
     mock_ens.assert_called_once_with("org/.github", "2026-Q2")
-    mock_add.assert_called_once_with(arch, task)
-    mock_rm.assert_called_once_with(live, task)
+    # Atomic single-parent-safe re-parent — no separate add/remove (#2691).
+    mock_reparent.assert_called_once_with(arch, task)
+    mock_add.assert_not_called()
+    mock_rm.assert_not_called()
 
 
 def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
@@ -588,10 +591,10 @@ def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
             "vergil_tooling.lib.epics._issue_title",
             return_value="Epic (ad hoc): .github — 2026-Q2",
         ),
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
-    mock_add.assert_not_called()
+    mock_reparent.assert_not_called()
 
 
 def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
@@ -603,16 +606,16 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
     mock_ens.assert_not_called()
-    mock_add.assert_not_called()
+    mock_reparent.assert_not_called()
 
 
 def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
     # Defensive guard: if the resolved archive is the live epic itself, never
-    # re-parent the child into its own parent (add_child/remove_child skipped).
+    # re-parent the child into its own parent (reparent_child skipped).
     live = IssueRef("org", ".github", 40)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
@@ -620,12 +623,10 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
-        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
-    mock_add.assert_not_called()
-    mock_rm.assert_not_called()
+    mock_reparent.assert_not_called()
 
 
 def test_rollup_skips_when_children_remain_open() -> None:
@@ -693,6 +694,26 @@ def test_remove_child_issues_removesubissue_mutation() -> None:
     mock_graphql.assert_called_once()
     assert "removeSubIssue" in mock_graphql.call_args.args[0]
     assert mock_graphql.call_args.kwargs == {"parent": "EPIC_ID", "child": "TASK_ID"}
+
+
+# -- reparent_child (atomic single-parent-safe move, #2691) ------------------
+
+
+def test_reparent_mutation_uses_replace_parent() -> None:
+    # GitHub's single-parent rule makes add-before-remove impossible; the atomic
+    # move rides addSubIssue with replaceParent: true (issue #2691, proven live).
+    assert "replaceParent: true" in epics._REPARENT_SUBISSUE
+
+
+def test_reparent_child_issues_replace_parent_mutation() -> None:
+    with (
+        patch("vergil_tooling.lib.epics._node_id", side_effect=["ARCHIVE_ID", "TASK_ID"]),
+        patch("vergil_tooling.lib.github.graphql") as mock_graphql,
+    ):
+        epics.reparent_child(EPIC, TASK)
+    mock_graphql.assert_called_once()
+    assert "replaceParent: true" in mock_graphql.call_args.args[0]
+    assert mock_graphql.call_args.kwargs == {"parent": "ARCHIVE_ID", "child": "TASK_ID"}
 
 
 # -- resolve_epic_ref / ensure_adhoc_epic ------------------------------------
@@ -954,26 +975,19 @@ def test_apply_drain_ensures_archive_moves_then_closes() -> None:
         close=[IssueRef("org", ".github", 88)],
     )
     arch = IssueRef("org", ".github", 88)
-    calls: list[tuple[str, IssueRef, IssueRef]] = []
     with (
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
-        patch(
-            "vergil_tooling.lib.epics.add_child",
-            side_effect=lambda e, t: calls.append(("add", e, t)),
-        ),
-        patch(
-            "vergil_tooling.lib.epics.remove_child",
-            side_effect=lambda e, t: calls.append(("rm", e, t)),
-        ),
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+        patch("vergil_tooling.lib.epics.add_child") as mock_add,
+        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
     mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
-    # add_child before remove_child (never orphan-under-neither)
-    assert calls == [
-        ("add", arch, IssueRef("org", ".github", 101)),
-        ("rm", live, IssueRef("org", ".github", 101)),
-    ]
+    # Single atomic re-parent — no add-before-remove (single-parent safe, #2691).
+    mock_reparent.assert_called_once_with(arch, IssueRef("org", ".github", 101))
+    mock_add.assert_not_called()
+    mock_rm.assert_not_called()
     assert mock_run.call_args.args[:2] == ("issue", "close")
     assert "88" in mock_run.call_args.args
 
@@ -987,13 +1001,11 @@ def test_apply_drain_skips_archive_equal_to_live() -> None:
     )
     with (
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
-        patch("vergil_tooling.lib.epics.add_child") as mock_add,
-        patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
-    mock_add.assert_not_called()  # defensive: never re-parent into the live epic
-    mock_rm.assert_not_called()
+    mock_reparent.assert_not_called()  # defensive: never re-parent into the live epic
     mock_run.assert_not_called()
 
 
