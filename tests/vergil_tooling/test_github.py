@@ -572,6 +572,27 @@ def test_merge_squash_strategy() -> None:
     mock_run.assert_called_once_with("pr", "merge", "--squash", "https://github.com/pr/1")
 
 
+def test_list_org_repos() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        return_value=[{"name": "tooling"}, {"name": ".github"}, {"name": "vm"}],
+    ):
+        assert github.list_org_repos("org") == ["tooling", ".github", "vm"]
+
+
+def test_list_org_repos_filters_non_dict_and_nameless() -> None:
+    with patch(
+        "vergil_tooling.lib.github.read_json",
+        return_value=["nope", {"id": 1}, {"name": "keep"}],
+    ):
+        assert github.list_org_repos("org") == ["keep"]
+
+
+def test_list_org_repos_non_list_is_empty() -> None:
+    with patch("vergil_tooling.lib.github.read_json", return_value={"unexpected": True}):
+        assert github.list_org_repos("org") == []
+
+
 def test_list_project_repos() -> None:
     with patch(
         "vergil_tooling.lib.github.read_output",
