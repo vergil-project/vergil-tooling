@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from unittest.mock import patch
 
 import pytest
@@ -142,8 +143,93 @@ def test_child_states_reflink_carries_title() -> None:
     ):
         result = epics.child_states(EPIC)
     assert result == [ChildState(IssueRef("org", ".github", 41), "OPEN", "Fallback task")]
-    # The search requests the title field so the fallback listing is complete.
-    assert "number,state,title,repository,body" in mock_search.call_args.args
+    # The search requests the title and closedAt fields so the listing is complete.
+    assert "number,state,title,closedAt,repository,body" in mock_search.call_args.args
+
+
+def test_child_states_native_includes_closed_at() -> None:
+    # The native traversal propagates each child's closedAt (issue #2678); an open
+    # child (closedAt null) yields "".
+    data = {
+        "node": {
+            "subIssues": {
+                "nodes": [
+                    {
+                        "number": 101,
+                        "state": "CLOSED",
+                        "title": "t",
+                        "closedAt": "2026-08-01T10:00:00Z",
+                        "repository": _repo_node("org", "repo-a"),
+                    },
+                    {
+                        "number": 102,
+                        "state": "OPEN",
+                        "title": "u",
+                        "closedAt": None,
+                        "repository": _repo_node("org", "repo-b"),
+                    },
+                ]
+            }
+        }
+    }
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=data),
+    ):
+        result = epics.child_states(EPIC)
+    assert result[0].closed_at == "2026-08-01T10:00:00Z"
+    assert result[1].closed_at == ""
+    # The GraphQL query asks GitHub for the closedAt field.
+    assert "closedAt" in _SUBISSUES_QUERY
+
+
+def test_child_states_reflink_includes_closed_at() -> None:
+    # The portable Parent: reflink fallback also propagates closedAt.
+    empty = {"node": {"subIssues": {"nodes": []}}}
+    search = [
+        {
+            "number": 41,
+            "state": "CLOSED",
+            "title": "t",
+            "closedAt": "2026-05-10T00:00:00Z",
+            "repository": {"nameWithOwner": "org/.github"},
+            "body": "Parent: org/.github#40",
+        }
+    ]
+    with (
+        patch("vergil_tooling.lib.epics._node_id", return_value="NODE"),
+        patch("vergil_tooling.lib.github.graphql", return_value=empty),
+        patch("vergil_tooling.lib.github.read_json", return_value=search),
+    ):
+        result = epics.child_states(EPIC)
+    assert result[0].closed_at == "2026-05-10T00:00:00Z"
+
+
+# -- quarter helpers (issue #2678) -------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "iso,expected",
+    [
+        ("2026-01-31T00:00:00Z", "2026-Q1"),
+        ("2026-03-31T23:59:59Z", "2026-Q1"),
+        ("2026-04-01T00:00:00Z", "2026-Q2"),
+        ("2026-07-15T12:00:00Z", "2026-Q3"),
+        ("2026-12-31T23:59:59Z", "2026-Q4"),
+        ("2026-08-01T10:00:00+00:00", "2026-Q3"),
+    ],
+)
+def test_quarter_of(iso: str, expected: str) -> None:
+    assert epics.quarter_of(iso) == expected
+
+
+def test_quarter_of_rejects_empty() -> None:
+    with pytest.raises(ValueError, match="empty timestamp"):
+        epics.quarter_of("")
+
+
+def test_current_quarter() -> None:
+    assert epics.current_quarter(datetime(2026, 8, 8, tzinfo=UTC)) == "2026-Q3"
 
 
 # -- parent_of ---------------------------------------------------------------
@@ -644,6 +730,71 @@ def test_resolve_epic_ref_explicit_non_epic_raises() -> None:
 def test_ensure_adhoc_epic_repo_without_owner_raises() -> None:
     with pytest.raises(ValueError, match="cannot resolve repo for ad-hoc epic"):
         epics.ensure_adhoc_epic("tooling")
+
+
+# -- ad-hoc archive finders (issue #2678) ------------------------------------
+
+
+def test_find_adhoc_epic_returns_none_when_absent() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+    ):
+        assert epics.find_adhoc_epic("org/tooling") is None
+
+
+def test_find_adhoc_epic_reuses_existing_by_title() -> None:
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[_adhoc_row(1972)]),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.find_adhoc_epic("org/tooling") == IssueRef("org", ".github", 1972)
+    mock_create.assert_not_called()  # find never creates
+
+
+def test_find_adhoc_epic_repo_without_owner_raises() -> None:
+    with pytest.raises(ValueError, match="cannot resolve repo for ad-hoc epic"):
+        epics.find_adhoc_epic("tooling")
+
+
+def test_ensure_adhoc_archive_creates_stamped_title() -> None:
+    created = "https://github.com/org/.github/issues/88"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        ref = epics.ensure_adhoc_archive("org/tooling", "2026-Q3")
+    assert ref == IssueRef("org", ".github", 88)
+    assert mock_create.call_args.kwargs["title"] == "Epic (ad hoc): tooling — 2026-Q3"
+    assert mock_create.call_args.kwargs["labels"] == ["epic", "ad-hoc"]
+
+
+def test_ensure_adhoc_archive_reuses_existing_stamped() -> None:
+    rows = [{"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q3"}]
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_adhoc_archive("org/tooling", "2026-Q3") == IssueRef(
+            "org", ".github", 88
+        )
+    mock_create.assert_not_called()
+
+
+def test_list_open_adhoc_archives_parses_quarter() -> None:
+    rows = [
+        {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2"},
+        {"number": 90, "title": "Epic (ad hoc): tooling"},  # live, not an archive
+        {"number": 91, "title": "Epic (ad hoc): tooling — 2026-Q3"},
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        got = epics.list_open_adhoc_archives("org/.github")
+    assert (IssueRef("org", ".github", 88), "2026-Q2") in got
+    assert (IssueRef("org", ".github", 91), "2026-Q3") in got
+    assert all(q for _, q in got) and len(got) == 2
 
 
 # -- resolve_epic_home (epic #130) -------------------------------------------
