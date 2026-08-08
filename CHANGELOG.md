@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.181] - 2026-08-08
+
+### Documentation
+
+- correct stale port_forwards relay comment (#2674) (#2675)
+
+### Features
+
+- ad-hoc archiving foundations — closedAt, quarter helpers, epic finders (#2678) (#2683)
+- add per-repo and org-wide ad-hoc drain engine (#2679) (#2684)
+- drain closed child on close via rollup hook (#238) (#2685)
+- add 'archive' subcommand (#2681) (#2686)
+- drain ad-hoc epics in the daily close sweep (#2682) (#2687)
+
 ## [2.1.180] - 2026-08-07
 
 ### Bug fixes

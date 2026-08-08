@@ -15,7 +15,9 @@ mock the ``github`` boundary; real GraphQL/REST correctness is exercised in use.
 from __future__ import annotations
 
 import re
+import sys
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from vergil_tooling.lib import github
@@ -36,16 +38,36 @@ class IssueRef:
 
 @dataclass(frozen=True)
 class ChildState:
-    """A child task: its ref, open/closed state, and title.
+    """A child task: its ref, open/closed state, title, and close timestamp.
 
     ``title`` is descriptive metadata for machine-readable enumeration (issue
     #2538); it defaults to ``""`` so state-only consumers construct a
-    ``ChildState`` without supplying it.
+    ``ChildState`` without supplying it. ``closed_at`` is the ISO-8601
+    ``closedAt`` string (``""`` when open), so ad-hoc archiving can bucket a
+    closed child by its close-quarter (issue #2678).
     """
 
     ref: IssueRef
     state: str  # "OPEN" | "CLOSED"
     title: str = ""
+    closed_at: str = ""  # ISO-8601 closedAt; "" when open
+
+
+def _quarter_str(dt: datetime) -> str:
+    return f"{dt.year}-Q{(dt.month - 1) // 3 + 1}"
+
+
+def quarter_of(closed_at: str) -> str:
+    """Return the ``YYYY-Qn`` quarter of an ISO-8601 timestamp (UTC)."""
+    if not closed_at:
+        raise ValueError("quarter_of: empty timestamp")
+    dt = datetime.fromisoformat(closed_at.replace("Z", "+00:00"))
+    return _quarter_str(dt)
+
+
+def current_quarter(now: datetime) -> str:
+    """Return the ``YYYY-Qn`` quarter containing *now*."""
+    return _quarter_str(now)
 
 
 _PARENT_RE = re.compile(
@@ -101,7 +123,7 @@ query($id: ID!) {
   node(id: $id) {
     ... on Issue {
       subIssues(first: 100) {
-        nodes { number state title repository { name owner { login } } }
+        nodes { number state title closedAt repository { name owner { login } } }
       }
     }
   }
@@ -149,6 +171,16 @@ def _issue_state(ref: IssueRef) -> str:
     return github.read_output("api", _issue_endpoint(ref), "--jq", ".state").upper()
 
 
+def _issue_title(ref: IssueRef) -> str:
+    """Return an issue's title (used to tell a live ad-hoc epic from an archive)."""
+    return github.read_output("api", _issue_endpoint(ref), "--jq", ".title")
+
+
+def _issue_closed_at(ref: IssueRef) -> str:
+    """Return an issue's ISO-8601 ``closed_at`` string, or ``""`` when still open."""
+    return github.read_output("api", _issue_endpoint(ref), "--jq", '.closed_at // ""')
+
+
 def _ref_from_node(node: Any) -> IssueRef:
     """Build an ``IssueRef`` from a GraphQL issue node (number + repository)."""
     repo = node["repository"]
@@ -162,7 +194,10 @@ def _native_child_states(epic: IssueRef) -> list[ChildState]:
     nodes = (((data or {}).get("node") or {}).get("subIssues") or {}).get("nodes") or []
     return [
         ChildState(
-            ref=_ref_from_node(n), state=str(n["state"]).upper(), title=str(n.get("title") or "")
+            ref=_ref_from_node(n),
+            state=str(n["state"]).upper(),
+            title=str(n.get("title") or ""),
+            closed_at=str(n.get("closedAt") or ""),
         )
         for n in nodes
     ]
@@ -196,7 +231,7 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
         "--owner",
         epic.owner,
         "--json",
-        "number,state,title,repository,body",
+        "number,state,title,closedAt,repository,body",
     )
     states: list[ChildState] = []
     for item in results if isinstance(results, list) else []:
@@ -211,6 +246,7 @@ def _reflink_child_states(epic: IssueRef) -> list[ChildState]:
                 ref=IssueRef(owner=owner, repo=name, number=int(item["number"])),
                 state=str(item["state"]).upper(),
                 title=str(item.get("title") or ""),
+                closed_at=str(item.get("closedAt") or ""),
             )
         )
     return states
@@ -345,26 +381,20 @@ _ADHOC_EPIC_BODY = (
     "Perpetual umbrella for ad-hoc work in {repo}. Created and reused "
     "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
 )
+# A stamped per-quarter archive epic: "Epic (ad hoc): <bare> — <YYYY>-Qn". The
+# separator is a space, U+2014 em-dash, space. Matching this distinguishes a
+# terminal archive from the live canonical ad-hoc epic (which has no stamp).
+_ADHOC_ARCHIVE_RE = re.compile(r"^Epic \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
 
 
-def ensure_adhoc_epic(target_repo: str) -> IssueRef:
-    """Return *target_repo*'s ad-hoc epic in its resolved epic home, creating it if absent.
+def _find_epic_by_title(home: str, title: str) -> IssueRef | None:
+    """Return the open ``ad-hoc`` epic in *home* whose title is exactly *title*.
 
-    The home is derived from *target_repo*'s visibility by
-    :func:`resolve_epic_home`: a public repo homes its ad-hoc epic centrally in
-    ``<org>/.github``; a private repo homes it in itself. One per repo, each
-    disambiguated by the title ``Epic (ad hoc): <bare repo name>`` and labelled
-    ``epic`` + ``ad-hoc``. Idempotent: an existing epic with that title is
-    reused; none means create it; two sharing the title is ambiguous and an
-    error names an explicit ref instead of guessing. Applies to member repos and
-    ``.github`` itself alike.
+    Shared title search for the ad-hoc epic finders. Scoped to open ``epic`` +
+    ``ad-hoc`` issues in *home*; returns None when absent, raises when two share
+    the title (ambiguous — name an explicit ref rather than guess).
     """
-    if "/" not in target_repo:
-        raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
-    owner, bare = target_repo.split("/", 1)
-    home = resolve_epic_home(owner, bare)
-    home_repo = home.split("/", 1)[1]
-    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
+    owner, home_repo = home.split("/", 1)
     raw: Any = github.read_json(
         "issue",
         "list",
@@ -391,6 +421,30 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
         )
     if rows:
         return IssueRef(owner=owner, repo=home_repo, number=int(rows[0]["number"]))
+    return None
+
+
+def ensure_adhoc_epic(target_repo: str) -> IssueRef:
+    """Return *target_repo*'s ad-hoc epic in its resolved epic home, creating it if absent.
+
+    The home is derived from *target_repo*'s visibility by
+    :func:`resolve_epic_home`: a public repo homes its ad-hoc epic centrally in
+    ``<org>/.github``; a private repo homes it in itself. One per repo, each
+    disambiguated by the title ``Epic (ad hoc): <bare repo name>`` and labelled
+    ``epic`` + ``ad-hoc``. Idempotent: an existing epic with that title is
+    reused; none means create it; two sharing the title is ambiguous and an
+    error names an explicit ref instead of guessing. Applies to member repos and
+    ``.github`` itself alike.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    home_repo = home.split("/", 1)[1]
+    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}"
+    found = _find_epic_by_title(home, title)
+    if found is not None:
+        return found
     url = github.create_issue(
         repo=home,
         title=title,
@@ -399,6 +453,162 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     )
     number = int(url.rstrip("/").rsplit("/", 1)[-1])
     return IssueRef(owner=owner, repo=home_repo, number=number)
+
+
+def find_adhoc_epic(target_repo: str) -> IssueRef | None:
+    """Return the live canonical ad-hoc epic for *target_repo*, or None.
+
+    Unlike :func:`ensure_adhoc_epic`, this never creates: it is the read-only
+    lookup the drain uses to find the epic whose closed children it archives.
+    """
+    if "/" not in target_repo:
+        raise ValueError(f"cannot resolve repo for ad-hoc epic (repo={target_repo!r})")
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    return _find_epic_by_title(home, f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}")
+
+
+def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
+    """Return *target_repo*'s ``— <quarter>`` archive epic, creating it if absent.
+
+    The archive is the stamped sibling of the live ad-hoc epic — same home, same
+    ``epic`` + ``ad-hoc`` labels — into which closed children of *quarter* are
+    re-parented. Idempotent: an existing stamped archive is reused.
+    """
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    home_repo = home.split("/", 1)[1]
+    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
+    existing = _find_epic_by_title(home, title)
+    if existing is not None:
+        return existing
+    url = github.create_issue(
+        repo=home,
+        title=title,
+        body=f"Ad-hoc work in {target_repo} finished in {quarter}. Managed automatically.\n",
+        labels=list(_ADHOC_EPIC_LABELS),
+    )
+    return IssueRef(owner=owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1]))
+
+
+def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
+    """Open ``ad-hoc`` archive epics in *home* with their ``YYYY-Qn`` quarter.
+
+    Only stamped archives (title carrying a ``— YYYY-Qn`` suffix) are returned;
+    the live canonical ad-hoc epic (no stamp) is skipped. Used to find archives
+    whose quarter is now past and should be closed.
+    """
+    owner, home_repo = home.split("/", 1)
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        "--label",
+        "epic",
+        "--label",
+        "ad-hoc",
+        "--state",
+        "open",
+        "--json",
+        "number,title",
+    )
+    out: list[tuple[IssueRef, str]] = []
+    for r in raw if isinstance(raw, list) else []:
+        m = _ADHOC_ARCHIVE_RE.match(str(r.get("title", ""))) if isinstance(r, dict) else None
+        if m:
+            out.append((IssueRef(owner, home_repo, int(r["number"])), m.group("quarter")))
+    return out
+
+
+@dataclass(frozen=True)
+class DrainPlan:
+    """A per-repo ad-hoc drain: what to re-parent and what to close.
+
+    ``live`` is the canonical (unstamped) ad-hoc epic. ``moves`` pairs each
+    closed child with its close-quarter (``YYYY-Qn``) archive bucket. ``close``
+    lists open archive epics whose quarter is now past and should be closed.
+    """
+
+    live: IssueRef
+    moves: list[tuple[IssueRef, str]]  # (closed child, its close-quarter)
+    close: list[IssueRef]  # open archives whose quarter is now past
+
+
+def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
+    """Plan *target_repo*'s ad-hoc drain, or None if it has no live ad-hoc epic.
+
+    Buckets each closed child of the live epic by its close-quarter and lists the
+    open archive epics whose quarter is strictly before the current quarter (so
+    they are eligible to close). Pure/read-only: no mutation happens here.
+    """
+    live = find_adhoc_epic(target_repo)
+    if live is None:
+        return None
+    moves = [
+        (c.ref, quarter_of(c.closed_at))
+        for c in child_states(live)
+        if c.state == "CLOSED" and c.closed_at
+    ]
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    cur = current_quarter(now)
+    close = [ref for ref, q in list_open_adhoc_archives(home) if q < cur]
+    return DrainPlan(live=live, moves=moves, close=close)
+
+
+def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
+    """Execute *plan*: ensure each archive, re-parent add-before-remove, close past.
+
+    Each closed child is added to its quarter's archive before being removed from
+    the live epic, so it is never orphaned under neither. Past archives are then
+    closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in the
+    plan is a correct "quarter is past" test.
+    """
+    for child, quarter in plan.moves:
+        archive = ensure_adhoc_archive(target_repo, quarter)
+        if archive == plan.live:
+            continue  # defensive: never re-parent into the live epic
+        add_child(archive, child)  # add before remove: never orphan-under-neither
+        remove_child(plan.live, child)
+    for archive in plan.close:
+        github.run(
+            "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
+        )
+
+
+def drain_adhoc_repo(target_repo: str, *, apply: bool, now: datetime) -> DrainPlan | None:
+    """Plan *target_repo*'s ad-hoc drain, applying it when *apply* is True.
+
+    Returns the plan (None if *target_repo* has no live ad-hoc epic). With
+    ``apply=False`` this is a pure dry-run.
+    """
+    plan = plan_adhoc_drain(target_repo, now=now)
+    if plan is not None and apply:
+        apply_adhoc_drain(target_repo, plan)
+    return plan
+
+
+def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
+    """Drain every repo in *org*, isolating per-repo failures (spec §7).
+
+    Each repo resolves its own epic home via :func:`drain_adhoc_repo` →
+    :func:`find_adhoc_epic` → :func:`resolve_epic_home`, so public
+    (``.github``-homed) and private (self-homed) ad-hoc epics are both covered. A
+    corrupted repo (e.g. two ad-hoc epics sharing a title) is reported and
+    skipped — never aborting the whole sweep. Returns one plan per repo that has
+    a live ad-hoc epic.
+    """
+    plans: list[DrainPlan] = []
+    for bare in github.list_org_repos(org):
+        try:
+            plan = drain_adhoc_repo(f"{org}/{bare}", apply=apply, now=now)
+        except (ValueError, RuntimeError) as exc:
+            print(f"skipped {org}/{bare}: {exc}", file=sys.stderr)
+            continue
+        if plan is not None:
+            plans.append(plan)
+    return plans
 
 
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:
@@ -462,12 +672,27 @@ def rollup(task: IssueRef) -> None:
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
     legacy issues have no epic parent, so finalize never rolls them up. An
-    ``ad-hoc`` epic is perpetual and never auto-closes.
+    ``ad-hoc`` epic is perpetual and never auto-closes; instead, when the
+    just-closed child's parent is the **live** ad-hoc epic, drain that one child
+    into its close-quarter archive (the steady-state event path). A parent that
+    is itself a stamped archive is terminal and left untouched.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
     if "ad-hoc" in _labels(parent):
+        owner, home_repo = parent.owner, parent.repo
+        title = _issue_title(parent)
+        # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
+        if _ADHOC_ARCHIVE_RE.match(title):
+            return
+        closed_at = _issue_closed_at(task)
+        if not closed_at:
+            return
+        archive = ensure_adhoc_archive(f"{owner}/{home_repo}", quarter_of(closed_at))
+        if archive != parent:
+            add_child(archive, task)
+            remove_child(parent, task)
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")

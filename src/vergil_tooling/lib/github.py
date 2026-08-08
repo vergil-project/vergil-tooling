@@ -919,6 +919,16 @@ def merge(pr: str, *, strategy: str) -> None:
     run("pr", "merge", f"--{strategy}", pr)
 
 
+def list_org_repos(org: str) -> list[str]:
+    """Return the bare names of all (non-archived) repositories in *org*."""
+    raw: Any = read_json("repo", "list", org, "--no-archived", "--limit", "1000", "--json", "name")
+    return (
+        [str(r["name"]) for r in raw if isinstance(r, dict) and "name" in r]
+        if isinstance(raw, list)
+        else []
+    )
+
+
 def list_project_repos(owner: str, project: str) -> list[str]:
     """Return sorted, unique repos linked to a GitHub Project."""
     jq_filter = (

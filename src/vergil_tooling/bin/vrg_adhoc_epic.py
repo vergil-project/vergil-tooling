@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from datetime import UTC, datetime
 
 from vergil_tooling.lib import epics, github
 
@@ -33,6 +34,38 @@ def cmd_ensure(args: argparse.Namespace) -> int:
     return 0
 
 
+def _render_plan(plan: epics.DrainPlan) -> str:
+    lines = [f"{plan.live.slug}: {len(plan.moves)} closed child(ren) to archive"]
+    for child, quarter in plan.moves:
+        lines.append(f"  {child.slug} -> {quarter}")
+    for archive in plan.close:
+        lines.append(f"  close past archive {archive.slug}")
+    return "\n".join(lines)
+
+
+def cmd_archive(args: argparse.Namespace) -> int:
+    now = datetime.now(UTC)
+    verb = "APPLY" if args.apply else "DRY-RUN"
+    if args.all_in:
+        # Scope the App token to the org before any mutation, mirroring
+        # vrg-epic-move / vrg-issue-create (spec §7).
+        with github.target_org(args.all_in):
+            plans = epics.drain_adhoc_org(args.all_in, apply=args.apply, now=now)
+        print(f"[{verb}] {args.all_in}: {len(plans)} ad-hoc epic(s) with work to archive")
+        for plan in plans:
+            print(_render_plan(plan))
+        return 0
+    repo = args.repo or github.current_repo()
+    if "/" not in repo:
+        print(f"vrg-adhoc-epic: --repo must be 'owner/repo' (got {repo!r})", file=sys.stderr)
+        return 1
+    owner = repo.split("/", 1)[0]
+    with github.target_org(owner):
+        repo_plan = epics.drain_adhoc_repo(repo, apply=args.apply, now=now)
+    print(f"[{verb}] " + (_render_plan(repo_plan) if repo_plan else f"{repo}: no ad-hoc epic"))
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
@@ -50,6 +83,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     p_ensure.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
     p_ensure.set_defaults(func=cmd_ensure)
+    p_arch = sub.add_parser(
+        "archive",
+        help="Drain closed children into per-quarter archives (dry-run unless --apply).",
+    )
+    scope = p_arch.add_mutually_exclusive_group()
+    scope.add_argument("--repo", help="Target repo owner/name (defaults to the current repo)")
+    scope.add_argument("--all-in", metavar="ORG", help="Sweep every repo in ORG")
+    p_arch.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
+    p_arch.set_defaults(func=cmd_archive)
     return parser.parse_args(argv)
 
 
