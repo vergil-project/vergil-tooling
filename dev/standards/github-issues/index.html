@@ -10951,6 +10951,45 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#ad-hoc-epic-archiving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ad-hoc epic archiving
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ad-hoc epic archiving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-the-drain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the drain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automation-no-new-schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automation (no new schedule)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#creating-an-epic-the-epic-create-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13283,6 +13322,45 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#ad-hoc-epic-archiving" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ad-hoc epic archiving
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ad-hoc epic archiving">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#running-the-drain" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the drain
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#automation-no-new-schedule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Automation (no new schedule)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#creating-an-epic-the-epic-create-workflow" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13494,7 +13572,59 @@ cross-forge fallback.</p>
   and it <strong>never auto-closes</strong>. Target it with <code>vrg-issue-create --epic adhoc</code>.
   (The older <code>standing</code> alias is <strong>retired</strong> — only <code>ad-hoc</code> remains.)
   <code>vrg-adhoc-epic ensure --repo &lt;owner&gt;/&lt;repo&gt;</code> creates a repo's ad-hoc epic
-  on demand (idempotent).</li>
+  on demand (idempotent). Its <em>closed</em> children are continuously drained into
+  per-quarter archive epics so the live umbrella shows only in-flight work — see
+  <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>.</li>
+</ul>
+<h3 id="ad-hoc-epic-archiving">Ad-hoc epic archiving<a class="headerlink" href="#ad-hoc-epic-archiving" title="Permanent link">&para;</a></h3>
+<p>A live ad-hoc epic accumulates closed children forever, so its "what's in
+flight" signal drowns in finished work. To keep the umbrella honest, closed
+children are <strong>continuously drained into per-quarter archive epics</strong> — a live
+ad-hoc epic ends up holding only its still-open children.</p>
+<ul>
+<li><strong>Archive epics</strong> are titled <code>Epic (ad hoc): &lt;repo&gt; — &lt;YYYY&gt;-Q&lt;n&gt;</code> (the
+  separator is a space, an em-dash <code>—</code>, and a space). They live in the same
+  resolved home as the live epic and carry the <code>epic</code> + <code>ad-hoc</code> labels.</li>
+<li><strong>Bucketing is by close quarter.</strong> Each closed child is re-parented into the
+  archive for the quarter of its <code>closedAt</code> timestamp (UTC), so the <code>YYYY-Qn</code>
+  archive holds the ad-hoc work that <em>finished</em> in that quarter — not the work
+  filed in it.</li>
+<li><strong>The live epic is never renamed, recreated, or closed.</strong> It only loses its
+  closed children to the archives; it stays the one perpetual umbrella per repo.</li>
+<li><strong>Past-quarter archives are closed; the current-quarter archive stays open.</strong>
+  A closed archive is a stable historical record; the current one keeps
+  receiving this quarter's closures. A late straggler whose close-quarter
+  archive was already closed is re-parented into it regardless.</li>
+<li><strong>Idempotent and dry-run by default.</strong> Every step is check-before-act
+  (archives are create-if-missing by exact title, an already-parented child is
+  skipped, an already-closed past archive is skipped), so a run that dies
+  partway is repaired by the next one. Empty quarters get no archive.</li>
+</ul>
+<h4 id="running-the-drain">Running the drain<a class="headerlink" href="#running-the-drain" title="Permanent link">&para;</a></h4>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="c1"># which archives would be created, and which past archives would close.</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="c1"># Apply the moves and closes.</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--repo<span class="w"> </span>&lt;owner&gt;/&lt;repo&gt;<span class="w"> </span>--apply
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="c1"># Visibility-aware sweep across every repo in an org.</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>vrg-adhoc-epic<span class="w"> </span>archive<span class="w"> </span>--all-in<span class="w"> </span>&lt;ORG&gt;<span class="w"> </span>--apply
+</code></pre></div>
+<p><code>--repo</code> targets a single repo; <code>--all-in &lt;ORG&gt;</code> sweeps every repo in the org,
+resolving each repo's ad-hoc home by visibility. Without <code>--apply</code> the command
+mutates nothing.</p>
+<h4 id="automation-no-new-schedule">Automation (no new schedule)<a class="headerlink" href="#automation-no-new-schedule" title="Permanent link">&para;</a></h4>
+<p>Two existing call sites keep archives current with no dedicated cron:</p>
+<ul>
+<li><strong>Steady state — on close.</strong> When a child of a <em>live</em> ad-hoc epic closes, the
+  <code>issues.closed</code> rollup path (<code>vrg-epic-rollup</code>) archives just that child into
+  its close-quarter archive.</li>
+<li><strong>Backstop + backfill.</strong> The daily <code>vrg-epic-audit --close</code> sweep runs the
+  org-wide drain: it distributes any backlog the steady-state path missed and
+  closes past-quarter archives. This is the same trusted sweep that closes other
+  provably-complete drift, so it is allowed to mutate under the scheduled
+  automation signal.</li>
 </ul>
 <h3 id="creating-an-epic-the-epic-create-workflow">Creating an epic (the <code>epic-create</code> workflow)<a class="headerlink" href="#creating-an-epic-the-epic-create-workflow" title="Permanent link">&para;</a></h3>
 <p>Non-trivial work starts with the <code>epic-create</code> workflow — the <strong>default entry
@@ -13579,7 +13709,8 @@ relocating epics when a repo's visibility changes.</p>
   issue there is a stray.</li>
 <li><strong>An epic is never closed while a child is open.</strong> A closed finite epic with an
   open child is a violation (perpetual <code>ad-hoc</code> epics are exempt — they never
-  roll up).</li>
+  roll up; their closed children are drained into per-quarter archive epics
+  instead, see <a href="#ad-hoc-epic-archiving">Ad-hoc epic archiving</a>).</li>
 </ul>
 <h2 id="intake-queues">Intake queues<a class="headerlink" href="#intake-queues" title="Permanent link">&para;</a></h2>
 <p>Not every capture is ready to be a task. Three <strong>intake queues</strong> hold uncurated
@@ -13617,7 +13748,7 @@ it graduates into a proper finite epic with automated tooling, never a hand-run
 one-off.</p>
 <p>Create an intake item with the sanctioned tool. <code>--kind</code> selects the shape and
 stamps its label (default <code>triage</code>); the target defaults to the org's <code>.github</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>vrg-triage-create<span class="w"> </span>--kind<span class="w"> </span><span class="o">{</span>triage<span class="p">|</span>idea<span class="p">|</span>research<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;&lt;what&gt;&quot;</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-triage-create<span class="w"> </span>--kind<span class="w"> </span><span class="o">{</span>triage<span class="p">|</span>idea<span class="p">|</span>research<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;&lt;what&gt;&quot;</span>
 </code></pre></div>
 <p>Intake lives in <code>.github</code>, never in a member repo — an intake item is not yet a
 single-PR task, so the "member repos hold only single-PR tasks" invariant
@@ -13672,8 +13803,8 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   kind.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;&lt;what&gt;&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--kind<span class="w"> </span><span class="o">{</span>validation<span class="p">|</span>deployment<span class="o">}</span><span class="w"> </span>--title<span class="w"> </span><span class="s2">&quot;&lt;what&gt;&quot;</span><span class="w"> </span>--blocked-by<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;#&lt;TASK&gt;
 </code></pre></div>
 <p>This stamps the kind's label and an executable scaffold: an author-defined
 <strong>precondition self-check</strong> (a machine probe or a human-attested statement — no
