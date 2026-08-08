@@ -171,6 +171,16 @@ def _issue_state(ref: IssueRef) -> str:
     return github.read_output("api", _issue_endpoint(ref), "--jq", ".state").upper()
 
 
+def _issue_title(ref: IssueRef) -> str:
+    """Return an issue's title (used to tell a live ad-hoc epic from an archive)."""
+    return github.read_output("api", _issue_endpoint(ref), "--jq", ".title")
+
+
+def _issue_closed_at(ref: IssueRef) -> str:
+    """Return an issue's ISO-8601 ``closed_at`` string, or ``""`` when still open."""
+    return github.read_output("api", _issue_endpoint(ref), "--jq", '.closed_at // ""')
+
+
 def _ref_from_node(node: Any) -> IssueRef:
     """Build an ``IssueRef`` from a GraphQL issue node (number + repository)."""
     repo = node["repository"]
@@ -662,12 +672,27 @@ def rollup(task: IssueRef) -> None:
 
     A no-op unless the task has an ``epic``-labeled parent (the transition gate):
     legacy issues have no epic parent, so finalize never rolls them up. An
-    ``ad-hoc`` epic is perpetual and never auto-closes.
+    ``ad-hoc`` epic is perpetual and never auto-closes; instead, when the
+    just-closed child's parent is the **live** ad-hoc epic, drain that one child
+    into its close-quarter archive (the steady-state event path). A parent that
+    is itself a stamped archive is terminal and left untouched.
     """
     parent = parent_of(task)
     if parent is None or not is_epic(parent):
         return
     if "ad-hoc" in _labels(parent):
+        owner, home_repo = parent.owner, parent.repo
+        title = _issue_title(parent)
+        # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
+        if _ADHOC_ARCHIVE_RE.match(title):
+            return
+        closed_at = _issue_closed_at(task)
+        if not closed_at:
+            return
+        archive = ensure_adhoc_archive(f"{owner}/{home_repo}", quarter_of(closed_at))
+        if archive != parent:
+            add_child(archive, task)
+            remove_child(parent, task)
         return
     if all_children_closed(parent):
         print(f"Rolling up epic {parent.slug} — all child tasks closed.")
