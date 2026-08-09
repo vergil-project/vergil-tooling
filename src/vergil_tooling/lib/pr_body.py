@@ -16,14 +16,32 @@ _ISSUE_PLAIN_RE = re.compile(r"^[1-9]\d*$")
 _ISSUE_CROSS_RE = re.compile(r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[1-9]\d*$")
 
 
-def resolve_issue_ref(issue: str) -> str:
-    """Validate and normalize the issue reference."""
+def normalize_issue_ref(issue: str) -> str:
+    """Normalize ``--issue`` to a canonical ref (``#N`` or ``owner/repo#N``).
+
+    A bare number is scoped to the current repo as ``#N``; a cross-repo
+    ``owner/repo#N`` passes through unchanged. Raises ``ValueError`` on any other
+    shape, so each caller surfaces the malformed value in its own error
+    convention — ``resolve_issue_ref`` (``vrg-submit-pr``) as a ``SystemExit``,
+    ``vrg-pr-workflow report-ready`` as a ``WorkflowError``. The canonical form is
+    what ``epics.parse_issue_ref`` — and thus the epic/operational guards — can
+    parse; a bare number cannot (it has no ``#``), which is the report-time guard
+    bypass #2213 closes.
+    """
     if _ISSUE_PLAIN_RE.match(issue):
         return f"#{issue}"
     if _ISSUE_CROSS_RE.match(issue):
         return issue
     msg = f"--issue must be a number (42) or cross-repo ref (owner/repo#42), got '{issue}'."
-    raise SystemExit(msg)
+    raise ValueError(msg)
+
+
+def resolve_issue_ref(issue: str) -> str:
+    """Validate and normalize the issue reference; abort (``SystemExit``) if malformed."""
+    try:
+        return normalize_issue_ref(issue)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
 
 
 def build_pr_body(*, summary: str, linkage: str, issue_ref: str, notes: str) -> str:

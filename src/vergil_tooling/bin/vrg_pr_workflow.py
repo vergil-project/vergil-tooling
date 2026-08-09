@@ -21,6 +21,7 @@ from vergil_tooling.lib.linkage import (
     freetext_linkage_error,
     normalize_linkage,
 )
+from vergil_tooling.lib.pr_body import normalize_issue_ref
 from vergil_tooling.lib.pr_workflow import engine
 from vergil_tooling.lib.pr_workflow.errors import WorkflowError
 from vergil_tooling.lib.pr_workflow.github_transport import GitHubTransport
@@ -38,7 +39,7 @@ def _emit(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2))
 
 
-def _reject_cross_repo_issue(issue: str) -> None:
+def _reject_cross_repo_issue(issue_ref: str) -> None:
     """Refuse a cross-repo --issue at report time — a PR closes only same-repo issues.
 
     Mirrors vrg-submit-pr's guard so the error surfaces where the value is entered
@@ -47,9 +48,10 @@ def _reject_cross_repo_issue(issue: str) -> None:
     cross-repo close would shut an unrelated same-numbered issue — a genuine
     mis-close hazard. Best-effort: if the current repo cannot be resolved (no
     remote, no gh auth — an offline run), defer silently to vrg-submit-pr's
-    authoritative check. A bare ``#N`` (or a plain number) resolves to the
-    current repo and always passes; the compare is case-insensitive so a
-    differently cased spelling of the current repo is not a false refusal.
+    authoritative check. *issue_ref* is the canonical ref (``#N`` or
+    ``owner/repo#N``); a same-repo ``#N`` resolves to the current repo and always
+    passes; the compare is case-insensitive so a differently cased spelling of the
+    current repo is not a false refusal.
     """
     try:
         current = github.current_repo()
@@ -57,10 +59,10 @@ def _reject_cross_repo_issue(issue: str) -> None:
         return
     if not current:
         return
-    try:
-        ref = epics.parse_issue_ref(issue, default_repo=current)
-    except ValueError:
-        return
+    # *issue_ref* is already the canonical form (normalize_issue_ref ran upstream)
+    # and *current* is non-empty, so parse_issue_ref cannot raise here — a bare
+    # number was the only unparseable shape, and it is now '#N' before this guard.
+    ref = epics.parse_issue_ref(issue_ref, default_repo=current)
     if f"{ref.owner}/{ref.repo}".lower() != current.lower():
         raise WorkflowError(
             f"--issue ({ref.slug}) is in a different repo than this PR ({current}); "
@@ -69,41 +71,44 @@ def _reject_cross_repo_issue(issue: str) -> None:
         )
 
 
-def _reject_epic_issue(issue: str) -> None:
+def _reject_epic_issue(issue_ref: str) -> None:
     """Refuse an epic linkage at report time — a PR links a task, not an epic.
 
     Mirrors vrg-submit-pr's guard so the error surfaces where the value is
-    entered (report time) rather than later at submit time. Best-effort: if
-    epic-ness cannot be determined (no remote, no gh auth — e.g. an offline
-    run), it defers silently to vrg-submit-pr's authoritative check rather than
-    blocking report-ready.
+    entered (report time) rather than later at submit time. *issue_ref* is the
+    canonical ref (``#N`` or ``owner/repo#N``) so a bare number no longer slips
+    past ``parse_issue_ref`` (#2213). Best-effort: if epic-ness cannot be
+    determined (no remote, no gh auth — e.g. an offline run), it defers silently
+    to vrg-submit-pr's authoritative check rather than blocking report-ready.
     """
     try:
-        links_epic = epics.is_epic_linkage(issue, default_repo=github.current_repo())
+        links_epic = epics.is_epic_linkage(issue_ref, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError):
         return
     if links_epic:
         raise WorkflowError(
-            f"--issue links an epic (#{issue}); link a task, not an epic "
+            f"--issue links an epic ({issue_ref}); link a task, not an epic "
             "(epics are closed by rollup when their tasks complete)."
         )
 
 
-def _reject_operational_issue(issue: str) -> None:
+def _reject_operational_issue(issue_ref: str) -> None:
     """Refuse an operational-task linkage at report time — it is not PR-workable.
 
     Mirrors vrg-submit-pr's guard so the error surfaces where the value is
-    entered. Best-effort: if operational-ness cannot be determined (no remote, no
-    gh auth — e.g. an offline run), defer silently to vrg-submit-pr's
-    authoritative check rather than blocking report-ready.
+    entered. *issue_ref* is the canonical ref (``#N`` or ``owner/repo#N``) so a
+    bare number no longer slips past ``parse_issue_ref`` (#2213). Best-effort: if
+    operational-ness cannot be determined (no remote, no gh auth — e.g. an offline
+    run), defer silently to vrg-submit-pr's authoritative check rather than
+    blocking report-ready.
     """
     try:
-        is_operational = epics.is_operational_task(issue, default_repo=github.current_repo())
+        is_operational = epics.is_operational_task(issue_ref, default_repo=github.current_repo())
     except (subprocess.CalledProcessError, OSError):
         return
     if is_operational:
         raise WorkflowError(
-            f"--issue (#{issue}) is an operational task (validation/deployment), which "
+            f"--issue ({issue_ref}) is an operational task (validation/deployment), which "
             "is not PR-workable; record the Outcome as a comment (issue-validate / "
             "issue-deploy) instead of preparing a PR."
         )
@@ -136,9 +141,20 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
 
 
 def cmd_report_ready(args: argparse.Namespace, transport: LocalFileTransport) -> int:
-    _reject_cross_repo_issue(str(args.issue))
-    _reject_epic_issue(str(args.issue))
-    _reject_operational_issue(str(args.issue))
+    # Resolve --issue to a canonical ref (bare number -> '#N') before the guards,
+    # mirroring vrg-submit-pr. The guards call epics.parse_issue_ref, which rejects
+    # a bare number (no '#') and would silently return False — letting a
+    # bare-number epic/operational issue bypass the report-time guard (#2213). The
+    # raw args.issue is still what gets *stored* (vrg-submit-pr's resolve_issue_ref
+    # re-normalizes it and rejects a leading '#'), so only the guards see the
+    # canonical form.
+    try:
+        issue_ref = normalize_issue_ref(str(args.issue))
+    except ValueError as exc:
+        raise WorkflowError(f"report-ready: {exc}") from exc
+    _reject_cross_repo_issue(issue_ref)
+    _reject_epic_issue(issue_ref)
+    _reject_operational_issue(issue_ref)
     try:
         linkage, linkage_warning = normalize_linkage(args.linkage)
     except ValueError as exc:
