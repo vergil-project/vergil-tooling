@@ -13834,7 +13834,10 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   epic until it succeeds, so rollup is honest.</li>
 <li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them
   to report each as <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by
-  kind.</li>
+  kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
+  <code>--blocked-by</code> to <code>vrg-issue-create --kind task</code> and it is appended to the task
+  body — so an epic driver's plain-task frontier (which open tasks have every
+  dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
