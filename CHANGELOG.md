@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.184] - 2026-08-09
+
+### Bug fixes
+
+- resolve a bare --issue N before the report-ready epic/operational guards (#2708)
+- derive ad-hoc archive repo from epic title; skip non-repo epics (#2709) (#2712)
+
+### Documentation
+
+- note once-per-quarter archive guarantee and duplicate tolerance (#2697) (#2705)
+
+### Features
+
+- support --blocked-by on plain tasks and classify all open children (#2707)
+
 ## [2.1.183] - 2026-08-09
 
 ### Bug fixes
