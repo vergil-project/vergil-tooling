@@ -720,15 +720,25 @@ def rollup(task: IssueRef) -> None:
     if parent is None or not is_epic(parent):
         return
     if "ad-hoc" in _labels(parent):
-        owner, home_repo = parent.owner, parent.repo
         title = _issue_title(parent)
         # Only the LIVE canonical ad-hoc epic drains; archives (stamped) are terminal.
         if _ADHOC_ARCHIVE_RE.match(title):
             return
+        # Derive the target repo from the epic's OWN bare name, not parent.repo:
+        # a public repo's ad-hoc epic lives in <org>/.github, so parent.repo is
+        # always ".github" and would misfile every public-repo child into one
+        # ".github" bucket (#2709). Drain only for a canonical per-repo epic —
+        # <bare> must be a real repo. A repo name has no space or "/", so reject
+        # those fast (also skips non-repo special epics whose bare is a prose
+        # description); then confirm via a direct existence probe (repo_exists,
+        # not list membership, so a self-homed private repo still passes).
+        bare = title.removeprefix(_ADHOC_EPIC_TITLE_PREFIX)
+        if " " in bare or "/" in bare or not github.repo_exists(parent.owner, bare):
+            return
         closed_at = _issue_closed_at(task)
         if not closed_at:
             return
-        archive = ensure_adhoc_archive(f"{owner}/{home_repo}", quarter_of(closed_at))
+        archive = ensure_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
         if archive != parent:
             reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
         return

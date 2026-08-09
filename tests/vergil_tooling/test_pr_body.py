@@ -48,6 +48,21 @@ def test_resolve_issue_ref_zero() -> None:
         pr_body.resolve_issue_ref("0")
 
 
+def test_normalize_issue_ref_plain_number() -> None:
+    assert pr_body.normalize_issue_ref("42") == "#42"
+
+
+def test_normalize_issue_ref_cross_repo() -> None:
+    assert pr_body.normalize_issue_ref("owner/repo#42") == "owner/repo#42"
+
+
+def test_normalize_issue_ref_invalid_raises_value_error() -> None:
+    # Unlike resolve_issue_ref (SystemExit), the shared normalizer raises
+    # ValueError so each caller surfaces it in its own error convention (#2213).
+    with pytest.raises(ValueError, match="must be a number"):
+        pr_body.normalize_issue_ref("bad-ref")
+
+
 def test_build_pr_body_rejects_linkage_keyword_in_notes() -> None:
     with pytest.raises(SystemExit) as exc:
         pr_body.build_pr_body(summary="s", linkage="Closes", issue_ref="#42", notes="Ref #99")

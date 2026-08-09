@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import sys
 from importlib import resources
+from pathlib import Path
 
 from vergil_tooling.lib import epics, github
 
@@ -44,8 +45,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="append",
         default=[],
         metavar="REF",
-        help="Dependency ref this operational task is blocked by "
-        "(repeatable; validation/deployment only)",
+        help="Dependency ref this task is blocked by; stamps a portable "
+        "Blocked-by: reflink (repeatable; not valid for --kind retrospective)",
     )
     return parser.parse_args(argv)
 
@@ -89,6 +90,19 @@ def _render_scaffold_body(*, kind: str, intro: str, deps: list[epics.IssueRef]) 
     return template.format(intro=intro or _SCAFFOLD_INTRO[kind], blocked_by=blocked_by)
 
 
+def _append_blocked_by(base: str, deps: list[epics.IssueRef]) -> str:
+    """Append a machine-parseable ``Blocked-by:`` reflink section to *base*.
+
+    A plain task has no scaffold template, so its dependencies are stamped by
+    appending the same portable ``Blocked-by: owner/repo#N`` reflinks the
+    operational scaffolds use (``epics.render_blocked_by``) under a Dependencies
+    heading. The reflink is what ``epics.blockers_of`` parses, so a plain task's
+    dependency becomes as machine-readable as an operational one (#2269).
+    """
+    section = "## Dependencies\n\n" + epics.render_blocked_by(deps)
+    return f"{base.rstrip()}\n\n{section}" if base.strip() else section
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     repo = args.repo or github.current_repo()
@@ -119,7 +133,28 @@ def main(argv: list[str] | None = None) -> int:
     labels = list(args.label)
     body = args.body
     body_file = args.body_file
-    if args.kind != "task":
+    deps: list[epics.IssueRef] = []
+    if args.kind == "task" and args.blocked_by:
+        # A plain task carries its dependencies as the same portable Blocked-by:
+        # reflinks the operational scaffolds use, appended to the caller's body
+        # (#2269). The dependency machinery (epics.blockers_of) is already
+        # generic; this is purely unlocking the creation edge for plain tasks.
+        try:
+            deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]
+        except ValueError as exc:
+            print(f"vrg-issue-create: invalid --blocked-by ref: {exc}", file=sys.stderr)
+            return 1
+        if body_file is not None:
+            try:
+                base = Path(body_file).read_text(encoding="utf-8")
+            except OSError as exc:
+                print(f"vrg-issue-create: cannot read --body-file: {exc}", file=sys.stderr)
+                return 1
+        else:
+            base = body
+        body = _append_blocked_by(base, deps)
+        body_file = None
+    elif args.kind != "task":
         if args.body_file:
             print(
                 f"vrg-issue-create: --body-file is not compatible with --kind {args.kind} "
@@ -127,7 +162,6 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        deps: list[epics.IssueRef] = []
         if args.kind in _OPERATIONAL_KINDS:
             try:
                 deps = [epics.parse_issue_ref(ref, default_repo=repo) for ref in args.blocked_by]

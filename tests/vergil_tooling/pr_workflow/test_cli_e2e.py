@@ -207,6 +207,96 @@ def test_report_ready_rejects_operational_task(
     assert "operational task" in capsys.readouterr().err.lower()
 
 
+def test_report_ready_bare_number_epic_is_caught(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #2213 regression: a bare --issue number must be resolved to '#N' before the
+    # epic guard. Patching the deeper epics.is_epic (not is_epic_linkage) exercises
+    # the real parse_issue_ref path — which rejects a bare number, so on the old
+    # code the guard silently no-ops and this would pass through (rc 0).
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=True) as mock_is_epic,
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "120",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "epic" in err.lower()
+    assert "#120" in err  # the canonical ref, not a doubled '##120'
+    # The guard actually reached the epic-ness check with a parseable ref.
+    assert mock_is_epic.call_args.args[0].number == 120
+
+
+def test_report_ready_bare_number_operational_is_caught(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # #2213 regression, operational variant: a bare --issue number must resolve
+    # before the operational guard. epics.is_operational is patched so real
+    # parse_issue_ref runs; the epic check (is_epic) is left to return False.
+    with (
+        patch("vergil_tooling.bin.vrg_pr_workflow.github.current_repo", return_value="org/repo"),
+        patch("vergil_tooling.lib.epics.is_epic", return_value=False),
+        patch("vergil_tooling.lib.epics.is_operational", return_value=True),
+    ):
+        rc = vrg_pr_workflow.main(
+            [
+                "--base",
+                "develop",
+                "report-ready",
+                "--issue",
+                "120",
+                "--title",
+                "t",
+                "--summary",
+                "s",
+                "--notes",
+                "n",
+            ]
+        )
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "operational task" in err.lower()
+    assert "#120" in err
+
+
+def test_report_ready_rejects_malformed_issue(
+    in_git_repo: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A --issue that is neither a number nor a cross-repo ref fails loudly at
+    # report time (WorkflowError), rather than being stored and deferred (#2213).
+    rc = vrg_pr_workflow.main(
+        [
+            "--base",
+            "develop",
+            "report-ready",
+            "--issue",
+            "not-a-ref",
+            "--title",
+            "t",
+            "--summary",
+            "s",
+            "--notes",
+            "n",
+        ]
+    )
+    assert rc == 1
+    assert "must be a number" in capsys.readouterr().err.lower()
+
+
 def test_report_ready_rejects_cross_repo_issue(
     in_git_repo: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

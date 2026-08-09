@@ -154,7 +154,11 @@ ad-hoc epic ends up holding only its still-open children.
 - **Idempotent and dry-run by default.** Every step is check-before-act
   (archives are create-if-missing by exact title, an already-parented child is
   skipped, an already-closed past archive is skipped), so a run that dies
-  partway is repaired by the next one. Empty quarters get no archive.
+  partway is repaired by the next one. Empty quarters get no archive. A single
+  drain creates **at most one archive per quarter** however many same-quarter
+  children it moves, and if a duplicate archive ever exists the **oldest is
+  reused** rather than the run failing on the ambiguity — so the drain is safe
+  to re-run and self-heals.
 
 #### Running the drain
 
@@ -358,7 +362,10 @@ Shared rules (both kinds):
   epic until it succeeds, so rollup is honest.
 - **Records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads them
   to report each as *runnable* (dependencies closed) or *blocked*, tagged by
-  kind.
+  kind. The same `Blocked-by:` reflink works on a **plain task** too — pass
+  `--blocked-by` to `vrg-issue-create --kind task` and it is appended to the task
+  body — so an epic driver's plain-task frontier (which open tasks have every
+  dependency closed) is machine-derivable, not inferred from plan prose.
 
 Create one with the sanctioned path — never hand-roll the body:
 

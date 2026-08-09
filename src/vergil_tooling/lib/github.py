@@ -132,6 +132,25 @@ def is_public(name_with_owner: str) -> bool:
     return repo_visibility(name_with_owner) == "PUBLIC"
 
 
+def repo_exists(owner: str, name: str) -> bool:
+    """True iff ``<owner>/<name>`` is a real repository the caller can see.
+
+    A direct existence probe, not list membership: a **private** repo the caller
+    is authorized for still returns True, so a self-homed private repo is never
+    wrongly reported absent (which ``list_org_repos`` would do when it cannot see
+    private repos). No silent failure — only GitHub's genuine "not found" answer
+    yields False; every other error (auth, network, rate limit) propagates.
+    """
+    try:
+        repo_visibility(f"{owner}/{name}")
+    except GitHubAPIError as exc:
+        detail = ((exc.stderr or "") + (exc.stdout or "")).lower()
+        if "could not resolve to a repository" in detail or "not found" in detail:
+            return False
+        raise
+    return True
+
+
 def _jwt_api_request(endpoint: str, jwt_token: str, *, method: str = "GET") -> Any:
     """Make a GitHub API request with JWT Bearer authentication.
 
