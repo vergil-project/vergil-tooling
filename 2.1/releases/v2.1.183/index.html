@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.0.9/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.0.7/">
+        <link rel="next" href="../v2.1.182/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.0.8 - VERGIL Tooling</title>
+        <title>2.1.183 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-208-2026-05-14" class="md-skip">
+        <a href="#release-21183-2026-08-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.0.8
+              2.1.183
             
           </span>
         </div>
@@ -1232,10 +1232,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.183/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.183
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1251,6 +1278,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -8288,37 +8357,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.0.8
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.0.8/" class="md-nav__link">
         
   
   
@@ -8334,59 +8376,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13005,17 +12994,6 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#chores" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Chores
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#documentation" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -13043,40 +13021,18 @@
 
 
 
-<h1 id="release-208-2026-05-14">Release 2.0.8 (2026-05-14)<a class="headerlink" href="#release-208-2026-05-14" title="Permanent link">&para;</a></h1>
+<h1 id="release-21183-2026-08-09">Release 2.1.183 (2026-08-09)<a class="headerlink" href="#release-21183-2026-08-09" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>replace hardcoded wphillipmoore/<em> with vergil-project/</em> in action patterns</strong>
-The base action patterns list and a stale GitHub Pages URL still referenced the pre-migration wphillipmoore org. Repos whose GitHub settings had been correctly updated to vergil-project/* failed the audit because the desired state expected the old org name. Ref #766</li>
-</ul>
-<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>bump version to 2.0.8</strong></li>
+<li><strong>ensure ad-hoc archive once per quarter; tolerate duplicate archives (#2698) (#2701)</strong></li>
 </ul>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add .github profile repository design spec (#753)</strong></li>
-<li><strong>apply pushback review fixes to .github profile repo design spec</strong>
-Resolved seven issues from spec pushback review:</li>
-<li>Fix vergil.toml: primary-language is required, use 'none' for common-checks-only</li>
-<li>Remove stale risk entry for missing primary_language, replace with CI verification note</li>
-<li>Add phase boundary to Section 4 (cross-repo follow-up work)</li>
-<li>Specify vergil-claude-plugin by name in SECURITY.md scope</li>
-<li>Assert GitHub Discussions as a prerequisite, add to rollout order</li>
-<li>Add full path to career-strategy draft for profile README source</li>
-<li>
-<p>Flag CI workflow with primary-language=none for implementation-time verification</p>
-</li>
-<li>
-<p><strong>add .github profile repository implementation plan (#753)</strong></p>
-</li>
-<li><strong>apply alignment review fixes to .github profile repo spec and plan</strong>
-Resolved four issues from alignment review:</li>
-<li>Fix LICENSE type in spec: MIT -&gt; GPL-3 (matches actual repos)</li>
-<li>Add missing LICENSE dependency to spec: vergil-docker and vergil-claude-plugin need GPL-3</li>
-<li>Add Task 0 prerequisite to plan: config parser must accept [dependencies].vergil before Task 4</li>
-<li>Confirmed release-oriented vergil.toml values are intentional (shrink-fit later)</li>
+<li><strong>document continuous ad-hoc epic archiving (#2676) (#2696)</strong>
+Reflect the shipped continuous ad-hoc archiving feature (epic vergil-project/.github#238) in the GitHub issue standard.</li>
 </ul>
+<p>Add an 'Ad-hoc epic archiving' subsection describing per-quarter archive epics (Epic (ad hoc): <repo> — <YYYY>-Qn), closedAt-quarter bucketing, past-closed/current-open lifecycle, the idempotent dry-run vrg-adhoc-epic archive subcommand (--repo/--all-in/--apply), and the two automation call sites (issues.closed rollup and the daily vrg-epic-audit --close sweep). Cross-link from the perpetual-epic definition and the compliance invariant.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.183/v2.1.183-ci-evidence.tar.gz">Download →</a></p>
 
 
 
