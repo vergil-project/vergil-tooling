@@ -239,6 +239,129 @@ def test_kind_defaults_to_task_without_validation_label() -> None:
     assert mock_create.call_args.kwargs["labels"] == ["bug"]  # no validation label added
 
 
+def test_plain_task_stamps_blocked_by_reflink_from_body() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--title",
+                "T",
+                "--body",
+                "Do the thing.",
+                "--blocked-by",
+                "org/repo#5",
+                "--blocked-by",
+                "org/repo#6",
+            ]
+        )
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["body_file"] is None  # inlined so the appended reflinks survive
+    body = kwargs["body"]
+    assert body.startswith("Do the thing.")  # caller's body preserved
+    assert "Blocked-by: org/repo#5" in body
+    assert "Blocked-by: org/repo#6" in body
+
+
+def test_plain_task_blocked_by_with_empty_body_is_just_the_section() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "org/repo#5"])
+    assert rc == 0
+    body = mock_create.call_args.kwargs["body"]
+    assert body.startswith("## Dependencies")
+    assert "Blocked-by: org/repo#5" in body
+
+
+def test_plain_task_blocked_by_appends_to_body_file(tmp_path: Path) -> None:
+    body_file = tmp_path / "b.md"
+    body_file.write_text("From a file.\n")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--title",
+                "T",
+                "--body-file",
+                str(body_file),
+                "--blocked-by",
+                "org/repo#5",
+            ]
+        )
+    assert rc == 0
+    kwargs = mock_create.call_args.kwargs
+    assert kwargs["body_file"] is None  # file contents were read and inlined
+    body = kwargs["body"]
+    assert body.startswith("From a file.")
+    assert "Blocked-by: org/repo#5" in body
+
+
+def test_plain_task_without_blocked_by_leaves_body_file_passthrough(tmp_path: Path) -> None:
+    body_file = tmp_path / "b.md"
+    body_file.write_text("From a file.\n")
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.epics.resolve_epic_ref", return_value=EPIC),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL) as mock_create,
+        patch(f"{_MOD}.epics.add_child"),
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--body-file", str(body_file)])
+    assert rc == 0
+    # No --blocked-by: the file is handed straight to gh, unchanged.
+    assert mock_create.call_args.kwargs["body_file"] == str(body_file)
+
+
+def test_plain_task_rejects_invalid_blocked_by() -> None:
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(["--epic", "adhoc", "--title", "T", "--blocked-by", "not-a-ref"])
+    assert rc == 1
+    mock_create.assert_not_called()
+
+
+def test_plain_task_blocked_by_reports_unreadable_body_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    missing = tmp_path / "nope.md"
+    with (
+        patch(f"{_MOD}.github.current_repo", return_value="org/repo"),
+        patch(f"{_MOD}.github.create_issue") as mock_create,
+    ):
+        rc = main(
+            [
+                "--epic",
+                "adhoc",
+                "--title",
+                "T",
+                "--body-file",
+                str(missing),
+                "--blocked-by",
+                "org/repo#5",
+            ]
+        )
+    assert rc == 1
+    mock_create.assert_not_called()
+    assert "cannot read --body-file" in capsys.readouterr().err
+
+
 def test_main_adhoc_sentinel_skips_cross_org_guard() -> None:
     # 'adhoc' resolves within the repo's org (.github), so it must skip the
     # explicit-ref cross-org guard and link.

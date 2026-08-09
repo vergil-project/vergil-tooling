@@ -165,6 +165,35 @@ def operational_status(epic: epics.IssueRef) -> OperationalStatus:
     )
 
 
+@dataclass(frozen=True)
+class ChildStatus:
+    """An epic's open children, split runnable vs blocked by their Blocked-by deps."""
+
+    epic: epics.IssueRef
+    runnable: tuple[epics.IssueRef, ...]  # open children, all blockers closed
+    blocked: tuple[epics.IssueRef, ...]  # open children, a blocker still open
+
+
+def child_status(epic: epics.IssueRef) -> ChildStatus:
+    """Classify *every* open child of *epic* as runnable vs blocked.
+
+    Where :func:`operational_status` is scoped to operational children (its
+    runnable/blocked split feeds the "operation-pending" report), this classifies
+    *all* open children — plain tasks included — through the already-generic
+    :func:`epics.all_blockers_closed`. It makes an epic driver's plain-task
+    frontier (the open tasks whose every ``Blocked-by`` dependency is closed)
+    machine-derivable instead of inferred from plan prose (#2269).
+    """
+    runnable: list[epics.IssueRef] = []
+    blocked: list[epics.IssueRef] = []
+    for child in epics.child_states(epic):
+        if child.state != "OPEN":
+            continue
+        target = runnable if epics.all_blockers_closed(child.ref) else blocked
+        target.append(child.ref)
+    return ChildStatus(epic=epic, runnable=tuple(runnable), blocked=tuple(blocked))
+
+
 def operational_pending(org: str, *, home: str | None = None) -> list[OperationalStatus]:
     """Open finite epics with outstanding operational children.
 
