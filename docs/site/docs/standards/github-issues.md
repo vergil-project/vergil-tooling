@@ -154,7 +154,11 @@ ad-hoc epic ends up holding only its still-open children.
 - **Idempotent and dry-run by default.** Every step is check-before-act
   (archives are create-if-missing by exact title, an already-parented child is
   skipped, an already-closed past archive is skipped), so a run that dies
-  partway is repaired by the next one. Empty quarters get no archive.
+  partway is repaired by the next one. Empty quarters get no archive. A single
+  drain creates **at most one archive per quarter** however many same-quarter
+  children it moves, and if a duplicate archive ever exists the **oldest is
+  reused** rather than the run failing on the ambiguity — so the drain is safe
+  to re-run and self-heals.
 
 #### Running the drain
 
