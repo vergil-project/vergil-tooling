@@ -1166,6 +1166,8 @@
       
         
       
+        
+      
     
     
     
@@ -1218,6 +1220,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.184/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.184
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13628,7 +13658,11 @@ ad-hoc epic ends up holding only its still-open children.</p>
 <li><strong>Idempotent and dry-run by default.</strong> Every step is check-before-act
   (archives are create-if-missing by exact title, an already-parented child is
   skipped, an already-closed past archive is skipped), so a run that dies
-  partway is repaired by the next one. Empty quarters get no archive.</li>
+  partway is repaired by the next one. Empty quarters get no archive. A single
+  drain creates <strong>at most one archive per quarter</strong> however many same-quarter
+  children it moves, and if a duplicate archive ever exists the <strong>oldest is
+  reused</strong> rather than the run failing on the ambiguity — so the drain is safe
+  to re-run and self-heals.</li>
 </ul>
 <h4 id="running-the-drain">Running the drain<a class="headerlink" href="#running-the-drain" title="Permanent link">&para;</a></h4>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># Dry-run: report which closed children move to which quarter archive,</span>
@@ -13830,7 +13864,10 @@ validate</strong>, each <code>Blocked-by</code> the last.</p>
   epic until it succeeds, so rollup is honest.</li>
 <li><strong>Records dependencies as <code>Blocked-by:</code> reflinks.</strong> <code>vrg-epic-audit</code> reads them
   to report each as <em>runnable</em> (dependencies closed) or <em>blocked</em>, tagged by
-  kind.</li>
+  kind. The same <code>Blocked-by:</code> reflink works on a <strong>plain task</strong> too — pass
+  <code>--blocked-by</code> to <code>vrg-issue-create --kind task</code> and it is appended to the task
+  body — so an epic driver's plain-task frontier (which open tasks have every
+  dependency closed) is machine-derivable, not inferred from plan prose.</li>
 </ul>
 <p>Create one with the sanctioned path — never hand-roll the body:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-issue-create<span class="w"> </span>--epic<span class="w"> </span>&lt;org&gt;/.github#N<span class="w"> </span>--repo<span class="w"> </span>&lt;org&gt;/&lt;repo&gt;<span class="w"> </span><span class="se">\</span>
