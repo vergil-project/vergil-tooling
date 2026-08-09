@@ -127,7 +127,65 @@ cross-forge fallback.
   and it **never auto-closes**. Target it with `vrg-issue-create --epic adhoc`.
   (The older `standing` alias is **retired** — only `ad-hoc` remains.)
   `vrg-adhoc-epic ensure --repo <owner>/<repo>` creates a repo's ad-hoc epic
-  on demand (idempotent).
+  on demand (idempotent). Its *closed* children are continuously drained into
+  per-quarter archive epics so the live umbrella shows only in-flight work — see
+  [Ad-hoc epic archiving](#ad-hoc-epic-archiving).
+
+### Ad-hoc epic archiving
+
+A live ad-hoc epic accumulates closed children forever, so its "what's in
+flight" signal drowns in finished work. To keep the umbrella honest, closed
+children are **continuously drained into per-quarter archive epics** — a live
+ad-hoc epic ends up holding only its still-open children.
+
+- **Archive epics** are titled `Epic (ad hoc): <repo> — <YYYY>-Q<n>` (the
+  separator is a space, an em-dash `—`, and a space). They live in the same
+  resolved home as the live epic and carry the `epic` + `ad-hoc` labels.
+- **Bucketing is by close quarter.** Each closed child is re-parented into the
+  archive for the quarter of its `closedAt` timestamp (UTC), so the `YYYY-Qn`
+  archive holds the ad-hoc work that *finished* in that quarter — not the work
+  filed in it.
+- **The live epic is never renamed, recreated, or closed.** It only loses its
+  closed children to the archives; it stays the one perpetual umbrella per repo.
+- **Past-quarter archives are closed; the current-quarter archive stays open.**
+  A closed archive is a stable historical record; the current one keeps
+  receiving this quarter's closures. A late straggler whose close-quarter
+  archive was already closed is re-parented into it regardless.
+- **Idempotent and dry-run by default.** Every step is check-before-act
+  (archives are create-if-missing by exact title, an already-parented child is
+  skipped, an already-closed past archive is skipped), so a run that dies
+  partway is repaired by the next one. Empty quarters get no archive.
+
+#### Running the drain
+
+```bash
+# Dry-run: report which closed children move to which quarter archive,
+# which archives would be created, and which past archives would close.
+vrg-adhoc-epic archive --repo <owner>/<repo>
+
+# Apply the moves and closes.
+vrg-adhoc-epic archive --repo <owner>/<repo> --apply
+
+# Visibility-aware sweep across every repo in an org.
+vrg-adhoc-epic archive --all-in <ORG> --apply
+```
+
+`--repo` targets a single repo; `--all-in <ORG>` sweeps every repo in the org,
+resolving each repo's ad-hoc home by visibility. Without `--apply` the command
+mutates nothing.
+
+#### Automation (no new schedule)
+
+Two existing call sites keep archives current with no dedicated cron:
+
+- **Steady state — on close.** When a child of a *live* ad-hoc epic closes, the
+  `issues.closed` rollup path (`vrg-epic-rollup`) archives just that child into
+  its close-quarter archive.
+- **Backstop + backfill.** The daily `vrg-epic-audit --close` sweep runs the
+  org-wide drain: it distributes any backlog the steady-state path missed and
+  closes past-quarter archives. This is the same trusted sweep that closes other
+  provably-complete drift, so it is allowed to mutate under the scheduled
+  automation signal.
 
 ### Creating an epic (the `epic-create` workflow)
 
@@ -219,7 +277,8 @@ relocating epics when a repo's visibility changes.
   issue there is a stray.
 - **An epic is never closed while a child is open.** A closed finite epic with an
   open child is a violation (perpetual `ad-hoc` epics are exempt — they never
-  roll up).
+  roll up; their closed children are drained into per-quarter archive epics
+  instead, see [Ad-hoc epic archiving](#ad-hoc-epic-archiving)).
 
 ## Intake queues
 

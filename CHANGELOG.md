@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.183] - 2026-08-09
+
+### Bug fixes
+
+- ensure ad-hoc archive once per quarter; tolerate duplicate archives (#2698) (#2701)
+
+### Documentation
+
+- document continuous ad-hoc epic archiving (#2676) (#2696)
+
 ## [2.1.182] - 2026-08-08
 
 ### Bug fixes

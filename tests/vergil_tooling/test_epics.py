@@ -847,6 +847,39 @@ def test_find_adhoc_epic_repo_without_owner_raises() -> None:
         epics.find_adhoc_epic("tooling")
 
 
+def test_find_epic_by_title_prefer_oldest_returns_lowest() -> None:
+    # Two open rows share the archive title (the list-consistency race that
+    # produced duplicate archives). With prefer_oldest the lowest-numbered wins;
+    # without it the ambiguity still raises (live-epic finders keep that guard).
+    title = "Epic (ad hoc): tooling — 2026-Q3"
+    rows = [{"number": 91, "title": title}, {"number": 88, "title": title}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert epics._find_epic_by_title("org/.github", title, prefer_oldest=True) == IssueRef(
+            "org", ".github", 88
+        )
+    with (
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        pytest.raises(ValueError, match="multiple ad-hoc epics"),
+    ):
+        epics._find_epic_by_title("org/.github", title)
+
+
+def test_ensure_adhoc_archive_reuses_oldest_duplicate() -> None:
+    # Duplicate archives already exist; ensure_adhoc_archive reuses the oldest
+    # (lowest-numbered) and never creates another.
+    title = "Epic (ad hoc): tooling — 2026-Q3"
+    rows = [{"number": 91, "title": title}, {"number": 88, "title": title}]
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=rows),
+        patch("vergil_tooling.lib.github.create_issue") as mock_create,
+    ):
+        assert epics.ensure_adhoc_archive("org/tooling", "2026-Q3") == IssueRef(
+            "org", ".github", 88
+        )
+    mock_create.assert_not_called()
+
+
 def test_ensure_adhoc_archive_creates_stamped_title() -> None:
     created = "https://github.com/org/.github/issues/88"
     with (
@@ -1007,6 +1040,57 @@ def test_apply_drain_skips_archive_equal_to_live() -> None:
         epics.apply_adhoc_drain("org/tooling", plan)
     mock_reparent.assert_not_called()  # defensive: never re-parent into the live epic
     mock_run.assert_not_called()
+
+
+def test_apply_drain_ensures_archive_once_per_quarter() -> None:
+    # Many closed children in the SAME quarter must ensure that quarter's archive
+    # exactly ONCE (cache by quarter), then re-parent each child — the fix for the
+    # duplicate-archive race (#2698).
+    live = IssueRef("org", ".github", 40)
+    arch = IssueRef("org", ".github", 88)
+    kids = [IssueRef("org", ".github", n) for n in (101, 102, 103)]
+    plan = epics.DrainPlan(
+        live=live,
+        moves=[(k, "2026-Q2") for k in kids],
+        close=[],
+    )
+    with (
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
+    assert mock_reparent.call_count == len(kids)
+    assert [c.args for c in mock_reparent.call_args_list] == [(arch, k) for k in kids]
+
+
+def test_apply_drain_two_quarters_ensures_twice() -> None:
+    # Moves spanning two distinct quarters ensure once PER quarter (2 total).
+    live = IssueRef("org", ".github", 40)
+    archives = {
+        "2026-Q2": IssueRef("org", ".github", 88),
+        "2026-Q3": IssueRef("org", ".github", 91),
+    }
+    plan = epics.DrainPlan(
+        live=live,
+        moves=[
+            (IssueRef("org", ".github", 101), "2026-Q2"),
+            (IssueRef("org", ".github", 102), "2026-Q2"),
+            (IssueRef("org", ".github", 103), "2026-Q3"),
+        ],
+        close=[],
+    )
+    with (
+        patch(
+            "vergil_tooling.lib.epics.ensure_adhoc_archive",
+            side_effect=lambda _repo, q: archives[q],
+        ) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    assert mock_ens.call_count == 2
+    assert {c.args[1] for c in mock_ens.call_args_list} == {"2026-Q2", "2026-Q3"}
+    assert mock_reparent.call_count == 3
 
 
 def test_drain_adhoc_repo_applies_when_apply_true() -> None:

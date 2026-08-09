@@ -408,12 +408,16 @@ _ADHOC_EPIC_BODY = (
 _ADHOC_ARCHIVE_RE = re.compile(r"^Epic \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
 
 
-def _find_epic_by_title(home: str, title: str) -> IssueRef | None:
+def _find_epic_by_title(home: str, title: str, *, prefer_oldest: bool = False) -> IssueRef | None:
     """Return the open ``ad-hoc`` epic in *home* whose title is exactly *title*.
 
     Shared title search for the ad-hoc epic finders. Scoped to open ``epic`` +
-    ``ad-hoc`` issues in *home*; returns None when absent, raises when two share
-    the title (ambiguous — name an explicit ref rather than guess).
+    ``ad-hoc`` issues in *home*; returns None when absent. On more than one match
+    the default raises (ambiguous — name an explicit ref rather than guess), which
+    is correct for the *live* ad-hoc epic where two rows is real corruption. When
+    *prefer_oldest* is True the lowest-numbered match is returned instead: archive
+    resolution tolerates the transient duplicate archives produced by the
+    list-consistency race (#2698) and reuses the oldest.
     """
     owner, home_repo = home.split("/", 1)
     raw: Any = github.read_json(
@@ -436,6 +440,9 @@ def _find_epic_by_title(home: str, title: str) -> IssueRef | None:
         else []
     )
     if len(rows) > 1:
+        if prefer_oldest:
+            oldest = min(int(r["number"]) for r in rows)
+            return IssueRef(owner=owner, repo=home_repo, number=oldest)
         nums = ", ".join(f"#{r['number']}" for r in rows)
         raise ValueError(
             f"multiple ad-hoc epics titled {title!r} in {home} ({nums}) — pass an explicit --epic"
@@ -494,13 +501,14 @@ def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
 
     The archive is the stamped sibling of the live ad-hoc epic — same home, same
     ``epic`` + ``ad-hoc`` labels — into which closed children of *quarter* are
-    re-parented. Idempotent: an existing stamped archive is reused.
+    re-parented. Idempotent: an existing stamped archive is reused; pre-existing
+    duplicate archives (the list-consistency race, #2698) collapse to the oldest.
     """
     owner, bare = target_repo.split("/", 1)
     home = resolve_epic_home(owner, bare)
     home_repo = home.split("/", 1)[1]
     title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
-    existing = _find_epic_by_title(home, title)
+    existing = _find_epic_by_title(home, title, prefer_oldest=True)
     if existing is not None:
         return existing
     url = github.create_issue(
@@ -586,9 +594,19 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
     call, no orphan window, no separate remove (issue #2691). Past archives are
     then closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in
     the plan is a correct "quarter is past" test.
+
+    Each distinct quarter's archive is ensured **once** and cached, not once per
+    child: :func:`ensure_adhoc_archive` is find-or-create by title, and the list
+    index lags issue creation, so calling it per child let many same-quarter
+    children each create their own archive before the first became visible
+    (duplicate archives, #2698). Ensuring once per quarter closes that race.
     """
+    archives: dict[str, IssueRef] = {}
     for child, quarter in plan.moves:
-        archive = ensure_adhoc_archive(target_repo, quarter)
+        archive = archives.get(quarter)
+        if archive is None:
+            archive = ensure_adhoc_archive(target_repo, quarter)
+            archives[quarter] = archive
         if archive == plan.live:
             continue  # defensive: never re-parent into the live epic
         reparent_child(archive, child)
