@@ -556,6 +556,44 @@ def test_operational_status_tags_kind() -> None:
     assert status.by_kind[dep] == "deployment"
 
 
+def test_child_status_classifies_every_open_child() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    plain_runnable = epics.IssueRef("org", "repo", 10)
+    plain_blocked = epics.IssueRef("org", "repo", 11)
+    op_runnable = epics.IssueRef("org", "repo", 12)  # operational, but not special-cased here
+    children = [
+        epics.ChildState(plain_runnable, "OPEN"),
+        epics.ChildState(plain_blocked, "OPEN"),
+        epics.ChildState(op_runnable, "OPEN"),
+        epics.ChildState(epics.IssueRef("org", "repo", 13), "CLOSED"),  # closed -> ignored
+    ]
+
+    def all_blockers_closed(ref: epics.IssueRef) -> bool:
+        return ref.number != 11  # only #11 is still blocked
+
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.all_blockers_closed", side_effect=all_blockers_closed),
+    ):
+        status = epic_audit.child_status(epic)
+    # Every open child is classified, plain tasks included — no kind gating.
+    assert status.runnable == (plain_runnable, op_runnable)
+    assert status.blocked == (plain_blocked,)
+
+
+def test_child_status_empty_when_no_open_children() -> None:
+    epic = epics.IssueRef("org", ".github", 99)
+    children = [epics.ChildState(epics.IssueRef("org", "repo", 1), "CLOSED")]
+    with (
+        patch("vergil_tooling.lib.epics.child_states", return_value=children),
+        patch("vergil_tooling.lib.epics.all_blockers_closed", return_value=True) as mock_blockers,
+    ):
+        status = epic_audit.child_status(epic)
+    assert status.runnable == ()
+    assert status.blocked == ()
+    mock_blockers.assert_not_called()  # closed children are never queried
+
+
 def test_operational_pending_collects_only_epics_with_open_validations() -> None:
     val = epics.IssueRef("org", "repo", 7)
 

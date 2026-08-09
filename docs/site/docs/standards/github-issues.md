@@ -362,7 +362,10 @@ Shared rules (both kinds):
   epic until it succeeds, so rollup is honest.
 - **Records dependencies as `Blocked-by:` reflinks.** `vrg-epic-audit` reads them
   to report each as *runnable* (dependencies closed) or *blocked*, tagged by
-  kind.
+  kind. The same `Blocked-by:` reflink works on a **plain task** too — pass
+  `--blocked-by` to `vrg-issue-create --kind task` and it is appended to the task
+  body — so an epic driver's plain-task frontier (which open tasks have every
+  dependency closed) is machine-derivable, not inferred from plan prose.
 
 Create one with the sanctioned path — never hand-roll the body:
 
