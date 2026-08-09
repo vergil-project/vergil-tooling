@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.123/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.121/">
+        <link rel="next" href="../v2.1.183/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.122 - VERGIL Tooling</title>
+        <title>2.1.184 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21122-2026-07-09" class="md-skip">
+        <a href="#release-21184-2026-08-09" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.122
+              2.1.184
             
           </span>
         </div>
@@ -1234,10 +1234,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.184/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.184
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1253,6 +1280,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2970,37 +3050,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.122
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.122/" class="md-nav__link">
         
   
   
@@ -3016,59 +3069,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13073,37 +13073,40 @@
 
 
 
-<h1 id="release-21122-2026-07-09">Release 2.1.122 (2026-07-09)<a class="headerlink" href="#release-21122-2026-07-09" title="Permanent link">&para;</a></h1>
+<h1 id="release-21184-2026-08-09">Release 2.1.184 (2026-08-09)<a class="headerlink" href="#release-21184-2026-08-09" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>refuse a cross-repo closing issue in submit-pr / report-ready (#2246)</strong>
-A PR can only <code>Closes</code> an issue in its own repository: GitHub scopes the close keyword to same-repo linkage, and issue numbers are not unique across repos, so a cross-repo close would shut an unrelated same-numbered issue — a genuine mis-close hazard, not a cosmetic slip. The existing guards covered is-epic, is-operational, and cross-org (single owner), but not cross-repo within an org.</li>
+<li><strong>resolve a bare --issue N before the report-ready epic/operational guards (#2708)</strong>
+report-ready's epic and operational guards called is_epic_linkage/is_operational_task with the raw --issue string. A bare number (e.g. 120) has no '#', so epics.parse_issue_ref rejects it and the guard silently returned False — letting a bare-number epic or operational issue bypass the report-time guard entirely. Only the submit-time guard, which resolves the ref first, was authoritative.</li>
 </ul>
-<p>Add a fourth guard mirroring the epic/operational rejects: if the resolved --issue names a repo different from the PR's own repo, refuse and direct the caller to file the task in this repo and reference the other issue via a comment or a Ref line. It runs before the epic/operational guards because it is a cheap, local structural check with no authenticated gh call, and short-circuiting a cross-repo ref avoids an epic-ness lookup against a repo the token may not cover. A bare issue number resolves to the current repo and always passes; the compare is case-insensitive to avoid a false refusal on a differently cased spelling. report-ready is best-effort: an unresolvable current repo defers to submit-pr's authoritative check.</p>
+<p>Resolve --issue to a canonical ref (bare number -&gt; '#N') before the guards, mirroring vrg-submit-pr. The raw --issue is still what gets stored, because vrg-submit-pr's resolve_issue_ref re-normalizes it and rejects a leading '#'; only the guards see the canonical form.</p>
+<ul>
+<li>pr_body: extract normalize_issue_ref (raises ValueError) as the shared normalizer; resolve_issue_ref now delegates and converts to SystemExit so vrg-submit-pr's behavior is unchanged. report-ready wraps the ValueError as a WorkflowError, so a malformed --issue now fails loud at report time instead of being stored and deferred.</li>
+<li>
+<p>The guards take the canonical issue_ref and no longer double the '#' in their messages. The cross-repo guard's now-unreachable unparseable-ref branch is removed (normalization guarantees a parseable ref).</p>
+</li>
+<li>
+<p><strong>derive ad-hoc archive repo from epic title; skip non-repo epics (#2709) (#2712)</strong></p>
+</li>
+</ul>
 <h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>generalize the validation-task doc to operational tasks (#2240)</strong>
-Generalize the GitHub Issue Standards 'Validation tasks' section (and definition) to 'Operational tasks' covering both kinds: validation (verify) and deployment (make usable), the merged-vs-deployed / implement-&gt;deploy-&gt;validate model, the shared not-PR-workable/closes-on-SUCCESS/gates-rollup rules, --kind {validation|deployment} creation, and the deployment autonomy boundary (release is a human-gated precondition). Doc-review bookend for epic vergil-project/.github#124. Ref vergil-project/.github#127.</li>
+<li><strong>note once-per-quarter archive guarantee and duplicate tolerance (#2697) (#2705)</strong>
+Documentation-review bookend of epic #259. Extends the ad-hoc archiving 'Idempotent' note to reflect the hardening from #2698: a single drain creates at most one archive per quarter regardless of same-quarter child count, and a pre-existing duplicate archive is tolerated (oldest reused) rather than failing the run.</li>
 </ul>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<p><strong>add visibility-based epic-home resolver (#2239)</strong>
-Add resolve_epic_home(org, target_repo) in lib/epics.py and a memoized, fail-loud repo_visibility/is_public in lib/github.py. A public target homes centrally in <org>/.github (unchanged); a private target with a public .github homes its epics in itself; a private .github routes everything to .github. INTERNAL counts as private. Foundational for epic #130.</p>
+<p><strong>support --blocked-by on plain tasks and classify all open children (#2707)</strong>
+The Blocked-by dependency machinery (blockers_of/all_blockers_closed) is already generic, but the creation flag and the audit's runnable/blocked split were gated to operational task kinds. Unlock both edges for plain tasks so an epic driver's plain-task frontier is machine-derivable from the issue graph instead of inferred from plan prose.</p>
 </li>
 <li>
-<p><strong>explicit --repo target, resolver-derived home (#2241)</strong>
-vrg-epic-create takes an explicit --repo owner/repo target (default: current repo) and derives the epic home via epics.resolve_epic_home, echoing the resolved home and its visibility before creating. A public target still homes in <org>/.github; a private target homes in itself. Replaces the detect_org/.github hard-coding. Task of epic #130.</p>
+<p>vrg-issue-create: --blocked-by now works on --kind task, appending the same portable Blocked-by: reflink (epics.render_blocked_by) the operational scaffolds use to the caller's body (--body or --body-file). Previously it was silently ignored for plain tasks. Retrospective still rejects it (an ordinary PR task takes no merge-first deps).</p>
 </li>
-<li>
-<p><strong>home ad-hoc epics via the resolver (self for private repos) (#2242)</strong>
-ensure_adhoc_epic now derives its home from resolve_epic_home: a public repo's ad-hoc epic stays in <org>/.github; a private repo's homes in itself (the returned IssueRef carries the resolved home repo). vrg-adhoc-epic echoes the resolved home + visibility and guards a malformed --repo. Task of epic #130.</p>
-</li>
-<li>
-<p><strong>flag epics outside .github only for public repos (#2245)</strong>
-Generalize invariant 1 (epic_outside_dotgithub) for visibility-based homes: an epic outside <org>/.github is a violation only when its repo is public; a private repo legitimately self-homes its epics. Visibility is probed per repo (memoized) and fail-loud on a probe error, so a genuinely leaked-out public epic is never masked. Render text notes '(public repos)'. Task of epic #130.</p>
-</li>
+<li>epic_audit.child_status(): a sibling of operational_status that classifies EVERY open child runnable-vs-blocked via the generic all_blockers_closed. operational_status stays operational-scoped so operational_pending keeps its 'operation-pending' meaning.</li>
+<li>Document the plain-task reflink in the github-issues standard.</li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.184/v2.1.184-ci-evidence.tar.gz">Download →</a></p>
 
 
 
