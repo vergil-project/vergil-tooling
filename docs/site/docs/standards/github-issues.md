@@ -147,6 +147,13 @@ ad-hoc epic ends up holding only its still-open children.
   filed in it.
 - **The live epic is never renamed, recreated, or closed.** It only loses its
   closed children to the archives; it stays the one perpetual umbrella per repo.
+- **Only canonical per-repo ad-hoc epics are archived.** Both the batch drain and
+  the on-close event path key on the repo named in the `Epic (ad hoc): <repo>`
+  title, so a closed child always lands in *its own repo's* quarter archive — even
+  for a public repo whose ad-hoc epic is homed centrally in `.github`. A
+  special-purpose `ad-hoc`-labelled epic whose title bare-name is a description
+  rather than a real repo (e.g. a standing reliability collection) is **left
+  untouched** — it is not treated as a drainable ad-hoc epic.
 - **Past-quarter archives are closed; the current-quarter archive stays open.**
   A closed archive is a stable historical record; the current one keeps
   receiving this quarter's closures. A late straggler whose close-quarter
