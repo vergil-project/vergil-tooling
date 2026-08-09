@@ -560,7 +560,33 @@ def test_rollup_holds_epic_open_while_validation_child_open() -> None:
     mock_run.assert_not_called()  # epic stays open — a validation child is still open
 
 
-def test_rollup_archives_closed_child_under_live_adhoc() -> None:
+def test_rollup_public_repo_epic_archives_into_own_bucket() -> None:
+    # A public repo's ad-hoc epic lives in <org>/.github (so parent.repo is
+    # ".github"), but the archive target must come from the epic TITLE's bare
+    # name — the child is filed into <org>/some-repo, NOT the ".github" bucket
+    # (#2709). ``some-repo`` is a real repo, so the drain proceeds.
+    task = IssueRef("org", ".github", 101)
+    live = IssueRef("org", ".github", 40)
+    arch = IssueRef("org", "some-repo", 88)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): some-repo"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.rollup(task)
+    mock_exists.assert_called_once_with("org", "some-repo")
+    mock_ens.assert_called_once_with("org/some-repo", "2026-Q2")
+    mock_reparent.assert_called_once_with(arch, task)
+
+
+def test_rollup_dotgithub_own_epic_unchanged() -> None:
+    # Regression guard: the .github repo's OWN ad-hoc epic has bare ".github",
+    # so the target resolves to "org/.github" exactly as before — the one case
+    # the old parent.repo-based path got right.
     task = IssueRef("org", ".github", 101)
     live = IssueRef("org", ".github", 40)
     arch = IssueRef("org", ".github", 88)
@@ -568,6 +594,7 @@ def test_rollup_archives_closed_child_under_live_adhoc() -> None:
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
@@ -575,11 +602,33 @@ def test_rollup_archives_closed_child_under_live_adhoc() -> None:
         patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
     ):
         epics.rollup(task)
+    mock_exists.assert_called_once_with("org", ".github")
     mock_ens.assert_called_once_with("org/.github", "2026-Q2")
     # Atomic single-parent-safe re-parent — no separate add/remove (#2691).
     mock_reparent.assert_called_once_with(arch, task)
     mock_add.assert_not_called()
     mock_rm.assert_not_called()
+
+
+def test_rollup_skips_non_repo_adhoc_epic() -> None:
+    # A non-repo special epic (its bare name is a prose description, not a repo)
+    # is skipped: the space in the bare name fast-rejects before any API call,
+    # so nothing is archived or re-parented (#2709).
+    task = IssueRef("org", ".github", 101)
+    live = IssueRef("org", ".github", 40)
+    title = "Epic (ad hoc): Lab lifecycle reliability — cold rebuild / boot / repoint / deploy"
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value=title),
+        patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.rollup(task)
+    mock_exists.assert_not_called()  # fast-rejected on the space, no API probe
+    mock_ens.assert_not_called()
+    mock_reparent.assert_not_called()
 
 
 def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
@@ -604,6 +653,7 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
@@ -621,6 +671,7 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
         patch("vergil_tooling.lib.epics.parent_of", return_value=live),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,

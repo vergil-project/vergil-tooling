@@ -1757,3 +1757,31 @@ def test_repo_visibility_fails_loud_on_empty() -> None:
         pytest.raises(github.GitHubAPIError),
     ):
         github.repo_visibility("org/repo")
+
+
+# -- repo_exists (issue #2709) -----------------------------------------------
+def test_repo_exists_true_for_real_repo() -> None:
+    github.repo_visibility.cache_clear()
+    with patch("vergil_tooling.lib.github.read_json", return_value={"visibility": "PRIVATE"}):
+        # A private repo the caller CAN see still exists — direct probe, not
+        # list membership.
+        assert github.repo_exists("org", "priv-repo") is True
+
+
+def test_repo_exists_false_for_missing_repo() -> None:
+    github.repo_visibility.cache_clear()
+    not_found = github.GitHubAPIError(
+        1, ["gh", "repo", "view"], stderr="GraphQL: Could not resolve to a Repository"
+    )
+    with patch("vergil_tooling.lib.github.read_json", side_effect=not_found):
+        assert github.repo_exists("org", "ghost-repo") is False
+
+
+def test_repo_exists_reraises_other_errors() -> None:
+    github.repo_visibility.cache_clear()
+    other = github.GitHubAPIError(1, ["gh", "repo", "view"], stderr="HTTP 401: Bad credentials")
+    with (
+        patch("vergil_tooling.lib.github.read_json", side_effect=other),
+        pytest.raises(github.GitHubAPIError, match="Bad credentials"),
+    ):
+        github.repo_exists("org", "repo")
