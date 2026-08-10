@@ -352,3 +352,37 @@ the `vergil-containers` repository via its
   container startup (e.g., `bundle install`, `uv sync`, `go install`)
 - **No host requirements** — Docker is the only prerequisite for
   local development
+
+### Repo-specific system packages
+
+The shared base images stay language-generic on purpose — a system dependency is
+treated as a property of the **language**, not the repo, which is what keeps the
+image cache sound. A repo that genuinely needs a Debian binary its language image
+does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
+declares it once in `vergil.toml`, **without** touching the shared base image:
+
+```toml
+[container]
+system-packages = ["lilypond"]
+```
+
+The full key reference — trust model, the names-only surface, cache-key
+behaviour, and the fail-closed error — lives in
+[Container Config Reference → `system-packages`](../reference/container-config.md#system-packages).
+Two things matter for the CI/container model here:
+
+- **Two paths, one declaration.** Locally the packages are **baked** into the
+  per-branch cached dev image, so they are present for every check in that one
+  image. In CI they are **installed per run** by a composite setup step
+  (vergil-actions#807) on the base-image container, before the tests. The two
+  paths agree on *what* is installed (the same names, from the same Debian
+  sources) even though they differ on *when* — baked once locally vs installed
+  per run in CI.
+- **Test-runtime contract.** In CI the install runs **only on the jobs that
+  execute the repo's tests**, never on lint or typecheck — these binaries are
+  needed at test time only. Locally the single cached image carries them for
+  every check as a convenience of the one-image model, but that does **not**
+  license depending on a system package during lint or typecheck. If a package
+  has no install candidate for the build architecture, the build (local) and the
+  CI step both **fail closed**, naming the package and the architecture — no
+  silent skip.
