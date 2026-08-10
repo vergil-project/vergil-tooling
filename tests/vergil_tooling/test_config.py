@@ -20,6 +20,7 @@ from vergil_tooling.lib.config import (
     VmStanza,
     _warn_unrecognized_keys,
     container_env_prefixes,
+    container_system_packages,
     parse_vm_stanza,
     primary_ci_version,
     read_config,
@@ -589,13 +590,13 @@ env-prefixes = ["MQ_"]
 def test_read_config_container_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_CONTAINER_TOML)
     cfg = read_config(tmp_path)
-    assert cfg.container == ContainerConfig(env_prefixes=["MQ_"])
+    assert cfg.container == ContainerConfig(env_prefixes=["MQ_"], system_packages=[])
 
 
 def test_read_config_no_container_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     cfg = read_config(tmp_path)
-    assert cfg.container == ContainerConfig(env_prefixes=[])
+    assert cfg.container == ContainerConfig(env_prefixes=[], system_packages=[])
 
 
 def test_read_config_container_empty_prefixes(tmp_path: Path) -> None:
@@ -658,6 +659,56 @@ def test_container_env_prefixes_no_file(tmp_path: Path) -> None:
 def test_container_env_prefixes_no_section(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     assert container_env_prefixes(tmp_path) == []
+
+
+# -- [container].system-packages (epic vergil-project/.github#272) -------------
+
+
+def test_read_config_container_system_packages(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_"]\nsystem-packages = ["lilypond"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.system_packages == ["lilypond"]
+
+
+def test_read_config_container_no_system_packages_defaults_empty(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.system_packages == []
+
+
+def test_read_config_container_no_container_section_system_packages_empty(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.container.system_packages == []
+
+
+def test_read_config_container_system_packages_not_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_"]\nsystem-packages = "lilypond"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.system-packages must be a list"):
+        read_config(tmp_path)
+
+
+def test_read_config_container_system_packages_not_strings(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = ["MQ_"]\nsystem-packages = [1, 2]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.system-packages must be a list"):
+        read_config(tmp_path)
+
+
+def test_container_system_packages_accessor(tmp_path: Path) -> None:
+    toml = (
+        _VALID_TOML
+        + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond", "fluidsynth"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert container_system_packages(tmp_path) == ["lilypond", "fluidsynth"]
+
+
+def test_container_system_packages_no_file(tmp_path: Path) -> None:
+    assert container_system_packages(tmp_path) == []
 
 
 # -- [validation] section -----------------------------------------------------
