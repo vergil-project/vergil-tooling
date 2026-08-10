@@ -50,6 +50,33 @@ def test_main_kind_idea() -> None:
     assert mock_create.call_args.kwargs["labels"] == ["idea"]
 
 
+def test_main_scopes_token_to_repo_owner() -> None:
+    """Issue creation runs under the --repo owner's App installation (#2722).
+
+    Without target_org(owner) the App token is minted for the cwd org, so a
+    cross-org create misroutes or misreports the issue's location.
+    """
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+    ):
+        rc = main(["--title", "T", "--repo", "other-org/repo"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("other-org")
+
+
+def test_main_scopes_token_to_default_dotgithub_org() -> None:
+    """The default <org>/.github route is also scoped to that org's token (#2722)."""
+    with (
+        patch(f"{_MOD}.github.detect_org", return_value="org"),
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+    ):
+        rc = main(["--title", "T"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("org")
+
+
 def test_main_repo_override_skips_detect_org() -> None:
     with (
         patch(f"{_MOD}.github.detect_org") as mock_detect,

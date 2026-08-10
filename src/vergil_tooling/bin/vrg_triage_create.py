@@ -69,14 +69,19 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         repo = f"{org}/.github"
     labels = list(dict.fromkeys([args.kind, *args.label]))
-    url = github.create_issue(
-        repo=repo,
-        title=args.title,
-        body=args.body,
-        body_file=args.body_file,
-        labels=labels,
-        assignees=args.assignee,
-    )
+    owner = repo.split("/")[0]
+    # Scope the App token to --repo's org, not the cwd org (mirrors issue-create,
+    # #2070). Without this the token is minted for the wrong org and a cross-org
+    # create either fails to write or misreports the issue's location (#2722).
+    with github.target_org(owner):
+        url = github.create_issue(
+            repo=repo,
+            title=args.title,
+            body=args.body,
+            body_file=args.body_file,
+            labels=labels,
+            assignees=args.assignee,
+        )
     print(f"Created {url} ({args.kind}).")
     return 0
 
