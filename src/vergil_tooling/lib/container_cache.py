@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shlex
 import subprocess
 import sys
 from typing import TYPE_CHECKING
@@ -53,6 +54,29 @@ _DEFAULT_CACHE_FILES = ["vergil.toml"]
 def _warmup_command(lang: str) -> str:
     cmds = language_commands(lang, CheckKind.INSTALL)
     return " && ".join(" ".join(cmd) for cmd in cmds) if cmds else ""
+
+
+def apt_install_command(packages: list[str], platform_label: str) -> str:
+    """Return a shell snippet installing *packages* fail-closed, or ``""``.
+
+    Installs one package at a time so a missing candidate names the offending
+    package; on failure it prints a message with the package and *platform_label*
+    and exits non-zero (no silent skip). Debian ``apt`` names, from the base
+    image's existing sources, ``--no-install-recommends``. This is the single
+    speller shared by the local cache build and the CI setup step (epic
+    vergil-project/.github#272).
+    """
+    if not packages:
+        return ""
+    parts = ["apt-get update"]
+    for pkg in packages:
+        q = shlex.quote(pkg)
+        parts.append(
+            f"{{ apt-get install -y --no-install-recommends {q} "
+            f'|| {{ echo "system package {q} is not installable on '
+            f'{platform_label} (apt: no installation candidate)" >&2; exit 1; }} }}'
+        )
+    return " && ".join(parts)
 
 
 def _inspect_image_id(image: str, *, runtime: str) -> str | None:
@@ -235,12 +259,23 @@ def _build_cached_image(
     self_repo = _is_self_repo(repo_root)
     warmup = _warmup_command(lang)
 
+    from vergil_tooling.lib.config import container_system_packages
+
+    apt = apt_install_command(container_system_packages(repo_root), container_platform())
+
     if self_repo:
         setup = warmup or "true"
     else:
         tag = vrg_install_tag(repo_root)
         uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
         setup = f"{uv_install} && {warmup}" if warmup else uv_install
+
+    # System packages are a repo-declared test-runtime dependency: install them
+    # before vergil-tooling / warmup so the rest of the setup step runs against the
+    # provisioned base (epic vergil-project/.github#272). Empty list => no apt step,
+    # setup byte-identical to before.
+    if apt:
+        setup = f"{apt} && {setup}"
 
     # Attribute the build clearly as an environment-provisioning step. A rebuild
     # can be triggered lazily by an operational command (the first vrg-container-run
@@ -258,6 +293,8 @@ def _build_cached_image(
         print(f"  Install: vergil-tooling@{tag}")
     if warmup:
         print(f"  Warmup:  {warmup}")
+    if apt:
+        print(f"  Packages: {' '.join(container_system_packages(repo_root))}")
 
     create_args = [
         rt,
