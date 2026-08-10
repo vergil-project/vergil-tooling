@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import subprocess
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from vergil_tooling.lib.config import CiConfig, ProjectConfig, VergilConfig
 
@@ -358,6 +359,118 @@ def desired_ci_gates_ruleset(
             },
         ],
     )
+
+
+# ---------------------------------------------------------------------------
+# CI-gate producibility cross-check (issue #2720)
+# ---------------------------------------------------------------------------
+#
+# The CI-gates ruleset (``desired_ci_gates_ruleset``) and the generated
+# ``ci.yml`` workflow are two artifacts derived from the same identity along two
+# independent paths. When they disagree — the ruleset *requires* a status check
+# the workflow never *emits on ``pull_request``* — the branch is unmergeable by
+# construction, with every check that does run green. Two flags have produced
+# this: ``integration-tests`` (no producing job at all) and ``publish-docs``
+# (the docs job ran on push, not on ``pull_request``). See issue #2720.
+#
+# ``unproducible_required_contexts`` reads the generated ci.yml, derives the set
+# of contexts each reusable workflow it invokes actually emits on a PR, and
+# returns any required context that set cannot produce. repo-init fails loudly on
+# a non-empty result instead of shipping a repository that cannot merge its first
+# PR with every check green.
+
+_CI_JOB_RE = re.compile(r"^ {2}([a-z][a-z0-9_-]*):\s*$")
+_CI_USES_RE = re.compile(r"^ {4}uses:\s+\S+/([a-z0-9-]+\.yml)@")
+
+
+def _ci_caller_jobs(ci_workflow_yaml: str) -> list[tuple[str, str]]:
+    """Parse a generated ci.yml into ``(caller_job, reusable_workflow_file)`` pairs.
+
+    Only jobs that delegate to a reusable workflow via ``uses:`` are returned.
+    The check-run context a reusable-workflow job produces is
+    ``<caller_job> / <reusable job name>``, so the caller job id is the first
+    segment of every context that job emits.
+    """
+    pairs: list[tuple[str, str]] = []
+    current: str | None = None
+    for line in ci_workflow_yaml.splitlines():
+        job = _CI_JOB_RE.match(line)
+        if job:
+            current = job.group(1)
+            continue
+        uses = _CI_USES_RE.match(line)
+        if uses and current is not None:
+            pairs.append((current, uses.group(1)))
+            current = None
+    return pairs
+
+
+def _reusable_pr_contexts(
+    reusable_file: str, caller_job: str, *, ghas: bool
+) -> tuple[set[str], set[str]]:
+    """Contexts a reusable CI workflow emits on ``pull_request`` under ``caller_job``.
+
+    Returns ``(exact, prefixes)``: a required context is producible when it
+    equals a member of ``exact`` or starts with a member of ``prefixes`` (the
+    version-parameterized families). The table mirrors what each
+    ``vergil-actions`` reusable workflow actually reports on a PR — notably
+    ``ci-test.yml`` emits ``unit`` but **not** ``integration``, which is what
+    flags an ``integration-tests`` repo whose ruleset requires
+    ``test / integration / <v>`` with no producing job (issue #2720).
+    """
+    j = caller_job
+    if reusable_file == "ci-quality.yml":
+        return ({f"{j} / common"}, {f"{j} / lint / ", f"{j} / typecheck / "})
+    if reusable_file == "ci-audit.yml":
+        return (set(), {f"{j} / dependencies / "})
+    if reusable_file == "ci-test.yml":
+        return (set(), {f"{j} / unit / "})
+    if reusable_file == "ci-docs.yml":
+        return ({f"{j} / docs"}, set())
+    if reusable_file == "ci-security.yml":
+        exact = {f"{j} / trivy", f"{j} / semgrep", f"{j} / codeql"}
+        if ghas:
+            # GHAS-app check runs carry no ``<job> /`` prefix (created by the
+            # GitHub Advanced Security app, not the workflow) but do report on a
+            # PR when the security job uploads SARIF.
+            exact |= {"Trivy", "Semgrep OSS", "CodeQL"}
+        return (exact, set())
+    if reusable_file == "ci-version-bump.yml":
+        return ({f"{j} / version-bump"}, set())
+    return (set(), set())
+
+
+def required_status_contexts(ruleset: DesiredRuleset) -> list[str]:
+    """The required status-check context names declared by a CI-gates ruleset."""
+    checks = _extract_status_checks(ruleset.rules) or []
+    return [str(c.get("context", "")) for c in checks if c.get("context")]
+
+
+def unproducible_required_contexts(
+    ci_workflow_yaml: str, required_contexts: Iterable[str], *, ghas: bool
+) -> list[str]:
+    """Required status-check contexts the generated ci.yml cannot emit on a PR.
+
+    A non-empty result means the CI-gates ruleset and the generated workflow
+    disagree: the ruleset requires a context no ``pull_request`` job produces, so
+    every merge is blocked with green checks (issue #2720). Returned sorted for a
+    stable, deduplicated error message.
+    """
+    exact: set[str] = set()
+    prefixes: set[str] = set()
+    for caller_job, reusable_file in _ci_caller_jobs(ci_workflow_yaml):
+        e, p = _reusable_pr_contexts(reusable_file, caller_job, ghas=ghas)
+        exact |= e
+        prefixes |= p
+
+    missing: set[str] = set()
+    for ctx in required_contexts:
+        if ctx in exact:
+            continue
+        if any(ctx.startswith(pre) for pre in prefixes):
+            continue
+        missing.add(ctx)
+    return sorted(missing)
 
 
 # ---------------------------------------------------------------------------

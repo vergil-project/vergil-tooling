@@ -16,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from vergil_tooling.lib.github_config import DesiredState
+
 from vergil_tooling.lib import git, github, repo_config
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.vergil_refs import EXPECTED_MARKETPLACE_REF
@@ -644,6 +646,20 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     if ctx.primary_language not in _CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
 
+    # Docs build gate — emitted on pull_request when the repo publishes docs, so
+    # the ``docs / docs`` context the CI-gates ruleset requires actually reports
+    # on a PR. Without it the ruleset waits on a context only the push-triggered
+    # cd.yml produces, blocking every merge with green checks (issue #2720).
+    # ci-docs.yml self-guards to a no-op pass when there is no mkdocs config.
+    if ctx.publish_docs:
+        lines.extend(
+            [
+                "\n",
+                "  docs:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-docs.yml@v2.1\n",
+            ]
+        )
+
     if has_test:
         lines.extend(
             [
@@ -1268,6 +1284,45 @@ def _sync_labels(repo: str) -> None:
         github.run(*cmd)
 
 
+def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
+    """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
+
+    Cross-checks the required status-check contexts of the derived ``CI gates``
+    ruleset against the contexts the generated ``.github/workflows/ci.yml``
+    actually produces on a ``pull_request``. A mismatch means the repository
+    cannot merge any PR — every check that runs is green while the merge stays
+    blocked on a context that never reports (issue #2720).
+    """
+    from vergil_tooling.lib.github_config import (
+        required_status_contexts,
+        unproducible_required_contexts,
+    )
+
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
+    ci_gates = next((rs for rs in desired.rulesets if rs.name == "CI gates"), None)
+    if ci_gates is None:  # pragma: no cover - the CI-gates ruleset is always derived
+        return
+
+    ci_yaml = (ctx.work_dir / ".github" / "workflows" / "ci.yml").read_text()
+    unproducible = unproducible_required_contexts(
+        ci_yaml, required_status_contexts(ci_gates), ghas=ghas
+    )
+    if unproducible:
+        raise RuntimeError(
+            "GitHub CI-gates ruleset requires status checks that "
+            ".github/workflows/ci.yml never emits on a pull_request, so the "
+            "repository could not merge any PR (every check that runs would be "
+            "green while the merge stays blocked).\n"
+            "  Unproducible required contexts: " + ", ".join(unproducible) + "\n"
+            "Every required context must correspond to a job the generated ci.yml "
+            "runs on pull_request. Likely cause:\n"
+            "  - integration-tests = true: ci.yml has no integration job yet "
+            "(vergil-project/vergil-tooling#2721) — set integration-tests = false "
+            "in vergil.toml until it is a first-class feature."
+        )
+
+
 def step_github_config(ctx: RepoInitContext) -> None:
     """Step 8: Apply GitHub config and labels."""
     from vergil_tooling.lib import config as config_module
@@ -1275,6 +1330,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
         apply_desired_state,
         compute_desired_state,
         fetch_actual_state,
+        ghas_available,
     )
 
     print("Step 8: Applying GitHub config...")
@@ -1285,6 +1341,14 @@ def step_github_config(ctx: RepoInitContext) -> None:
     result = fetch_actual_state(ctx.repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+    # Refuse to apply a CI-gates ruleset whose required status checks the
+    # generated ci.yml never emits on a pull_request — the defect that ships a
+    # repository which cannot merge its first PR with every check green (#2720).
+    # Checked before the ruleset is written, so a mismatch fails at creation
+    # rather than at the first merge.
+    _assert_ci_gates_producible(
+        ctx, desired, ghas=ghas_available(cfg, visibility=result.visibility)
+    )
     removed = apply_desired_state(ctx.repo, desired)
     if removed:
         print(f"  Legacy protection removed: {', '.join(removed)}")
