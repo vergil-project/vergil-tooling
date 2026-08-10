@@ -9913,6 +9913,8 @@
       
         
       
+        
+      
     
     
     
@@ -10029,6 +10031,34 @@
   
   
   
+    <li class="md-nav__item">
+      <a href="../../reference/container-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Container Config ([container])
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
     
     
       
@@ -10047,10 +10077,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
         
           
-          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
             
   
   
@@ -10068,8 +10098,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_4">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10141,10 +10171,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -10162,8 +10192,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10269,10 +10299,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -10290,8 +10320,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13197,6 +13227,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#repo-specific-system-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific system packages
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -13606,6 +13647,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#repo-specific-system-packages" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific system packages
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -13983,6 +14035,36 @@ the <code>vergil-containers</code> repository via its
   container startup (e.g., <code>bundle install</code>, <code>uv sync</code>, <code>go install</code>)</li>
 <li><strong>No host requirements</strong> — Docker is the only prerequisite for
   local development</li>
+</ul>
+<h3 id="repo-specific-system-packages">Repo-specific system packages<a class="headerlink" href="#repo-specific-system-packages" title="Permanent link">&para;</a></h3>
+<p>The shared base images stay language-generic on purpose — a system dependency is
+treated as a property of the <strong>language</strong>, not the repo, which is what keeps the
+image cache sound. A repo that genuinely needs a Debian binary its language image
+does not carry (for example a repo whose render/e2e tests shell out to LilyPond)
+declares it once in <code>vergil.toml</code>, <strong>without</strong> touching the shared base image:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="k">[container]</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;lilypond&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>The full key reference — trust model, the names-only surface, cache-key
+behaviour, and the fail-closed error — lives in
+<a href="../../reference/container-config/#system-packages">Container Config Reference → <code>system-packages</code></a>.
+Two things matter for the CI/container model here:</p>
+<ul>
+<li><strong>Two paths, one declaration.</strong> Locally the packages are <strong>baked</strong> into the
+  per-branch cached dev image, so they are present for every check in that one
+  image. In CI they are <strong>installed per run</strong> by a composite setup step
+  (vergil-actions#807) on the base-image container, before the tests. The two
+  paths agree on <em>what</em> is installed (the same names, from the same Debian
+  sources) even though they differ on <em>when</em> — baked once locally vs installed
+  per run in CI.</li>
+<li><strong>Test-runtime contract.</strong> In CI the install runs <strong>only on the jobs that
+  execute the repo's tests</strong>, never on lint or typecheck — these binaries are
+  needed at test time only. Locally the single cached image carries them for
+  every check as a convenience of the one-image model, but that does <strong>not</strong>
+  license depending on a system package during lint or typecheck. If a package
+  has no install candidate for the build architecture, the build (local) and the
+  CI step both <strong>fail closed</strong>, naming the package and the architecture — no
+  silent skip.</li>
 </ul>
 
 
