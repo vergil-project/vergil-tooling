@@ -63,16 +63,20 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     owner, bare = target.split("/", 1)
     home = epics.resolve_epic_home(owner, bare)
-    print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
     labels = list(dict.fromkeys(["epic", *args.label]))
-    url = github.create_issue(
-        repo=home,
-        title=args.title,
-        body=args.body,
-        body_file=args.body_file,
-        labels=labels,
-        assignees=args.assignee,
-    )
+    # Scope every App-token call to the target's org, not the cwd org (mirrors
+    # issue-create, #2070). Without this a cross-org epic mints the token for the
+    # wrong org and either fails to write or misreports the epic's location (#2722).
+    with github.target_org(owner):
+        print(f"-> epic home: {home} [{github.repo_visibility(home)}]")
+        url = github.create_issue(
+            repo=home,
+            title=args.title,
+            body=args.body,
+            body_file=args.body_file,
+            labels=labels,
+            assignees=args.assignee,
+        )
     print(f"Created {url} (epic).")
     return 0
 

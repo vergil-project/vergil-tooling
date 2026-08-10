@@ -33,6 +33,23 @@ def test_default_target_is_current_repo_public_goes_to_dotgithub() -> None:
     assert mock_create.call_args.kwargs["labels"] == ["epic"]
 
 
+def test_main_scopes_token_to_target_owner() -> None:
+    """Epic creation runs under the --repo owner's App installation (#2722).
+
+    Without target_org(owner) the App token is minted for the cwd org, so a
+    cross-org epic misroutes or misreports the epic's location.
+    """
+    with (
+        patch(f"{_MOD}.github.target_org") as mock_scope,
+        patch(f"{_MOD}.epics.resolve_epic_home", return_value="other-org/.github"),
+        patch(f"{_MOD}.github.repo_visibility", return_value="PUBLIC"),
+        patch(f"{_MOD}.github.create_issue", return_value=_URL),
+    ):
+        rc = main(["--repo", "other-org/repo", "--title", "T"])
+    assert rc == 0
+    mock_scope.assert_called_once_with("other-org")
+
+
 def test_explicit_private_target_homes_in_self() -> None:
     with (
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as home,

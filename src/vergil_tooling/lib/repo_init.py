@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import textwrap
 from dataclasses import dataclass, field
 from importlib import resources
@@ -14,6 +15,8 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from vergil_tooling.lib.github_config import DesiredState
 
 from vergil_tooling.lib import git, github, repo_config
 from vergil_tooling.lib.config import _ENUMS
@@ -32,6 +35,11 @@ class RepoInitContext:
     visibility: str = "public"
     description: str = ""
     work_dir: Path | None = None
+    # Where the clone's parent directory is. ``None`` means "use CWD" — the
+    # historical default. An explicit ``--target-dir`` names the parent so the
+    # clone target is a property of the caller's intent, not of wherever they
+    # happened to be standing (#2717).
+    target_dir: Path | None = None
     completed_steps: set[int] = field(default_factory=set)
 
     # vergil.toml fields (populated by step 3 prompts)
@@ -83,6 +91,49 @@ def detect_completed_steps(log_output: str) -> set[int]:
         if m:
             steps.add(int(m.group(1)))
     return steps
+
+
+def cwd_repo_slug() -> str | None:
+    """Return the ``OWNER/REPO`` of the current directory's git remote, or None.
+
+    Used to tell whether the caller is standing inside a git repository and, if
+    so, which one — the fact that resolves both #2717 hazards: resume state must
+    only be trusted when CWD *is* the target's clone, and a new-repo bootstrap
+    must not run from inside an unrelated repo. Returns None when CWD is not a
+    git repo, has no remote, or ``gh`` is unavailable — every "cannot tell"
+    outcome maps to "not inside a known repo", which the callers treat as the
+    safe, non-blocking default.
+    """
+    try:
+        slug = github.current_repo()
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return slug or None
+
+
+def foreign_repo_refusal(ctx: RepoInitContext) -> str | None:
+    """Refusal message if a *new-repo* run would bootstrap from inside another repo.
+
+    Bootstrapping a new repo derives its clone target from CWD and (historically)
+    its resume state too. Running from inside an unrelated Vergil/git repo makes
+    both wrong: the clone would nest inside that repo, and the resume scan would
+    read that repo's `chore(init): step N -` commits (#2717). Refuse *before* any
+    side effect — notably before step 1 creates the remote — unless ``--target-dir``
+    names where the clone goes. Returns None when there is nothing to refuse: an
+    adopt run (CWD is the target by design), an explicit ``--target-dir``, CWD not
+    inside a repo, or CWD already inside the target's own clone.
+    """
+    if ctx.adopt or ctx.target_dir is not None:
+        return None
+    inside = cwd_repo_slug()
+    if inside is None or inside.lower() == ctx.repo.lower():
+        return None
+    return (
+        f"Refusing to bootstrap {ctx.repo} from inside {inside}: the current "
+        "directory is a different repository, so the clone would nest inside it and "
+        "resume state would be read from the wrong repo. Run from the parent "
+        "directory where sibling repos live, or pass --target-dir <parent>."
+    )
 
 
 def prompt_choice(label: str, options: list[str], *, default: str = "") -> str:
@@ -595,6 +646,20 @@ def render_ci_workflow(ctx: RepoInitContext) -> str:
     if ctx.primary_language not in _CODEQL_LANGUAGES:
         lines.append("      run-codeql: false\n")
 
+    # Docs build gate — emitted on pull_request when the repo publishes docs, so
+    # the ``docs / docs`` context the CI-gates ruleset requires actually reports
+    # on a PR. Without it the ruleset waits on a context only the push-triggered
+    # cd.yml produces, blocking every merge with green checks (issue #2720).
+    # ci-docs.yml self-guards to a no-op pass when there is no mkdocs config.
+    if ctx.publish_docs:
+        lines.extend(
+            [
+                "\n",
+                "  docs:\n",
+                "    uses: vergil-project/vergil-actions/.github/workflows/ci-docs.yml@v2.1\n",
+            ]
+        )
+
     if has_test:
         lines.extend(
             [
@@ -816,7 +881,9 @@ def step_create_repo(ctx: RepoInitContext) -> None:
 def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
     """Step 2: Clone the repo locally or verify an existing clone."""
     if parent_dir is None:
-        parent_dir = Path.cwd()
+        # An explicit --target-dir names the clone's parent; otherwise fall back
+        # to CWD (the historical default). #2717.
+        parent_dir = ctx.target_dir or Path.cwd()
 
     target = parent_dir / ctx.name
 
@@ -832,6 +899,21 @@ def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
         return
 
     resolved = target.resolve()
+
+    # Refuse to clone into an occupied path rather than letting `git clone` raise
+    # a cryptic CalledProcessError. In the wild this collided with a legitimate
+    # `docs/` directory inside a `.github` repo — two unrelated things named the
+    # same (#2717). Name the resolved path so the operator sees exactly what is in
+    # the way. (An existing clone of this repo was already handled above.)
+    if target.exists() and any(target.iterdir()):
+        print(
+            f"Step 2: Refusing to clone {ctx.repo} into {resolved}: the path already "
+            "exists and is not empty. Pick an empty location with --target-dir, or "
+            "remove what is there.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     # Under --non-interactive/--yes the clone confirmation is auto-accepted.
     if not ctx.non_interactive and not prompt_yes_no(f"Step 2: Clone to {resolved}?", default=True):
         print("Aborted. Re-run from the directory where you want the clone.")
@@ -1202,6 +1284,45 @@ def _sync_labels(repo: str) -> None:
         github.run(*cmd)
 
 
+def _assert_ci_gates_producible(ctx: RepoInitContext, desired: DesiredState, *, ghas: bool) -> None:
+    """Fail loudly when the CI-gates ruleset requires a check ci.yml never emits.
+
+    Cross-checks the required status-check contexts of the derived ``CI gates``
+    ruleset against the contexts the generated ``.github/workflows/ci.yml``
+    actually produces on a ``pull_request``. A mismatch means the repository
+    cannot merge any PR — every check that runs is green while the merge stays
+    blocked on a context that never reports (issue #2720).
+    """
+    from vergil_tooling.lib.github_config import (
+        required_status_contexts,
+        unproducible_required_contexts,
+    )
+
+    if ctx.work_dir is None:  # pragma: no cover
+        raise RuntimeError("work_dir not set")
+    ci_gates = next((rs for rs in desired.rulesets if rs.name == "CI gates"), None)
+    if ci_gates is None:  # pragma: no cover - the CI-gates ruleset is always derived
+        return
+
+    ci_yaml = (ctx.work_dir / ".github" / "workflows" / "ci.yml").read_text()
+    unproducible = unproducible_required_contexts(
+        ci_yaml, required_status_contexts(ci_gates), ghas=ghas
+    )
+    if unproducible:
+        raise RuntimeError(
+            "GitHub CI-gates ruleset requires status checks that "
+            ".github/workflows/ci.yml never emits on a pull_request, so the "
+            "repository could not merge any PR (every check that runs would be "
+            "green while the merge stays blocked).\n"
+            "  Unproducible required contexts: " + ", ".join(unproducible) + "\n"
+            "Every required context must correspond to a job the generated ci.yml "
+            "runs on pull_request. Likely cause:\n"
+            "  - integration-tests = true: ci.yml has no integration job yet "
+            "(vergil-project/vergil-tooling#2721) — set integration-tests = false "
+            "in vergil.toml until it is a first-class feature."
+        )
+
+
 def step_github_config(ctx: RepoInitContext) -> None:
     """Step 8: Apply GitHub config and labels."""
     from vergil_tooling.lib import config as config_module
@@ -1209,6 +1330,7 @@ def step_github_config(ctx: RepoInitContext) -> None:
         apply_desired_state,
         compute_desired_state,
         fetch_actual_state,
+        ghas_available,
     )
 
     print("Step 8: Applying GitHub config...")
@@ -1219,6 +1341,14 @@ def step_github_config(ctx: RepoInitContext) -> None:
     result = fetch_actual_state(ctx.repo)
     is_org = result.owner_type == "Organization"
     desired = compute_desired_state(cfg, visibility=result.visibility, is_org=is_org)
+    # Refuse to apply a CI-gates ruleset whose required status checks the
+    # generated ci.yml never emits on a pull_request — the defect that ships a
+    # repository which cannot merge its first PR with every check green (#2720).
+    # Checked before the ruleset is written, so a mismatch fails at creation
+    # rather than at the first merge.
+    _assert_ci_gates_producible(
+        ctx, desired, ghas=ghas_available(cfg, visibility=result.visibility)
+    )
     removed = apply_desired_state(ctx.repo, desired)
     if removed:
         print(f"  Legacy protection removed: {', '.join(removed)}")
@@ -1279,11 +1409,20 @@ def _check_remote_steps(ctx: RepoInitContext) -> set[int]:
 
 def run_wizard(ctx: RepoInitContext) -> None:
     """Run all wizard steps, skipping completed ones."""
-    try:
-        log_output = git.read_output("log", "--oneline")
-    except subprocess.CalledProcessError:
-        log_output = ""
-    local_completed = detect_completed_steps(log_output)
+    # Resume state is a property of the TARGET, not of wherever the operator is
+    # standing. Only trust the local checkpoint commits when CWD is the target's
+    # own clone (or an adopt run, which uses CWD by design); an unrelated repo's
+    # `chore(init): step N -` commits would otherwise be misread as this repo's
+    # progress and silently skip vergil.toml / config / CI steps (#2717).
+    cwd_slug = cwd_repo_slug()
+    if ctx.adopt or (cwd_slug is not None and cwd_slug.lower() == ctx.repo.lower()):
+        try:
+            log_output = git.read_output("log", "--oneline")
+        except subprocess.CalledProcessError:
+            log_output = ""
+        local_completed = detect_completed_steps(log_output)
+    else:
+        local_completed = set()
 
     remote_completed = _check_remote_steps(ctx)
 

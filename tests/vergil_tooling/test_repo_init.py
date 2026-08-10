@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.config import _parse_raw_config
+from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    _assert_ci_gates_producible,
     _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
@@ -21,7 +22,9 @@ from vergil_tooling.lib.repo_init import (
     _remote_branch_exists,
     _resolve,
     _sync_labels,
+    cwd_repo_slug,
     detect_completed_steps,
+    foreign_repo_refusal,
     prompt_choice,
     prompt_free_text,
     prompt_language,
@@ -207,6 +210,59 @@ class TestDetectCompletedSteps:
         )
         result = detect_completed_steps(log_output)
         assert result == {3}
+
+
+class TestCwdRepoSlug:
+    def test_returns_slug(self) -> None:
+        with patch("vergil_tooling.lib.repo_init.github.current_repo", return_value="org/repo"):
+            assert cwd_repo_slug() == "org/repo"
+
+    def test_returns_none_when_not_a_repo(self) -> None:
+        with patch(
+            "vergil_tooling.lib.repo_init.github.current_repo",
+            side_effect=subprocess.CalledProcessError(1, "gh"),
+        ):
+            assert cwd_repo_slug() is None
+
+    def test_returns_none_when_empty(self) -> None:
+        with patch("vergil_tooling.lib.repo_init.github.current_repo", return_value=""):
+            assert cwd_repo_slug() is None
+
+
+class TestForeignRepoRefusal:
+    def test_adopt_never_refuses(self) -> None:
+        ctx = RepoInitContext(org="org", name="repo", adopt=True)
+        with patch("vergil_tooling.lib.repo_init.cwd_repo_slug") as mock_slug:
+            assert foreign_repo_refusal(ctx) is None
+        mock_slug.assert_not_called()  # short-circuits before touching CWD
+
+    def test_target_dir_never_refuses(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="org", name="repo", target_dir=tmp_path)
+        with patch("vergil_tooling.lib.repo_init.cwd_repo_slug") as mock_slug:
+            assert foreign_repo_refusal(ctx) is None
+        mock_slug.assert_not_called()
+
+    def test_none_outside_a_repo(self) -> None:
+        ctx = RepoInitContext(org="org", name="repo")
+        with patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None):
+            assert foreign_repo_refusal(ctx) is None
+
+    def test_none_when_cwd_is_target(self) -> None:
+        ctx = RepoInitContext(org="Org", name="Repo")  # case-insensitive match
+        with patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value="org/repo"):
+            assert foreign_repo_refusal(ctx) is None
+
+    def test_refuses_inside_a_foreign_repo(self) -> None:
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        with patch(
+            "vergil_tooling.lib.repo_init.cwd_repo_slug",
+            return_value="mnemosys-project/.github",
+        ):
+            msg = foreign_repo_refusal(ctx)
+        assert msg is not None
+        assert "mnemosys-project/docs" in msg
+        assert "mnemosys-project/.github" in msg
+        assert "--target-dir" in msg
 
 
 class TestRenderVergilToml:
@@ -492,6 +548,128 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "@v2.0" not in content
         assert "ci-security.yml@v2.1" in content
+
+    def test_publish_docs_emits_ci_docs_job(self) -> None:
+        """A docs-publishing repo must invoke ci-docs.yml from ci.yml so the
+        `docs / docs` gate reports on pull_request (issue #2720)."""
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.publish_docs = True
+        content = render_ci_workflow(ctx)
+        assert "ci-docs.yml@v2.1" in content
+        assert "\n  docs:\n" in content
+
+    def test_no_publish_docs_omits_ci_docs_job(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="dotgithub")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.publish_docs = False
+        content = render_ci_workflow(ctx)
+        assert "ci-docs.yml" not in content
+
+
+class TestCiGatesProducibility:
+    """The generated ci.yml must emit every context the CI-gates ruleset
+    requires on a pull_request — the parity #2720 restores and guards."""
+
+    @staticmethod
+    def _unproducible(ctx: RepoInitContext, *, ghas: bool, docs: bool) -> list[str]:
+        from vergil_tooling.lib.github_config import (
+            desired_ci_gates_ruleset,
+            required_status_contexts,
+            unproducible_required_contexts,
+        )
+
+        project = ProjectConfig(
+            repository_type="documentation",
+            versioning_scheme="semver",
+            branching_model="gitflow",
+            release_model=ctx.release_model,
+            primary_language=ctx.primary_language,
+        )
+        ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
+        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
+        result: list[str] = unproducible_required_contexts(
+            render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
+        )
+        return result
+
+    def test_docs_repo_is_fully_producible(self) -> None:
+        """End-to-end: a python docs repo's generated ci.yml produces every
+        required context, so nothing is unproducible (the mnemosys/docs case)."""
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=True, docs=True) == []
+
+    def test_private_docs_repo_is_fully_producible(self) -> None:
+        ctx = RepoInitContext(org="logical-minds-foundry", name="docs", visibility="private")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=False, docs=True) == []
+
+    def test_integration_tests_leave_an_unproducible_context(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=True, docs=True) == ["test / integration / 3.14"]
+
+
+class TestAssertCiGatesProducible:
+    def _ctx_with_ci(self, tmp_path: Path, ctx: RepoInitContext) -> RepoInitContext:
+        ctx.work_dir = tmp_path
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True, exist_ok=True)
+        (wf / "ci.yml").write_text(render_ci_workflow(ctx))
+        return ctx
+
+    def _desired(self, ctx: RepoInitContext, *, ghas: bool) -> Any:
+        """A minimal desired-state stand-in: the guard only reads ``.rulesets``."""
+        from types import SimpleNamespace
+
+        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+
+        project = ProjectConfig(
+            repository_type="documentation",
+            versioning_scheme="semver",
+            branching_model="gitflow",
+            release_model=ctx.release_model,
+            primary_language=ctx.primary_language,
+        )
+        ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
+        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=ctx.publish_docs)
+        return SimpleNamespace(rulesets=[ruleset])
+
+    def test_passes_for_a_docs_repo(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        self._ctx_with_ci(tmp_path, ctx)
+        # Does not raise.
+        _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+
+    def test_raises_for_integration_tests(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        self._ctx_with_ci(tmp_path, ctx)
+        with pytest.raises(RuntimeError) as exc:
+            _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+        assert "test / integration / 3.14" in str(exc.value)
+        assert "2721" in str(exc.value)
 
 
 class TestContainerHelpers:
@@ -830,6 +1008,52 @@ class TestStepClone:
             patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx, parent_dir=tmp_path)
+
+    def test_refuses_occupied_non_clone_path(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # An existing, non-empty directory that is NOT a clone (e.g. a legitimate
+        # docs/ dir) must not be clobbered — refuse loudly, naming the path (#2717).
+        ctx = RepoInitContext(org="vergil-project", name="docs")
+        ctx.non_interactive = True
+        collision = tmp_path / "docs"
+        collision.mkdir()
+        (collision / "index.md").write_text("hello\n")
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=AssertionError("must not clone into an occupied path"),
+            ),
+            pytest.raises(SystemExit),
+        ):
+            step_clone(ctx, parent_dir=tmp_path)
+        assert str(collision.resolve()) in capsys.readouterr().err
+
+    def test_target_dir_used_as_clone_parent(self, tmp_path: Path) -> None:
+        # With no explicit parent_dir, the clone parent comes from ctx.target_dir,
+        # not CWD (#2717).
+        parent = tmp_path / "sibling-root"
+        parent.mkdir()
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm", target_dir=parent)
+        ctx.non_interactive = True
+        target = parent / "vergil-vm"
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path / "elsewhere"),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
+        ):
+            step_clone(ctx)
+
+        assert ctx.work_dir == target
 
         assert ctx.work_dir == target
 
@@ -1486,6 +1710,12 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            # Local resume state is trusted only when CWD is the target's own
+            # clone (#2717); here it is, so the step 3/4 markers apply.
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="vergil-project/test",
+            ),
             patch(
                 "vergil_tooling.lib.repo_init.git.read_output",
                 return_value=(
@@ -1499,6 +1729,53 @@ class TestRunWizard:
         assert 3 not in steps_run
         assert 4 not in steps_run
         assert 5 in steps_run
+
+    def test_ignores_foreign_repo_resume_state(self) -> None:
+        # #2717 regression: when CWD is a DIFFERENT repo, its own bootstrap
+        # commits must not be read as this repo's progress — every step runs.
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+
+        steps_run: list[int] = []
+
+        def mock_step(step_num: int) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                steps_run.append(step_num)
+
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
+            patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step(4),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            # Standing inside the `.github` repo, whose log carries step 3/4/5
+            # markers that must be ignored for the unrelated `docs` target.
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="mnemosys-project/.github",
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                return_value=(
+                    "abc chore(init): step 3 - vergil.toml\n"
+                    "def chore(init): step 4 - config files\n"
+                    "ghi chore(init): step 5 - CI/CD workflows\n"
+                ),
+            ) as mock_log,
+        ):
+            run_wizard(ctx)
+
+        assert {3, 4, 5}.issubset(steps_run)  # none skipped
+        mock_log.assert_not_called()  # the foreign log is not even read
 
     def test_handles_git_log_failure(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
@@ -1525,6 +1802,12 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            # CWD is the target's own clone, so the log is read — and its failure
+            # degrades to "no local completions" rather than raising.
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="vergil-project/test",
+            ),
             patch(
                 "vergil_tooling.lib.repo_init.git.read_output",
                 side_effect=subprocess.CalledProcessError(1, "git"),
@@ -1558,6 +1841,9 @@ class TestRunWizard:
             patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
             patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
             patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            # CWD is not the target's clone, so local resume state is not trusted
+            # and the git log is not even read.
+            patch("vergil_tooling.lib.repo_init.cwd_repo_slug", return_value=None),
             patch(
                 "vergil_tooling.lib.repo_init.git.read_output",
                 side_effect=subprocess.CalledProcessError(1, "git"),
