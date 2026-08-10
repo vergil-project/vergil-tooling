@@ -9,9 +9,10 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib.config import _parse_raw_config
+from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    _assert_ci_gates_producible,
     _cd_release_secrets,
     _check_remote_steps,
     _container_suffix,
@@ -547,6 +548,128 @@ class TestRenderCiWorkflow:
         content = render_ci_workflow(ctx)
         assert "@v2.0" not in content
         assert "ci-security.yml@v2.1" in content
+
+    def test_publish_docs_emits_ci_docs_job(self) -> None:
+        """A docs-publishing repo must invoke ci-docs.yml from ci.yml so the
+        `docs / docs` gate reports on pull_request (issue #2720)."""
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.publish_docs = True
+        content = render_ci_workflow(ctx)
+        assert "ci-docs.yml@v2.1" in content
+        assert "\n  docs:\n" in content
+
+    def test_no_publish_docs_omits_ci_docs_job(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="dotgithub")
+        ctx.ci_versions = ["latest"]
+        ctx.release_model = "none"
+        ctx.publish_docs = False
+        content = render_ci_workflow(ctx)
+        assert "ci-docs.yml" not in content
+
+
+class TestCiGatesProducibility:
+    """The generated ci.yml must emit every context the CI-gates ruleset
+    requires on a pull_request — the parity #2720 restores and guards."""
+
+    @staticmethod
+    def _unproducible(ctx: RepoInitContext, *, ghas: bool, docs: bool) -> list[str]:
+        from vergil_tooling.lib.github_config import (
+            desired_ci_gates_ruleset,
+            required_status_contexts,
+            unproducible_required_contexts,
+        )
+
+        project = ProjectConfig(
+            repository_type="documentation",
+            versioning_scheme="semver",
+            branching_model="gitflow",
+            release_model=ctx.release_model,
+            primary_language=ctx.primary_language,
+        )
+        ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
+        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=docs)
+        result: list[str] = unproducible_required_contexts(
+            render_ci_workflow(ctx), required_status_contexts(ruleset), ghas=ghas
+        )
+        return result
+
+    def test_docs_repo_is_fully_producible(self) -> None:
+        """End-to-end: a python docs repo's generated ci.yml produces every
+        required context, so nothing is unproducible (the mnemosys/docs case)."""
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=True, docs=True) == []
+
+    def test_private_docs_repo_is_fully_producible(self) -> None:
+        ctx = RepoInitContext(org="logical-minds-foundry", name="docs", visibility="private")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=False, docs=True) == []
+
+    def test_integration_tests_leave_an_unproducible_context(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        assert self._unproducible(ctx, ghas=True, docs=True) == ["test / integration / 3.14"]
+
+
+class TestAssertCiGatesProducible:
+    def _ctx_with_ci(self, tmp_path: Path, ctx: RepoInitContext) -> RepoInitContext:
+        ctx.work_dir = tmp_path
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True, exist_ok=True)
+        (wf / "ci.yml").write_text(render_ci_workflow(ctx))
+        return ctx
+
+    def _desired(self, ctx: RepoInitContext, *, ghas: bool) -> Any:
+        """A minimal desired-state stand-in: the guard only reads ``.rulesets``."""
+        from types import SimpleNamespace
+
+        from vergil_tooling.lib.github_config import desired_ci_gates_ruleset
+
+        project = ProjectConfig(
+            repository_type="documentation",
+            versioning_scheme="semver",
+            branching_model="gitflow",
+            release_model=ctx.release_model,
+            primary_language=ctx.primary_language,
+        )
+        ci = CiConfig(versions=ctx.ci_versions, integration_tests=ctx.integration_tests)
+        ruleset = desired_ci_gates_ruleset(project, ci, ghas=ghas, docs=ctx.publish_docs)
+        return SimpleNamespace(rulesets=[ruleset])
+
+    def test_passes_for_a_docs_repo(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.publish_docs = True
+        self._ctx_with_ci(tmp_path, ctx)
+        # Does not raise.
+        _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+
+    def test_raises_for_integration_tests(self, tmp_path: Path) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "python"
+        ctx.ci_versions = ["3.14"]
+        ctx.release_model = "tagged-release"
+        ctx.integration_tests = True
+        ctx.publish_docs = True
+        self._ctx_with_ci(tmp_path, ctx)
+        with pytest.raises(RuntimeError) as exc:
+            _assert_ci_gates_producible(ctx, self._desired(ctx, ghas=True), ghas=True)
+        assert "test / integration / 3.14" in str(exc.value)
+        assert "2721" in str(exc.value)
 
 
 class TestContainerHelpers:

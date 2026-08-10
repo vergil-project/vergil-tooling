@@ -47,6 +47,8 @@ from vergil_tooling.lib.github_config import (
     format_rules_delta,
     ghas_available,
     required_evidence_gates,
+    required_status_contexts,
+    unproducible_required_contexts,
 )
 
 
@@ -413,6 +415,107 @@ def test_ci_gates_no_language_has_no_versioned_checks() -> None:
 
 def test_lang_has_check_returns_false_for_unknown_check() -> None:
     assert _lang_has_check("python", "nonexistent") is False
+
+
+# ---------------------------------------------------------------------------
+# CI-gate producibility cross-check tests (issue #2720)
+# ---------------------------------------------------------------------------
+
+
+def _ci_yaml(*, jobs: dict[str, str]) -> str:
+    """A minimal generated-ci.yml fragment: one `<job>:` → reusable-workflow use.
+
+    Mirrors the shape `render_ci_workflow` emits (2-space job id, 4-space
+    ``uses:`` pinned to a ``vergil-actions`` reusable workflow), enough for the
+    caller-job parser without pulling in the full renderer.
+    """
+    lines = ["name: CI\n", "on:\n", "  pull_request:\n", "jobs:\n"]
+    for job, reusable in jobs.items():
+        lines.append(f"  {job}:\n")
+        lines.append(f"    uses: vergil-project/vergil-actions/.github/workflows/{reusable}@v2.1\n")
+    return "".join(lines)
+
+
+_FULL_CI_JOBS = {
+    "audit": "ci-audit.yml",
+    "quality": "ci-quality.yml",
+    "security": "ci-security.yml",
+    "docs": "ci-docs.yml",
+    "test": "ci-test.yml",
+    "version": "ci-version-bump.yml",
+}
+
+
+def test_required_status_contexts_extracts_names() -> None:
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True)
+    contexts = required_status_contexts(ruleset)
+    assert "quality / common" in contexts
+    assert "test / unit / 3.14" in contexts
+    # No empty strings from malformed entries.
+    assert all(contexts)
+
+
+def test_producible_when_all_required_contexts_have_a_pr_job() -> None:
+    """A docs-publishing python repo whose ci.yml emits every required context
+    (including `docs / docs`) has nothing unproducible."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    assert (
+        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+    )
+
+
+def test_integration_context_is_flagged_unproducible() -> None:
+    """`test / integration / <v>` is required when integration-tests=true, but
+    ci-test.yml emits only `unit` — so the context can never report (#2720)."""
+    ruleset = desired_ci_gates_ruleset(
+        _project(), _ci(integration_tests=True), ghas=True, docs=True
+    )
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    assert missing == ["test / integration / 3.14"]
+
+
+def test_docs_context_flagged_when_ci_lacks_docs_job() -> None:
+    """The pre-fix `publish-docs` defect: the ruleset requires `docs / docs`, but
+    a ci.yml with no docs job never reports it on a PR (#2720)."""
+    ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=True, docs=True)
+    jobs_without_docs = {k: v for k, v in _FULL_CI_JOBS.items() if k != "docs"}
+    ci_yaml = _ci_yaml(jobs=jobs_without_docs)
+    missing = unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True)
+    assert missing == ["docs / docs"]
+
+
+def test_ghas_literal_contexts_producible_only_with_ghas() -> None:
+    """The GHAS-app checks (`Trivy`, `Semgrep OSS`, `CodeQL`) report on a PR only
+    when GHAS is on — the ruleset requires them under the same condition, so both
+    the ghas and non-ghas derivations must come out clean."""
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    for ghas in (True, False):
+        ruleset = desired_ci_gates_ruleset(_project(), _ci(), ghas=ghas, docs=True)
+        assert (
+            unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=ghas)
+            == []
+        )
+
+
+def test_versioned_contexts_producible_across_all_versions() -> None:
+    ruleset = desired_ci_gates_ruleset(
+        _project(), _ci(versions=["3.12", "3.13", "3.14"]), ghas=True, docs=True
+    )
+    ci_yaml = _ci_yaml(jobs=_FULL_CI_JOBS)
+    assert (
+        unproducible_required_contexts(ci_yaml, required_status_contexts(ruleset), ghas=True) == []
+    )
+
+
+def test_unrecognized_reusable_workflow_produces_no_contexts() -> None:
+    """A job wired to an unknown reusable workflow contributes nothing to the
+    producible set, so any required context is flagged (the safe default)."""
+    ci_yaml = _ci_yaml(jobs={"mystery": "ci-mystery.yml"})
+    assert unproducible_required_contexts(ci_yaml, ["quality / common"], ghas=True) == [
+        "quality / common"
+    ]
 
 
 # ---------------------------------------------------------------------------
