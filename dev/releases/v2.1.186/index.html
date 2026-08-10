@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.91/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.89/">
+        <link rel="next" href="../v2.1.185/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.90 - VERGIL Tooling</title>
+        <title>2.1.186 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2190-2026-07-01" class="md-skip">
+        <a href="#release-21186-2026-08-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.90
+              2.1.186
             
           </span>
         </div>
@@ -1238,10 +1238,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.186/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.186
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1257,6 +1284,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3926,37 +3984,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.90
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.90/" class="md-nav__link">
         
   
   
@@ -3972,37 +4003,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13089,16 +13089,26 @@
 
 
 
-<h1 id="release-2190-2026-07-01">Release 2.1.90 (2026-07-01)<a class="headerlink" href="#release-2190-2026-07-01" title="Permanent link">&para;</a></h1>
+<h1 id="release-21186-2026-08-10">Release 2.1.186 (2026-08-10)<a class="headerlink" href="#release-21186-2026-08-10" title="Permanent link">&para;</a></h1>
 <h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>render epics as a table with a Done column and stacked repos (#1995)</strong>
-Replace the bullet-list roadmap rows with a markdown table per milestone:
-columns Epic (link + title) | Done (closed/total) | Repos | Created. Repos
-are stacked in-cell with <br> using short names instead of a comma-joined
-run, and the created date now has its own visible column. Epic titles are
-pipe-escaped so a '|' in a title can't break the table.</li>
+<li><strong>declarative [container].system-packages for dev images (#2732)</strong></li>
+<li>feat(config): parse [container].system-packages</li>
 </ul>
+<p>Add ContainerConfig.system_packages + container_system_packages accessor; the single reader of the key for both the local cache build and CI. Epic vergil-project/.github#272.</p>
+<ul>
+<li>feat(container): bake declared system-packages into the cached dev image</li>
+</ul>
+<p>apt_install_command spells a fail-closed per-package apt install; _build_cached_image prepends it to setup when [container].system-packages is declared. Cache key already covers it via vergil.toml. Epic vergil-project/.github#272.</p>
+<ul>
+<li>feat(container): add vrg-container-system-packages accessor for CI</li>
+</ul>
+<p>CLI printing the declared package list, or --install-script emitting the shared apt speller for the CI setup step. Epic vergil-project/.github#272.</p>
+<ul>
+<li>fix(container): add <strong>main</strong> guard to accessor and wrap long test line</li>
+</ul>
+<p>vrg-container-system-packages needs a <strong>main</strong> guard so python -m answers --help (help-coverage gate); wrap an over-length test line. Epic vergil-project/.github#272.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.186/v2.1.186-ci-evidence.tar.gz">Download →</a></p>
 
 
 
