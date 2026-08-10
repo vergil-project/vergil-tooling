@@ -861,7 +861,8 @@ def test_cache_hash_changes_when_system_packages_change(tmp_path: Path) -> None:
         _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond"]\n'
     )
     (b / "vergil.toml").write_text(
-        _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond", "fluidsynth"]\n'
+        _VALID_TOML
+        + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond", "fluidsynth"]\n'
     )
     assert compute_cache_hash(cache_sensitive_files(a, "go")) != compute_cache_hash(
         cache_sensitive_files(b, "go")

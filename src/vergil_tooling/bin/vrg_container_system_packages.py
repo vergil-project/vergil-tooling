@@ -7,6 +7,7 @@ install snippet (the single speller shared with the local cache build).
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from vergil_tooling.lib.config import container_system_packages
@@ -34,3 +35,7 @@ def main(argv: list[str] | None = None) -> int:
         for pkg in packages:
             print(pkg)
     return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
