@@ -12,6 +12,7 @@ from vergil_tooling.lib.container_cache import (
     _build_cached_image,
     _is_self_repo,
     _sanitize_branch,
+    apt_install_command,
     cache_image_tag,
     cache_sensitive_files,
     clean_branch_images,
@@ -823,6 +824,91 @@ def test_compute_cache_hash_stable_for_same_inputs(tmp_path: Path) -> None:
     h1 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
     h2 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
     assert h1 == h2
+
+
+# -- apt_install_command speller (epic vergil-project/.github#272) -------------
+
+
+def test_apt_install_command_empty_is_blank() -> None:
+    assert apt_install_command([], "linux/arm64") == ""
+
+
+def test_apt_install_command_updates_then_installs_each_package() -> None:
+    cmd = apt_install_command(["lilypond", "fluidsynth"], "linux/arm64")
+    assert "apt-get update" in cmd
+    assert "--no-install-recommends" in cmd
+    # per-package install so the failing package is named
+    assert "lilypond" in cmd
+    assert "fluidsynth" in cmd
+
+
+def test_apt_install_command_fail_closed_names_package_and_arch() -> None:
+    cmd = apt_install_command(["boguspkg"], "linux/arm64")
+    assert "boguspkg" in cmd
+    assert "linux/arm64" in cmd
+    assert "not installable" in cmd
+    assert "exit 1" in cmd
+
+
+def test_cache_hash_changes_when_system_packages_change(tmp_path: Path) -> None:
+    # The §3.6 invariant: vergil.toml is cache-sensitive, so editing the package
+    # list changes the hash and forces a rebuild.
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / "vergil.toml").write_text(
+        _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond"]\n'
+    )
+    (b / "vergil.toml").write_text(
+        _VALID_TOML
+        + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond", "fluidsynth"]\n'
+    )
+    assert compute_cache_hash(cache_sensitive_files(a, "go")) != compute_cache_hash(
+        cache_sensitive_files(b, "go")
+    )
+
+
+# -- _build_cached_image bakes declared system-packages -----------------------
+
+
+def test_build_cached_image_prepends_apt_install_to_setup(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond"]\n'
+    )
+    create_cmd = _capture_create_cmd(tmp_path, "go")
+    setup_cmd = create_cmd[-1]
+    assert "apt-get update" in setup_cmd
+    assert "lilypond" in setup_cmd
+    # the apt snippet precedes the vergil-tooling install / warmup
+    assert setup_cmd.index("apt-get update") < setup_cmd.index("uv tool install")
+
+
+def test_build_cached_image_no_apt_when_no_system_packages(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    create_cmd = _capture_create_cmd(tmp_path, "go")
+    assert "apt-get" not in create_cmd[-1]
+
+
+def test_build_cached_image_prints_packages_banner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML + '[container]\nenv-prefixes = []\nsystem-packages = ["lilypond"]\n'
+    )
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    ok = MagicMock(returncode=0)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return create_result
+        return ok
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
+    out = capsys.readouterr().out
+    assert "Packages:" in out
+    assert "lilypond" in out
 
 
 # -- resolve_base_digest ------------------------------------------------------
