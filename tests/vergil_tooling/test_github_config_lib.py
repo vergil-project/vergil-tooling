@@ -626,7 +626,7 @@ def _vergil_config(
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(versions=versions or ["3.14"], integration_tests=integration_tests),
         publish=PublishConfig(release=False, docs=docs, consumer_refresh=None),
-        container=ContainerConfig(env_prefixes=[]),
+        container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
 
@@ -1778,7 +1778,7 @@ def test_compute_desired_state_publish_release_true() -> None:
         markdownlint=MarkdownlintConfig(ignore=[]),
         ci=_ci(),
         publish=PublishConfig(release=True, docs=True, consumer_refresh=None),
-        container=ContainerConfig(env_prefixes=[]),
+        container=ContainerConfig(env_prefixes=[], system_packages=[]),
         validation=ValidationConfig(container_command=DEFAULT_VALIDATION_COMMAND),
     )
     state = compute_desired_state(config, visibility="public", is_org=True)

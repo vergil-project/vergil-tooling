@@ -71,7 +71,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
-    "container": frozenset({"env-prefixes"}),
+    "container": frozenset({"env-prefixes", "system-packages"}),
     "validation": frozenset({"container-command"}),
     "actions": frozenset({"extra-allowed-patterns"}),
     "cpp": frozenset({"std", "stdlib"}),
@@ -113,6 +113,11 @@ class PublishConfig:
 @dataclass
 class ContainerConfig:
     env_prefixes: list[str]
+    # Debian package names a repo declares in [container].system-packages, baked
+    # into the local cached dev image and installed on CI test jobs (epic
+    # vergil-project/.github#272). Names only, from the base image's existing apt
+    # sources; default [].
+    system_packages: list[str]
 
 
 @dataclass
@@ -504,9 +509,15 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         if not isinstance(env_prefixes, list) or not all(isinstance(p, str) for p in env_prefixes):
             msg = f"{source}: [container].env-prefixes must be a list of strings"
             raise ConfigError(msg)
-        container = ContainerConfig(env_prefixes=env_prefixes)
+        system_packages = container_raw.get("system-packages", [])
+        if not isinstance(system_packages, list) or not all(
+            isinstance(p, str) for p in system_packages
+        ):
+            msg = f"{source}: [container].system-packages must be a list of strings"
+            raise ConfigError(msg)
+        container = ContainerConfig(env_prefixes=env_prefixes, system_packages=system_packages)
     else:
-        container = ContainerConfig(env_prefixes=[])
+        container = ContainerConfig(env_prefixes=[], system_packages=[])
 
     validation_raw = raw.get("validation")
     if validation_raw is not None:
@@ -613,6 +624,19 @@ def container_env_prefixes(repo_root: Path) -> list[str]:
     except FileNotFoundError:
         return []
     return cfg.container.env_prefixes
+
+
+def container_system_packages(repo_root: Path) -> list[str]:
+    """Return ``[container].system-packages`` from vergil.toml, or ``[]``.
+
+    The single reader of the key; the local cache build and the CI setup step
+    both resolve packages through this. Debian ``apt`` package names.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return []
+    return cfg.container.system_packages
 
 
 def validation_container_command(repo_root: Path) -> str:
