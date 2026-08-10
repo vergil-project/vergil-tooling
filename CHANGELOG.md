@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.185] - 2026-08-10
+
+### Bug fixes
+
+- stop treating CWD as authoritative for clone target and resume state (#2719)
+- scope App token to --repo org (also epic-create) (#2723)
+- emit docs/docs on PR and guard required-context parity (#2726)
+
+### Documentation
+
+- note archiving targets only canonical per-repo ad-hoc epics (#2706) (#2716)
+
 ## [2.1.184] - 2026-08-09
 
 ### Bug fixes
