@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from vergil_tooling.lib import identity_mode
 from vergil_tooling.lib.config import _ENUMS
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
+    foreign_repo_refusal,
     prompt_choice,
     prompt_free_text,
     prompt_yes_no,
@@ -47,6 +49,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--visibility",
         choices=("public", "private"),
         help="Repository visibility, new repos only (default: public)",
+    )
+    parser.add_argument(
+        "--target-dir",
+        help="Parent directory to clone into (new repos only; default: current "
+        "directory). Names the clone location explicitly so it does not depend on "
+        "where the command is run.",
     )
 
     # Wizard-prompt flags. Each overrides the matching interactive prompt exactly
@@ -129,6 +137,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.adopt and args.repo:
         parser.error("--adopt cannot be used with a repo argument")
 
+    if args.target_dir is not None:
+        if args.adopt:
+            parser.error("--target-dir cannot be used with --adopt (adopt uses the current dir)")
+        if not Path(args.target_dir).is_dir():
+            parser.error(f"--target-dir is not an existing directory: {args.target_dir}")
+
     if not args.adopt and not args.repo:
         parser.error("provide ORG/NAME or use --adopt from inside a clone")
 
@@ -194,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
     else:
         org, name = args.repo.split("/", 1)
         ctx = RepoInitContext(org=org, name=name)
+        if args.target_dir is not None:
+            ctx.target_dir = Path(args.target_dir)
 
         if args.visibility:
             ctx.visibility = args.visibility
@@ -230,6 +246,14 @@ def main(argv: list[str] | None = None) -> int:
     ctx.opt_vergil_version = args.vergil_version
     ctx.opt_license_type = args.license
     ctx.opt_initial_version = args.initial_version
+
+    # Refuse a new-repo run launched from inside an unrelated repo before any side
+    # effect (notably before step 1 creates the remote), unless --target-dir names
+    # where the clone goes (#2717). Adopt runs and --target-dir runs return None.
+    refusal = foreign_repo_refusal(ctx)
+    if refusal is not None:
+        print(refusal, file=sys.stderr)
+        return 1
 
     run_wizard(ctx)
     return 0

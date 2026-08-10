@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 
 from vergil_tooling.bin.vrg_github_repo_init import main, parse_args
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestParseArgs:
@@ -33,6 +37,19 @@ class TestParseArgs:
     def test_no_args_is_error(self) -> None:
         with pytest.raises(SystemExit):
             parse_args([])
+
+    def test_target_dir_parses(self, tmp_path: Path) -> None:
+        args = parse_args(["org/repo", "--target-dir", str(tmp_path)])
+        assert args.target_dir == str(tmp_path)
+
+    def test_target_dir_with_adopt_is_error(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit):
+            parse_args(["--adopt", "--target-dir", str(tmp_path)])
+
+    def test_target_dir_must_exist(self, tmp_path: Path) -> None:
+        missing = tmp_path / "nope"
+        with pytest.raises(SystemExit):
+            parse_args(["org/repo", "--target-dir", str(missing)])
 
     def test_wizard_flags_parse(self) -> None:
         args = parse_args(
@@ -219,6 +236,10 @@ class TestMain:
     def test_new_repo_with_visibility_arg(self) -> None:
         with (
             patch("vergil_tooling.bin.vrg_github_repo_init.prompt_free_text", return_value="desc"),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
             patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
         ):
             result = main(["org/repo", "--visibility", "private"])
@@ -228,6 +249,46 @@ class TestMain:
         assert ctx.visibility == "private"
         assert ctx.description == "desc"
 
+    def test_new_repo_target_dir_threads_into_ctx(self, tmp_path: Path) -> None:
+        # --target-dir is carried onto the context and, being set, lifts the
+        # foreign-repo guard without any CWD lookup (#2717).
+        with (
+            patch("vergil_tooling.bin.vrg_github_repo_init.prompt_free_text", return_value="desc"),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.prompt_choice",
+                return_value="public",
+            ),
+            patch("vergil_tooling.lib.repo_init.cwd_repo_slug") as mock_slug,
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["org/repo", "--target-dir", str(tmp_path)])
+
+        assert result == 0
+        ctx = mock_wizard.call_args[0][0]
+        assert ctx.target_dir == tmp_path
+        mock_slug.assert_not_called()  # --target-dir short-circuits the guard
+
+    def test_new_repo_refused_inside_foreign_repo(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # When the guard returns a refusal, main aborts with code 1 before the
+        # wizard runs — nothing is created (#2717).
+        with (
+            patch("vergil_tooling.bin.vrg_github_repo_init.prompt_free_text", return_value="desc"),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.prompt_choice",
+                return_value="public",
+            ),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value="Refusing to bootstrap org/repo from inside other/repo",
+            ),
+            patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
+        ):
+            result = main(["org/repo"])
+
+        assert result == 1
+        mock_wizard.assert_not_called()
+        assert "Refusing to bootstrap" in capsys.readouterr().err
+
     def test_new_repo_prompts_visibility(self) -> None:
         with (
             patch(
@@ -235,6 +296,10 @@ class TestMain:
                 return_value="public",
             ),
             patch("vergil_tooling.bin.vrg_github_repo_init.prompt_free_text", return_value="desc"),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
             patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
         ):
             result = main(["org/repo"])
@@ -273,6 +338,10 @@ class TestMain:
         ]
         with (
             patch("builtins.input", side_effect=AssertionError("prompted in non-interactive mode")),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
             patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
         ):
             result = main(argv)
@@ -311,6 +380,10 @@ class TestMain:
         ]
         with (
             patch("builtins.input", side_effect=AssertionError("prompted in non-interactive mode")),
+            patch(
+                "vergil_tooling.bin.vrg_github_repo_init.foreign_repo_refusal",
+                return_value=None,
+            ),
             patch("vergil_tooling.bin.vrg_github_repo_init.run_wizard") as mock_wizard,
         ):
             result = main(argv)
