@@ -1168,6 +1168,8 @@
       
         
       
+        
+      
     
     
     
@@ -1220,6 +1222,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.185/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.185
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13651,6 +13681,13 @@ ad-hoc epic ends up holding only its still-open children.</p>
   filed in it.</li>
 <li><strong>The live epic is never renamed, recreated, or closed.</strong> It only loses its
   closed children to the archives; it stays the one perpetual umbrella per repo.</li>
+<li><strong>Only canonical per-repo ad-hoc epics are archived.</strong> Both the batch drain and
+  the on-close event path key on the repo named in the <code>Epic (ad hoc): &lt;repo&gt;</code>
+  title, so a closed child always lands in <em>its own repo's</em> quarter archive — even
+  for a public repo whose ad-hoc epic is homed centrally in <code>.github</code>. A
+  special-purpose <code>ad-hoc</code>-labelled epic whose title bare-name is a description
+  rather than a real repo (e.g. a standing reliability collection) is <strong>left
+  untouched</strong> — it is not treated as a drainable ad-hoc epic.</li>
 <li><strong>Past-quarter archives are closed; the current-quarter archive stays open.</strong>
   A closed archive is a stable historical record; the current one keeps
   receiving this quarter's closures. A late straggler whose close-quarter

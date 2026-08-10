@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.171/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.169/">
+        <link rel="next" href="../v2.1.184/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.170 - VERGIL Tooling</title>
+        <title>2.1.185 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21170-2026-08-05" class="md-skip">
+        <a href="#release-21185-2026-08-10" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.170
+              2.1.185
             
           </span>
         </div>
@@ -1236,10 +1236,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.185/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.185
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1255,6 +1282,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1656,37 +1725,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.170
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.170/" class="md-nav__link">
         
   
   
@@ -1702,37 +1744,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13042,6 +13053,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -13059,20 +13081,34 @@
 
 
 
-<h1 id="release-21170-2026-08-05">Release 2.1.170 (2026-08-05)<a class="headerlink" href="#release-21170-2026-08-05" title="Permanent link">&para;</a></h1>
+<h1 id="release-21185-2026-08-10">Release 2.1.185 (2026-08-10)<a class="headerlink" href="#release-21185-2026-08-10" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>switch AUDIT to OSV-Scanner, fix Conan build_type + gcovr paths (#2573)</strong></li>
-<li>fix(cpp): switch AUDIT to OSV-Scanner, fix Conan build_type + gcovr paths</li>
+<li><strong>stop treating CWD as authoritative for clone target and resume state (#2719)</strong>
+vrg-github-repo-init derived two things from the current working directory, and both were wrong when run from inside an existing Vergil repo. The resume symptom is the dangerous one: run_wizard read CWD's git log, so an unrelated repo's 'chore(init): step N -' commits were misread as the new repo's progress, silently skipping vergil.toml, config, and CI steps and reporting success. The clone symptom cloned into CWD/<name> and collided with a legitimate same-named directory, leaving an empty remote behind.</li>
 </ul>
-<p>T11 validation (#2558) surfaced three C++ config gaps in the registry and packaged configs. Fix all three:</p>
+<p>Fixes (all four from the issue):
+- Resume state is now trusted only when CWD is the target's own clone (or an adopt run); a foreign repo's log is ignored. Removes the silent-misconfiguration path.
+- step_clone refuses to clone into an occupied, non-clone path and names the resolved path instead of letting git clone raise.
+- New --target-dir names the clone's parent explicitly (validated: existing dir, not with --adopt).
+- main refuses a new-repo run launched from inside a different repo before any side effect (notably before the remote is created), unless --target-dir is given.</p>
+<p>New helpers cwd_repo_slug() and foreign_repo_refusal() centralize the CWD-vs-target comparison.</p>
 <ul>
-<li>AUDIT now runs OSV-Scanner over a conan.lock (tokenless, scalable) instead of conan audit (SaaS token, rate-limited). INSTALL writes the lockfile via 'conan lock create'. Decision: vergil-project/.github#209; tool added image-side in vergil-containers#487.</li>
-<li>Conan resolves deps with -s build_type=Debug so dependency binaries match the CMake Debug coverage/sanitizer builds (was defaulting to Release -&gt; fmt/format.h not found on cold rebuild). Fixed in both the languages registry INSTALL and the container-test default command.</li>
-<li>gcovr --root/--filter move to the command line so they resolve against the repo root; config-relative paths resolved against the packaged config dir and filtered all coverage out. gcovr.cfg keeps only path-independent settings.</li>
+<li><strong>scope App token to --repo org (also epic-create) (#2723)</strong>
+vrg-triage-create computed the target repo correctly but called github.create_issue without wrapping it in target_org(owner), so _gh_env() fell back to the cwd repo's org and minted the App installation token for the wrong org. A cross-org create then misrouted or misreported the issue's location, and because target_org was unset the require_installation fail-loud guard never fired.</li>
 </ul>
-<p>Docs and unit tests updated to match.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.170/v2.1.170-ci-evidence.tar.gz">Download →</a></p>
+<p>Wrap the create in target_org(owner) derived from the resolved --repo, mirroring vrg-issue-create. Auditing the other create paths surfaced the same gap in vrg-epic-create (repo_visibility + create_issue), which is fixed the same way. Add regression tests asserting target_org is entered with the --repo owner for both commands.</p>
+<ul>
+<li><strong>emit docs/docs on PR and guard required-context parity (#2726)</strong>
+The CI-gates ruleset and the generated ci.yml are derived from the same identity along two independent paths, and they disagreed about what reports on pull_request. A publish-docs repo required the docs / docs context, but ci.yml never invoked ci-docs.yml (the docs job lived only in the push-triggered cd.yml), so every merge blocked with green checks. render_ci_workflow now emits a docs job calling ci-docs.yml@v2.1 on pull_request whenever publish_docs is set, so the required context actually reports.</li>
+</ul>
+<p>Add an init/adopt cross-check (_assert_ci_gates_producible) that fails loudly at step 8 when the CI-gates ruleset requires any status check the generated ci.yml cannot emit on a pull_request, instead of shipping a repository that cannot merge its first PR. The check naturally refuses integration-tests = true, whose test / integration context has no producing job, pointing at #2721 until integration tests are first-class.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>note archiving targets only canonical per-repo ad-hoc epics (#2706) (#2716)</strong>
+Documentation-review bookend of epic #266. Adds a bullet stating that both the batch drain and the on-close event path archive a closed child into its own repo's quarter bucket (keyed on the Epic (ad hoc): <repo> title, including public repos homed in .github), and that a special-purpose ad-hoc-labelled epic whose title bare-name is not a real repo is left untouched — reflecting the #2709 hook repo-derivation + non-repo guard fix.</li>
+</ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.185/v2.1.185-ci-evidence.tar.gz">Download →</a></p>
 
 
 
