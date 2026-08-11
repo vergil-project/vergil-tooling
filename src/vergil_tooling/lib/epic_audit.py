@@ -303,13 +303,14 @@ def epic_outside_dotgithub(org: str) -> list[str]:
 def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     """Open issues in the epic *home* that violate invariant 2 (epic #85).
 
-    The home holds only epics, intake (``triage``/``idea``/``research``), and
-    managed tasks whose closing PR lands there (a task linked under an epic). An
-    open issue that is none of these — an unlinked, non-epic, non-intake issue —
-    is a stray; returns their slugs. *home* defaults to ``<org>/.github``; a
-    ``--repo``-targeted audit passes the repo's resolved home. When a candidate's
-    parent cannot be confirmed as an epic it is reported (fail-loud, the human
-    decides).
+    The home holds only epics, intake (``triage``/``idea``/``research``), the
+    ``archive``-labelled per-quarter buckets (a legitimate top-level home issue,
+    skipped like epics and intake), and managed tasks whose closing PR lands there
+    (a task linked under an epic). An open issue that is none of these — an
+    unlinked, non-epic, non-archive, non-intake issue — is a stray; returns their
+    slugs. *home* defaults to ``<org>/.github``; a ``--repo``-targeted audit passes
+    the repo's resolved home. When a candidate's parent cannot be confirmed as an
+    epic it is reported (fail-loud, the human decides).
     """
     if home is None:
         home = f"{org}/.github"
@@ -329,7 +330,7 @@ def stray_dotgithub_issue(org: str, *, home: str | None = None) -> list[str]:
     strays: list[str] = []
     for item in raw if isinstance(raw, list) else []:
         labels = {str((label or {}).get("name", "")) for label in (item.get("labels") or [])}
-        if "epic" in labels or (labels & _INTAKE_LABELS):
+        if "epic" in labels or "archive" in labels or (labels & _INTAKE_LABELS):
             continue
         number = int(item["number"])
         parent = epics.parent_of(epics.IssueRef(home_owner, home_repo, number))
