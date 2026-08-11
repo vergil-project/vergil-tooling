@@ -302,6 +302,17 @@ def test_stray_dotgithub_issue_flags_unlinked_non_epic_non_intake() -> None:
     assert result == ["vergil-project/.github#7"]
 
 
+def test_stray_skips_open_archive() -> None:
+    # An open, top-level 'archive'-labelled per-quarter bucket has no parent and
+    # is not epic-labelled, but it is a legitimate home issue, not a stray.
+    rows = [
+        {"number": 88, "labels": [{"name": "archive"}, {"name": "ad-hoc"}]},
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        strays = epic_audit.stray_dotgithub_issue("org", home="org/.github")
+    assert strays == []  # an archive is not a stray
+
+
 # -- closed-epic-with-open-child invariant + reopen remediation (issue #2259) --
 
 
