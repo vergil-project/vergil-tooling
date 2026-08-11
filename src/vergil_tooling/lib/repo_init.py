@@ -472,18 +472,50 @@ def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | Non
     return parse_cpp_version_tag(versions[0])
 
 
+def _node_major(versions: list[str] | None) -> str | None:
+    """Parse the primary Node major from a ``node-``-prefixed ``[ci].versions`` tag.
+
+    TypeScript carries its Node major on ``[ci].versions`` as a ``node-``
+    prefixed tag (e.g. ``node-24``), matching the ``prod-ts-node:<major>``
+    images T1/T2 build in vergil-containers (epic vergil-project/.github#284).
+    The first entry is the representative primary that drives the single
+    top-level ``container-suffix``/``container-tag`` in generated CI. Returns
+    the numeric major (e.g. ``"24"``) or ``None`` when the primary entry
+    carries no recognized ``node-`` prefix.
+
+    The container image-resolution side of this parse lives in
+    :mod:`container` and lands with T5; this local helper keeps the CI
+    scaffolding path self-contained on the ``typescript`` primary-language
+    name alone.
+    """
+    if not versions:
+        return None
+    prefix = "node-"
+    primary = versions[0]
+    if primary.startswith(prefix):
+        return primary[len(prefix) :]
+    return None
+
+
 def _container_suffix(language: str | None, versions: list[str] | None = None) -> str:
     """Map primary language to dev container image suffix.
 
     C++ is compiler-family-aware: the suffix resolves to ``cpp-clang`` /
     ``cpp-gcc`` from the ``clang-``/``gcc-`` prefix on the primary
-    ``[ci].versions`` entry (vergil-project/.github#207 §6).
+    ``[ci].versions`` entry (vergil-project/.github#207 §6). TypeScript resolves
+    to the fixed ``ts-node`` runtime-family suffix (the Node major rides the
+    *tag*, like cpp's numeric version), matching the ``prod-ts-node:<major>``
+    images (epic vergil-project/.github#284). A primary tag without a
+    recognized ``node-`` prefix falls back to ``base``, like an unknown
+    language.
     """
     if language is None:
         return "base"
     if language == "cpp":
         parsed = _cpp_family_and_version(versions)
         return f"cpp-{parsed[0]}" if parsed else "base"
+    if language == "typescript":
+        return "ts-node" if _node_major(versions) else "base"
     suffix_map = {
         "python": "python",
         "go": "go",
@@ -523,6 +555,11 @@ def _container_tag(language: str | None, versions: list[str]) -> str:
     if language == "cpp":
         parsed = _cpp_family_and_version(versions)
         return parsed[1] if parsed else "latest"
+    if language == "typescript":
+        # The Node major is the tag; the ``ts-node`` family rides the suffix,
+        # so ``node-24`` resolves to ``prod-ts-node:24`` (epic
+        # vergil-project/.github#284). A malformed tag falls back to ``latest``.
+        return _node_major(versions) or "latest"
     if language == "python" and versions:
         return versions[-1]
     return "latest"
@@ -944,6 +981,11 @@ def _default_ci_versions(language: str | None) -> str:
         # default seeds a single primary Clang image, matching the primary
         # major built in vergil-containers.
         "cpp": "clang-20",
+        # TypeScript carries the Node major here as a ``node-`` prefixed tag so
+        # the derived suffix/tag are runtime-aware; the default seeds the two v1
+        # LTS majors (primary first), matching the ``prod-ts-node:<major>``
+        # images built in vergil-containers (epic vergil-project/.github#284).
+        "typescript": "node-24, node-22",
     }
     return defaults.get(language, "latest")
 

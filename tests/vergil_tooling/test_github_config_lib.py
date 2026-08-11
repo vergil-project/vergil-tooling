@@ -343,6 +343,33 @@ def test_ci_gates_codeql_for_cpp() -> None:
     assert "CodeQL" in names
 
 
+def test_ci_gates_codeql_for_typescript() -> None:
+    # typescript is CodeQL-supported (epic vergil-project/.github#284 T6). It is
+    # keyed by the *primary-language* name (`typescript`), NOT the CodeQL
+    # analysis identifier `javascript-typescript`: this set is tested against
+    # `project.primary_language`, and the `typescript → javascript-typescript`
+    # mapping belongs to the reusable CI Action (T7), not here.
+    r = desired_ci_gates_ruleset(
+        _project(language="typescript"), _ci(versions=["node-24", "node-22"]), ghas=True
+    )
+    names = _check_names(r)
+    assert "security / codeql" in names
+    assert "CodeQL" in names
+
+
+def test_codeql_supported_languages_align_with_repo_init() -> None:
+    # The github_config gate-emission set and repo_init's CI-rendering set must
+    # agree on typescript, or a TS repo would get a required CodeQL check with no
+    # job to satisfy it (or vice versa). Assert alignment on both cpp and
+    # typescript (epic vergil-project/.github#284 T6, #207 T7).
+    from vergil_tooling.lib.github_config import _CODEQL_SUPPORTED_LANGUAGES
+    from vergil_tooling.lib.repo_init import _CODEQL_LANGUAGES
+
+    for lang in ("cpp", "typescript"):
+        assert lang in _CODEQL_SUPPORTED_LANGUAGES
+        assert lang in _CODEQL_LANGUAGES
+
+
 def test_ci_gates_no_codeql_without_language() -> None:
     r = desired_ci_gates_ruleset(_project(language=None), _ci(), ghas=True)
     names = _check_names(r)
