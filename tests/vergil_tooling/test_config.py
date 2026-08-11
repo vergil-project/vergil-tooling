@@ -10,12 +10,15 @@ import pytest
 from vergil_tooling.lib.config import (
     DEFAULT_CPP_STD,
     DEFAULT_CPP_STDLIB,
+    DEFAULT_TYPESCRIPT_MODULE,
+    DEFAULT_TYPESCRIPT_TARGET,
     DEFAULT_VALIDATION_COMMAND,
     CiConfig,
     ConfigError,
     ContainerConfig,
     CppConfig,
     MarkdownlintConfig,
+    TypeScriptConfig,
     ValidationConfig,
     VmStanza,
     _warn_unrecognized_keys,
@@ -249,6 +252,28 @@ def test_config_warns_on_unknown_language_after_cpp_added(
     cfg = read_config(tmp_path)
     assert cfg.project.primary_language is None
     assert "unrecognized primary-language 'cobol'" in capsys.readouterr().err
+
+
+def test_config_accepts_typescript_language(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``primary-language = "typescript"`` is a recognized language (no warning)."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "typescript"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language == "typescript"
+    assert "unrecognized primary-language" not in capsys.readouterr().err
+
+
+def test_config_warns_on_unknown_language_after_typescript_added(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Adding typescript does not weaken the enum — an unknown value still warns."""
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "fortran"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.project.primary_language is None
+    assert "unrecognized primary-language 'fortran'" in capsys.readouterr().err
 
 
 # -- [markdownlint] section ---------------------------------------------------
@@ -1266,3 +1291,103 @@ def test_cpp_block_not_flagged_as_unrecognized_section(
     (tmp_path / "vergil.toml").write_text(toml)
     read_config(tmp_path)
     assert "unrecognized section [cpp]" not in capsys.readouterr().err
+
+
+# -- [typescript] section (epic vergil-project/.github#284, T3) ----------------
+
+_TYPESCRIPT_BASE_TOML = """\
+[project]
+repository-type = "application"
+versioning-scheme = "semver"
+branching-model = "application-promotion"
+release-model = "environment-promotion"
+primary-language = "typescript"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["node-24", "node-22"]
+"""
+
+
+def test_typescript_block_defaults_when_absent(tmp_path: Path) -> None:
+    """With no [typescript] block, module/target fall back to the v1 pins."""
+    (tmp_path / "vergil.toml").write_text(_TYPESCRIPT_BASE_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.typescript == TypeScriptConfig(
+        module=DEFAULT_TYPESCRIPT_MODULE, target=DEFAULT_TYPESCRIPT_TARGET
+    )
+    assert cfg.typescript.module == "esm"
+    assert cfg.typescript.target == "es2022"
+
+
+def test_typescript_block_parsed(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\nmodule = "esm"\ntarget = "es2022"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.typescript == TypeScriptConfig(module="esm", target="es2022")
+
+
+def test_typescript_block_module_only_target_defaults(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\nmodule = "esm"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.typescript.module == "esm"
+    assert cfg.typescript.target == DEFAULT_TYPESCRIPT_TARGET
+
+
+def test_typescript_block_target_only_module_defaults(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\ntarget = "es2022"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.typescript.module == DEFAULT_TYPESCRIPT_MODULE
+    assert cfg.typescript.target == "es2022"
+
+
+def test_typescript_module_rejects_nonsense(tmp_path: Path) -> None:
+    # cjs is deferred (spec §9 ledger): not yet a valid value, so it is
+    # rejected rather than silently ignored.
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\nmodule = "cjs"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[typescript\]\.module 'cjs'"):
+        read_config(tmp_path)
+
+
+def test_typescript_module_non_string_rejected(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + "\n[typescript]\nmodule = 6\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[typescript\]\.module must be a string"):
+        read_config(tmp_path)
+
+
+def test_typescript_target_rejects_nonsense(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\ntarget = "banana"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[typescript\]\.target 'banana'"):
+        read_config(tmp_path)
+
+
+def test_typescript_target_non_string_rejected(tmp_path: Path) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + "\n[typescript]\ntarget = 2022\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[typescript\]\.target must be a string"):
+        read_config(tmp_path)
+
+
+def test_warns_unrecognized_typescript_key(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\nmodule = "esm"\nlib = "es2022"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized key 'lib' in [typescript]" in capsys.readouterr().err
+
+
+def test_typescript_block_not_flagged_as_unrecognized_section(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    toml = _TYPESCRIPT_BASE_TOML + '\n[typescript]\nmodule = "esm"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    read_config(tmp_path)
+    assert "unrecognized section [typescript]" not in capsys.readouterr().err

@@ -27,7 +27,7 @@ _ENUMS: dict[str, set[str]] = {
     "versioning-scheme": {"library", "semver", "application", "none"},
     "branching-model": {"library-release", "application-promotion", "docs-single-branch"},
     "release-model": {"artifact-publishing", "tagged-release", "environment-promotion", "none"},
-    "primary-language": {"python", "go", "java", "ruby", "rust", "cpp"},
+    "primary-language": {"python", "go", "java", "ruby", "rust", "cpp", "typescript"},
 }
 
 # The [cpp] block (epic vergil-project/.github#207 §3.3). The compiler family ×
@@ -40,6 +40,17 @@ DEFAULT_CPP_STD = "c++20"
 DEFAULT_CPP_STDLIB = "libstdc++"
 _CPP_STD_VALUES = frozenset({"c++17", "c++20", "c++23"})
 _CPP_STDLIB_VALUES = frozenset({"libstdc++"})
+
+# The [typescript] block (epic vergil-project/.github#284 §3.3), mirroring the
+# [cpp] std/stdlib precedent. The Node major × version axis rides [ci].versions
+# (the ``node-`` tag prefix); the two cheap in-config axes are single-valued
+# [typescript] keys. v1 pins module = esm and target = es2022. cjs stays on the
+# spec §9 deferral ledger and is therefore rejected, not silently ignored; the
+# target set is likewise restricted to the pinned value in v1.
+DEFAULT_TYPESCRIPT_MODULE = "esm"
+DEFAULT_TYPESCRIPT_TARGET = "es2022"
+_TYPESCRIPT_MODULE_VALUES = frozenset({"esm"})
+_TYPESCRIPT_TARGET_VALUES = frozenset({"es2022"})
 
 _REQUIRED_PROJECT_FIELDS = (
     "repository-type",
@@ -61,6 +72,7 @@ _KNOWN_SECTIONS = frozenset(
         "validation",
         "actions",
         "cpp",
+        "typescript",
         "vm",
     },
 )
@@ -75,6 +87,7 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "validation": frozenset({"container-command"}),
     "actions": frozenset({"extra-allowed-patterns"}),
     "cpp": frozenset({"std", "stdlib"}),
+    "typescript": frozenset({"module", "target"}),
 }
 
 
@@ -136,6 +149,16 @@ class CppConfig:
 
 
 @dataclass
+class TypeScriptConfig:
+    # The two cheap in-config TypeScript axes (epic vergil-project/.github#284
+    # §3.3), mirroring [cpp]'s std/stdlib: ``module`` is the module system and
+    # ``target`` is the compile target. Both are single string values in v1;
+    # the Node major × version axis is carried by [ci].versions, not here.
+    module: str
+    target: str
+
+
+@dataclass
 class ActionsConfig:
     # Extra allowed-action patterns unioned into the repo's GitHub Actions
     # allowed-actions policy, on top of the base + per-language defaults in
@@ -156,6 +179,11 @@ class VergilConfig:
     actions: ActionsConfig = field(default_factory=lambda: ActionsConfig(extra_allowed_patterns=[]))
     cpp: CppConfig = field(
         default_factory=lambda: CppConfig(std=DEFAULT_CPP_STD, stdlib=DEFAULT_CPP_STDLIB)
+    )
+    typescript: TypeScriptConfig = field(
+        default_factory=lambda: TypeScriptConfig(
+            module=DEFAULT_TYPESCRIPT_MODULE, target=DEFAULT_TYPESCRIPT_TARGET
+        )
     )
     vm: VmStanza | None = None
 
@@ -408,6 +436,41 @@ def _parse_cpp_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> CppConf
     )
 
 
+def _parse_typescript_str_value(
+    raw: dict[str, Any], key: str, allowed: frozenset[str], default: str, source: str
+) -> str:
+    """Return a validated single-string [typescript] value, or its default when absent.
+
+    Raises ConfigError if present but non-string, or if it is not one of the
+    ``allowed`` values (rejection, not a silent fallback — a bogus module/target
+    would otherwise be dropped into the build unnoticed), mirroring [cpp].
+    """
+    if key not in raw:
+        return default
+    value = raw[key]
+    if not isinstance(value, str):
+        msg = f"{source}: [typescript].{key} must be a string (got {type(value).__name__})"
+        raise ConfigError(msg)
+    if value not in allowed:
+        allowed_str = ", ".join(sorted(allowed))
+        msg = f"{source}: invalid [typescript].{key} '{value}' (allowed: {allowed_str})"
+        raise ConfigError(msg)
+    return value
+
+
+def _parse_typescript_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> TypeScriptConfig:
+    """Parse the ``[typescript]`` block, defaulting to the v1 pins when it is absent."""
+    ts_raw = raw.get("typescript", {})
+    return TypeScriptConfig(
+        module=_parse_typescript_str_value(
+            ts_raw, "module", _TYPESCRIPT_MODULE_VALUES, DEFAULT_TYPESCRIPT_MODULE, source
+        ),
+        target=_parse_typescript_str_value(
+            ts_raw, "target", _TYPESCRIPT_TARGET_VALUES, DEFAULT_TYPESCRIPT_TARGET, source
+        ),
+    )
+
+
 def _warn_unrecognized_keys(raw: dict[str, Any], source: str = CONFIG_FILE) -> None:
     for section in raw:
         if section not in _KNOWN_SECTIONS:
@@ -562,6 +625,7 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         validation=validation,
         actions=actions,
         cpp=_parse_cpp_config(raw, source),
+        typescript=_parse_typescript_config(raw, source),
         vm=parse_vm_stanza(raw, source),
     )
 
