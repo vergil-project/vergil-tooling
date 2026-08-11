@@ -186,8 +186,21 @@ def _is_self_repo(repo_root: Path) -> bool:
 
 
 def cache_sensitive_files(repo_root: Path, lang: str) -> list[Path]:
-    """Return paths of cache-sensitive files that exist in *repo_root*."""
-    names = _CACHE_FILES.get(lang, _DEFAULT_CACHE_FILES)
+    """Return paths of cache-sensitive files that exist in *repo_root*.
+
+    The language defaults (lockfiles + ``vergil.toml``) are joined with the
+    repo-relative files named in ``[container].build-cache-files`` — the inputs
+    the repo's ``build-command`` reads — so a bump to a declared lockfile changes
+    the image cache hash and forces a rebuild (epic vergil-project/.github#291).
+    Declared files that duplicate a default are folded in once; only existing
+    files are returned.
+    """
+    from vergil_tooling.lib.config import container_build_cache_files
+
+    names = list(_CACHE_FILES.get(lang, _DEFAULT_CACHE_FILES))
+    for name in container_build_cache_files(repo_root):
+        if name not in names:
+            names.append(name)
     return [repo_root / n for n in names if (repo_root / n).is_file()]
 
 
@@ -246,6 +259,54 @@ def find_cached_image(base_image: str, branch: str, *, runtime: str = "") -> tup
     return None
 
 
+def _compose_setup(repo_root: Path, lang: str) -> str:
+    """Return the shell setup string baked into the cached image.
+
+    The composed step is, in order,
+    ``<apt fragment> && <uv tool install …> && <build-command> && <warmup>``:
+
+    * **apt** — repo-declared ``[container].system-packages``, installed first so
+      the rest of the step runs against the provisioned base (epic
+      vergil-project/.github#272).
+    * **uv install** — the pinned vergil-tooling install. Skipped for the self-repo
+      (vergil-tooling itself), which uses its local dev version; the build-command
+      then runs after apt and before warmup, the same relative slot.
+    * **build-command** — the repo's declared ``[container].build-command`` (epic
+      vergil-project/.github#291), run after the install so its environment matches
+      CI. Absent (``None``) ⇒ no fragment, and the result is byte-identical to the
+      pre-existing apt/install/warmup composition. A non-zero build-command aborts
+      the ``&&`` chain, failing the build fail-closed via the setup-step path.
+    * **warmup** — the language dependency warmup.
+
+    Pure and unit-testable: it reads config and derives the string without
+    spawning a container.
+    """
+    from vergil_tooling.lib.config import (
+        container_build_command,
+        container_system_packages,
+    )
+
+    warmup = _warmup_command(lang)
+    build = container_build_command(repo_root)
+
+    # The post-install tail: build-command then warmup, each included only when
+    # present. Keeping the tail separate reproduces the old install/warmup joining
+    # exactly, so an absent build-command yields a byte-identical setup string.
+    tail = " && ".join(part for part in (build, warmup) if part)
+
+    if _is_self_repo(repo_root):
+        setup = tail or "true"
+    else:
+        tag = vrg_install_tag(repo_root)
+        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
+        setup = f"{uv_install} && {tail}" if tail else uv_install
+
+    apt = apt_install_command(container_system_packages(repo_root), container_platform())
+    if apt:
+        setup = f"{apt} && {setup}"
+    return setup
+
+
 def _build_cached_image(
     repo_root: Path,
     lang: str,
@@ -259,23 +320,14 @@ def _build_cached_image(
     self_repo = _is_self_repo(repo_root)
     warmup = _warmup_command(lang)
 
-    from vergil_tooling.lib.config import container_system_packages
+    from vergil_tooling.lib.config import (
+        container_build_command,
+        container_system_packages,
+    )
 
     apt = apt_install_command(container_system_packages(repo_root), container_platform())
-
-    if self_repo:
-        setup = warmup or "true"
-    else:
-        tag = vrg_install_tag(repo_root)
-        uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
-        setup = f"{uv_install} && {warmup}" if warmup else uv_install
-
-    # System packages are a repo-declared test-runtime dependency: install them
-    # before vergil-tooling / warmup so the rest of the setup step runs against the
-    # provisioned base (epic vergil-project/.github#272). Empty list => no apt step,
-    # setup byte-identical to before.
-    if apt:
-        setup = f"{apt} && {setup}"
+    build = container_build_command(repo_root)
+    setup = _compose_setup(repo_root, lang)
 
     # Attribute the build clearly as an environment-provisioning step. A rebuild
     # can be triggered lazily by an operational command (the first vrg-container-run
@@ -290,7 +342,9 @@ def _build_cached_image(
     if self_repo:
         print("  Install: skipped (self-repo uses local dev version)")
     else:
-        print(f"  Install: vergil-tooling@{tag}")
+        print(f"  Install: vergil-tooling@{vrg_install_tag(repo_root)}")
+    if build:
+        print(f"  Build:   {build}")
     if warmup:
         print(f"  Warmup:  {warmup}")
     if apt:
