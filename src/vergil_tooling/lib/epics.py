@@ -18,9 +18,12 @@ import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -398,17 +401,31 @@ def resolve_epic_home(org: str, target_repo: str) -> str:
 
 _ADHOC_EPIC_TITLE_PREFIX = "Epic (ad hoc): "
 _ADHOC_EPIC_LABELS = ("epic", "ad-hoc")
+_ADHOC_ARCHIVE_TITLE_PREFIX = "Archive (ad hoc): "
+_ADHOC_ARCHIVE_LABELS = ("archive", "ad-hoc")
 _ADHOC_EPIC_BODY = (
     "Perpetual umbrella for ad-hoc work in {repo}. Created and reused "
     "idempotently; tasks routed to the ad-hoc epic are linked here.\n"
 )
-# A stamped per-quarter archive epic: "Epic (ad hoc): <bare> — <YYYY>-Qn". The
+# A stamped per-quarter archive: "Archive (ad hoc): <bare> — <YYYY>-Qn". The
 # separator is a space, U+2014 em-dash, space. Matching this distinguishes a
 # terminal archive from the live canonical ad-hoc epic (which has no stamp).
-_ADHOC_ARCHIVE_RE = re.compile(r"^Epic \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
+_ADHOC_ARCHIVE_RE = re.compile(r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
+# Legacy pre-rename archive title ("Epic (ad hoc): <bare> — <YYYY>-Qn"), used
+# ONLY by the self-healing creation path and the normalize sweep to find
+# archives still in the old form. Steady-state code keys off _ADHOC_ARCHIVE_RE.
+_LEGACY_ADHOC_ARCHIVE_RE = re.compile(
+    r"^Epic \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$"
+)
 
 
-def _find_epic_by_title(home: str, title: str, *, prefer_oldest: bool = False) -> IssueRef | None:
+def _find_epic_by_title(
+    home: str,
+    title: str,
+    *,
+    prefer_oldest: bool = False,
+    labels: Sequence[str] = ("epic", "ad-hoc"),
+) -> IssueRef | None:
     """Return the open ``ad-hoc`` epic in *home* whose title is exactly *title*.
 
     Shared title search for the ad-hoc epic finders. Scoped to open ``epic`` +
@@ -425,10 +442,7 @@ def _find_epic_by_title(home: str, title: str, *, prefer_oldest: bool = False) -
         "list",
         "--repo",
         home,
-        "--label",
-        "epic",
-        "--label",
-        "ad-hoc",
+        *[arg for label in labels for arg in ("--label", label)],
         "--state",
         "open",
         "--json",
@@ -496,26 +510,56 @@ def find_adhoc_epic(target_repo: str) -> IssueRef | None:
     return _find_epic_by_title(home, f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}")
 
 
-def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
-    """Return *target_repo*'s ``— <quarter>`` archive epic, creating it if absent.
+def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
+    """Convert a legacy-form archive to the new form: retitle, +archive, -epic.
 
-    The archive is the stamped sibling of the live ad-hoc epic — same home, same
-    ``epic`` + ``ad-hoc`` labels — into which closed children of *quarter* are
-    re-parented. Idempotent: an existing stamped archive is reused; pre-existing
-    duplicate archives (the list-consistency race, #2698) collapse to the oldest.
+    Keeps ``ad-hoc``. Works on open or closed issues (``gh issue edit`` permits
+    editing a closed issue's title and labels).
+    """
+    github.run(
+        "issue",
+        "edit",
+        str(ref.number),
+        "--repo",
+        f"{ref.owner}/{ref.repo}",
+        "--title",
+        new_title,
+        "--add-label",
+        "archive",
+        "--remove-label",
+        "epic",
+    )
+
+
+def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
+    """Return *target_repo*'s ``— <quarter>`` archive, creating it if absent.
+
+    The archive is the stamped sibling of the live ad-hoc epic — same home,
+    labelled ``archive`` + ``ad-hoc`` — into which closed children of *quarter*
+    are re-parented. Self-healing and idempotent: an existing new-form archive is
+    reused; else a legacy-form archive (old ``Epic (ad hoc): … — Qn`` title,
+    ``epic`` + ``ad-hoc``) is normalized in place and returned; else a fresh
+    new-form archive is created. This makes creation race-free regardless of
+    whether the bulk normalize sweep has run. Pre-existing duplicate archives
+    (the list-consistency race, #2698) collapse to the oldest.
     """
     owner, bare = target_repo.split("/", 1)
     home = resolve_epic_home(owner, bare)
     home_repo = home.split("/", 1)[1]
-    title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
-    existing = _find_epic_by_title(home, title, prefer_oldest=True)
+    title = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
+    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS)
     if existing is not None:
         return existing
+    legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
+    legacy = _find_epic_by_title(home, legacy_title, prefer_oldest=True)
+    if legacy is not None:
+        _normalize_archive_in_place(legacy, title)
+        return legacy
     url = github.create_issue(
         repo=home,
         title=title,
         body=f"Ad-hoc work in {target_repo} finished in {quarter}. Managed automatically.\n",
-        labels=list(_ADHOC_EPIC_LABELS),
+        labels=list(_ADHOC_ARCHIVE_LABELS),
     )
     return IssueRef(owner=owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1]))
 
@@ -533,10 +577,7 @@ def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
         "list",
         "--repo",
         home,
-        "--label",
-        "epic",
-        "--label",
-        "ad-hoc",
+        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
         "--state",
         "open",
         "--json",
@@ -648,6 +689,82 @@ def drain_adhoc_org(org: str, *, apply: bool, now: datetime) -> list[DrainPlan]:
         if plan is not None:
             plans.append(plan)
     return plans
+
+
+@dataclass(frozen=True)
+class ArchiveConversion:
+    """A single legacy archive to convert: where it is and its new title."""
+
+    ref: IssueRef
+    old_title: str
+    new_title: str
+
+
+def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
+    """Every legacy-form archive across *org*, open or closed, to convert.
+
+    Pure/read-only. Resolves each repo's own epic home (public → ``<org>/.github``,
+    private → itself) the way :func:`drain_adhoc_org` does, deduping homes so a
+    shared ``.github`` is scanned once. A legacy archive is an issue whose title
+    matches :data:`_LEGACY_ADHOC_ARCHIVE_RE`; the unstamped live epic never matches.
+    """
+    homes: dict[str, tuple[str, str]] = {}
+    for bare in github.list_org_repos(org):
+        home = resolve_epic_home(org, bare)
+        home_owner, home_repo = home.split("/", 1)
+        homes[home] = (home_owner, home_repo)
+    homes.setdefault(f"{org}/.github", (org, ".github"))
+    conversions: list[ArchiveConversion] = []
+    for home, (owner, home_repo) in homes.items():
+        raw: Any = github.read_json(
+            "issue",
+            "list",
+            "--repo",
+            home,
+            "--label",
+            "epic",
+            "--label",
+            "ad-hoc",
+            "--state",
+            "all",
+            "--limit",
+            "500",
+            "--json",
+            "number,title",
+        )
+        for item in raw if isinstance(raw, list) else []:
+            if not isinstance(item, dict):
+                continue
+            old_title = str(item.get("title", ""))
+            if not _LEGACY_ADHOC_ARCHIVE_RE.match(old_title):
+                continue
+            new_title = _ADHOC_ARCHIVE_TITLE_PREFIX + old_title.removeprefix(
+                _ADHOC_EPIC_TITLE_PREFIX
+            )
+            conversions.append(
+                ArchiveConversion(
+                    IssueRef(owner, home_repo, int(item["number"])), old_title, new_title
+                )
+            )
+    return conversions
+
+
+def apply_normalize(conversions: list[ArchiveConversion]) -> None:
+    """Convert each planned archive in place (retitle, +archive, -epic)."""
+    for conv in conversions:
+        _normalize_archive_in_place(conv.ref, conv.new_title)
+
+
+def normalize_adhoc_archives(org: str, *, apply: bool) -> list[ArchiveConversion]:
+    """Plan (and, when *apply*, execute) the org-wide legacy-archive conversion.
+
+    Idempotent: an already-migrated archive is new-form, does not match the legacy
+    recognizer, and is skipped — so re-running is a no-op.
+    """
+    conversions = plan_normalize_adhoc(org)
+    if apply:
+        apply_normalize(conversions)
+    return conversions
 
 
 def is_epic_linkage(ref: str, *, default_repo: str) -> bool:

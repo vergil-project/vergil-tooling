@@ -901,7 +901,7 @@ wheels = [
 
 [[package]]
 name = "vergil-tooling"
-version = "2.1.186"
+version = "2.1.187"
 source = { editable = "." }
 dependencies = [
     { name = "pyyaml" },

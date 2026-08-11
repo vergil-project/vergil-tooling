@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from vergil_tooling.lib.languages import (
+    _TYPESCRIPT_LICENSES_ALLOWLIST,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
@@ -447,6 +449,173 @@ def test_cpp_std_stdlib_are_threaded_from_config() -> None:
     assert "--std=c++17" in cppcheck_cmd
 
 
+# -- TypeScript (epic vergil-project/.github#284, T4) -------------------------
+
+
+def _ts_config_path(name: str) -> Path:
+    """Resolve a packaged ``configs/typescript/<name>`` path.
+
+    Derives the packaged ``typescript/`` config directory from a LINT argument
+    that carries the expanded ``{configs}`` placeholder, then joins *name* — so
+    it resolves files (like ``tsconfig.base.json``) that no command references
+    directly, without hard-coding the package layout.
+    """
+    for cmd in language_commands("typescript", CheckKind.LINT):
+        for arg in cmd:
+            token = arg.split("=", 1)[-1]
+            if "/typescript/" in token:
+                return Path(token).parent / name
+    msg = "no LINT arg references the typescript configs dir"
+    raise AssertionError(msg)
+
+
+def test_typescript_is_supported() -> None:
+    assert "typescript" in supported_languages()
+
+
+def test_typescript_install_commands() -> None:
+    cmds = language_commands("typescript", CheckKind.INSTALL)
+    assert cmds == [["npm", "ci"]]
+
+
+def test_typescript_lint_commands() -> None:
+    cmds = language_commands("typescript", CheckKind.LINT)
+    joined = _joined(cmds)
+    # Prettier format check + ESLint, each against a packaged config.
+    assert any(c.startswith("prettier --check .") for c in joined)
+    assert any(c.startswith("eslint .") for c in joined)
+    # Both reference a packaged {configs}/typescript/* config.
+    assert any("/typescript/prettier.config.json" in c for c in joined)
+    assert any("/typescript/eslint.config.mjs" in c for c in joined)
+
+
+def test_typescript_lint_ban_ts_comment_rule_present() -> None:
+    """The no-standing-suppression rule is wired via the packaged ESLint config."""
+    text = _ts_config_path("eslint.config.mjs").read_text()
+    assert "@typescript-eslint/ban-ts-comment" in text
+    # Bare @ts-ignore / @ts-nocheck are banned; @ts-expect-error needs a reason.
+    assert '"ts-ignore": true' in text
+    assert '"ts-nocheck": true' in text
+    assert '"ts-expect-error": "allow-with-description"' in text
+    # Type-aware linting is enabled.
+    assert "recommendedTypeChecked" in text
+    assert "projectService" in text
+
+
+def test_typescript_lint_uses_packaged_configs() -> None:
+    """Every LINT tool points at a packaged {configs}/typescript/* file that exists."""
+    cmds = language_commands("typescript", CheckKind.LINT)
+    flat = [arg for cmd in cmds for arg in cmd]
+    # No unresolved placeholder survives expansion.
+    assert all("{configs}" not in arg for arg in flat)
+    referenced = [arg for arg in flat if "/typescript/" in arg]
+    assert len(referenced) == 2
+    for arg in referenced:
+        path = arg.split("=", 1)[-1]
+        assert Path(path).exists(), f"packaged config missing: {path}"
+
+
+def test_typescript_typecheck_commands() -> None:
+    cmds = language_commands("typescript", CheckKind.TYPECHECK)
+    # One canonical type engine; strict set lives in the base tsconfig consumers
+    # extend, so the command is a bare --noEmit typecheck.
+    assert cmds == [["tsc", "--noEmit"]]
+
+
+def test_typescript_base_tsconfig_curated_extras() -> None:
+    """The curated 'warnings to 11' set is authored in the packaged base tsconfig.
+
+    This task (T4) owns and tests the concrete strictness set (spec §3.2); T8
+    only documents it. Every option must be present and enabled, and each is a
+    real ``tsc`` 5.x compiler option.
+    """
+    base = _ts_config_path("tsconfig.base.json")
+    # tsconfig.base.json is authored as pure JSON (no comments) so it is both
+    # tsc-loadable and directly parseable here — the file *is* the source of
+    # truth for the strict set.
+    opts = json.loads(base.read_text())["compilerOptions"]
+    curated = (
+        "strict",
+        "noUncheckedIndexedAccess",
+        "exactOptionalPropertyTypes",
+        "noImplicitOverride",
+        "noImplicitReturns",
+        "noFallthroughCasesInSwitch",
+        "noPropertyAccessFromIndexSignature",
+        "noUnusedLocals",
+        "noUnusedParameters",
+    )
+    for opt in curated:
+        assert opts.get(opt) is True, f"base tsconfig missing/disabled: {opt}"
+
+
+def test_typescript_test_commands() -> None:
+    cmds = language_commands("typescript", CheckKind.TEST)
+    joined = _joined(cmds)
+    # Vitest with the V8 coverage provider.
+    assert any(c.startswith("vitest run --coverage") for c in joined)
+    assert any("--coverage.provider=v8" in c for c in joined)
+
+
+def test_typescript_test_enforces_100_line_coverage() -> None:
+    """The gate must fail under 100% line coverage (spec §5)."""
+    cmds = language_commands("typescript", CheckKind.TEST)
+    vitest_cmd = [c for c in cmds if c[0] == "vitest"]
+    assert len(vitest_cmd) == 1
+    assert "--coverage.thresholds.lines=100" in vitest_cmd[0]
+
+
+def test_typescript_audit_commands() -> None:
+    cmds = language_commands("typescript", CheckKind.AUDIT)
+    joined = _joined(cmds)
+    # npm audit is the CVE scan, scoped to prod deps with an explicit severity
+    # threshold (spec §4 caveat 1).
+    npm_audit = [c for c in cmds if c[:2] == ["npm", "audit"]]
+    assert len(npm_audit) == 1
+    assert "--omit=dev" in npm_audit[0]
+    assert any(arg.startswith("--audit-level=") for arg in npm_audit[0])
+    # OSV-Scanner is the documented contingency, not the v1 default.
+    assert not any("osv-scanner" in c for c in joined)
+    # Best-effort license-metadata surfacing (hardened gating deferred, §9 #7).
+    assert any("license-checker" in c for c in joined)
+
+
+def test_typescript_audit_license_allowlist_reviewed_set() -> None:
+    """The TS license allowlist constant carries the reviewed permissive set."""
+    licenses = _TYPESCRIPT_LICENSES_ALLOWLIST.split(";")
+    assert "MIT" in licenses
+    assert "Apache-2.0" in licenses
+    assert "ISC" in licenses
+    # Semicolon-separated (the form license-checker --onlyAllow consumes).
+    assert ";" in _TYPESCRIPT_LICENSES_ALLOWLIST
+
+
+def test_typescript_ecosystem_metadata() -> None:
+    info = ecosystem_metadata("typescript")
+    # v1 mandates no bundler/emit and no publish target (spec §8, ledger #6).
+    assert info.build_cmd is None
+    assert info.publish_cmd is None
+    assert info.publish_env_var is None
+
+
+def test_typescript_cardinality_typecheck_lint_audit_run_once() -> None:
+    assert check_cardinality("typescript", CheckKind.TYPECHECK) is Cardinality.ONCE
+    assert check_cardinality("typescript", CheckKind.LINT) is Cardinality.ONCE
+    assert check_cardinality("typescript", CheckKind.AUDIT) is Cardinality.ONCE
+
+
+def test_typescript_cardinality_test_is_per_version() -> None:
+    # Only TEST fans out per Node version (§3.6).
+    assert check_cardinality("typescript", CheckKind.TEST) is Cardinality.PER_VERSION
+
+
+def test_typescript_no_unresolved_placeholders() -> None:
+    for kind in CheckKind:
+        for cmd in language_commands("typescript", kind):
+            for arg in cmd:
+                assert "{configs}" not in arg, f"Unresolved placeholder in: {arg}"
+
+
 # -- Edge cases ---------------------------------------------------------------
 
 
@@ -489,7 +658,7 @@ def test_configs_placeholder_resolves_to_existing_directory() -> None:
 
 def test_supported_languages_includes_cpp() -> None:
     langs = supported_languages()
-    assert langs == frozenset({"python", "go", "java", "ruby", "rust", "cpp"})
+    assert langs == frozenset({"python", "go", "java", "ruby", "rust", "cpp", "typescript"})
 
 
 def test_supported_languages_is_frozen() -> None:
@@ -536,11 +705,11 @@ def test_single_image_languages_default_to_per_version_cardinality() -> None:
     """Every single-image language defaults to per-version for every check kind.
 
     This backward-compatibility guarantee is what keeps their generated CI
-    gates byte-identical after the cardinality concept was introduced. C++ is
-    the one matrix language that legitimately declares ONCE kinds, so it is
-    excluded here and covered by the C++-specific cardinality tests.
+    gates byte-identical after the cardinality concept was introduced. C++ and
+    TypeScript are the matrix languages that legitimately declare ONCE kinds, so
+    they are excluded here and covered by their own cardinality tests.
     """
-    for lang in supported_languages() - {"cpp"}:
+    for lang in supported_languages() - {"cpp", "typescript"}:
         for kind in CheckKind:
             assert check_cardinality(lang, kind) is Cardinality.PER_VERSION
 

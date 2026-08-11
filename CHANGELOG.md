@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.187] - 2026-08-11
+
+### Documentation
+
+- document [container].system-packages (#2736)
+- reflect ad-hoc archive rename (Archive title, archive label, normalize sweep) (#2752)
+
+### Features
+
+- reclassify per-quarter ad-hoc buckets as archives (#2748)
+- add typescript primary-language + [typescript] block (#2749)
+- support typescript for CodeQL + repo-init (#2754)
+- TypeScript registry entry (node) (#2755)
+
 ## [2.1.186] - 2026-08-10
 
 ### Features

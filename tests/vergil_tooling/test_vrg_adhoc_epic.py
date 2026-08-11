@@ -174,3 +174,33 @@ def test_archive_all_in_renders_each_plan(capsys: pytest.CaptureFixture[str]) ->
 def test_archive_repo_and_all_in_mutually_exclusive() -> None:
     with pytest.raises(SystemExit):
         parse_args(["archive", "--repo", "org/tooling", "--all-in", "org"])
+
+
+def test_normalize_dry_run_lists_conversions(capsys: pytest.CaptureFixture[str]) -> None:
+    conv = [
+        epics.ArchiveConversion(
+            epics.IssueRef("org", ".github", 88),
+            "Epic (ad hoc): tooling — 2026-Q2",
+            "Archive (ad hoc): tooling — 2026-Q2",
+        )
+    ]
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=conv) as mock_norm,
+    ):
+        rc = main(["normalize", "--all-in", "org"])
+    assert rc == 0
+    mock_norm.assert_called_once_with("org", apply=False)
+    out = capsys.readouterr().out
+    assert "DRY-RUN" in out and "1 archive(s)" in out
+    assert "org/.github#88" in out and "Archive (ad hoc): tooling — 2026-Q2" in out
+
+
+def test_normalize_apply_passes_apply_true() -> None:
+    with (
+        patch(f"{_MOD}.github.target_org"),
+        patch(f"{_MOD}.epics.normalize_adhoc_archives", return_value=[]) as mock_norm,
+    ):
+        rc = main(["normalize", "--all-in", "org", "--apply"])
+    assert rc == 0
+    mock_norm.assert_called_once_with("org", apply=True)

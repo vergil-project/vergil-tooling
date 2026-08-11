@@ -459,6 +459,22 @@ class TestRenderCiWorkflow:
         # cpp is CodeQL-supported, so run-codeql must NOT be disabled.
         assert "run-codeql: false" not in content
 
+    def test_typescript_workflow(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="test")
+        ctx.primary_language = "typescript"
+        ctx.ci_versions = ["node-24", "node-22"]
+        ctx.release_model = "tagged-release"
+        content = render_ci_workflow(ctx)
+        # The emitted ci.yml carries the *primary-language* name for container
+        # resolution — NOT the CodeQL identifier `javascript-typescript` (that
+        # mapping is the reusable Action's job, epic vergil-project/.github#284 T7).
+        assert "language: typescript" in content
+        # Node-family suffix + numeric major tag → prod-ts-node:24.
+        assert "container-suffix: ts-node" in content
+        assert "container-tag: '24'" in content
+        # typescript is CodeQL-supported, so run-codeql must NOT be disabled.
+        assert "run-codeql: false" not in content
+
     def test_no_language_workflow(self) -> None:
         ctx = RepoInitContext(org="vergil-project", name="test")
         ctx.ci_versions = ["latest"]
@@ -715,6 +731,41 @@ class TestContainerHelpers:
         versions = [v.strip() for v in default.split(",")]
         assert _container_suffix("cpp", versions) == "cpp-clang"
         assert _container_tag("cpp", versions) == "20"
+
+    def test_container_suffix_typescript_is_ts_node(self) -> None:
+        # TypeScript's runtime family (node) rides the suffix; the Node major
+        # rides the tag, so node-24 resolves to prod-ts-node:24 (epic
+        # vergil-project/.github#284).
+        assert _container_suffix("typescript", ["node-24"]) == "ts-node"
+        assert _container_suffix("typescript", ["node-22"]) == "ts-node"
+
+    def test_container_suffix_typescript_uses_first_entry_as_primary(self) -> None:
+        # The representative top-level suffix comes from the primary (first) entry.
+        assert _container_suffix("typescript", ["node-22", "node-24"]) == "ts-node"
+
+    def test_container_suffix_typescript_unparseable_falls_back_to_base(self) -> None:
+        assert _container_suffix("typescript", ["latest"]) == "base"
+        assert _container_suffix("typescript", []) == "base"
+
+    def test_container_tag_typescript_is_numeric_major(self) -> None:
+        # The tag carries only the numeric Node major; the family lives in the
+        # suffix, so node-24 resolves to prod-ts-node:24.
+        assert _container_tag("typescript", ["node-24"]) == "24"
+        assert _container_tag("typescript", ["node-22"]) == "22"
+
+    def test_container_tag_typescript_unparseable_falls_back_to_latest(self) -> None:
+        assert _container_tag("typescript", ["latest"]) == "latest"
+        assert _container_tag("typescript", []) == "latest"
+
+    def test_default_ci_versions_typescript_seeds_node_primary(self) -> None:
+        # The typescript default must be node-/prefixed tags (primary first) so
+        # the derived suffix/tag are runtime-aware; a bare "latest" would render
+        # a base image.
+        default = _default_ci_versions("typescript")
+        assert default == "node-24, node-22"
+        versions = [v.strip() for v in default.split(",")]
+        assert _container_suffix("typescript", versions) == "ts-node"
+        assert _container_tag("typescript", versions) == "24"
 
 
 class TestRenderCdWorkflow:

@@ -232,6 +232,16 @@ _CODEQL_SUPPORTED_LANGUAGES = frozenset(
         # cpp aligns this list with repo_init._CODEQL_LANGUAGES, which already
         # lists cpp — the two must agree (epic vergil-project/.github#207 T7).
         "cpp",
+        # typescript is keyed by the *primary-language* name here, because this
+        # set is tested against ``project.primary_language`` (see
+        # ``desired_ci_gates_ruleset`` below). The CodeQL analysis identifier is
+        # ``javascript-typescript``, but that ``typescript → javascript-typescript``
+        # mapping belongs to the reusable CI Action (epic
+        # vergil-project/.github#284 T7), not here — the emitted ``ci.yml``
+        # ``language:`` stays ``typescript`` for container resolution. Like cpp,
+        # this list must stay aligned with repo_init._CODEQL_LANGUAGES, which
+        # already lists typescript (epic vergil-project/.github#284 T6).
+        "typescript",
     }
 )
 

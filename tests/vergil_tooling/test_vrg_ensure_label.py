@@ -128,8 +128,9 @@ def test_main_sync_provisions_all_labels() -> None:
     # Should have called once per label + once for the delete
     label_calls = [c for c in mock_run.call_args_list if c.args[1] == "create"]
     # 18 before retiring the deprecated 'standing' alias (retire-standing task);
-    # 18 again after adding the 'retrospective' kind label.
-    assert len(label_calls) == 18
+    # 18 again after adding the 'retrospective' kind label;
+    # 19 after adding the 'archive' label (adhoc-archive-rename epic #281).
+    assert len(label_calls) == 19
 
 
 def test_main_sync_uses_force_with_color_description() -> None:
