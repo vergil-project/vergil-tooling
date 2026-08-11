@@ -111,9 +111,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "'Archive (ad hoc): …' form (dry-run unless --apply)."
         ),
     )
-    p_norm.add_argument(
-        "--all-in", metavar="ORG", required=True, help="Sweep every repo in ORG"
-    )
+    p_norm.add_argument("--all-in", metavar="ORG", required=True, help="Sweep every repo in ORG")
     p_norm.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
     p_norm.set_defaults(func=cmd_normalize)
     return parser.parse_args(argv)

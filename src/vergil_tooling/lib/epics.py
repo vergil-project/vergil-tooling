@@ -16,12 +16,14 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import github
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 
 @dataclass(frozen=True)
@@ -408,9 +410,7 @@ _ADHOC_EPIC_BODY = (
 # A stamped per-quarter archive: "Archive (ad hoc): <bare> — <YYYY>-Qn". The
 # separator is a space, U+2014 em-dash, space. Matching this distinguishes a
 # terminal archive from the live canonical ad-hoc epic (which has no stamp).
-_ADHOC_ARCHIVE_RE = re.compile(
-    r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$"
-)
+_ADHOC_ARCHIVE_RE = re.compile(r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
 # Legacy pre-rename archive title ("Epic (ad hoc): <bare> — <YYYY>-Qn"), used
 # ONLY by the self-healing creation path and the normalize sweep to find
 # archives still in the old form. Steady-state code keys off _ADHOC_ARCHIVE_RE.
@@ -547,9 +547,7 @@ def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
     home = resolve_epic_home(owner, bare)
     home_repo = home.split("/", 1)[1]
     title = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
-    existing = _find_epic_by_title(
-        home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS
-    )
+    existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS)
     if existing is not None:
         return existing
     legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
@@ -713,7 +711,8 @@ def plan_normalize_adhoc(org: str) -> list[ArchiveConversion]:
     homes: dict[str, tuple[str, str]] = {}
     for bare in github.list_org_repos(org):
         home = resolve_epic_home(org, bare)
-        homes[home] = tuple(home.split("/", 1))  # type: ignore[assignment]
+        home_owner, home_repo = home.split("/", 1)
+        homes[home] = (home_owner, home_repo)
     homes.setdefault(f"{org}/.github", (org, ".github"))
     conversions: list[ArchiveConversion] = []
     for home, (owner, home_repo) in homes.items():

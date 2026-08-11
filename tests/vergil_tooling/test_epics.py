@@ -632,13 +632,15 @@ def test_rollup_skips_non_repo_adhoc_epic() -> None:
 
 
 def test_rollup_noop_when_parent_is_adhoc_archive() -> None:
+    # A stamped archive (new-form title) is terminal: the _ADHOC_ARCHIVE_RE guard
+    # short-circuits the drain even if the archive still carries the epic label.
     task = IssueRef("org", ".github", 101)
     with (
         patch("vergil_tooling.lib.epics.parent_of", return_value=IssueRef("org", ".github", 88)),
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch(
             "vergil_tooling.lib.epics._issue_title",
-            return_value="Epic (ad hoc): .github — 2026-Q2",
+            return_value="Archive (ad hoc): .github — 2026-Q2",
         ),
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
@@ -991,9 +993,7 @@ def test_find_epic_by_title_uses_supplied_labels() -> None:
     title = "Archive (ad hoc): tooling — 2026-Q3"
     rows = [{"number": 42, "title": title}]
     with patch("vergil_tooling.lib.github.read_json", return_value=rows) as mock_list:
-        got = epics._find_epic_by_title(
-            "org/.github", title, labels=("archive", "ad-hoc")
-        )
+        got = epics._find_epic_by_title("org/.github", title, labels=("archive", "ad-hoc"))
     assert got == IssueRef("org", ".github", 42)
     # The label filters passed to gh reflect the supplied labels, not epic+ad-hoc.
     args = list(mock_list.call_args.args)
@@ -1067,9 +1067,12 @@ def test_plan_normalize_dedupes_homes_and_finds_legacy_all_states() -> None:
         home = args[args.index("--repo") + 1]
         if home == "org/.github":
             return [
+                # legacy archive (closed) -> converts
                 {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2", "state": "CLOSED"},
-                {"number": 90, "title": "Epic (ad hoc): tooling", "state": "OPEN"},  # live epic
-                {"number": 91, "title": "Archive (ad hoc): actions — 2026-Q3", "state": "OPEN"},  # already migrated
+                # live epic (unstamped) -> never matches
+                {"number": 90, "title": "Epic (ad hoc): tooling", "state": "OPEN"},
+                # already migrated (new form) -> skipped
+                {"number": 91, "title": "Archive (ad hoc): actions — 2026-Q3", "state": "OPEN"},
             ]
         if home == "org/private":
             return [
@@ -1077,8 +1080,9 @@ def test_plan_normalize_dedupes_homes_and_finds_legacy_all_states() -> None:
             ]
         return []
 
+    repos = ["tooling", "actions", "private"]
     with (
-        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "actions", "private"]),
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=repos),
         patch("vergil_tooling.lib.epics.resolve_epic_home", side_effect=fake_home),
         patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
     ):
@@ -1093,12 +1097,12 @@ def test_plan_normalize_dedupes_homes_and_finds_legacy_all_states() -> None:
 
 
 def test_apply_normalize_calls_in_place_for_each() -> None:
-    conv = [
-        epics.ArchiveConversion(IssueRef("org", ".github", 88), "old", "Archive (ad hoc): tooling — 2026-Q2"),
-    ]
+    ref = IssueRef("org", ".github", 88)
+    new_title = "Archive (ad hoc): tooling — 2026-Q2"
+    conv = [epics.ArchiveConversion(ref, "old", new_title)]
     with patch("vergil_tooling.lib.epics._normalize_archive_in_place") as mock_heal:
         epics.apply_normalize(conv)
-    mock_heal.assert_called_once_with(IssueRef("org", ".github", 88), "Archive (ad hoc): tooling — 2026-Q2")
+    mock_heal.assert_called_once_with(ref, new_title)
 
 
 def test_normalize_adhoc_archives_dry_run_does_not_mutate() -> None:
@@ -1110,6 +1114,41 @@ def test_normalize_adhoc_archives_dry_run_does_not_mutate() -> None:
     assert out == []
     mock_plan.assert_called_once_with("org")
     mock_apply.assert_not_called()
+
+
+def test_normalize_adhoc_archives_apply_executes_conversions() -> None:
+    conv = [
+        epics.ArchiveConversion(
+            IssueRef("org", ".github", 88), "old", "Archive (ad hoc): tooling — 2026-Q2"
+        )
+    ]
+    with (
+        patch("vergil_tooling.lib.epics.plan_normalize_adhoc", return_value=conv),
+        patch("vergil_tooling.lib.epics.apply_normalize") as mock_apply,
+    ):
+        out = epics.normalize_adhoc_archives("org", apply=True)
+    assert out == conv
+    mock_apply.assert_called_once_with(conv)
+
+
+def test_plan_normalize_tolerates_non_list_and_non_dict_rows() -> None:
+    # A non-dict row is skipped; a home whose listing is not a list yields nothing.
+    def fake_home(org, bare):
+        return "org/.github" if bare == "tooling" else f"org/{bare}"
+
+    def fake_list(*args, **kwargs):
+        home = args[args.index("--repo") + 1]
+        if home == "org/.github":
+            return [None, {"number": 88, "title": "Epic (ad hoc): tooling — 2026-Q2"}]
+        return {}  # non-list result for the private home
+
+    with (
+        patch("vergil_tooling.lib.github.list_org_repos", return_value=["tooling", "private"]),
+        patch("vergil_tooling.lib.epics.resolve_epic_home", side_effect=fake_home),
+        patch("vergil_tooling.lib.github.read_json", side_effect=fake_list),
+    ):
+        plan = epics.plan_normalize_adhoc("org")
+    assert [(c.ref.repo, c.ref.number) for c in plan] == [(".github", 88)]
 
 
 # -- resolve_epic_home (epic #130) -------------------------------------------
