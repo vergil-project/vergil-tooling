@@ -152,6 +152,31 @@ _CPP_LICENSES_ALLOWLIST = ";".join(
     ]
 )
 
+# TypeScript / npm license allowlist (epic vergil-project/.github#284 §4).
+# Mirrors the C++ pattern exactly: npm has no turnkey allowlist-enforcing gate
+# with reliable metadata (npm package license fields are inconsistent), so v1
+# license checking is *best-effort surfacing* (see the AUDIT commands below) and
+# hardened gating is deferred (spec §9 ledger #7). This constant is the reviewed
+# allowlist the TypeScript standards docs (T8) reference and that a future
+# hardened gate (e.g. ``license-checker --onlyAllow``, which consumes this exact
+# ``;``-separated form) will enforce; keeping it here alongside the other
+# language allowlists preserves the single-source-of-truth contract.
+_TYPESCRIPT_LICENSES_ALLOWLIST = ";".join(
+    [
+        "0BSD",
+        "Apache-2.0",
+        "BlueOak-1.0.0",
+        "BSD-2-Clause",
+        "BSD-3-Clause",
+        "CC0-1.0",
+        "ISC",
+        "MIT",
+        "MPL-2.0",
+        "Python-2.0",
+        "Unlicense",
+    ]
+)
+
 # -- C++ warning set (epic vergil-project/.github#207 §3.2, owned by T5) -------
 #
 # "Warnings to 11" resolved to a concrete, reviewable list. The floor is
@@ -545,6 +570,99 @@ _REGISTRY: dict[str, Language] = {
         # and TEST are the two-diagnostics engine → per compiler×version, which
         # is the PER_VERSION default, so they are intentionally omitted here.
         cardinality={
+            CheckKind.LINT: Cardinality.ONCE,
+            CheckKind.AUDIT: Cardinality.ONCE,
+        },
+    ),
+    # TypeScript (epic vergil-project/.github#284, T4). Node.js runtime with a
+    # single canonical typechecker (``tsc``); the expensive matrix axis is the
+    # Node major version, so — unlike C++ — TYPECHECK/LINT/AUDIT run **once**
+    # and only TEST fans out per Node version (§3.1/§3.6). The per-kind
+    # cardinality machinery is inherited from C++ (this entry only *declares*
+    # cardinalities, it builds none).
+    #
+    # **Warnings to 11 live in the shareable base tsconfig.** The curated
+    # strictness set — ``strict`` plus ``noUncheckedIndexedAccess``,
+    # ``exactOptionalPropertyTypes``, ``noImplicitOverride``,
+    # ``noImplicitReturns``, ``noFallthroughCasesInSwitch``,
+    # ``noPropertyAccessFromIndexSignature``, ``noUnusedLocals``,
+    # ``noUnusedParameters`` (spec §3.2) — is authored and tested in the
+    # packaged ``{configs}/typescript/tsconfig.base.json`` that consumers
+    # ``extends``. TYPECHECK is therefore a bare ``tsc --noEmit`` that reads the
+    # consumer's own ``tsconfig.json`` (which extends the base); the strict set
+    # is enforced through that inheritance, the direct analog of C++ threading
+    # ``-Wall -Wextra -Werror -Wpedantic``-plus-extras onto every compile line.
+    # T8 *documents* this already-decided set; it does not re-choose it.
+    "typescript": Language(
+        name="typescript",
+        checks={
+            # Clean, lockfile-pinned install from ``package-lock.json``.
+            CheckKind.INSTALL: [["npm", "ci"]],
+            # LINT runs *once* (§3.6): Prettier for format, then ESLint's flat
+            # config with type-aware typescript-eslint rules. Both point at the
+            # packaged configs; the ESLint flat config carries
+            # ``@typescript-eslint/ban-ts-comment`` (the no-standing-suppression
+            # rule, §3.2). Prettier and ESLint ignore ``node_modules`` by
+            # default.
+            CheckKind.LINT: [
+                [
+                    "prettier",
+                    "--check",
+                    ".",
+                    "--config",
+                    "{configs}/typescript/prettier.config.json",
+                ],
+                ["eslint", ".", "--config", "{configs}/typescript/eslint.config.mjs"],
+            ],
+            # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
+            # curated "warnings to 11" set lives in the packaged base tsconfig
+            # the consumer extends (see the class comment above); this command
+            # reads the consumer's ``tsconfig.json`` and never emits output.
+            CheckKind.TYPECHECK: [["tsc", "--noEmit"]],
+            # TEST runs *per Node version* (§3.6) — the only fan-out stage,
+            # because runtime behavior differs across Node majors. Vitest with
+            # the V8 coverage provider, held to a **100% line** threshold so the
+            # gate fails under 100% (spec §5). Contingency (spec §4 caveat 2): if
+            # V8's byte-range→TS-source-map mapping proves imprecise at the 100%
+            # bar, switch the provider to ``@vitest/coverage-istanbul`` (which
+            # instruments source directly). Decided against the real gate in T10.
+            CheckKind.TEST: [
+                [
+                    "vitest",
+                    "run",
+                    "--coverage",
+                    "--coverage.provider=v8",
+                    "--coverage.thresholds.lines=100",
+                ],
+            ],
+            # AUDIT runs *once* (§3.6). ``npm audit`` is the CVE scan, scoped to
+            # production dependencies (``--omit=dev`` — dev-only advisories must
+            # not gate, spec §4 caveat 1) with an explicit severity threshold
+            # (``--audit-level=high``). Contingency (spec §4 caveat 1): if
+            # ``npm audit``'s signal/noise is unworkable, fall back to
+            # OSV-Scanner over ``package-lock.json`` — the switch is proven or
+            # rejected against a known CVE in T10, not asserted here. License
+            # checking stays best-effort surfacing in v1 (``license-checker
+            # --summary``, non-gating — npm license metadata is inconsistent);
+            # hardened gating against ``_TYPESCRIPT_LICENSES_ALLOWLIST`` is
+            # deferred (spec §9 ledger #7).
+            CheckKind.AUDIT: [
+                ["npm", "audit", "--audit-level=high", "--omit=dev"],
+                ["license-checker", "--production", "--summary"],
+            ],
+        },
+        ecosystem=EcosystemInfo(
+            # v1 mandates no bundler/emit step — ``tsc --noEmit`` covers
+            # compile-correctness — and no publish target (spec §8, ledger #6).
+            build_cmd=None,
+            publish_cmd=None,
+            publish_env_var=None,
+        ),
+        # TYPECHECK/LINT/AUDIT are runtime-agnostic → one gate each (§3.6). Only
+        # TEST is per Node version, which is the PER_VERSION default, so it is
+        # intentionally omitted here.
+        cardinality={
+            CheckKind.TYPECHECK: Cardinality.ONCE,
             CheckKind.LINT: Cardinality.ONCE,
             CheckKind.AUDIT: Cardinality.ONCE,
         },
