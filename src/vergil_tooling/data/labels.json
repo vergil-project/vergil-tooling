@@ -12,6 +12,7 @@
     {"name": "observability", "color": "1d76db", "description": "Monitoring, reporting, health checks"},
     {"name": "epic", "color": "6f42c1", "description": "Umbrella issue; finite epics close when all sub-issues close"},
     {"name": "ad-hoc", "color": "5319e7", "description": "Perpetual umbrella for ad-hoc work; never auto-closes"},
+    {"name": "archive", "color": "6a737d", "description": "Terminal per-quarter archive of closed ad-hoc work; historical record"},
     {"name": "triage", "color": "d93f0b", "description": "Uncurated intake; not yet folded into the epic/task model"},
     {"name": "idea", "color": "fef2c0", "description": "Seed to be expanded into an epic"},
     {"name": "hotfix", "color": "b60205", "description": "Emergency fix that skipped formal planning; flagged for retroactive review"},
