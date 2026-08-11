@@ -115,6 +115,44 @@ def test_detect_cpp_requires_conanfile(tmp_path: Path) -> None:
     assert detect_language(tmp_path) == ""
 
 
+def test_detect_typescript_tsconfig(tmp_path: Path) -> None:
+    # A tsconfig.json is a sufficient TypeScript marker on its own.
+    (tmp_path / "tsconfig.json").write_text("{}")
+    assert detect_language(tmp_path) == "typescript"
+
+
+def test_detect_typescript_package_json_dev_dep(tmp_path: Path) -> None:
+    # A package.json carrying a `typescript` devDependency is a TypeScript marker.
+    (tmp_path / "package.json").write_text('{"devDependencies": {"typescript": "^5.4.0"}}')
+    assert detect_language(tmp_path) == "typescript"
+
+
+def test_detect_typescript_package_json_without_ts_dep_not_detected(tmp_path: Path) -> None:
+    # A plain (JS-only) package.json with no `typescript` devDependency must NOT
+    # misdetect as TypeScript.
+    (tmp_path / "package.json").write_text('{"devDependencies": {"eslint": "^9.0.0"}}')
+    assert detect_language(tmp_path) == ""
+
+
+def test_detect_typescript_bare_package_json_not_detected(tmp_path: Path) -> None:
+    # A package.json with no devDependencies block at all is not a TS marker.
+    (tmp_path / "package.json").write_text('{"name": "example"}')
+    assert detect_language(tmp_path) == ""
+
+
+def test_detect_typescript_malformed_package_json_not_detected(tmp_path: Path) -> None:
+    # A malformed package.json must not crash detection nor claim TypeScript.
+    (tmp_path / "package.json").write_text("{not json")
+    assert detect_language(tmp_path) == ""
+
+
+def test_detect_typescript_non_object_package_json_not_detected(tmp_path: Path) -> None:
+    # A package.json that is valid JSON but not an object (e.g. an array) is not
+    # a TypeScript marker and must not crash detection.
+    (tmp_path / "package.json").write_text('["typescript"]')
+    assert detect_language(tmp_path) == ""
+
+
 # -- default_image ------------------------------------------------------------
 
 
@@ -271,6 +309,65 @@ def test_cpp_default_test_command_is_conan_cmake_ctest() -> None:
     # or the Debug config finds no matching binary (fmt/format.h not found). (#2572)
     assert "conan install . -s build_type=Debug --build=missing" in cmd
     assert "-DCMAKE_BUILD_TYPE=Debug" in cmd
+
+
+# -- typescript node image resolution -----------------------------------------
+
+
+def test_default_image_typescript_uses_builtin_node_default() -> None:
+    # _DEFAULT_VERSIONS["typescript"] is the primary Node tag (node-24), so the
+    # runtime family rides the image suffix and the numeric major is the tag.
+    assert default_image("typescript") == "ghcr.io/vergil-project/prod-ts-node:24"
+
+
+def test_default_image_typescript_node24_declared_version() -> None:
+    assert default_image("typescript", version="node-24") == (
+        "ghcr.io/vergil-project/prod-ts-node:24"
+    )
+
+
+def test_default_image_typescript_node22_declared_version() -> None:
+    # node-22 → prod-ts-node:22, matching the second image T2 produces.
+    assert default_image("typescript", version="node-22") == (
+        "ghcr.io/vergil-project/prod-ts-node:22"
+    )
+
+
+def test_default_image_typescript_respects_prefix() -> None:
+    assert default_image("typescript", prefix="dev", version="node-24") == (
+        "ghcr.io/vergil-project/dev-ts-node:24"
+    )
+
+
+def test_default_image_typescript_unparseable_version_no_fallback() -> None:
+    # A malformed node tag (no node- prefix) must not build a malformed
+    # prod-ts-node: image — it returns empty without fallback.
+    assert default_image("typescript", version="latest") == ""
+
+
+def test_default_image_typescript_empty_major_no_fallback() -> None:
+    # A `node-` prefix with no major must not build prod-ts-node: with an empty
+    # major — it falls back like an unknown language.
+    assert default_image("typescript", version="node-") == ""
+
+
+def test_default_image_typescript_unparseable_version_with_fallback() -> None:
+    assert default_image("typescript", version="latest", fallback=True) == (
+        "ghcr.io/vergil-project/prod-base:latest"
+    )
+
+
+def test_typescript_default_version_is_primary_node() -> None:
+    # The built-in default drives default_image("typescript") when no [ci].versions
+    # is declared — it must be the primary Node tag.
+    assert _DEFAULT_VERSIONS["typescript"] == "node-24"
+
+
+def test_typescript_default_test_command_is_npm_ci_vitest() -> None:
+    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
+    cmd = _DEFAULT_TEST_COMMANDS["typescript"]
+    assert "npm ci" in cmd
+    assert "vitest run" in cmd
 
 
 # -- workspace_mount_args -----------------------------------------------------

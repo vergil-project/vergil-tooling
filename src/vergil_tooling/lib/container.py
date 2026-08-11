@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import platform
 import shutil
@@ -25,6 +26,11 @@ _DEFAULT_VERSIONS: dict[str, str] = {
     # vergil-project/.github#207 §6). The built-in default is the primary Clang
     # image, so default_image("cpp") resolves to prod-cpp-clang:20.
     "cpp": "clang-20",
+    # TypeScript carries its Node major on the version tag as a `node-` prefix
+    # (epic vergil-project/.github#284). The runtime family is the fixed
+    # `ts-node` image suffix and the numeric major is the tag, so the primary
+    # default default_image("typescript") resolves to prod-ts-node:24.
+    "typescript": "node-24",
 }
 
 _DEFAULT_PREFIX = "prod"
@@ -43,6 +49,10 @@ _DEFAULT_TEST_COMMANDS: dict[str, str] = {
         "&& cmake --build build --parallel "
         "&& ctest --test-dir build --output-on-failure"
     ),
+    # vrg-container-test runs this via `bash -c`, so `&&` chaining is valid.
+    # `npm ci` installs from the lockfile, then Vitest runs the suite once
+    # under the selected Node image (epic vergil-project/.github#284).
+    "typescript": "npm ci && vitest run",
 }
 
 
@@ -77,6 +87,25 @@ def container_platform() -> str:
 docker_platform = container_platform
 
 
+def _package_json_has_typescript_dep(package_json: Path) -> bool:
+    """Return True when *package_json* declares ``typescript`` as a devDependency.
+
+    A plain ``package.json`` (any Node project) is not a TypeScript marker on its
+    own — only the presence of the ``typescript`` devDependency is. A malformed or
+    unreadable manifest is treated as "no TypeScript dep" (detection must not crash
+    on a stray file); this is a bounded, documented fallback, not a swallowed error
+    that would surface later as a wrong image.
+    """
+    try:
+        data = json.loads(package_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    dev_deps = data.get("devDependencies")
+    return isinstance(dev_deps, dict) and "typescript" in dev_deps
+
+
 def detect_language(repo_root: Path) -> str:
     """Detect the project language from repo contents."""
     if (repo_root / "Gemfile").is_file():
@@ -96,7 +125,35 @@ def detect_language(repo_root: Path) -> str:
         (repo_root / "conanfile.py").is_file() or (repo_root / "conanfile.txt").is_file()
     ):
         return "cpp"
+    # TypeScript is identified by a tsconfig.json, or a package.json that carries
+    # a `typescript` devDependency (epic vergil-project/.github#284 §3.3). A plain
+    # package.json alone (a JS-only Node project) must NOT misdetect as TypeScript.
+    if (repo_root / "tsconfig.json").is_file():
+        return "typescript"
+    package_json = repo_root / "package.json"
+    if package_json.is_file() and _package_json_has_typescript_dep(package_json):
+        return "typescript"
     return ""
+
+
+def _parse_node_version_tag(tag: str) -> str | None:
+    """Extract the Node major from a ``node-`` prefixed version tag.
+
+    TypeScript carries its Node major on ``[ci].versions`` as a ``node-`` prefixed
+    tag (e.g. ``node-24`` → ``"24"``, ``node-22`` → ``"22"``), matching the
+    ``prod-ts-node:<major>`` images T1/T2 build in vergil-containers (epic
+    vergil-project/.github#284). Returns ``None`` when *tag* carries no recognized
+    ``node-`` prefix.
+
+    This is the container-side counterpart of ``repo_init._node_major`` and mirrors
+    its ``node-`` → major parse exactly; it is kept local so the container path stays
+    self-contained (T5), the way ``repo_init`` keeps its own copy for the CI
+    scaffolding path.
+    """
+    prefix = "node-"
+    if tag.startswith(prefix):
+        return tag[len(prefix) :]
+    return None
 
 
 def default_image(
@@ -139,6 +196,17 @@ def default_image(
             return _fallback_image(prefix) if fallback else ""
         family, ver = parsed
         return f"{_GHCR}/{prefix}-cpp-{family}:{ver}"
+    # TypeScript carries its Node major on the version tag: `node-24` resolves to
+    # `prod-ts-node:24` — the runtime family is the fixed `ts-node` image suffix
+    # and only the numeric major is the tag (epic vergil-project/.github#284,
+    # matching the images T1/T2 build in vergil-containers). A malformed tag (no
+    # `node-` prefix, or an empty major) must not build a `prod-ts-node:` image
+    # with an empty major, so it falls back like an unknown language.
+    if lang == "typescript":
+        major = _parse_node_version_tag(resolved)
+        if not major:
+            return _fallback_image(prefix) if fallback else ""
+        return f"{_GHCR}/{prefix}-ts-node:{major}"
     return f"{_GHCR}/{prefix}-{lang}:{resolved}"
 
 
