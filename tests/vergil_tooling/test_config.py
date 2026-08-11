@@ -22,6 +22,8 @@ from vergil_tooling.lib.config import (
     ValidationConfig,
     VmStanza,
     _warn_unrecognized_keys,
+    container_build_cache_files,
+    container_build_command,
     container_env_prefixes,
     container_system_packages,
     parse_vm_stanza,
@@ -734,6 +736,80 @@ def test_container_system_packages_accessor(tmp_path: Path) -> None:
 
 def test_container_system_packages_no_file(tmp_path: Path) -> None:
     assert container_system_packages(tmp_path) == []
+
+
+# -- [container].build-command + build-cache-files (epic .github#291) ----------
+
+
+def test_read_config_container_build_command(tmp_path: Path) -> None:
+    toml = (
+        _VALID_TOML
+        + "[container]\nenv-prefixes = []\n"
+        + 'build-command = "npm install -g @coderline/alphatab"\n'
+        + 'build-cache-files = ["melete-render/package-lock.json"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.build_command == "npm install -g @coderline/alphatab"
+    assert cfg.container.build_cache_files == ["melete-render/package-lock.json"]
+
+
+def test_read_config_container_build_command_defaults(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[container]\nenv-prefixes = []\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    cfg = read_config(tmp_path)
+    assert cfg.container.build_command is None
+    assert cfg.container.build_cache_files == []
+
+
+def test_read_config_container_no_section_build_command_defaults(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    cfg = read_config(tmp_path)
+    assert cfg.container.build_command is None
+    assert cfg.container.build_cache_files == []
+
+
+def test_read_config_container_build_command_not_string(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-command = ["a", "b"]\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.build-command must be a string"):
+        read_config(tmp_path)
+
+
+def test_read_config_container_build_cache_files_not_list(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-cache-files = "lock"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.build-cache-files must be a list"):
+        read_config(tmp_path)
+
+
+def test_read_config_container_build_cache_files_not_strings(tmp_path: Path) -> None:
+    toml = _VALID_TOML + "[container]\nenv-prefixes = []\nbuild-cache-files = [1, 2]\n"
+    (tmp_path / "vergil.toml").write_text(toml)
+    with pytest.raises(ConfigError, match=r"\[container\]\.build-cache-files must be a list"):
+        read_config(tmp_path)
+
+
+def test_container_build_command_accessor(tmp_path: Path) -> None:
+    toml = _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-command = "make deps"\n'
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert container_build_command(tmp_path) == "make deps"
+
+
+def test_container_build_command_no_file(tmp_path: Path) -> None:
+    assert container_build_command(tmp_path) is None
+
+
+def test_container_build_cache_files_accessor(tmp_path: Path) -> None:
+    toml = (
+        _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-cache-files = ["a.lock", "b.lock"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert container_build_cache_files(tmp_path) == ["a.lock", "b.lock"]
+
+
+def test_container_build_cache_files_no_file(tmp_path: Path) -> None:
+    assert container_build_cache_files(tmp_path) == []
 
 
 # -- [validation] section -----------------------------------------------------
