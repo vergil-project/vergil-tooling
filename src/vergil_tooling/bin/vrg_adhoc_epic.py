@@ -66,14 +66,26 @@ def cmd_archive(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_normalize(args: argparse.Namespace) -> int:
+    verb = "APPLY" if args.apply else "DRY-RUN"
+    with github.target_org(args.all_in):
+        conversions = epics.normalize_adhoc_archives(args.all_in, apply=args.apply)
+    print(f"[{verb}] {args.all_in}: {len(conversions)} archive(s) to normalize")
+    for conv in conversions:
+        print(f"  {conv.ref.slug}: {conv.old_title!r} -> {conv.new_title!r}")
+    return 0
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="vrg-adhoc-epic",
         description=(
-            "Manage a repo's ad-hoc epic (Epic (ad hoc): <repo>, labelled "
-            "epic + ad-hoc, homed by visibility: <org>/.github for a public "
-            "repo, the repo itself when private)."
+            "Manage a repo's ad-hoc epic. The live epic is 'Epic (ad hoc): "
+            "<repo>' labelled epic + ad-hoc; stamped per-quarter buckets are "
+            "'Archive (ad hoc): <repo> — YYYY-Qn' labelled archive + ad-hoc. "
+            "Homed by visibility: <org>/.github for a public repo, the repo "
+            "itself when private."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -92,6 +104,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     scope.add_argument("--all-in", metavar="ORG", help="Sweep every repo in ORG")
     p_arch.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
     p_arch.set_defaults(func=cmd_archive)
+    p_norm = sub.add_parser(
+        "normalize",
+        help=(
+            "Convert legacy 'Epic (ad hoc): … — Qn' archives to the "
+            "'Archive (ad hoc): …' form (dry-run unless --apply)."
+        ),
+    )
+    p_norm.add_argument(
+        "--all-in", metavar="ORG", required=True, help="Sweep every repo in ORG"
+    )
+    p_norm.add_argument("--apply", action="store_true", help="Execute (default: dry-run)")
+    p_norm.set_defaults(func=cmd_normalize)
     return parser.parse_args(argv)
 
 
