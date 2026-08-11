@@ -124,6 +124,11 @@ nav:
           - Shell:
               - Overview: standards/development/shell/overview.md
               - Naming Conventions: standards/development/shell/naming-conventions.md
+          - TypeScript:
+              - Overview: standards/development/typescript/overview.md
+              - Toolchain and Strictness: standards/development/typescript/toolchain-and-strictness.md
+              - Testing and Coverage: standards/development/typescript/testing-and-coverage.md
+              - Naming Conventions: standards/development/typescript/naming-conventions.md
           - Database:
               - Overview: standards/development/database/overview.md
               - Conventions: standards/development/database/conventions.md
