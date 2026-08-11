@@ -128,19 +128,22 @@ cross-forge fallback.
   (The older `standing` alias is **retired** — only `ad-hoc` remains.)
   `vrg-adhoc-epic ensure --repo <owner>/<repo>` creates a repo's ad-hoc epic
   on demand (idempotent). Its *closed* children are continuously drained into
-  per-quarter archive epics so the live umbrella shows only in-flight work — see
+  per-quarter **archives** so the live umbrella shows only in-flight work — see
   [Ad-hoc epic archiving](#ad-hoc-epic-archiving).
 
 ### Ad-hoc epic archiving
 
 A live ad-hoc epic accumulates closed children forever, so its "what's in
 flight" signal drowns in finished work. To keep the umbrella honest, closed
-children are **continuously drained into per-quarter archive epics** — a live
+children are **continuously drained into per-quarter archives** — a live
 ad-hoc epic ends up holding only its still-open children.
 
-- **Archive epics** are titled `Epic (ad hoc): <repo> — <YYYY>-Q<n>` (the
+- **Archives** are titled `Archive (ad hoc): <repo> — <YYYY>-Q<n>` (the
   separator is a space, an em-dash `—`, and a space). They live in the same
-  resolved home as the live epic and carry the `epic` + `ad-hoc` labels.
+  resolved home as the live epic and carry the `archive` + `ad-hoc` labels. The
+  `archive` label replaced the `epic` label these buckets used to carry (`ad-hoc`
+  is kept), so terminal per-quarter buckets no longer clutter `label:epic`
+  views; only the live `Epic (ad hoc): <repo>` epic keeps `epic` + `ad-hoc`.
 - **Bucketing is by close quarter.** Each closed child is re-parented into the
   archive for the quarter of its `closedAt` timestamp (UTC), so the `YYYY-Qn`
   archive holds the ad-hoc work that *finished* in that quarter — not the work
@@ -184,6 +187,30 @@ vrg-adhoc-epic archive --all-in <ORG> --apply
 `--repo` targets a single repo; `--all-in <ORG>` sweeps every repo in the org,
 resolving each repo's ad-hoc home by visibility. Without `--apply` the command
 mutates nothing.
+
+#### Normalizing legacy archives
+
+Archives created before the `archive`-label rename carry the old
+`Epic (ad hoc): <repo> — <YYYY>-Qn` title and the `epic` label. `vrg-adhoc-epic
+normalize` converts them in place to the current form — retitling to
+`Archive (ad hoc): …`, adding `archive`, and removing `epic` (keeping `ad-hoc`):
+
+```bash
+# Dry-run: list every legacy-form archive that would be converted.
+vrg-adhoc-epic normalize --all-in <ORG>
+
+# Apply the conversions.
+vrg-adhoc-epic normalize --all-in <ORG> --apply
+```
+
+It sweeps every repo's resolved home, so it covers both the centrally-homed
+archives of public repos and the self-homed archives of private ones, and it
+converts both open and closed archives. It is **idempotent** — an
+already-converted archive is new-form and is skipped — so it is safe to re-run
+and doubles as a straggler net. The creation path is also self-healing: the next
+time the drain touches a quarter whose archive is still in legacy form, it heals
+that archive in place rather than minting a duplicate, so there is no ordering
+hazard between the code landing and this sweep running.
 
 #### Automation (no new schedule)
 
@@ -284,11 +311,11 @@ relocating epics when a repo's visibility changes.
 - **Epics live in `.github`.** An open `epic`-labelled issue outside `.github` in
   a *public* repo is a violation (a private repo self-homes legitimately).
 - **No stray `.github` issues.** The epic home holds only epics, intake
-  (`triage`/`idea`/`research`), and tasks linked under an epic; any other open
-  issue there is a stray.
+  (`triage`/`idea`/`research`), the `archive`-labelled per-quarter buckets, and
+  tasks linked under an epic; any other open issue there is a stray.
 - **An epic is never closed while a child is open.** A closed finite epic with an
   open child is a violation (perpetual `ad-hoc` epics are exempt — they never
-  roll up; their closed children are drained into per-quarter archive epics
+  roll up; their closed children are drained into per-quarter archives
   instead, see [Ad-hoc epic archiving](#ad-hoc-epic-archiving)).
 
 ## Intake queues
