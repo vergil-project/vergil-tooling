@@ -6,10 +6,13 @@ import subprocess
 import time
 
 from vergil_tooling.lib import progress, retry
-from vergil_tooling.lib.github import _gh_env, _poll_and_watch_checks
+from vergil_tooling.lib.github import _POLL_TIMEOUT_SECS, _gh_env, _poll_and_watch_checks
 
+# _POLL_TIMEOUT_SECS is the shared pending-checks ceiling (1800s), imported from
+# lib.github so the release/update-deps merge waiter and the finalize merge
+# waiter (github.wait_for_checks) can never drift apart — the 180s-vs-real-CI
+# mismatch that caused #2809. See lib.github._POLL_TIMEOUT_SECS for rationale.
 _POLL_INTERVAL_SECS = 5
-_POLL_TIMEOUT_SECS = 180
 
 
 def _stream_with_retry(cmd: tuple[str, ...]) -> None:

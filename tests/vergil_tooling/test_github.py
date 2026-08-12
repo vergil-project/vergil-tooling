@@ -316,6 +316,32 @@ def test_wait_for_checks_polls_until_terminal(monkeypatch: pytest.MonkeyPatch) -
     assert sleeps == [7, 7]
 
 
+def test_wait_for_checks_default_ceiling_is_1800_and_polls_past_180(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression (#2809): the default pending-checks ceiling was 180s — shorter
+    # than real CI (3-8 min) — so a normal PR whose checks were merely still
+    # running spuriously hard-failed the finalize merge. With the ceiling now
+    # 1800s, the waiter must keep polling well past 180s and raise the *plain*
+    # timeout only at the 1800s deadline (checks never terminal, nothing
+    # orphaned — e.g. an app-posted status still running).
+    assert github._POLL_TIMEOUT_SECS == 1800
+    monkeypatch.setattr(github, "all_checks_terminal", lambda pr: False)
+    monkeypatch.setattr(github, "orphaned_check_names", lambda pr: [])
+    # Fake monotonic clock, no real sleeping: deadline = 0 + 1800. The poll at
+    # t=200 is *past the old 180s ceiling* yet must NOT raise (proves 180s is
+    # gone); the deadline is only reached at t=1800.
+    clock = iter([0.0, 200.0, 1800.0])
+    monkeypatch.setattr(github.time, "monotonic", lambda: next(clock))
+    sleeps: list[int] = []
+    monkeypatch.setattr(github.time, "sleep", lambda s: sleeps.append(s))
+    with pytest.raises(github.GitHubAPIError, match="still pending after 1800s"):
+        github.wait_for_checks("934")
+    # Exactly one poll happened after crossing 180s and before the 1800s
+    # deadline — the old ceiling would have raised at that first check instead.
+    assert sleeps == [github._POLL_INTERVAL_SECS]
+
+
 def test_failed_check_names_returns_failing_checks() -> None:
     payload = json.dumps(
         [
