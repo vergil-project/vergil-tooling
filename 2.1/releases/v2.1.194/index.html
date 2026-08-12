@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.195/">
       
       
         <link rel="next" href="../v2.1.193/">
@@ -1193,6 +1193,8 @@
       
         
       
+        
+      
     
     
     
@@ -1248,6 +1250,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.195/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.195
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13551,6 +13581,7 @@ The ad-hoc archive machinery documents itself as self-healing, but it applied th
 </ul>
 <p>Add a _ensure_labels helper that idempotently creates each required label (from the canonical labels.json, with its color and description) and call it on the rare create/normalize branches only: _normalize_archive_in_place, and the create paths of ensure_adhoc_archive and ensure_adhoc_epic. The steady-state early-return paths are untouched. This makes the machinery self-healing in every org, not just the migrated one.</p>
 <p>Ref vergil-project/.github#305</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.194/v2.1.194-ci-evidence.tar.gz">Download →</a></p>
 
 
 
