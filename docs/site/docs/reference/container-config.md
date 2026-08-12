@@ -4,9 +4,11 @@ A repo customizes its **dev container** through the `[container]` section of its
 `vergil.toml`. The section is optional; every key defaults to empty, so a repo
 that omits `[container]` behaves exactly as it would with an empty table.
 
-Both keys describe the *same* container from two angles: `env-prefixes` controls
+The keys describe the *same* container from a few angles: `env-prefixes` controls
 which host environment variables `vrg-container-run` forwards **into** the
-container, and `system-packages` declares Debian packages installed **inside** it.
+container, `system-packages` declares Debian packages installed **inside** it, and
+`build-command` runs a repo-declared provisioning step when the cached dev image
+is built (with `build-cache-files` naming the inputs that invalidate the cache).
 
 ## Structure
 
@@ -14,6 +16,8 @@ container, and `system-packages` declares Debian packages installed **inside** i
 [container]
 env-prefixes = ["CONAN_AUDIT_PROVIDER_TOKEN"]   # forward matching host env vars
 system-packages = ["lilypond"]                  # install Debian packages
+build-command = "npm install -g @coderline/alphatab"  # provision non-apt deps
+build-cache-files = ["package-lock.json"]       # inputs that invalidate the cache
 ```
 
 ## Keys
@@ -22,6 +26,8 @@ system-packages = ["lilypond"]                  # install Debian packages
 |---|---|---|---|
 | `env-prefixes` | list of strings | `[]` | Host env-var name **prefixes** `vrg-container-run` forwards into the container (accumulates) |
 | `system-packages` | list of strings | `[]` | Debian `apt` package **names** baked into the local cached dev image and installed on CI test jobs (see below) |
+| `build-command` | string | *(unset)* | A shell command run while the cached dev image is built, to provision a non-apt dependency **outside `/workspace`** (see below) |
+| `build-cache-files` | list of strings | `[]` | Repo-relative files the `build-command` reads; folded into the image cache hash so a bump forces a rebuild |
 
 ## `env-prefixes`
 
@@ -129,3 +135,69 @@ vrg-container-system-packages --install-script  # the exact apt snippet CI runs
 The plain-list mode is a human-facing inspection affordance ("what would this
 repo install?"); `--install-script` emits the single, shared apt speller that
 both the local image build and the CI step execute verbatim.
+
+## `build-command`
+
+A shell command run once while the per-branch cached dev image is built (after the
+`system-packages` apt step and the vergil-tooling install, before the language
+warmup). It is the escape hatch for a dependency that is **not** an apt package and
+**not** a language package the base image already carries — for example a JS
+library a test driver consumes at runtime (epic
+[vergil-project/.github#291](https://github.com/vergil-project/.github/issues/291)).
+
+### The out-of-workspace contract
+
+`vrg-container-run` bind-mounts the repo over `/workspace` at run time, which
+**masks** anything the build wrote under `/workspace`. So a `build-command` must
+install its artifact **outside `/workspace`** (a global/system location baked into
+the image), or the run-time mount hides it. A global install is the usual way to
+land outside the workspace — e.g. `npm install -g <pkg>` writes to
+`/usr/lib/node_modules`, which is image-resident and survives the mount.
+
+Landing the artifact outside `/workspace` makes it **present**, but *present* is
+not the same as *resolvable*, and the two differ by artifact kind:
+
+- **Executables** are on `PATH`. A globally-installed CLI (`npm install -g` of a
+  package with a `bin`, a `pip install` console script, a Go binary in
+  `/usr/local/bin`) is on `PATH` and runs as-is — no extra configuration.
+- **Libraries are not automatically on the language's module-resolution path.**
+  This is the correction to the earlier contract wording: a global `npm install -g`
+  of a *library* is **not** "on the default resolution path." A global npm install
+  puts *executables* on `PATH` but does **not** add the npm global root
+  (`/usr/lib/node_modules`) to Node's `require` search path. Without help,
+  `require("<lib>")` / `require.resolve("<lib>")` returns `MODULE_NOT_FOUND` even
+  though the package is baked into the image (validated in
+  [vergil-project/vergil-tooling#2766](https://github.com/vergil-project/vergil-tooling/issues/2766);
+  this also corrects the design spec's §4, tracked for the epic doc-sweep
+  [#2756](https://github.com/vergil-project/vergil-tooling/issues/2756)).
+
+### `NODE_PATH` for baked npm libraries
+
+To make a baked npm **library** resolvable, `vrg-container-run` sets `NODE_PATH`
+to the npm global root (`/usr/lib/node_modules`, i.e. `npm root -g` on the vergil
+base images) **whenever the repo declares a `build-command`**, so
+`require.resolve("<lib>")` resolves out of the box. A repo that declares no
+`build-command` is unaffected — no `NODE_PATH` is set, and its container
+environment is byte-for-byte unchanged.
+
+Two caveats:
+
+- **CommonJS only.** `NODE_PATH` is honoured by CommonJS `require`; **ESM `import`
+  ignores it**. A library consumed via ESM `import` needs a different mechanism
+  (e.g. a repo-local `node_modules` populated by `npm ci`, or staging the module
+  into a directory ESM resolution walks up to).
+- **Overridable.** An explicit `NODE_PATH` in the host environment wins, so a
+  consumer can point resolution at a different location at run time.
+
+The value rides the container **run** invocation rather than being baked into the
+image with `commit --change ENV`, because the `nerdctl` runtime's `commit --change`
+supports only `CMD`/`ENTRYPOINT` directives (not `ENV`); setting it on the run
+path works identically across the `docker` and `nerdctl` runtimes.
+
+### Cache key
+
+Like `system-packages`, editing `build-command` changes `vergil.toml`, which is in
+the cache-sensitive file set, so a change forces an image rebuild. When the command
+reads a lockfile whose *contents* (not the command string) determine what gets
+installed, list that lockfile in `build-cache-files` so a dependency bump also
+invalidates the cache.
