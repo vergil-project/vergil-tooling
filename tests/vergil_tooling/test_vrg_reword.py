@@ -296,6 +296,18 @@ def test_main_rejects_autoclose_body() -> None:
     assert rc == 1
 
 
+def test_autoclose_rejection_message_directs_to_pr_submit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The rejection guidance points at PR-submit linkage, not a stale 'Ref #N'."""
+    rc = main(["abc", "--type", "feat", "--scope", "core", "--message", "x", "--body", "Closes #5"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "Ref #N" not in err
+    assert "report-ready" in err
+    assert "no issue-linkage keyword" in err
+
+
 # --------------------------------------------------------------------------
 # push behavior
 # --------------------------------------------------------------------------
