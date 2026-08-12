@@ -125,6 +125,13 @@ def foreign_repo_refusal(ctx: RepoInitContext) -> str | None:
     """
     if ctx.adopt or ctx.target_dir is not None:
         return None
+    # If the clone's org-layout parent is derivable from CWD, the clone lands
+    # correctly beside sibling repos (step_clone derives it) and resume state is
+    # already CWD-guarded in run_wizard, so launching from a subdirectory — even
+    # another repo's clone, like the org .github — is safe. Only refuse when the
+    # layout is NOT derivable and CWD sits inside an unrelated repo (#2225, #2717).
+    if derive_clone_parent(ctx.org) is not None:
+        return None
     inside = cwd_repo_slug()
     if inside is None or inside.lower() == ctx.repo.lower():
         return None
@@ -915,19 +922,53 @@ def step_create_repo(ctx: RepoInitContext) -> None:
     print(f"  Created {ctx.repo}.")
 
 
+def derive_clone_parent(org: str, start: Path | None = None) -> Path | None:
+    """Return the org-layout parent directory for a fresh clone, or ``None``.
+
+    Every managed repo lives at ``<projects>/<org>/<repo>``, so a new clone's
+    parent is the ancestor directory named ``<org>``. Walk up from ``start``
+    (CWD by default), inclusive, and return the first ancestor whose name is
+    ``org`` — letting the operator launch from anywhere inside the org tree, not
+    only the org root (#2225). Return ``None`` when no ancestor is named ``org``;
+    callers turn that into a loud refusal rather than silently cloning into an
+    arbitrary CWD.
+    """
+    base = (start if start is not None else Path.cwd()).resolve()
+    for candidate in (base, *base.parents):
+        if candidate.name == org:
+            return candidate
+    return None
+
+
 def step_clone(ctx: RepoInitContext, *, parent_dir: Path | None = None) -> None:
     """Step 2: Clone the repo locally or verify an existing clone."""
-    if parent_dir is None:
-        # An explicit --target-dir names the clone's parent; otherwise fall back
-        # to CWD (the historical default). #2717.
-        parent_dir = ctx.target_dir or Path.cwd()
-
-    target = parent_dir / ctx.name
-
     if ctx.adopt:
         ctx.work_dir = Path.cwd()
         print("Step 2: Using current directory as working directory.")
         return
+
+    if parent_dir is None:
+        if ctx.target_dir is not None:
+            # An explicit --target-dir names the clone's parent (#2717).
+            parent_dir = ctx.target_dir
+        else:
+            # No explicit target: derive the parent from the org layout so the
+            # clone lands beside sibling repos regardless of which subdirectory
+            # the operator launched from (#2225). Fail loud rather than silently
+            # cloning into an arbitrary CWD when the layout is not derivable.
+            parent_dir = derive_clone_parent(ctx.org)
+            if parent_dir is None:
+                cwd = Path.cwd()
+                print(
+                    f"Step 2: Cannot derive a clone location for {ctx.repo} from {cwd}: "
+                    f"no ancestor directory is named {ctx.org!r}. Managed repos live at "
+                    f"<projects>/{ctx.org}/{ctx.name}. Re-run from inside the {ctx.org!r} "
+                    "directory (or any subdirectory of it), or pass --target-dir <parent>.",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1)
+
+    target = parent_dir / ctx.name
 
     if (target / ".git").is_dir():
         ctx.work_dir = target
@@ -1453,11 +1494,21 @@ def run_wizard(ctx: RepoInitContext) -> None:
     """Run all wizard steps, skipping completed ones."""
     # Resume state is a property of the TARGET, not of wherever the operator is
     # standing. Only trust the local checkpoint commits when CWD is the target's
-    # own clone (or an adopt run, which uses CWD by design); an unrelated repo's
-    # `chore(init): step N -` commits would otherwise be misread as this repo's
-    # progress and silently skip vergil.toml / config / CI steps (#2717).
+    # own clone; an unrelated repo's `chore(init): step N -` commits would
+    # otherwise be misread as this repo's progress and silently skip
+    # vergil.toml / config / CI steps (#2717).
+    #
+    # Adopt is the exception: it is an idempotent "overwrite managed files to
+    # canonical state" run, so every generation step must re-run regardless of
+    # prior init history. The `chore(init): step N -` markers are permanent in
+    # any previously-init'd repo and describe a PAST init, not current drift —
+    # trusting them would skip regenerating managed files (notably ci.yml),
+    # directly contradicting adopt's stated overwrite contract (#2795).
+    # Checkpoint-based resume is meaningful only for an interrupted FRESH init.
     cwd_slug = cwd_repo_slug()
-    if ctx.adopt or (cwd_slug is not None and cwd_slug.lower() == ctx.repo.lower()):
+    if ctx.adopt:
+        local_completed = set()
+    elif cwd_slug is not None and cwd_slug.lower() == ctx.repo.lower():
         try:
             log_output = git.read_output("log", "--oneline")
         except subprocess.CalledProcessError:

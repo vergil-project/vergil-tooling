@@ -5,9 +5,14 @@ from __future__ import annotations
 from vergil_tooling.lib.labels import load_labels
 
 # GitHub default labels that must not collide with the registry.
+#
+# ``bug`` is intentionally omitted: the registry now owns ``bug`` canonically as
+# part of the full kind axis (issue #1971) rather than leaning on GitHub's
+# default, so ``--sync`` provisions a complete, consistent set regardless of
+# which defaults a repo happens to have. ``documentation`` stays on the list
+# because the registry's documentation kind is ``docs``, not ``documentation``.
 _GITHUB_DEFAULTS = frozenset(
     {
-        "bug",
         "documentation",
         "duplicate",
         "good first issue",

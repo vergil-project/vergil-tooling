@@ -23,3 +23,14 @@ def test_archive_label_present_and_wellformed() -> None:
 def test_label_names_are_unique() -> None:
     names = [entry["name"] for entry in _labels()]
     assert len(names) == len(set(names)), "duplicate label names in labels.json"
+
+
+def test_registry_includes_full_kind_axis() -> None:
+    # The canonical registry must own the *complete* kind axis so a repo's first
+    # ``vrg-ensure-label --sync`` seeds a consistent set without relying on GitHub
+    # default labels (which may be renamed or deleted). ``bug`` and ``docs`` were
+    # historically absent — ``bug`` leaned on GitHub's default and ``docs`` had to
+    # be created ad hoc mid-migration (issue #1971).
+    names = {entry["name"] for entry in _labels()}
+    for kind in {"bug", "feature", "docs", "refactor", "chore", "research"}:
+        assert kind in names, f"kind label missing from labels.json: {kind}"

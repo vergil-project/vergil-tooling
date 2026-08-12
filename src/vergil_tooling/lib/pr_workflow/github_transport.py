@@ -19,6 +19,9 @@ would advance the feature branch out from under it (design
 
 from __future__ import annotations
 
+import contextlib
+import sys
+
 from vergil_tooling.lib import git
 from vergil_tooling.lib.pr_workflow.state import WorkflowState
 from vergil_tooling.lib.pr_workflow.transport import Transport
@@ -82,11 +85,21 @@ class GitHubTransport(Transport):
         INVARIANT: never runs ``git commit``; never mutates HEAD, the index, or
         the working tree. The blob/tree/commit are built with plumbing and the
         push targets only the reserved ref, keeping the write freeze-neutral.
+
+        Quiet-by-design (#2793): ``git.run`` streams the push's plumbing chatter
+        through ``progress.emit``, which prints to **stdout** outside a progress
+        pipeline. That would corrupt the stdout contract of any caller that emits
+        structured output (``report-ready`` speaks JSON-on-stdout). The push
+        chatter belongs on stderr regardless of caller, so it is redirected here
+        at the transport boundary — no caller needs the workaround. The redirect
+        is torn down only after ``git.run`` joins its output-pump threads, so
+        every emitted line lands on stderr before ``write`` returns.
         """
         blob = git.read_output_stdin(state.to_json(), "hash-object", "-w", "--stdin")
         tree = git.read_output_stdin(f"{_BLOB_MODE} blob {blob}\t{_FILE}\n", "mktree")
         commit = git.read_output("commit-tree", tree, "-m", _COMMIT_MESSAGE)
-        git.run("push", "--force", self.remote, f"{commit}:{self.ref}")
+        with contextlib.redirect_stdout(sys.stderr):
+            git.run("push", "--force", self.remote, f"{commit}:{self.ref}")
 
     def delete(self) -> None:
         """Remove the relay ref from the remote; a no-op when it is absent."""

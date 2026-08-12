@@ -385,8 +385,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.body and contains_autoclose(args.body):
         return _reject(
-            "commit body contains a GitHub auto-close keyword (close/fix/resolve).",
-            "Use 'Ref #N' instead. Issues stay open until post-merge workflows succeed.",
+            "commit body contains a GitHub auto-close keyword (close/fix/resolve). "
+            "Commit bodies must carry no issue-linkage keyword.",
+            "Issue linkage is set on the PR at submit time (via "
+            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the commit "
+            "body. Issues stay open until post-merge workflows succeed.",
         )
 
     rc, target_sha, branch = _validate(args)

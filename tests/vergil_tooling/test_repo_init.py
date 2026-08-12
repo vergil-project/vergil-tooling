@@ -23,6 +23,7 @@ from vergil_tooling.lib.repo_init import (
     _resolve,
     _sync_labels,
     cwd_repo_slug,
+    derive_clone_parent,
     detect_completed_steps,
     foreign_repo_refusal,
     prompt_choice,
@@ -263,6 +264,42 @@ class TestForeignRepoRefusal:
         assert "mnemosys-project/docs" in msg
         assert "mnemosys-project/.github" in msg
         assert "--target-dir" in msg
+
+    def test_none_when_org_layout_derivable_inside_foreign_repo(self, tmp_path: Path) -> None:
+        # Launched from the org .github clone: cwd_repo_slug reports a foreign
+        # repo, but the org-layout parent is derivable, so the clone will land
+        # correctly beside sibling repos — no refusal (#2225).
+        org_dir = tmp_path / "mnemosys-project"
+        nested = org_dir / ".github"
+        nested.mkdir(parents=True)
+        ctx = RepoInitContext(org="mnemosys-project", name="docs")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=nested),
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="mnemosys-project/.github",
+            ),
+        ):
+            assert foreign_repo_refusal(ctx) is None
+
+
+class TestDeriveCloneParent:
+    def test_returns_org_root_when_cwd_is_org_dir(self, tmp_path: Path) -> None:
+        org_dir = tmp_path / "vergil-project"
+        org_dir.mkdir()
+        assert derive_clone_parent("vergil-project", org_dir) == org_dir.resolve()
+
+    def test_walks_up_to_org_root_from_nested_cwd(self, tmp_path: Path) -> None:
+        org_dir = tmp_path / "vergil-project"
+        nested = org_dir / ".github" / "workflows"
+        nested.mkdir(parents=True)
+        assert derive_clone_parent("vergil-project", nested) == org_dir.resolve()
+
+    def test_returns_none_when_no_ancestor_matches_org(self, tmp_path: Path) -> None:
+        stray = tmp_path / "somewhere-else"
+        stray.mkdir()
+        assert derive_clone_parent("vergil-project", stray) is None
 
 
 class TestRenderVergilToml:
@@ -977,9 +1014,13 @@ class TestStepClone:
         step_clone(ctx)
         assert ctx.work_dir is not None
 
-    def test_default_parent_dir(self, tmp_path: Path) -> None:
+    def test_derives_parent_from_org_root(self, tmp_path: Path) -> None:
+        # No --target-dir: launched from the org directory itself. The clone
+        # lands beside sibling repos under <projects>/<org>/ (#2225).
+        org_dir = tmp_path / "vergil-project"
+        org_dir.mkdir()
+        target = org_dir / "vergil-vm"
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
-        target = tmp_path / "vergil-vm"
 
         def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
             target.mkdir(exist_ok=True)
@@ -990,13 +1031,59 @@ class TestStepClone:
                 "vergil_tooling.lib.repo_init.subprocess.run",
                 side_effect=mock_subprocess_run,
             ),
-            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=tmp_path),
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=org_dir),
             patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
             patch("vergil_tooling.lib.repo_init.os.chdir"),
         ):
             step_clone(ctx)
 
         assert ctx.work_dir == target
+
+    def test_derives_parent_from_nested_cwd(self, tmp_path: Path) -> None:
+        # Launched from a subdirectory of the org tree (e.g. the org .github
+        # clone). The clone still lands beside sibling repos, not nested in the
+        # subdirectory the operator happened to be in (#2225).
+        org_dir = tmp_path / "vergil-project"
+        nested = org_dir / ".github"
+        nested.mkdir(parents=True)
+        target = org_dir / "vergil-vm"
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        def mock_subprocess_run(cmd: Any, **kw: Any) -> None:
+            target.mkdir(exist_ok=True)
+            (target / ".git").mkdir()
+
+        with (
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=mock_subprocess_run,
+            ),
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=nested),
+            patch("vergil_tooling.lib.repo_init.prompt_yes_no", return_value=True),
+            patch("vergil_tooling.lib.repo_init.os.chdir"),
+        ):
+            step_clone(ctx)
+
+        assert ctx.work_dir == target
+
+    def test_fails_loud_when_org_layout_not_derivable(self, tmp_path: Path) -> None:
+        # No --target-dir and no ancestor named after the org: refuse loudly
+        # rather than silently cloning into an arbitrary CWD (#2225).
+        stray = tmp_path / "somewhere-else"
+        stray.mkdir()
+        ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
+
+        with (
+            patch("vergil_tooling.lib.repo_init.Path.cwd", return_value=stray),
+            patch(
+                "vergil_tooling.lib.repo_init.subprocess.run",
+                side_effect=AssertionError("must not clone when the layout is underivable"),
+            ),
+            pytest.raises(SystemExit) as excinfo,
+        ):
+            step_clone(ctx)
+
+        assert excinfo.value.code == 1
 
     def test_clone_changes_cwd(self, tmp_path: Path) -> None:
         ctx = RepoInitContext(org="vergil-project", name="vergil-vm")
@@ -1780,6 +1867,59 @@ class TestRunWizard:
         assert 3 not in steps_run
         assert 4 not in steps_run
         assert 5 in steps_run
+
+    def test_adopt_ignores_checkpoint_markers_and_regenerates(self) -> None:
+        # #2795 regression: adopt is an idempotent "overwrite managed files to
+        # canonical" run. A previously-init'd repo carries permanent
+        # `chore(init): step N -` markers for every generation step; adopt must
+        # NOT read them as completed progress, or it skips regenerating managed
+        # files (notably ci.yml at step 5), defeating adopt's own contract.
+        ctx = RepoInitContext(org="mnemosys-project", name="docs", adopt=True)
+
+        steps_run: list[int] = []
+
+        def mock_step(step_num: int) -> Any:
+            def inner(*a: Any, **kw: Any) -> None:
+                steps_run.append(step_num)
+
+            return inner
+
+        with (
+            patch("vergil_tooling.lib.repo_init.step_create_repo", side_effect=mock_step(1)),
+            patch("vergil_tooling.lib.repo_init.step_clone", side_effect=mock_step(2)),
+            patch("vergil_tooling.lib.repo_init.step_generate_config", side_effect=mock_step(3)),
+            patch(
+                "vergil_tooling.lib.repo_init.step_scaffold_config_files",
+                side_effect=mock_step(4),
+            ),
+            patch("vergil_tooling.lib.repo_init.step_ci_cd_workflows", side_effect=mock_step(5)),
+            patch("vergil_tooling.lib.repo_init.step_docs_site", side_effect=mock_step(6)),
+            patch("vergil_tooling.lib.repo_init.step_branch_structure", side_effect=mock_step(7)),
+            patch("vergil_tooling.lib.repo_init.step_github_config", side_effect=mock_step(8)),
+            patch("vergil_tooling.lib.repo_init.step_github_pages", side_effect=mock_step(9)),
+            patch("vergil_tooling.lib.repo_init._check_remote_steps", return_value=set()),
+            # Adopt runs in the target's own clone, whose log carries markers for
+            # every past init step — the exact history that must be ignored.
+            patch(
+                "vergil_tooling.lib.repo_init.cwd_repo_slug",
+                return_value="mnemosys-project/docs",
+            ),
+            patch(
+                "vergil_tooling.lib.repo_init.git.read_output",
+                return_value=(
+                    "abc chore(init): step 3 - vergil.toml\n"
+                    "def chore(init): step 4 - config files\n"
+                    "ghi chore(init): step 5 - CI/CD workflows\n"
+                    "jkl chore(init): step 6 - docs site\n"
+                ),
+            ) as mock_log,
+        ):
+            run_wizard(ctx)
+
+        # Every generation step re-runs; step 5 (ci.yml) is the load-bearing one.
+        assert {3, 4, 5, 6}.issubset(steps_run)
+        # On adopt the checkpoint log is not even consulted.
+        mock_log.assert_not_called()
 
     def test_ignores_foreign_repo_resume_state(self) -> None:
         # #2717 regression: when CWD is a DIFFERENT repo, its own bootstrap

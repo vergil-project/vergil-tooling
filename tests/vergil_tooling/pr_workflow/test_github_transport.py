@@ -98,6 +98,19 @@ def test_write_is_a_pure_ref_write_leaving_head_index_worktree_untouched(
     assert _git("ls-remote", "origin", GitHubTransport(_BRANCH).ref, cwd=clone)
 
 
+def test_write_keeps_stdout_clean_routing_push_chatter_to_stderr(
+    clone: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Quiet-by-design (#2793): ``write`` must not leak git push chatter to
+    stdout — outside a progress pipeline ``git.run`` prints its streamed output,
+    and a caller with a JSON-on-stdout contract (``report-ready``) would be
+    corrupted. The transport redirects the chatter to stderr itself, so no
+    caller-side ``redirect_stdout`` workaround is needed."""
+    GitHubTransport(_BRANCH).write(_state())
+    captured = capsys.readouterr()
+    assert captured.out == ""
+
+
 def test_write_force_overwrites_existing_ref(clone: Path) -> None:
     transport = GitHubTransport(_BRANCH)
     transport.write(_state(head="first"))

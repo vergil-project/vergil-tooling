@@ -460,6 +460,32 @@ def test_validate_rejects_autoclose_keywords_in_body(tmp_path: Path, body: str) 
     assert result == 1
 
 
+def test_autoclose_rejection_message_directs_to_pr_submit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The rejection guidance points at PR-submit linkage, not a stale 'Ref #N'."""
+    with _commit_environment(tmp_path):
+        result = main(
+            [
+                "--type",
+                "feat",
+                "--scope",
+                "core",
+                "--message",
+                "test",
+                "--body",
+                "Closes #42",
+            ]
+        )
+    assert result == 1
+    err = capsys.readouterr().err
+    # The stale recommendation is gone.
+    assert "Ref #N" not in err
+    # The new guidance explains linkage is set on the PR at submit time.
+    assert "report-ready" in err
+    assert "no issue-linkage keyword" in err
+
+
 @pytest.mark.parametrize(
     "body",
     [

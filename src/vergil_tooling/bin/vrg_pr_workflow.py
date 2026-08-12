@@ -8,7 +8,6 @@ and ``vrg-submit-pr`` (human-run) reads it. ``status`` prints the current state.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import subprocess
 import sys
@@ -125,14 +124,14 @@ def _push_relay_ref(state: WorkflowState, base: str) -> None:
     local file has already been written and stays put; a push failure is
     therefore surfaced loudly on stderr but never rolls the local state back.
 
-    ``report-ready`` speaks a JSON-on-stdout contract, so the relay push's git
-    chatter is redirected to stderr — where "loud" belongs — keeping stdout a
-    pure JSON document whether the push succeeds or fails.
+    ``report-ready`` speaks a JSON-on-stdout contract; ``GitHubTransport.write``
+    is quiet-by-design (#2793), routing the relay push's git chatter to stderr
+    itself, so no caller-side ``redirect_stdout`` workaround is needed here to
+    keep stdout a pure JSON document.
     """
     relay = GitHubTransport(git.current_branch(), base=base)
     try:
-        with contextlib.redirect_stdout(sys.stderr):
-            relay.write(state)
+        relay.write(state)
     except (subprocess.CalledProcessError, OSError) as exc:
         print(
             f"warning: could not push pr-workflow relay ref {relay.ref}: {exc}",

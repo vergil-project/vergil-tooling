@@ -81,6 +81,17 @@ class TestStreamWithRetry:
         assert m_progress.run.call_count == retry.MAX_RETRIES + 1
 
 
+def test_poll_timeout_is_the_shared_github_constant() -> None:
+    # Regression (#2809): the release/update-deps merge waiter and the finalize
+    # merge waiter (github.wait_for_checks) must share one pending-checks ceiling
+    # so they can never drift apart again. subprocess imports the constant from
+    # lib.github; assert it is that same 1800s value.
+    from vergil_tooling.lib import github
+
+    assert release_subprocess._POLL_TIMEOUT_SECS is github._POLL_TIMEOUT_SECS
+    assert release_subprocess._POLL_TIMEOUT_SECS == 1800
+
+
 class TestWaitForChecks:
     """The shared poll-and-watch engine lives in lib.github (#1490)."""
 
@@ -127,7 +138,9 @@ class TestWaitForChecks:
             patch(_GH + "._checks_registered", return_value=False),
             patch(_MOD + "._stream_with_retry") as m_stream,
             patch(_GH + ".time.sleep"),
-            patch(_GH + ".time.monotonic", side_effect=[0, 200]),
+            # deadline = 0 + _POLL_TIMEOUT_SECS (1800s, #2809); the second clock
+            # read must clear it to trip the registration timeout.
+            patch(_GH + ".time.monotonic", side_effect=[0, 2000]),
             pytest.raises(subprocess.CalledProcessError, match="no checks reported"),
         ):
             wait_for_checks("https://github.com/o/r/pull/1")

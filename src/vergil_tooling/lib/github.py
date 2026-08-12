@@ -376,7 +376,16 @@ class GitHubAPIError(subprocess.CalledProcessError):
 
 
 _POLL_INTERVAL_SECS = 5
-_POLL_TIMEOUT_SECS = 180
+# Ceiling for how long the check-poll waiters block on still-PENDING checks
+# before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
+# finalize-merge failure on normal PRs (#2809); 1800s (30 min) comfortably
+# clears real CI and matches vrg_finalize_pr._CD_WATCH_TIMEOUT_SECS (#2753). A
+# merely-pending check is recoverable and is waited out to this deadline; a
+# *failed* check (pr_merge.failed_check_names) or an *orphaned* check
+# (OrphanedCheckError) still aborts earlier, so this ceiling never lets a
+# genuinely stuck merge hang. Single source of truth: release.subprocess imports
+# this same constant so the two waiters can never drift apart again (#2809).
+_POLL_TIMEOUT_SECS = 1800
 
 
 def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
@@ -924,6 +933,18 @@ def is_draft(pr: str) -> bool:
 def head_ref(pr: str) -> str:
     """Return the PR's head branch name."""
     return read_output("pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName")
+
+
+def merge_commit_sha(pr: str) -> str:
+    """Return the SHA of the commit *pr*'s merge produced on the base branch.
+
+    ``mergeCommit.oid`` is the resulting base-branch commit regardless of
+    strategy — the merge commit for ``--merge``, the squashed commit for
+    ``--squash``, the last rebased commit for ``--rebase`` — and is the
+    ``headSha`` the base-branch push event hands to the CD workflow. Empty
+    string if the PR is not yet merged (no merge commit exists).
+    """
+    return read_output("pr", "view", pr, "--json", "mergeCommit", "--jq", '.mergeCommit.oid // ""')
 
 
 def merge(pr: str, *, strategy: str) -> None:
