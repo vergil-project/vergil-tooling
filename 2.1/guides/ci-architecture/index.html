@@ -1180,6 +1180,8 @@
       
         
       
+        
+      
     
     
     
@@ -1232,6 +1234,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.192/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.192
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -9865,7 +9895,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -9893,7 +9923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -13572,6 +13602,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#repo-specific-build-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific build steps
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -13992,6 +14033,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#repo-specific-build-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific build steps
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -14068,12 +14120,15 @@ opens, it should already be green.</p>
 <p>Earlier versions of this guide documented a third tier — push-CI — as
 a thin <code>workflow_call</code> wrapper that ran a subset of checks on every
 push to a feature branch. That tier was removed once <code>vrg-validate</code>
-reached parity with PR-CI; the push-CI workflow added no coverage that
-PR-CI didn't already provide and created a concurrency-group deadlock
-with <code>ci.yml</code>. Integration-test coverage at push-time was deliberately
-dropped and is tracked separately as future work on local integration
-testing. See vergil-project/vergil-actions#176 for the parity audit
-and removal rationale.</p>
+matched the checks push-CI ran; the push-CI workflow added no coverage
+that PR-CI didn't already provide and created a concurrency-group
+deadlock with <code>ci.yml</code>. Integration-test coverage at push-time was
+deliberately dropped and is tracked separately as future work on local
+integration testing. See vergil-project/vergil-actions#176 for the
+parity audit and removal rationale. The "parity with PR-CI" framing is
+precise only for the single-interpreter checks Tier 1 runs — see the
+coverage-parity caveat under <a href="#tier-2-pr-ci">Tier 2: PR CI</a> below for
+the one deliberate gap.</p>
 </div>
 <h2 id="tier-1-local-pre-commit">Tier 1: Local pre-commit<a class="headerlink" href="#tier-1-local-pre-commit" title="Permanent link">&para;</a></h2>
 <p>Run in a dev container on the developer's machine. Docker is the only
@@ -14117,6 +14172,23 @@ ensures agents use <code>vrg-commit</code> (which runs validation) rather than r
 <p>The workflow file is <code>.github/workflows/ci.yml</code>, which runs directly on
 <code>pull_request</code> and is also exposed as a reusable workflow via
 <code>workflow_call</code> for any specialized callers (release pipelines, etc.).</p>
+<div class="admonition warning">
+<p class="admonition-title">Local validate is not full coverage parity</p>
+<p>Tier 1 runs one dev container on a single Python interpreter (currently
+3.14), so its <code>--cov-fail-under=100</code> gate proves 100% coverage on that
+one interpreter only. PR-CI re-runs the test-and-coverage gate
+<strong>independently in a separate container per <code>[ci].versions</code> entry</strong>
+(3.12, 3.13, 3.14). Because branch coverage (<code>--cov-branch</code>) can
+legitimately differ across CPython versions — a branch reachable on one
+version may be dead on another, or a version-guarded code path may only
+execute on some interpreters — code that measures 100% locally can still
+fall below 100% on a 3.12 or 3.13 leg and fail CI. The multi-version
+coverage matrix is therefore a <strong>PR-CI-only</strong> gate: local validate covers
+a single interpreter and cannot reproduce it. This is a known, accepted
+limitation, not a bug — closing it would mean running the full version
+matrix locally, which Tier 1's one-container model deliberately trades
+away for speed.</p>
+</div>
 <h2 id="architecture">Architecture<a class="headerlink" href="#architecture" title="Permanent link">&para;</a></h2>
 <h3 id="reusable-workflow-pattern">Reusable workflow pattern<a class="headerlink" href="#reusable-workflow-pattern" title="Permanent link">&para;</a></h3>
 <p><code>ci.yml</code> accepts <code>workflow_call</code> with inputs that control scope:</p>
@@ -14407,6 +14479,30 @@ Two things matter for the CI/container model here:</p>
   has no install candidate for the build architecture, the build (local) and the
   CI step both <strong>fail closed</strong>, naming the package and the architecture — no
   silent skip.</li>
+</ul>
+<h3 id="repo-specific-build-steps">Repo-specific build steps<a class="headerlink" href="#repo-specific-build-steps" title="Permanent link">&para;</a></h3>
+<p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
+consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
+<code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[container]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;npm install -g @coderline/alphatab&quot;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;package-lock.json&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
+for baked npm libraries, the trust model, and the cache-key behaviour — lives in
+<a href="../../reference/container-config/#build-command">Container Config Reference → <code>build-command</code></a>.
+It follows the <strong>same two-paths, one-declaration</strong> shape as <code>system-packages</code>:</p>
+<ul>
+<li><strong>Two paths, one declaration.</strong> Locally the command is <strong>baked</strong> into the
+  per-branch cached dev image, so its artifact is present for every check in that
+  one image. In CI the command is <strong>run per job</strong> on the test jobs — the job
+  obtains it with <code>vrg-container-build-command --script</code> and runs it against the
+  base-image container before the tests. The two paths agree on <em>what</em> is
+  provisioned (the same command string) even though they differ on <em>when</em> — baked
+  once locally vs run per test job in CI.</li>
+<li><strong>Fail-closed.</strong> A non-zero exit from the command <strong>fails the build</strong> (local)
+  and the CI step, rather than producing an image whose missing dependency only
+  surfaces mysteriously inside a test.</li>
 </ul>
 
 
