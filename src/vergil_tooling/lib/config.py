@@ -83,7 +83,9 @@ _KNOWN_KEYS: dict[str, frozenset[str]] = {
     "markdownlint": frozenset({"ignore"}),
     "ci": frozenset({"versions", "integration-tests"}),
     "publish": frozenset({"release", "docs", "consumer-refresh"}),
-    "container": frozenset({"env-prefixes", "system-packages"}),
+    "container": frozenset(
+        {"env-prefixes", "system-packages", "build-command", "build-cache-files"}
+    ),
     "validation": frozenset({"container-command"}),
     "actions": frozenset({"extra-allowed-patterns"}),
     "cpp": frozenset({"std", "stdlib"}),
@@ -131,6 +133,15 @@ class ContainerConfig:
     # vergil-project/.github#272). Names only, from the base image's existing apt
     # sources; default [].
     system_packages: list[str]
+    # A single shell command a repo declares in [container].build-command, run in
+    # the container setup step after the vergil-tooling install and before warmup
+    # (epic vergil-project/.github#291). Bakes non-apt deps into the image the way
+    # system-packages bakes apt ones. Must install OUTSIDE /workspace (the runtime
+    # bind-mount masks workspace paths). Default None ⇒ no build step.
+    build_command: str | None = None
+    # Repo-relative files the build-command reads (e.g. a lockfile), folded into
+    # the image cache hash so a dependency bump rebuilds. Default [].
+    build_cache_files: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -578,7 +589,22 @@ def _parse_raw_config(raw: dict[str, Any], source: str = CONFIG_FILE) -> VergilC
         ):
             msg = f"{source}: [container].system-packages must be a list of strings"
             raise ConfigError(msg)
-        container = ContainerConfig(env_prefixes=env_prefixes, system_packages=system_packages)
+        build_command = container_raw.get("build-command")
+        if build_command is not None and not isinstance(build_command, str):
+            msg = f"{source}: [container].build-command must be a string"
+            raise ConfigError(msg)
+        build_cache_files = container_raw.get("build-cache-files", [])
+        if not isinstance(build_cache_files, list) or not all(
+            isinstance(p, str) for p in build_cache_files
+        ):
+            msg = f"{source}: [container].build-cache-files must be a list of strings"
+            raise ConfigError(msg)
+        container = ContainerConfig(
+            env_prefixes=env_prefixes,
+            system_packages=system_packages,
+            build_command=build_command,
+            build_cache_files=build_cache_files,
+        )
     else:
         container = ContainerConfig(env_prefixes=[], system_packages=[])
 
@@ -701,6 +727,33 @@ def container_system_packages(repo_root: Path) -> list[str]:
     except FileNotFoundError:
         return []
     return cfg.container.system_packages
+
+
+def container_build_command(repo_root: Path) -> str | None:
+    """Return ``[container].build-command`` from vergil.toml, or ``None``.
+
+    The single reader of the key; the local cache build and the CI setup step
+    both resolve the command through this. Must install outside ``/workspace``
+    (the runtime bind-mount masks workspace paths). Epic vergil-project/.github#291.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return None
+    return cfg.container.build_command
+
+
+def container_build_cache_files(repo_root: Path) -> list[str]:
+    """Return ``[container].build-cache-files`` from vergil.toml, or ``[]``.
+
+    Repo-relative files the build-command reads; folded into the image cache
+    hash so a dependency bump rebuilds. Epic vergil-project/.github#291.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return []
+    return cfg.container.build_cache_files
 
 
 def validation_container_command(repo_root: Path) -> str:
