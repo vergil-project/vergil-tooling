@@ -4,13 +4,18 @@
 counterpart to ``vrg-await`` (§9 of the Vergil 2.1 workflow design). It polls
 the GitHub API and returns when the PR settles: all checks reach a terminal
 conclusion, **or** the head SHA moves (a new commit), **or** a new review
-appears. The baselines let the caller thread "what I last saw" so a settle on
-a fresh commit/review is detected even when checks are already terminal.
+appears, **or** the PR is wedged by an orphaned check-run (``reason`` is
+``orphaned_check``: it is ``BLOCKED`` with every pending check stuck
+non-terminal after its backing run completed). The baselines let the caller
+thread "what I last saw" so a settle on a fresh commit/review is detected even
+when checks are already terminal.
 
 On settle it prints a JSON object (``reason``, ``head_sha``, ``review_count``,
-``checks``, ``failed_checks``, ``all_checks_passed``) for the wrapping skill to
-reconcile, and exits 0. Like ``vrg-await`` it blocks patiently and
-indefinitely — a wait that never returns means the PR has not changed.
+``checks``, ``failed_checks``, ``all_checks_passed``, ``merge_state_status``,
+``orphaned_checks``) for the wrapping skill to reconcile, and exits 0. Like
+``vrg-await`` it blocks patiently and indefinitely — but the ``orphaned_check``
+settle deliberately breaks that block, since an orphaned check emits no further
+event and the wait would otherwise never return.
 
 If any poll (including the first) finds the PR already merged, it aborts with
 an error and exits 1: a merged PR can never settle into actionable output, and
