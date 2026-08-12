@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.12/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.10/">
+        <link rel="next" href="../v2.1.189/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.11 - VERGIL Tooling</title>
+        <title>2.1.190 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-1411-2026-05-01" class="md-skip">
+        <a href="#release-21190-2026-08-12" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.11
+              2.1.190
             
           </span>
         </div>
@@ -1246,10 +1246,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.190/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.190
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1265,6 +1292,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -9338,37 +9396,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.11
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.11/" class="md-nav__link">
         
   
   
@@ -9384,37 +9415,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13396,10 +13396,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
+  <a href="#bug-fixes" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Features
+        Bug fixes
       
     </span>
   </a>
@@ -13423,11 +13423,14 @@
 
 
 
-<h1 id="release-1411-2026-05-01">Release 1.4.11 (2026-05-01)<a class="headerlink" href="#release-1411-2026-05-01" title="Permanent link">&para;</a></h1>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<h1 id="release-21190-2026-08-12">Release 2.1.190 (2026-08-12)<a class="headerlink" href="#release-21190-2026-08-12" title="Permanent link">&para;</a></h1>
+<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>add container guard to st-validate-local</strong></li>
+<li><strong>resolve packaged ESLint flat config from the consumer repo (#2777)</strong>
+The registry LINT command referenced the ESLint flat config by its packaged path inside the vergil-tooling Python package, which has no adjacent node_modules. Node resolves the config's bare ESM imports (@eslint/js, typescript-eslint) relative to the config file's own directory, so every TypeScript consumer's LINT stage failed with ERR_MODULE_NOT_FOUND (and NODE_PATH does not help, as ESM ignores it).</li>
 </ul>
+<p>Stage the packaged config into the consumer repo root at lint time via an sh -c wrapper (the idiom already used by the C++ clang-format LINT command), run eslint against the staged copy so ESM resolution walks up to the repo-local node_modules that npm ci populates, and remove the staged file via an EXIT trap that preserves eslint's exit code. The dot-prefixed .mjs staging name is loaded as ESM regardless of the consumer's package.json type and is matched by no config entry, so it is never linted and never left behind.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.190/v2.1.190-ci-evidence.tar.gz">Download →</a></p>
 
 
 
