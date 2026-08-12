@@ -119,7 +119,13 @@ _ANSIBLE_FILE_SIGNALS = (
     ".ansible-lint.yaml",
     "galaxy.yml",
 )
-_ANSIBLE_DIR_SIGNALS = ("playbooks", "roles")
+# ``ansible`` is listed first: a top-level ``ansible/`` directory is the most
+# common convention for standardizing Ansible layout (playbooks + a nested
+# ``ansible/roles`` tree), more common than bare root-level
+# ``playbooks/``/``roles/``. Detecting it also covers the nested
+# ``ansible/roles`` and ``ansible/playbooks`` layouts, since those imply a
+# top-level ``ansible/`` directory (issue #1906).
+_ANSIBLE_DIR_SIGNALS = ("ansible", "playbooks", "roles")
 
 
 def _has_ansible_content(repo_root: Path) -> bool:
@@ -127,9 +133,10 @@ def _has_ansible_content(repo_root: Path) -> bool:
 
     Detection is signal-based: a recognized config/manifest file at the
     repo root (``ansible.cfg``, ``.ansible-lint*``, ``galaxy.yml``), a
-    role/collection metadata file (``meta/main.yml``), or a ``playbooks/``
-    or ``roles/`` directory. Mirrors the conditional-skip behavior of the
-    other common checks — no Ansible content means the check is skipped.
+    role/collection metadata file (``meta/main.yml``), or an ``ansible/``,
+    ``playbooks/``, or ``roles/`` directory. Mirrors the conditional-skip
+    behavior of the other common checks — no Ansible content means the
+    check is skipped.
     """
     if any((repo_root / name).is_file() for name in _ANSIBLE_FILE_SIGNALS):
         return True
