@@ -21,6 +21,9 @@ the dev-tree override venv.
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
 | [vrg-container-test](cli-tools-overview.md#vrg-container-test) | Run test suite inside a dev container |
 | [vrg-container-docs](cli-tools-overview.md#vrg-container-docs) | Preview/build MkDocs in a dev container |
+| [vrg-container-build-command](cli-tools-overview.md#vrg-container-build-command) | Print the declared `[container].build-command` (CI consumption) |
+| [vrg-container-system-packages](cli-tools-overview.md#vrg-container-system-packages) | Print the declared `[container].system-packages` (CI consumption) |
+| [vrg-container-cache](cli-tools-overview.md#vrg-container-cache) | Manage the per-branch cached dev image |
 | [vrg-generate-commands](cli-tools-overview.md#vrg-generate-commands) | Generate MQSC command methods |
 
 ## Container tools

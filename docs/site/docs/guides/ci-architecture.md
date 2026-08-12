@@ -395,3 +395,31 @@ Two things matter for the CI/container model here:
   has no install candidate for the build architecture, the build (local) and the
   CI step both **fail closed**, naming the package and the architecture — no
   silent skip.
+
+### Repo-specific build steps
+
+For a dependency that is **not** an apt package — a JS library a test driver
+consumes at runtime, say — a repo declares a `build-command` (with optional
+`build-cache-files`) instead of `system-packages`:
+
+```toml
+[container]
+build-command = "npm install -g @coderline/alphatab"
+build-cache-files = ["package-lock.json"]
+```
+
+The full key reference — the out-of-workspace contract, the `NODE_PATH` handling
+for baked npm libraries, the trust model, and the cache-key behaviour — lives in
+[Container Config Reference → `build-command`](../reference/container-config.md#build-command).
+It follows the **same two-paths, one-declaration** shape as `system-packages`:
+
+- **Two paths, one declaration.** Locally the command is **baked** into the
+  per-branch cached dev image, so its artifact is present for every check in that
+  one image. In CI the command is **run per job** on the test jobs — the job
+  obtains it with `vrg-container-build-command --script` and runs it against the
+  base-image container before the tests. The two paths agree on *what* is
+  provisioned (the same command string) even though they differ on *when* — baked
+  once locally vs run per test job in CI.
+- **Fail-closed.** A non-zero exit from the command **fails the build** (local)
+  and the CI step, rather than producing an image whose missing dependency only
+  surfaces mysteriously inside a test.

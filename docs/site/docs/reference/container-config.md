@@ -201,3 +201,50 @@ the cache-sensitive file set, so a change forces an image rebuild. When the comm
 reads a lockfile whose *contents* (not the command string) determine what gets
 installed, list that lockfile in `build-cache-files` so a dependency bump also
 invalidates the cache.
+
+### Trust model
+
+`build-command` is a deliberate **broadening** of the surface `system-packages`
+grants. Where `system-packages` is names-only — Debian packages installed from
+the base image's existing sources, with no allowlist because the surface is
+already constrained — `build-command` is **arbitrary shell, run as root, at
+image-build time**. It can fetch URLs, run installers, and write anywhere in the
+image. That is the point (it is the escape hatch for a dependency apt cannot
+express), and it is what makes it a larger grant.
+
+The controls that keep it sound:
+
+- **Reviewed via the `vergil.toml` PR diff.** The command is a plain string in
+  the repo's own `vergil.toml`; adding or changing it is a config change read and
+  approved like any other in the PR diff. There is **no separate allowlist**
+  (unlike the names-only `system-packages` surface, none is needed) — the diff is
+  the review surface.
+- **The fail-closed build is the backstop.** The command runs while the cached
+  image is built; a non-zero exit **fails the build** rather than producing a
+  degraded image, exactly as the `system-packages` apt step does. A broken
+  provisioning step stops the build, it does not leak into a mysteriously failing
+  test.
+- **Artifacts are image-resident and out-of-workspace.** Whatever the command
+  installs lands in the image outside `/workspace` (see the out-of-workspace
+  contract above); it never writes into the mounted repo tree at run time.
+- **No build-time network secrets by default.** The build step runs with the
+  image build's environment, not the run-time forward set — a `build-command`
+  sees a host secret only if the repo deliberately forwards it. Keep credentials
+  out of the command string, which is stored in `vergil.toml` verbatim.
+
+### Inspecting the declared command
+
+`vrg-container-build-command` reads the key through the same single accessor the
+local bake and CI both use (`container_build_command` in
+[`config.py`](https://github.com/vergil-project/vergil-tooling/blob/develop/src/vergil_tooling/lib/config.py)):
+
+```bash
+vrg-container-build-command            # the declared command (nothing if unset)
+vrg-container-build-command --script   # the same command, emitted for CI to run
+```
+
+Both modes print the command verbatim; a repo that declares no `build-command`
+prints nothing. `--script` is the CI-consumption entry point — the CI test jobs
+call it to obtain the exact command to run per job (see
+[CI Architecture → Repo-specific build steps](../guides/ci-architecture.md#repo-specific-build-steps)),
+mirroring how `vrg-container-system-packages --install-script` feeds the apt step.

@@ -234,6 +234,59 @@ repos, wraps with `uv sync --group docs`.
 | Exit codes | 0 (help), 1 error; command exit code after `execvp` |
 | Status | Active |
 
+### vrg-container-build-command
+
+Print a repo's declared `[container].build-command` verbatim, for CI
+consumption. The CI test jobs call `--script` to obtain the exact
+provisioning command to run per job — the same command the local cache
+build bakes into the per-branch image — so the two paths run one
+declaration. Prints nothing when the repo declares no `build-command`.
+See [Container Config Reference → `build-command`](container-config.md#build-command).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_container_build_command` |
+| Args | `--script` (explicit CI intent; identical output), `--repo-root` (default: CWD) |
+| Preconditions | A readable `vergil.toml` at the repo root (absent/empty key prints nothing) |
+| Failure mode | argparse error on unknown flags; no failure for an unset key |
+| Exit codes | 0 always |
+| Status | Active |
+
+### vrg-container-system-packages
+
+Print a repo's declared `[container].system-packages`, for CI
+consumption. Default mode prints the package names one per line;
+`--install-script` prints the exact apt install snippet — the single
+speller shared with the local cache build — which the CI test jobs run.
+See [Container Config Reference → `system-packages`](container-config.md#system-packages).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_container_system_packages` |
+| Args | `--install-script` (apt snippet instead of the name list), `--repo-root` (default: CWD) |
+| Preconditions | A readable `vergil.toml` at the repo root (absent/empty key prints nothing) |
+| Failure mode | argparse error on unknown flags; no failure for an unset key |
+| Exit codes | 0 always |
+| Status | Active |
+
+### vrg-container-cache
+
+Manage the per-branch cached container image (base image plus
+vergil-tooling, `system-packages`, and the `build-command` artifact) that
+`vrg-container-run` builds over. Subcommands: `build` (build/refresh the
+cached image for the current branch), `clean` (remove it), `status` (show
+cache state and the expected tag), and `clean-all` (remove every image it
+manages).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_container_cache` |
+| Args | `build` \| `clean` \| `status` \| `clean-all` |
+| Preconditions | Git repo; a container runtime (`docker`/`nerdctl`) available for `build`/`clean`/`clean-all` |
+| Failure mode | Runtime-unavailable error; propagates the runtime's build/remove failures |
+| Exit codes | 0 success, non-zero on runtime or build failure |
+| Status | Active |
+
 ### vrg-generate-commands
 
 Generate MQSC command methods for all language ports (Python, Ruby,
