@@ -1494,11 +1494,21 @@ def run_wizard(ctx: RepoInitContext) -> None:
     """Run all wizard steps, skipping completed ones."""
     # Resume state is a property of the TARGET, not of wherever the operator is
     # standing. Only trust the local checkpoint commits when CWD is the target's
-    # own clone (or an adopt run, which uses CWD by design); an unrelated repo's
-    # `chore(init): step N -` commits would otherwise be misread as this repo's
-    # progress and silently skip vergil.toml / config / CI steps (#2717).
+    # own clone; an unrelated repo's `chore(init): step N -` commits would
+    # otherwise be misread as this repo's progress and silently skip
+    # vergil.toml / config / CI steps (#2717).
+    #
+    # Adopt is the exception: it is an idempotent "overwrite managed files to
+    # canonical state" run, so every generation step must re-run regardless of
+    # prior init history. The `chore(init): step N -` markers are permanent in
+    # any previously-init'd repo and describe a PAST init, not current drift —
+    # trusting them would skip regenerating managed files (notably ci.yml),
+    # directly contradicting adopt's stated overwrite contract (#2795).
+    # Checkpoint-based resume is meaningful only for an interrupted FRESH init.
     cwd_slug = cwd_repo_slug()
-    if ctx.adopt or (cwd_slug is not None and cwd_slug.lower() == ctx.repo.lower()):
+    if ctx.adopt:
+        local_completed = set()
+    elif cwd_slug is not None and cwd_slug.lower() == ctx.repo.lower():
         try:
             log_output = git.read_output("log", "--oneline")
         except subprocess.CalledProcessError:
