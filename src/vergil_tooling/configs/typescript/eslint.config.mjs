@@ -4,9 +4,14 @@
 // (@typescript-eslint/ban-ts-comment) that bans bare `@ts-ignore`/`@ts-nocheck`
 // and requires a description on `@ts-expect-error` (spec §3.2).
 //
-// Referenced by the registry LINT command as `eslint . --config
-// {configs}/typescript/eslint.config.mjs`; the packages it imports
-// (@eslint/js, typescript-eslint) ship in the `prod-ts-node:*` images (T1).
+// The registry LINT command stages this file into the consumer repo root at
+// lint time and runs `eslint . --config ./.vergil-eslint.config.mjs` there
+// (see the LINT wiring in languages.py, #2771). Staging is required because
+// this is an ESM config: Node resolves its bare imports (@eslint/js,
+// typescript-eslint) relative to *this file's own directory*, so it must live
+// inside the repo tree for those imports to resolve against the consumer's
+// repo-local node_modules (populated by `npm ci`) — the packaged path inside
+// the vergil-tooling Python package has no adjacent node_modules.
 // `projectService: true` auto-discovers the consumer's nearest tsconfig, so the
 // type-aware rules resolve type information without a hard-coded project path.
 
