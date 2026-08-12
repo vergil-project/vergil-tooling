@@ -341,30 +341,71 @@ def assemble_bundle(staging_dir: Path, out_tarball: Path) -> Path:
 
 
 class IncompleteEvidenceError(Exception):
-    """A required evidence gate produced no harvested evidence.
+    """A required evidence gate is absent or carries an empty payload.
 
-    Thin, data-carrying: ``.missing`` lists every required gate name with no
-    evidence. The message format is defined here once so the CLI (T5) can reuse
-    it via ``emit_error``. Substantive failure — terminal in enforcing mode.
+    Thin, data-carrying, distinguishing the two substantive failure modes:
+
+    - ``.missing`` — required gates with no harvested evidence at all.
+    - ``.empty_payload`` — required gates that were harvested but carry no
+      report file, only the ``evidence.json`` envelope. This is the #2812 root
+      cause: for weeks the test/audit/quality gates shipped empty payloads and
+      the name-only completeness check passed them green even while enforcing.
+
+    The message format is defined here once so the CLI (T5) can reuse it via
+    ``emit_error``. Substantive failure — terminal in enforcing mode.
     """
 
-    def __init__(self, missing: list[str]) -> None:
-        self.missing = missing
-        super().__init__(f"missing evidence for required gates: {missing}")
+    def __init__(
+        self, missing: list[str] | None = None, empty_payload: list[str] | None = None
+    ) -> None:
+        self.missing = missing or []
+        self.empty_payload = empty_payload or []
+        parts: list[str] = []
+        if self.missing:
+            parts.append(f"required gates with no evidence artifact: {self.missing}")
+        if self.empty_payload:
+            parts.append(
+                "required gates with an empty payload "
+                f"(only evidence.json, no report files): {self.empty_payload}"
+            )
+        super().__init__("; ".join(parts))
+
+
+def _has_report_payload(evidence: GateEvidence) -> bool:
+    """True when a gate carries at least one report file besides ``evidence.json``.
+
+    :func:`load_gate_evidence` builds ``GateEvidence.files`` from
+    ``gate_dir.rglob("*")``, which **always** includes the ``evidence.json``
+    envelope itself — so an empty gate still has one file. Completeness must
+    therefore count report files *excluding* ``evidence.json``; a bare
+    ``len(files) > 0`` would wave the empty payload through (#2812).
+    """
+    return any(path.name != "evidence.json" for path in evidence.files)
 
 
 def validate_completeness(
     required: Sequence[EvidenceGate],
     harvested: Mapping[str, GateEvidence],
 ) -> None:
-    """Raise :class:`IncompleteEvidenceError` for required gates lacking evidence.
+    """Raise :class:`IncompleteEvidenceError` for incomplete required gates.
 
-    A pure set-difference of required gate names against harvested keys. The
-    ``missing`` list preserves ``required`` order for a stable, readable report.
+    A required gate is complete only if it is present **and** carries at least
+    one report file besides ``evidence.json``. Both failure modes are collected
+    and reported together, each preserving ``required`` order for a stable,
+    readable report:
+
+    - **missing** — no harvested :class:`GateEvidence` for the gate at all.
+    - **empty payload** — present but every staged file is ``evidence.json``
+      (no real report), the empty-envelope bug this guard exists to catch.
     """
     missing = [gate.name for gate in required if gate.name not in harvested]
-    if missing:
-        raise IncompleteEvidenceError(missing)
+    empty_payload = [
+        gate.name
+        for gate in required
+        if gate.name in harvested and not _has_report_payload(harvested[gate.name])
+    ]
+    if missing or empty_payload:
+        raise IncompleteEvidenceError(missing, empty_payload)
 
 
 # --- GitHub harvest layer ------------------------------------------------
