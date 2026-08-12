@@ -10,8 +10,10 @@ from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
+    MYPY_REPORT,
     PIP_AUDIT_REPORT,
     PYTHON_REPORT_FILES,
+    RUFF_REPORT,
     Cardinality,
     CheckKind,
     EcosystemInfo,
@@ -42,10 +44,34 @@ def test_python_lint_commands() -> None:
     assert "ruff format --check src/ tests/" in joined
 
 
+def test_python_lint_emits_ruff_json_report() -> None:
+    """A ``ruff check`` invocation writes the machine-readable findings file."""
+    cmds = language_commands("python", CheckKind.LINT)
+    report_cmd = [c for c in cmds if c[:2] == ["ruff", "check"] and "--output-format=json" in c]
+    assert len(report_cmd) == 1
+    assert "--output-format=json" in report_cmd[0]
+    assert f"--output-file={RUFF_REPORT}" in report_cmd[0]
+    # The developer-facing console invocations are preserved alongside it.
+    assert ["ruff", "check", "src/", "tests/"] in cmds
+    assert ["ruff", "format", "--check", "src/", "tests/"] in cmds
+
+
 def test_python_typecheck_commands() -> None:
     joined = _joined(language_commands("python", CheckKind.TYPECHECK))
-    assert "mypy src/" in joined
+    assert "mypy src/ --junit-xml quality-mypy.xml" in joined
     assert "ty check src tests" in joined
+
+
+def test_python_typecheck_mypy_emits_junit_xml() -> None:
+    """The mypy gate writes a JUnit-XML diagnostic report file."""
+    cmds = language_commands("python", CheckKind.TYPECHECK)
+    mypy_cmd = [c for c in cmds if c[0] == "mypy"]
+    assert len(mypy_cmd) == 1
+    assert "--junit-xml" in mypy_cmd[0]
+    junit_idx = mypy_cmd[0].index("--junit-xml")
+    assert mypy_cmd[0][junit_idx + 1] == MYPY_REPORT
+    # ty stays stdout-only (unchanged).
+    assert ["ty", "check", "src", "tests"] in cmds
 
 
 def test_python_test_commands() -> None:
@@ -107,11 +133,15 @@ def test_python_audit_pip_licenses_emits_json_report() -> None:
 def test_python_report_files_contract() -> None:
     """The shared report-path constants match the T8 path contract."""
     assert PYTHON_REPORT_FILES == (
+        "quality-ruff.json",
+        "quality-mypy.xml",
         "coverage.xml",
         "junit.xml",
         "pip-audit.json",
         "licenses.json",
     )
+    assert RUFF_REPORT == "quality-ruff.json"
+    assert MYPY_REPORT == "quality-mypy.xml"
     assert COVERAGE_REPORT == "coverage.xml"
     assert JUNIT_REPORT == "junit.xml"
     assert PIP_AUDIT_REPORT == "pip-audit.json"

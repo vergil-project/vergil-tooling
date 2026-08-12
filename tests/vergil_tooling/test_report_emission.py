@@ -17,6 +17,8 @@ from vergil_tooling.lib.languages import (
     COVERAGE_REPORT,
     JUNIT_REPORT,
     LICENSES_REPORT,
+    MYPY_REPORT,
+    RUFF_REPORT,
     CheckKind,
     language_commands,
 )
@@ -70,6 +72,64 @@ def test_test_command_report_flags_write_files(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     assert (tmp_path / COVERAGE_REPORT).is_file()
     assert (tmp_path / JUNIT_REPORT).is_file()
+
+
+def test_lint_ruff_writes_json_report(tmp_path: Path) -> None:
+    """ruff check, run with the registry's report flags, writes quality-ruff.json."""
+    if shutil.which("ruff") is None:
+        import pytest
+
+        pytest.skip("ruff not installed in this environment")
+
+    (tmp_path / "clean.py").write_text("x: int = 1\n")
+
+    cmds = language_commands("python", CheckKind.LINT)
+    report_cmd = [c for c in cmds if c[:2] == ["ruff", "check"] and "--output-format=json" in c]
+    assert len(report_cmd) == 1, f"expected one report ruff command, got {report_cmd}"
+    # Point the report flags at the fixture file instead of src/ tests/.
+    output_flags = [
+        arg
+        for arg in report_cmd[0]
+        if arg.startswith("--output-format=") or arg.startswith("--output-file=")
+    ]
+    assert len(output_flags) == 2
+
+    result = subprocess.run(
+        ["ruff", "check", *output_flags, "clean.py"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / RUFF_REPORT).is_file()
+
+
+def test_typecheck_mypy_writes_junit_report(tmp_path: Path) -> None:
+    """mypy, run with the registry's report flag, writes quality-mypy.xml."""
+    if shutil.which("mypy") is None:
+        import pytest
+
+        pytest.skip("mypy not installed in this environment")
+
+    (tmp_path / "clean.py").write_text("def f() -> int:\n    return 1\n")
+
+    mypy_cmd = _registry_cmd(CheckKind.TYPECHECK, "mypy")
+    junit_idx = mypy_cmd.index("--junit-xml")
+    report_flag = mypy_cmd[junit_idx : junit_idx + 2]
+    assert report_flag == ["--junit-xml", MYPY_REPORT]
+
+    result = subprocess.run(
+        ["mypy", "clean.py", *report_flag],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (tmp_path / MYPY_REPORT).is_file()
 
 
 def test_audit_pip_licenses_writes_report(tmp_path: Path) -> None:
