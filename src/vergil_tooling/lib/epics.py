@@ -21,6 +21,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from vergil_tooling.lib import github
+from vergil_tooling.lib.labels import load_labels
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -487,6 +488,7 @@ def ensure_adhoc_epic(target_repo: str) -> IssueRef:
     found = _find_epic_by_title(home, title)
     if found is not None:
         return found
+    _ensure_labels(home, _ADHOC_EPIC_LABELS)
     url = github.create_issue(
         repo=home,
         title=title,
@@ -510,12 +512,45 @@ def find_adhoc_epic(target_repo: str) -> IssueRef | None:
     return _find_epic_by_title(home, f"{_ADHOC_EPIC_TITLE_PREFIX}{bare}")
 
 
+def _ensure_labels(repo: str, names: Sequence[str]) -> None:
+    """Create each of *names* in *repo* if absent, from the canonical registry.
+
+    The ad-hoc/archive machinery labels issues with ``archive``/``ad-hoc``/
+    ``epic``; in an org whose ``.github`` was never label-synced these labels do
+    not exist, and ``gh`` refuses to apply a missing one (``'archive' not
+    found``). Creating them on demand from ``labels.json`` — idempotent
+    ``label create --force`` with the canonical colour and description — makes
+    archive creation and normalization self-healing in every org, not only the
+    migrated one. This is the root cause of the cross-org epic-rollup failures
+    (vergil-project/.github#305): only ``vergil-project/.github`` had the
+    ``archive`` label, so every other org's ``on: issues.closed`` rollup crashed.
+    """
+    specs = {entry["name"]: entry for entry in load_labels()["labels"]}
+    for name in names:
+        spec = specs[name]
+        github.run(
+            "label",
+            "create",
+            name,
+            "--repo",
+            repo,
+            "--force",
+            "--color",
+            spec["color"],
+            "--description",
+            spec["description"],
+        )
+
+
 def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
     """Convert a legacy-form archive to the new form: retitle, +archive, -epic.
 
     Keeps ``ad-hoc``. Works on open or closed issues (``gh issue edit`` permits
-    editing a closed issue's title and labels).
+    editing a closed issue's title and labels). Ensures the ``archive`` label
+    exists first, so a not-yet-migrated org's ``.github`` self-heals instead of
+    failing with ``'archive' not found``.
     """
+    _ensure_labels(f"{ref.owner}/{ref.repo}", ("archive",))
     github.run(
         "issue",
         "edit",
@@ -555,6 +590,7 @@ def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
     if legacy is not None:
         _normalize_archive_in_place(legacy, title)
         return legacy
+    _ensure_labels(home, _ADHOC_ARCHIVE_LABELS)
     url = github.create_issue(
         repo=home,
         title=title,
