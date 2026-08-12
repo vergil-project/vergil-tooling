@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.95/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.93/">
+        <link rel="next" href="../v2.1.190/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.94 - VERGIL Tooling</title>
+        <title>2.1.191 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-2194-2026-07-01" class="md-skip">
+        <a href="#release-21191-2026-08-12" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.94
+              2.1.191
             
           </span>
         </div>
@@ -1248,10 +1248,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.191/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.191
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1267,6 +1294,48 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -3964,37 +4033,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.94
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.94/" class="md-nav__link">
         
   
   
@@ -4010,37 +4052,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13436,6 +13447,17 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -13453,20 +13475,39 @@
 
 
 
-<h1 id="release-2194-2026-07-01">Release 2.1.94 (2026-07-01)<a class="headerlink" href="#release-2194-2026-07-01" title="Permanent link">&para;</a></h1>
+<h1 id="release-21191-2026-08-12">Release 2.1.191 (2026-08-12)<a class="headerlink" href="#release-21191-2026-08-12" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>
-<p><strong>omit trailing space on language: for no-language repos (#2031)</strong>
-render_ci_workflow emitted 'language: {value}' unconditionally, leaving a trailing space when a repo has no primary language. That fails vrg-validate (yamllint trailing-spaces) and was hit bootstrapping vergil-project/docs. Emit a bare 'language:' when there is no primary language. Ref #1993.</p>
-</li>
-<li>
-<p><strong>register marketplaces referenced by enabled plugins even when undeclared (#2032)</strong>
-Follow-up hardening to #2021/#2023. Fix C v2 registered only the marketplaces listed in settings.json extraKnownMarketplaces. But an enabled plugin can reference a marketplace not declared there — notably the built-in claude-plugins-official, which is not always listed (superpowers@claude-plugins-official). On such a box its catalog is never cloned and install fails again.</p>
-</li>
+<li><strong>expose NODE_PATH so baked out-of-workspace npm libs resolve (#2784)</strong>
+A [container].build-command global npm install (npm install -g <lib>) bakes a
+library into /usr/lib/node_modules — outside /workspace, so it survives the
+runtime bind-mount — but the package is not on Node's default require path: a
+global install puts executables on PATH, not libraries on the module search
+path. require.resolve(<lib>) therefore returns MODULE_NOT_FOUND unless NODE_PATH
+points at the npm global root.</li>
 </ul>
-<p>Refactor the settings read into _read_guest_settings + _enabled_plugin_ids + _marketplace_sources (single read). _marketplace_sources now also derives a source for any enabled plugin whose marketplace is undeclared where it can — claude-plugins-official -&gt; anthropics/claude-plugins-official; an undecidable third-party marketplace has no derivable source and is left for the install to surface, never invented.</p>
-<p>Part of epic vergil-project/.github#69.</p>
+<p>build_container_args now sets NODE_PATH=/usr/lib/node_modules on the run path
+whenever the repo declares a [container].build-command, so a baked library
+resolves via CommonJS require. The flag is gated on the declared build-command,
+so every repo that declares none has a byte-identical container environment. An
+explicit host NODE_PATH wins, letting a consumer override the location.</p>
+<p>The value rides the container run invocation rather than a commit-time image ENV
+because nerdctl's commit --change supports only CMD/ENTRYPOINT, not ENV (verified:
+'unknown change directive ENV'); the run-path form works identically across
+docker and nerdctl.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li>
+<p><strong>add TypeScript to supported-languages tables and dev-ts-node image (#2783)</strong>
+Documentation-review sweep for epic #284: reflect the shipped TypeScript language support in vergil-tooling's consumer-facing docs.</p>
+</li>
+<li>
+<p>consuming-repo-setup.md and repo-profile.md: add typescript to the primary_language value lists (matches the config enum in lib/config.py).</p>
+</li>
+<li>ci-architecture.md: add the dev-ts-node (Node 22, 24) entry to the dev container image catalog, mirroring the prod-ts-node images built in vergil-containers.</li>
+</ul>
+<p>Ref vergil-project/vergil-tooling#2738</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.191/v2.1.191-ci-evidence.tar.gz">Download →</a></p>
 
 
 
