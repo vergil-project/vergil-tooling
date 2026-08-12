@@ -6,25 +6,32 @@ Supports three modes:
   confirmation, pushes the branch, and creates the PR.
 - **CLI argument mode** (``--issue``/``--summary``/``--title``): existing
   direct invocation for human emergency use.
-- **Relay branch mode** (positional ``branches``): opens PRs for
-  branches that are already on origin, worktree-free (issue #2368). Each
+- **Named branch mode** (positional ``branches``): opens PRs for one or
+  more named branches, worktree-free by default (issue #2368). Each
   branch's ready-state is resolved from a local worktree's
   ``pr-workflow.json`` when one exists, else the relay ref
-  (``GitHubTransport``); origin's tip is verified against the recorded
-  ``head_sha`` and the PR is opened **without** pushing (``--head`` names
-  the source branch). This is the Mac-side of the cloud→Mac relay handoff:
-  the branch and its metadata already rode GitHub, so no worktree, no
-  ``git.current_branch()``, and no push are involved. With a cascade flag
-  (``--finalize``/``--release``/``--install``) it also carries the branches
-  through the cascade locally, using the same batch semantics as the local
-  worktree batch — finalize each PR, then a single validation and **one**
-  release (issue #2398).
+  (``GitHubTransport``). The local-vs-relay decision is then made from
+  **actual state**, not from the mere fact that a branch was named
+  (issue #2794): when the branch has a local worktree ready-state **and**
+  origin lacks the branch, it is pushed and opened locally
+  (``push=True``) — the branch was developed on this machine and never
+  reached origin (e.g. a workflow-file change the agent's token could not
+  push). Otherwise it takes the relay path — origin's tip is verified
+  against the recorded ``head_sha`` and the PR is opened **without**
+  pushing (``--head`` names the source branch) — the Mac-side of the
+  cloud→Mac relay handoff, where the branch and its metadata already rode
+  GitHub. With a cascade flag (``--finalize``/``--release``/``--install``)
+  it also carries the branches through the cascade locally, using the same
+  batch semantics as the local worktree batch — finalize each PR, then a
+  single validation and **one** release (issue #2398).
 
 The template and CLI modes push the branch using the human's host
 credentials before creating the PR. Because the human is the superset
 of any agent's rights, this carries workflow-touching pushes that the
-agent's own credentials would be rejected for. The relay mode never
-pushes — the branch is already on origin.
+agent's own credentials would be rejected for. The named-branch mode
+pushes only when it falls back to the local path for a branch that never
+reached origin; the relay path itself never pushes — the branch is
+already on origin.
 
 Agent identities are blocked — PR submission is a Chief Steward
 (human) operation.
@@ -77,10 +84,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "branches",
         nargs="*",
-        help="Relay path: one or more branches (already on origin) to open PRs "
-        "for, worktree-free. Each branch's ready-state is resolved from a local "
-        "worktree's pr-workflow.json when present, else the relay ref. With no "
-        "branch arguments, the local-worktree flow runs unchanged.",
+        help="One or more branches to open PRs for, worktree-free. Each branch's "
+        "ready-state is resolved from a local worktree's pr-workflow.json when "
+        "present, else the relay ref; a branch that is on origin is opened "
+        "without pushing (relay), while a branch with a local ready worktree that "
+        "never reached origin is pushed then opened. With no branch arguments, "
+        "the local-worktree flow runs unchanged.",
     )
     parser.add_argument(
         "--issue", default=None, help="Issue reference: number or owner/repo#number"
@@ -861,27 +870,70 @@ def _verify_origin_tip(branch: str, state: WorkflowState) -> None:
         )
 
 
+def _local_worktree_with_state(root: Path, branch: str) -> Path | None:
+    """Return the path of a canonical worktree checked out on *branch* whose
+    local ``pr-workflow.json`` carries a ready-state, else ``None``.
+
+    This is the signal that the named branch was developed in a local worktree
+    (as opposed to a cloud VM that pushed it and relayed only the ref): a
+    checked-out worktree on the branch *and* a local state file present. It
+    mirrors the local-preference probe in :func:`_resolve_ready_state`.
+    """
+    for wt in worktrees.list_worktrees(root):
+        if wt.branch == branch and LocalFileTransport(wt.path).read() is not None:
+            return wt.path
+    return None
+
+
+def _origin_has_branch(branch: str) -> bool:
+    """True when origin already carries *branch* (``ls-remote`` finds its ref)."""
+    listing = git.read_output("ls-remote", "origin", f"refs/heads/{branch}")
+    return bool(listing)
+
+
 def _relay_open(
     root: Path, branch: str, args: argparse.Namespace, *, assume_yes: bool
 ) -> tuple[str | None, str | None]:
-    """Resolve, verify, and open the relay PR for one already-pushed *branch*.
+    """Resolve, verify, and open the PR for one named *branch*.
 
     Returns ``(pr_url, submitted_url)``: exactly one is non-``None`` on a live
     run — the new PR URL when the branch was opened, or the already-submitted
     PR's URL when the branch already carries one. A dry run returns
     ``(None, None)`` (``_open_pr`` previewed without opening). Resolves the
-    ready-state (local file preferred, else the relay ref), verifies origin's
-    tip matches the recorded ``head_sha``, and drives the shared :func:`_open_pr`
-    core with ``push=False``. Shared by the plain relay loop and the relay
-    cascade so both classify an already-submitted branch identically.
+    ready-state (local file preferred, else the relay ref) and classifies an
+    already-submitted branch identically for the plain relay loop and the relay
+    cascade.
+
+    The local-vs-relay choice is made from **actual state**, not from the mere
+    fact that a branch was named on the command line (issue #2794). The relay
+    path never pushes — it trusts origin already carries the branch — so a
+    branch developed in a local worktree and never pushed (e.g. a workflow-file
+    change the agent's token could not push) would dead-end on
+    :func:`_verify_origin_tip`'s "not on origin". When the named branch has a
+    local worktree carrying a ready-state **and** origin lacks the branch, fall
+    back to the local submit path (``push=True``: push, then open), which is
+    exactly what selecting that worktree from the interactive list would do.
+    Otherwise keep the relay path (``push=False``, verify origin's tip matches
+    the recorded ``head_sha``). The fallback is a live-run concern only: a dry
+    run merely previews the body (push vs no-push does not change it) and never
+    touches origin, so it stays on the relay preview.
     """
     state = _resolve_ready_state(root, branch)
     if state.submitted is not None:
         return None, state.submitted.get("pr_url", "")
     metadata = _metadata_from_state(state, branch)
     base = _target_branch(args.base, state.base)
+
     if not args.dry_run:
+        wt_path = _local_worktree_with_state(root, branch)
+        if wt_path is not None and not _origin_has_branch(branch):
+            pr_url = _open_pr(branch, base, metadata, push=True, assume_yes=assume_yes)
+            if pr_url is None:  # pragma: no cover - a live push=True open always yields a URL
+                raise SystemExit("vrg-submit-pr: internal error: local submit returned no PR URL")
+            submission.record_submission(wt_path, pr_url=pr_url)
+            return pr_url, None
         _verify_origin_tip(branch, state)
+
     pr_url = _open_pr(
         branch, base, metadata, push=False, dry_run=args.dry_run, assume_yes=assume_yes
     )
@@ -889,15 +941,18 @@ def _relay_open(
 
 
 def _run_relay(branches: list[str], args: argparse.Namespace) -> int:
-    """Open PRs for each already-pushed *branch* without a local worktree.
+    """Open PRs for each named *branch*, worktree-free.
 
-    For every branch: resolve its ready-state (local file preferred, else the
-    relay ref), verify origin's tip matches the recorded ``head_sha``, and drive
-    the shared :func:`_open_pr` core with ``push=False``. Branches already
-    carrying a submitted PR are reported and skipped. Standards/provenance run
-    against the resolved GitHub-carried metadata, exactly as the local path runs
-    them against the worktree's file. The finalize/release/install cascade is
-    handled separately by :func:`_run_relay_cascade`.
+    For every branch, :func:`_relay_open` resolves its ready-state (local file
+    preferred, else the relay ref) and picks the path from actual state: the
+    relay path (verify origin's tip against the recorded ``head_sha``, open with
+    ``push=False``) for a branch already on origin, or the local push+open path
+    for a branch with a local ready worktree that never reached origin
+    (issue #2794). Branches already carrying a submitted PR are reported and
+    skipped. Standards/provenance run against the resolved metadata, exactly as
+    the local path runs them against the worktree's file. The
+    finalize/release/install cascade is handled separately by
+    :func:`_run_relay_cascade`.
     """
     root = Path(git.repo_root())
     for branch in branches:

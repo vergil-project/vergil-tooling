@@ -10,8 +10,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vergil_tooling.bin.vrg_submit_pr import (
+    _local_worktree_with_state,
     _metadata_from_state,
     _open_pr,
+    _origin_has_branch,
     _push_branch,
     _reject_if_cross_repo,
     _reject_if_epic_link,
@@ -1985,6 +1987,53 @@ def test_resolve_ready_state_errors_when_no_source() -> None:
         _resolve_ready_state(Path("/repo"), "feature/x")
 
 
+def test_local_worktree_with_state_returns_matching_worktree() -> None:
+    """A worktree on the branch with a readable state file yields its path;
+    a non-matching worktree earlier in the list is skipped without a state read
+    (short-circuit on the branch name)."""
+    other = Worktree(path=Path("/repo/.worktrees/issue-99-y"), branch="feature/other")
+    match = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+    local = MagicMock()
+    local.read.return_value = _ready_state()
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[other, match]),
+        patch(_MOD + ".LocalFileTransport", return_value=local) as local_cls,
+    ):
+        out = _local_worktree_with_state(Path("/repo"), "feature/x")
+    assert out == match.path
+    # Only the matching worktree's state file is read — the non-match short-circuits.
+    local_cls.assert_called_once_with(match.path)
+
+
+def test_local_worktree_with_state_none_when_no_match() -> None:
+    other = Worktree(path=Path("/repo/.worktrees/issue-99-y"), branch="feature/other")
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[other]),
+        patch(_MOD + ".LocalFileTransport") as local_cls,
+    ):
+        assert _local_worktree_with_state(Path("/repo"), "feature/x") is None
+    local_cls.assert_not_called()
+
+
+def test_local_worktree_with_state_none_when_file_absent() -> None:
+    """A worktree on the branch but with no state file is not a local candidate."""
+    match = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+    local = MagicMock()
+    local.read.return_value = None
+    with (
+        patch(_MOD + ".worktrees.list_worktrees", return_value=[match]),
+        patch(_MOD + ".LocalFileTransport", return_value=local),
+    ):
+        assert _local_worktree_with_state(Path("/repo"), "feature/x") is None
+
+
+def test_origin_has_branch_reflects_ls_remote() -> None:
+    with patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"):
+        assert _origin_has_branch("feature/x") is True
+    with patch(_MOD + ".git.read_output", return_value=""):
+        assert _origin_has_branch("feature/x") is False
+
+
 def test_verify_origin_tip_passes_on_match() -> None:
     state = _ready_state(head_sha="abc123")
     with patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"):
@@ -2054,6 +2103,55 @@ class TestRelayBranchPath:
             rc = main(["feature/x", "--yes"])
         assert rc == 0
         gh_cls.assert_not_called()
+
+    def test_named_branch_local_worktree_not_on_origin_pushes_and_opens(self) -> None:
+        """Regression (issue #2794): a named branch with a local ready worktree
+        that was never pushed to origin falls back to the local push+open path
+        instead of dead-ending on `_verify_origin_tip`'s "not on origin"."""
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        local = MagicMock()
+        local.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            # origin lacks the branch: ls-remote returns nothing.
+            patch(_MOD + ".git.read_output", return_value="") as read_output,
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".submission.record_submission") as record,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        push.assert_called_once_with("feature/x")
+        assert create.call_args.kwargs["head"] == "feature/x"
+        # The submission is recorded on the local worktree so the scanner shows
+        # it in-flight, exactly like the worktree submit path.
+        record.assert_called_once_with(wt.path, pr_url="https://github.com/pr/7")
+        # Only the origin-presence probe runs — no `_verify_origin_tip` ls-remote
+        # against a branch that is not there.
+        assert read_output.call_count == 1
+
+    def test_named_branch_local_worktree_already_on_origin_uses_relay(self) -> None:
+        """A local worktree branch that *is* on origin keeps the relay path
+        (verify tip, push=False) — the fallback is gated on origin lacking it."""
+        wt = Worktree(path=Path("/repo/.worktrees/issue-42-x"), branch="feature/x")
+        state = _ready_state(branch="feature/x", head_sha="abc123")
+        local = MagicMock()
+        local.read.return_value = state
+        with (
+            patch(_MOD + ".git.repo_root", return_value="/repo"),
+            patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
+            patch(_MOD + ".LocalFileTransport", return_value=local),
+            patch(_MOD + ".git.read_output", return_value="abc123\trefs/heads/feature/x"),
+            patch(_MOD + "._push_branch") as push,
+            patch(_MOD + ".github.create_pr", return_value="https://github.com/pr/7") as create,
+        ):
+            rc = main(["feature/x", "--yes"])
+        assert rc == 0
+        push.assert_not_called()
+        assert create.call_args.kwargs["head"] == "feature/x"
 
     def test_relay_head_sha_mismatch_errors(self) -> None:
         state = _ready_state(branch="feature/x", head_sha="abc123")
