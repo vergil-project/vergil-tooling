@@ -187,8 +187,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.body and contains_autoclose(args.body):
         return _reject(
             "ERROR: commit body contains a GitHub auto-close keyword "
-            "(close/fix/resolve). Use 'Ref #N' instead.",
-            "Issues must remain open until post-merge workflows succeed.",
+            "(close/fix/resolve). Commit bodies must carry no issue-linkage "
+            "keyword.",
+            "Issue linkage is set on the PR at submit time (via "
+            "'vrg-pr-workflow report-ready' / 'vrg-submit-pr'), not in the "
+            "commit body. Issues must remain open until post-merge workflows "
+            "succeed.",
         )
 
     co_author = os.environ.get("VRG_CO_AUTHOR")
