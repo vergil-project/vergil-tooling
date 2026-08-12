@@ -2,8 +2,8 @@
 
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
-  2. markdownlint on published markdown (docs/site/, README.md) using
-     the bundled canonical config
+  2. markdownlint on published markdown (docs/site/, epics/, README.md)
+     using the bundled canonical config
   3. shellcheck on all shell scripts under ``scripts/``
   4. yamllint on YAML files under ``.github/`` and ``docs/`` using
      the bundled canonical config (issue #302, #590)
@@ -47,13 +47,21 @@ def _find_shell_files(repo_root: Path) -> list[str]:
 
 
 def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
-    """Discover published markdown files: docs/site/**/*.md and README.md."""
+    """Discover published markdown files: docs/site/**/*.md, epics/**/*.md,
+    and README.md."""
     found: list[str] = []
     ignore_paths = [repo_root / p for p in (ignore or [])]
 
     site_dir = repo_root / "docs" / "site"
     if site_dir.is_dir():
         for path in site_dir.rglob("*.md"):
+            if any(path.is_relative_to(ip) for ip in ignore_paths):
+                continue
+            found.append(str(path))
+
+    epics_dir = repo_root / "epics"
+    if epics_dir.is_dir():
+        for path in epics_dir.rglob("*.md"):
             if any(path.is_relative_to(ip) for ip in ignore_paths):
                 continue
             found.append(str(path))
@@ -213,7 +221,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
     # "(N files)" as "N markdown files I changed" and reporting a phantom
     # off-by-one when a changed file fell outside the scope (issue #2601).
     if md_files:
-        print(f"Running: markdownlint ({len(md_files)} files in docs/site/, README.md)")
+        print(f"Running: markdownlint ({len(md_files)} files in docs/site/, epics/, README.md)")
         config = files("vergil_tooling.configs") / "markdownlint.yaml"
         cmd: list[str] = ["markdownlint", "--config", str(config), *md_files]
         result = subprocess.run(cmd, check=False)  # noqa: S603, S607

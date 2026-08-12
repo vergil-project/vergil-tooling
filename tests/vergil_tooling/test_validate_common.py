@@ -185,6 +185,49 @@ def test_find_markdown_files_ignore_empty_list(tmp_path: Path) -> None:
     assert len(result) == 1
 
 
+def test_find_markdown_files_epics(tmp_path: Path) -> None:
+    epic = tmp_path / "epics" / "epic-1"
+    epic.mkdir(parents=True)
+    (epic / "spec.md").write_text("# Spec\n")
+    result = _find_markdown_files(tmp_path)
+    assert len(result) == 1
+    assert result[0].endswith("spec.md")
+
+
+def test_find_markdown_files_epics_nested(tmp_path: Path) -> None:
+    epics = tmp_path / "epics"
+    (epics / "epic-1").mkdir(parents=True)
+    (epics / "epic-2").mkdir(parents=True)
+    (epics / "epic-1" / "spec.md").write_text("# Spec\n")
+    (epics / "epic-1" / "plan.md").write_text("# Plan\n")
+    (epics / "epic-2" / "retrospective.md").write_text("# Retro\n")
+    result = _find_markdown_files(tmp_path)
+    assert len(result) == 3
+
+
+def test_find_markdown_files_all_scopes(tmp_path: Path) -> None:
+    site = tmp_path / "docs" / "site"
+    site.mkdir(parents=True)
+    (site / "index.md").write_text("# Hello\n")
+    epic = tmp_path / "epics" / "epic-1"
+    epic.mkdir(parents=True)
+    (epic / "spec.md").write_text("# Spec\n")
+    (tmp_path / "README.md").write_text("# Project\n")
+    result = _find_markdown_files(tmp_path)
+    assert len(result) == 3
+
+
+def test_find_markdown_files_epics_honors_ignore(tmp_path: Path) -> None:
+    epics = tmp_path / "epics"
+    (epics / "epic-1").mkdir(parents=True)
+    (epics / "archived").mkdir(parents=True)
+    (epics / "epic-1" / "spec.md").write_text("# Spec\n")
+    (epics / "archived" / "old.md").write_text("# Old\n")
+    result = _find_markdown_files(tmp_path, ignore=["epics/archived"])
+    assert len(result) == 1
+    assert result[0].endswith("spec.md")
+
+
 # -- main --------------------------------------------------------------------
 
 
