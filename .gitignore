@@ -19,6 +19,8 @@ build/
 # Machine-readable gate reports emitted at the workspace root by the check
 # registry (see src/vergil_tooling/lib/languages.py). Consumed by the T8
 # evidence-producer composite; never committed.
+quality-ruff.json
+quality-mypy.xml
 coverage.xml
 junit.xml
 pip-audit.json
