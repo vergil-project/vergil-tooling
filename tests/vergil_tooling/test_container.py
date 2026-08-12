@@ -11,6 +11,7 @@ import pytest
 from vergil_tooling.lib.container import (
     _DEFAULT_TEST_COMMANDS,
     _DEFAULT_VERSIONS,
+    _NPM_GLOBAL_ROOT,
     assert_docker_available,
     build_container_args,
     build_docker_args,
@@ -451,6 +452,81 @@ def test_build_container_args_omits_venv_mask_for_non_python(tmp_path: Path) -> 
     with patch.dict("os.environ", {}, clear=True):
         args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
     assert "/workspace/.venv" not in args
+
+
+_TOML_WITH_BUILD_COMMAND = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "typescript"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["node-24"]
+
+[container]
+env-prefixes = []
+build-command = "npm install -g is-number"
+"""
+
+
+def test_build_container_args_sets_node_path_when_build_command_declared(
+    tmp_path: Path,
+) -> None:
+    # A [container].build-command global install bakes a library outside
+    # /workspace but off Node's default require path; NODE_PATH points at the
+    # npm global root so it resolves (#2781).
+    (tmp_path / "vergil.toml").write_text(_TOML_WITH_BUILD_COMMAND)
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "NODE_PATH") == _NPM_GLOBAL_ROOT
+    assert _NPM_GLOBAL_ROOT == "/usr/lib/node_modules"
+
+
+def test_build_container_args_no_node_path_without_build_command(tmp_path: Path) -> None:
+    # No build-command ⇒ behaviour is byte-identical to before: no NODE_PATH is
+    # injected for any repo that declares none (#2781).
+    baseline = None
+    with patch.dict("os.environ", {}, clear=True):
+        baseline = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(baseline, "NODE_PATH") is None
+    assert "NODE_PATH" not in " ".join(baseline)
+
+
+def test_build_container_args_no_node_path_when_config_has_no_build_command(
+    tmp_path: Path,
+) -> None:
+    # A vergil.toml present, with a [container] table but no build-command, is
+    # still unchanged — the gate is the build-command, not the table.
+    (tmp_path / "vergil.toml").write_text(
+        _TOML_WITH_BUILD_COMMAND.replace('build-command = "npm install -g is-number"\n', "")
+    )
+    with patch.dict("os.environ", {}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "NODE_PATH") is None
+
+
+def test_build_container_args_host_node_path_overrides_default(tmp_path: Path) -> None:
+    # An explicit host NODE_PATH wins over the npm-global-root default, so a
+    # consumer can point resolution elsewhere (#2781).
+    (tmp_path / "vergil.toml").write_text(_TOML_WITH_BUILD_COMMAND)
+    with patch.dict("os.environ", {"NODE_PATH": "/custom/modules"}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "NODE_PATH") == "/custom/modules"
+
+
+def test_build_container_args_host_node_path_ignored_without_build_command(
+    tmp_path: Path,
+) -> None:
+    # The gate is the declared build-command, not the host env: a host NODE_PATH
+    # alone does not inject the flag for a repo that declares no build-command.
+    with patch.dict("os.environ", {"NODE_PATH": "/custom/modules"}, clear=True):
+        args = build_container_args(tmp_path, "img:1", ["cmd"], runtime="docker")
+    assert _env_value(args, "NODE_PATH") is None
 
 
 def test_build_docker_args_basic(tmp_path: Path) -> None:

@@ -35,6 +35,20 @@ _DEFAULT_VERSIONS: dict[str, str] = {
 
 _DEFAULT_PREFIX = "prod"
 
+# npm's global prefix on the vergil base images is ``/usr``, so ``npm root -g``
+# is ``/usr/lib/node_modules``. A library baked there by a
+# ``[container].build-command`` global install (``npm install -g <lib>``) is
+# **not** on Node's default module-resolution path — a global install puts
+# *executables* on ``PATH`` but does not put *libraries* on the ``require``
+# search path — so ``require()`` / ``require.resolve()`` returns
+# ``MODULE_NOT_FOUND`` unless ``NODE_PATH`` points at the global root. We expose
+# it on the run path (below) so a baked library resolves out of the box. Two
+# caveats worth knowing: ``NODE_PATH`` is honoured by CommonJS ``require`` only —
+# ESM ``import`` ignores it — and a consumer can override the location by setting
+# ``NODE_PATH`` in the host environment. (issue #2781, epic
+# vergil-project/.github#291)
+_NPM_GLOBAL_ROOT = "/usr/lib/node_modules"
+
 _DEFAULT_TEST_COMMANDS: dict[str, str] = {
     "ruby": "bundle install --jobs 4 && bundle exec rake",
     "python": "uv sync && uv run pytest tests/ -v",
@@ -303,6 +317,21 @@ def build_container_args(
     # host UV_LINK_MODE wins, so an operator can still override it. (#2461)
     uv_link_mode = os.environ.get("UV_LINK_MODE", "copy")
     container_args.extend(["-e", f"UV_LINK_MODE={uv_link_mode}"])
+
+    # Expose the npm global root on NODE_PATH so a library baked out-of-workspace
+    # by a [container].build-command global install resolves via CommonJS
+    # `require` at runtime (see _NPM_GLOBAL_ROOT). Gated on a declared
+    # build-command so every repo that declares none is byte-for-byte unchanged.
+    # An explicit host NODE_PATH wins, letting a consumer override the location.
+    # This lives on the run path rather than being baked into the cached image
+    # because nerdctl's `commit --change` supports only CMD/ENTRYPOINT, not ENV
+    # (verified: `unknown change directive "ENV"`), so a commit-time ENV would not
+    # be portable across the docker/nerdctl runtimes. (issue #2781)
+    from vergil_tooling.lib.config import container_build_command
+
+    if container_build_command(repo_root) is not None:
+        node_path = os.environ.get("NODE_PATH", _NPM_GLOBAL_ROOT)
+        container_args.extend(["-e", f"NODE_PATH={node_path}"])
 
     # Mount host git config so git identity is available in the container.
     gitconfig = Path.home() / ".gitconfig"
