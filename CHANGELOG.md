@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.193] - 2026-08-12
+
+### Bug fixes
+
+- emit machine-readable quality report files from the check registry (#2816)
+
 ## [2.1.192] - 2026-08-12
 
 ### Bug fixes
