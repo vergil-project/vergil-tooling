@@ -13572,6 +13572,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#repo-specific-build-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific build steps
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -13986,6 +13997,17 @@
     <span class="md-ellipsis">
       
         Repo-specific system packages
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#repo-specific-build-steps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Repo-specific build steps
       
     </span>
   </a>
@@ -14407,6 +14429,30 @@ Two things matter for the CI/container model here:</p>
   has no install candidate for the build architecture, the build (local) and the
   CI step both <strong>fail closed</strong>, naming the package and the architecture — no
   silent skip.</li>
+</ul>
+<h3 id="repo-specific-build-steps">Repo-specific build steps<a class="headerlink" href="#repo-specific-build-steps" title="Permanent link">&para;</a></h3>
+<p>For a dependency that is <strong>not</strong> an apt package — a JS library a test driver
+consumes at runtime, say — a repo declares a <code>build-command</code> (with optional
+<code>build-cache-files</code>) instead of <code>system-packages</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="k">[container]</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;npm install -g @coderline/alphatab&quot;</span>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;package-lock.json&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>The full key reference — the out-of-workspace contract, the <code>NODE_PATH</code> handling
+for baked npm libraries, the trust model, and the cache-key behaviour — lives in
+<a href="../../reference/container-config/#build-command">Container Config Reference → <code>build-command</code></a>.
+It follows the <strong>same two-paths, one-declaration</strong> shape as <code>system-packages</code>:</p>
+<ul>
+<li><strong>Two paths, one declaration.</strong> Locally the command is <strong>baked</strong> into the
+  per-branch cached dev image, so its artifact is present for every check in that
+  one image. In CI the command is <strong>run per job</strong> on the test jobs — the job
+  obtains it with <code>vrg-container-build-command --script</code> and runs it against the
+  base-image container before the tests. The two paths agree on <em>what</em> is
+  provisioned (the same command string) even though they differ on <em>when</em> — baked
+  once locally vs run per test job in CI.</li>
+<li><strong>Fail-closed.</strong> A non-zero exit from the command <strong>fails the build</strong> (local)
+  and the CI step, rather than producing an image whose missing dependency only
+  surfaces mysteriously inside a test.</li>
 </ul>
 
 
