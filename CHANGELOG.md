@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.191] - 2026-08-12
+
+### Bug fixes
+
+- expose NODE_PATH so baked out-of-workspace npm libs resolve (#2784)
+
+### Documentation
+
+- add TypeScript to supported-languages tables and dev-ts-node image (#2783)
+
 ## [2.1.190] - 2026-08-12
 
 ### Bug fixes
