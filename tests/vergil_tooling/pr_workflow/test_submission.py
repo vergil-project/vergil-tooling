@@ -57,6 +57,23 @@ def test_read_pr_fields_errors_when_state_has_no_metadata(tmp_path: Path) -> Non
         submission.read_pr_fields(tmp_path)
 
 
+def test_read_pr_fields_excludes_unfrozen_worktree_that_kept_metadata(tmp_path: Path) -> None:
+    """Regression for issue #2741: a worktree reported ready and then reopened
+    via ``vrg-pr-workflow unfreeze`` drops to ``status == "implementing"`` while
+    *retaining* its ``pr_metadata``. That mid-flight state must be classified as
+    not-ready so ``vrg-submit-pr --all`` never sweeps it into a batch."""
+    _write_state(tmp_path, with_metadata=True)
+    state = LocalFileTransport(tmp_path, base="develop").read()
+    assert state is not None
+    engine.apply_unfreeze(state, now=_NOW)
+    LocalFileTransport(tmp_path, base="develop").write(state)
+    # Metadata is retained (unfreeze keeps it), but status is now implementing.
+    assert state.status == "implementing"
+    assert state.pr_metadata is not None
+    with pytest.raises(WorkflowError, match="not ready"):
+        submission.read_pr_fields(tmp_path)
+
+
 def test_read_pr_fields_raises_when_state_file_absent(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         submission.read_pr_fields(tmp_path)
