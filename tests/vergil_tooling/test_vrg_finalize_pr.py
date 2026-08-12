@@ -376,6 +376,12 @@ def test_main_validation_fails(tmp_path: Path) -> None:
             _MOD + ".progress.run",
             side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",)),
         ),
+        # Mock rev-parse of the target branch so the cleanup-only CD check
+        # resolves a head SHA deterministically instead of leaking to the real
+        # git env (a CI PR checkout has no local ``develop`` ref, which sent
+        # cd-check down the "could not resolve" early return and skipped the
+        # _wait_for_cd_run call this test asserts).
+        patch(_MOD + ".git.read_output", return_value="deadbeefcafe"),
         patch(_MOD + "._wait_for_cd_run", return_value=None) as cd_check,
     ):
         result = main([])
