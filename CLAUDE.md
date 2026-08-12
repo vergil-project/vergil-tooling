@@ -287,13 +287,22 @@ container. (Here that transparently expands to `uv run vrg-validate`
 via the `[validation]` override in `vergil.toml` — see
 [Validation](#validation).)
 
-**Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Python 3.12,
-all quality checks, security scanners (CodeQL, Trivy, Semgrep), standards
-compliance, and release gates.
-Workflow: `.github/workflows/ci.yml`.
+**Tier 2 — PR CI (~5-8 min):** Triggers on `pull_request`. Runs every
+quality check across the full Python version matrix (3.12, 3.13, 3.14),
+security scanners (CodeQL, Trivy, Semgrep), standards compliance, and
+release gates. Workflow: `.github/workflows/ci.yml`.
 
-Push-CI was retired once `vrg-validate` reached parity with PR-CI.
-See `docs/site/docs/guides/ci-architecture.md` for the full rationale and
+Push-CI was retired once `vrg-validate` matched the checks push-CI ran.
+Note one deliberate gap in the "parity with PR-CI" framing: local
+`vrg-container-run -- vrg-validate` runs a single dev container on one
+Python interpreter (currently 3.14), so its `--cov-fail-under=100` gate
+proves 100% coverage on that interpreter only. PR-CI re-runs the
+test-and-coverage gate independently in a separate container per
+`[ci].versions` entry (3.12, 3.13, 3.14). Because branch coverage
+(`--cov-branch`) can legitimately differ across CPython versions, code at
+100% locally can still fall below 100% on a 3.12 or 3.13 leg and fail CI —
+the multi-version coverage matrix is a PR-CI-only gate. See
+`docs/site/docs/guides/ci-architecture.md` for the full rationale and
 vergil-project/vergil-actions#176 for the parity audit.
 
 ### Docker-First Testing

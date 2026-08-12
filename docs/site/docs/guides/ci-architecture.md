@@ -36,12 +36,15 @@ opens, it should already be green.
     Earlier versions of this guide documented a third tier — push-CI — as
     a thin `workflow_call` wrapper that ran a subset of checks on every
     push to a feature branch. That tier was removed once `vrg-validate`
-    reached parity with PR-CI; the push-CI workflow added no coverage that
-    PR-CI didn't already provide and created a concurrency-group deadlock
-    with `ci.yml`. Integration-test coverage at push-time was deliberately
-    dropped and is tracked separately as future work on local integration
-    testing. See vergil-project/vergil-actions#176 for the parity audit
-    and removal rationale.
+    matched the checks push-CI ran; the push-CI workflow added no coverage
+    that PR-CI didn't already provide and created a concurrency-group
+    deadlock with `ci.yml`. Integration-test coverage at push-time was
+    deliberately dropped and is tracked separately as future work on local
+    integration testing. See vergil-project/vergil-actions#176 for the
+    parity audit and removal rationale. The "parity with PR-CI" framing is
+    precise only for the single-interpreter checks Tier 1 runs — see the
+    coverage-parity caveat under [Tier 2: PR CI](#tier-2-pr-ci) below for
+    the one deliberate gap.
 
 ## Tier 1: Local pre-commit
 
@@ -91,6 +94,22 @@ Triggers on `pull_request` events. Runs the full validation suite.
 The workflow file is `.github/workflows/ci.yml`, which runs directly on
 `pull_request` and is also exposed as a reusable workflow via
 `workflow_call` for any specialized callers (release pipelines, etc.).
+
+!!! warning "Local validate is not full coverage parity"
+    Tier 1 runs one dev container on a single Python interpreter (currently
+    3.14), so its `--cov-fail-under=100` gate proves 100% coverage on that
+    one interpreter only. PR-CI re-runs the test-and-coverage gate
+    **independently in a separate container per `[ci].versions` entry**
+    (3.12, 3.13, 3.14). Because branch coverage (`--cov-branch`) can
+    legitimately differ across CPython versions — a branch reachable on one
+    version may be dead on another, or a version-guarded code path may only
+    execute on some interpreters — code that measures 100% locally can still
+    fall below 100% on a 3.12 or 3.13 leg and fail CI. The multi-version
+    coverage matrix is therefore a **PR-CI-only** gate: local validate covers
+    a single interpreter and cannot reproduce it. This is a known, accepted
+    limitation, not a bug — closing it would mean running the full version
+    matrix locally, which Tier 1's one-container model deliberately trades
+    away for speed.
 
 ## Architecture
 
