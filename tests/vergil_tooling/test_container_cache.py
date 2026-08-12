@@ -7,11 +7,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vergil_tooling.lib.config import vrg_install_tag
 from vergil_tooling.lib.container_cache import (
+    _VRG_GIT_URL,
     _allow_stale_base,
     _build_cached_image,
+    _compose_setup,
     _is_self_repo,
     _sanitize_branch,
+    _warmup_command,
     apt_install_command,
     cache_image_tag,
     cache_sensitive_files,
@@ -53,7 +57,7 @@ versions = ["3.14"]
 
 def test_cache_files_python(tmp_path: Path) -> None:
     (tmp_path / "uv.lock").write_text("lock\n")
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "python")
     names = [f.name for f in files]
     assert "uv.lock" in names
@@ -62,7 +66,7 @@ def test_cache_files_python(tmp_path: Path) -> None:
 
 def test_cache_files_go(tmp_path: Path) -> None:
     (tmp_path / "go.sum").write_text("sum\n")
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "go")
     names = [f.name for f in files]
     assert "go.sum" in names
@@ -70,14 +74,14 @@ def test_cache_files_go(tmp_path: Path) -> None:
 
 
 def test_cache_files_unknown_language(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "")
     assert len(files) == 1
     assert files[0].name == "vergil.toml"
 
 
 def test_cache_files_missing_lockfile(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "go")
     assert len(files) == 1
     assert files[0].name == "vergil.toml"
@@ -811,7 +815,7 @@ def test_build_cached_image_uses_pull_missing(tmp_path: Path) -> None:
 
 
 def test_compute_cache_hash_changes_with_base_digest(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "go")
     h1 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
     h2 = compute_cache_hash(files, base_digest="sha256:bbb", salt="r")
@@ -819,7 +823,7 @@ def test_compute_cache_hash_changes_with_base_digest(tmp_path: Path) -> None:
 
 
 def test_compute_cache_hash_stable_for_same_inputs(tmp_path: Path) -> None:
-    (tmp_path / "vergil.toml").write_text("[vergil-tooling]\n")
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     files = cache_sensitive_files(tmp_path, "go")
     h1 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
     h2 = compute_cache_hash(files, base_digest="sha256:aaa", salt="r")
@@ -1082,3 +1086,120 @@ def test_allow_stale_base_falsy(monkeypatch: pytest.MonkeyPatch, value: str) -> 
 def test_allow_stale_base_unset(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VRG_ALLOW_STALE_BASE", raising=False)
     assert _allow_stale_base() is False
+
+
+# -- _compose_setup bakes [container].build-command (epic .github#291) ---------
+
+_BUILD_CMD_TOML = _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-command = "make deps"\n'
+
+
+def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -> None:
+    # For a non-self repo the composed setup is
+    # `<uv tool install …> && <build-command> && <warmup>`.
+    (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    setup = _compose_setup(tmp_path, "go")
+    warmup = _warmup_command("go")
+    assert "uv tool install" in setup
+    assert "make deps" in setup
+    assert setup.index("uv tool install") < setup.index("make deps") < setup.index(warmup)
+
+
+def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path: Path) -> None:
+    # Absent build-command ⇒ byte-identical to the pre-existing composition.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    setup = _compose_setup(tmp_path, "go")
+    tag = vrg_install_tag(tmp_path)
+    uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
+    warmup = _warmup_command("go")
+    assert setup == f"{uv_install} && {warmup}"
+
+
+def test_compose_setup_self_repo_slots_build_after_apt_before_warmup(tmp_path: Path) -> None:
+    # Self-repo skips the uv install; the build-command still runs after apt and
+    # before warmup, the same relative slot.
+    (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    setup = _compose_setup(tmp_path, "python")
+    warmup = _warmup_command("python")
+    assert "uv tool install" not in setup
+    assert setup.index("make deps") < setup.index(warmup)
+
+
+def test_build_cached_image_bakes_build_command_into_setup(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    create_cmd = _capture_create_cmd(tmp_path, "go")
+    setup_cmd = create_cmd[-1]
+    assert "make deps" in setup_cmd
+    assert setup_cmd.index("uv tool install") < setup_cmd.index("make deps")
+
+
+def test_build_cached_image_prints_build_banner(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    ok = MagicMock(returncode=0)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return create_result
+        return ok
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
+    out = capsys.readouterr().out
+    assert "Build:" in out
+    assert "make deps" in out
+
+
+def test_build_cached_image_no_build_banner_when_absent(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    create_result = MagicMock(returncode=0, stdout="abc123\n")
+    ok = MagicMock(returncode=0)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return create_result
+        return ok
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
+    out = capsys.readouterr().out
+    assert "Build:" not in out
+
+
+# -- cache_sensitive_files folds [container].build-cache-files ----------------
+
+
+def test_cache_sensitive_files_includes_declared_build_cache_file(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML
+        + "[container]\nenv-prefixes = []\n"
+        + 'build-cache-files = ["deps.txt", "missing.txt"]\n'
+    )
+    (tmp_path / "deps.txt").write_text("x\n")
+    files = cache_sensitive_files(tmp_path, "go")
+    assert (tmp_path / "deps.txt") in files
+    assert (tmp_path / "missing.txt") not in files
+
+
+def test_cache_sensitive_files_no_duplicate_build_cache_file(tmp_path: Path) -> None:
+    # A build-cache-file that is already a default (vergil.toml) is not doubled.
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-cache-files = ["vergil.toml"]\n'
+    )
+    files = cache_sensitive_files(tmp_path, "go")
+    assert files.count(tmp_path / "vergil.toml") == 1
+
+
+def test_cache_hash_changes_when_build_cache_file_changes(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(
+        _VALID_TOML + '[container]\nenv-prefixes = []\nbuild-cache-files = ["deps.txt"]\n'
+    )
+    (tmp_path / "deps.txt").write_text("v1\n")
+    h1 = compute_cache_hash(cache_sensitive_files(tmp_path, "go"))
+    (tmp_path / "deps.txt").write_text("v2\n")
+    h2 = compute_cache_hash(cache_sensitive_files(tmp_path, "go"))
+    assert h1 != h2
