@@ -45,6 +45,31 @@ Package management is **npm**, chosen for universality at zero adoption barrier:
   native ES modules resolved the way modern Node resolves them. A repository's
   `package.json` declares `"type": "module"` to match.
 
+### Baking a non-npm dependency into the dev image
+
+A repo occasionally needs a JS library present in the dev image itself — for
+example a package a test driver loads at runtime that is not part of the repo's
+own `package-lock.json`. That is a `[container].build-command` in `vergil.toml`,
+not an apt package:
+
+```toml
+[container]
+build-command = "npm install -g @coderline/alphatab"
+build-cache-files = ["package-lock.json"]
+```
+
+One TypeScript-specific caveat is load-bearing. A global `npm install -g` puts a
+library's **executables** on `PATH`, but does **not** add the npm global root
+(`/usr/lib/node_modules`) to Node's module-resolution path. So `vrg-container-run`
+sets `NODE_PATH` to that root whenever the repo declares a `build-command`, which
+makes a baked library resolvable **via CommonJS `require`** — but `NODE_PATH` is
+honoured only by `require`. **ESM `import` ignores `NODE_PATH`.** Since Vergil
+repositories are native ESM (per the npm + ESM Layout section above), a baked
+library consumed through `import` needs a different mechanism (a repo-local
+`node_modules`, or staging the module where ESM resolution walks up to it). The
+full contract and the runtime details are in
+[Container Config Reference → `build-command`](../../../reference/container-config.md#build-command).
+
 ## Prebuilt Toolchains Only
 
 Node toolchains come **exclusively from prebuilt stable binary packages — never

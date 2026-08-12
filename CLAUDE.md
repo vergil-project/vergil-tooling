@@ -378,6 +378,9 @@ it in a thin `scripts/dev/test.sh`. Environment overrides:
 
 Env-var passthrough is configured per-repo via `[container].env-prefixes`
 in `vergil.toml` (see `docs/specs/2026-05-25-configurable-container-env-passthrough-design.md`).
+The sibling `[container]` keys — `system-packages` (apt names) and
+`build-command`/`build-cache-files` (a non-apt provisioning step) — are documented
+in `docs/site/docs/reference/container-config.md`.
 
 ### Claude Code Hook Guard
 
