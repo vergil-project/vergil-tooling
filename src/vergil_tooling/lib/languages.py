@@ -604,6 +604,28 @@ _REGISTRY: dict[str, Language] = {
             # ``@typescript-eslint/ban-ts-comment`` (the no-standing-suppression
             # rule, §3.2). Prettier and ESLint ignore ``node_modules`` by
             # default.
+            #
+            # **ESLint config staging (#2771).** The flat config is ESM, and
+            # Node resolves its bare imports (``@eslint/js``,
+            # ``typescript-eslint``) **relative to the config file's own
+            # directory**, not the repo cwd. The packaged config lives inside
+            # the vergil-tooling Python package, which has no adjacent
+            # ``node_modules`` — so, referenced by its packaged path, those
+            # imports fail with ``ERR_MODULE_NOT_FOUND`` for every consumer
+            # (and ``NODE_PATH`` does not help: ESM ignores it). Option 1 fix:
+            # stage the packaged config into the repo root at lint time so ESM
+            # resolution walks up to the consumer's repo-local ``node_modules``
+            # (populated by ``npm ci``), then remove it. The ``EXIT`` trap
+            # fires on success, failure, or signal and preserves eslint's exit
+            # code; the ``.mjs`` extension forces ESM loading regardless of the
+            # consumer's ``package.json`` ``"type"``; and the dot-prefixed name
+            # is matched by no config entry, so eslint never lints the staged
+            # file itself. This is the ``sh -c`` wrapper idiom already used by
+            # the C++ clang-format LINT command (commands exec directly, with
+            # no shell). Shipping the config's deps in the image globals
+            # (rejected here) would not work anyway given the ESM/``NODE_PATH``
+            # fact; a real ``@vergil/eslint-config`` npm package is the
+            # follow-on (deferred, vergil-project/.github#286).
             CheckKind.LINT: [
                 [
                     "prettier",
@@ -612,7 +634,14 @@ _REGISTRY: dict[str, Language] = {
                     "--config",
                     "{configs}/typescript/prettier.config.json",
                 ],
-                ["eslint", ".", "--config", "{configs}/typescript/eslint.config.mjs"],
+                [
+                    "sh",
+                    "-c",
+                    "cfg=./.vergil-eslint.config.mjs; "
+                    "trap 'rm -f \"$cfg\"' EXIT; "
+                    'cp "{configs}/typescript/eslint.config.mjs" "$cfg"; '
+                    'eslint . --config "$cfg"',
+                ],
             ],
             # TYPECHECK runs *once* (§3.6) — one canonical type engine. The
             # curated "warnings to 11" set lives in the packaged base tsconfig
