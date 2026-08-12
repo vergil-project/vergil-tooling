@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import tarfile
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -28,9 +28,6 @@ from vergil_tooling.lib.ci_evidence import (
     write_readme,
 )
 from vergil_tooling.lib.github_config import EvidenceGate
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 class TestEvidenceAssetNames:
@@ -180,15 +177,18 @@ def test_copy_sbom(tmp_path: Path) -> None:
     assert out.read_text() == "{}"
 
 
-def _gate_evidence(name: str) -> GateEvidence:
-    """A minimal GateEvidence for completeness tests (files unused here)."""
-    return GateEvidence(
-        name=name,
-        conclusion="success",
-        tools=(),
-        metrics={},
-        files=(),
-    )
+def _gate_evidence(name: str, *, files: tuple[Path, ...] | None = None) -> GateEvidence:
+    """A GateEvidence for completeness tests.
+
+    Defaults to a real report payload — a report file staged alongside the
+    ``evidence.json`` envelope — so the gate reads as complete. Pass ``files``
+    to model an empty payload (only ``evidence.json``) or any custom file set.
+    ``_has_report_payload`` inspects only ``Path.name``, so these paths need not
+    exist on disk.
+    """
+    if files is None:
+        files = (Path(f"gates/{name}/{name}.report"), Path(f"gates/{name}/evidence.json"))
+    return GateEvidence(name=name, conclusion="success", tools=(), metrics={}, files=files)
 
 
 def test_validate_completeness_all_present_ok() -> None:
@@ -208,6 +208,55 @@ def test_validate_completeness_missing_required_raises() -> None:
             {"test": _gate_evidence("test")},
         )
     assert excinfo.value.missing == ["security"]
+    assert excinfo.value.empty_payload == []
+    assert "no evidence artifact" in str(excinfo.value)
+
+
+def test_validate_completeness_empty_payload_raises() -> None:
+    """A required gate present but carrying only ``evidence.json`` is incomplete.
+
+    The empty-envelope root cause of #2812: an artifact NAME was present so the
+    old check passed it green, but the payload held no report file. It must now
+    surface under ``empty_payload``.
+    """
+    with pytest.raises(IncompleteEvidenceError) as excinfo:
+        validate_completeness(
+            [EvidenceGate("test", ("test / unit / 3.14",))],
+            {"test": _gate_evidence("test", files=(Path("gates/test/evidence.json"),))},
+        )
+    assert excinfo.value.empty_payload == ["test"]
+    assert excinfo.value.missing == []
+    assert "empty payload" in str(excinfo.value)
+
+
+def test_validate_completeness_report_payload_ok() -> None:
+    """A required gate with a real report file beside ``evidence.json`` passes."""
+    validate_completeness(
+        [EvidenceGate("test", ("test / unit / 3.14",))],
+        {
+            "test": _gate_evidence(
+                "test",
+                files=(Path("gates/test/coverage.xml"), Path("gates/test/evidence.json")),
+            )
+        },
+    )  # no raise
+
+
+def test_validate_completeness_mixed_missing_and_empty() -> None:
+    """One absent gate and one empty-payload gate are both surfaced at once."""
+    with pytest.raises(IncompleteEvidenceError) as excinfo:
+        validate_completeness(
+            [
+                EvidenceGate("security", ("Trivy",)),
+                EvidenceGate("test", ("test / unit / 3.14",)),
+            ],
+            {"test": _gate_evidence("test", files=(Path("gates/test/evidence.json"),))},
+        )
+    assert excinfo.value.missing == ["security"]
+    assert excinfo.value.empty_payload == ["test"]
+    message = str(excinfo.value)
+    assert "no evidence artifact" in message
+    assert "empty payload" in message
 
 
 # --- Persisted harvest state (issue #2330) ------------------------------
