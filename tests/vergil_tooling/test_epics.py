@@ -796,6 +796,7 @@ def test_ensure_adhoc_epic_zero_creates_in_dotgithub() -> None:
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         result = epics.ensure_adhoc_epic("org/tooling")
@@ -811,6 +812,7 @@ def test_ensure_adhoc_epic_private_repo_homes_in_self() -> None:
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/lab"),
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         result = epics.ensure_adhoc_epic("org/lab")
@@ -823,6 +825,7 @@ def test_ensure_adhoc_epic_for_dotgithub_itself() -> None:
     created = "https://github.com/org/.github/issues/5"
     with (
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         assert epics.ensure_adhoc_epic("org/.github") == IssueRef("org", ".github", 5)
@@ -938,6 +941,7 @@ def test_ensure_adhoc_archive_creates_stamped_title() -> None:
     with (
         patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
         patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
         patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
     ):
         ref = epics.ensure_adhoc_archive("org/tooling", "2026-Q3")
@@ -1023,13 +1027,63 @@ def test_rollup_noop_for_child_under_archive_parent() -> None:
 
 def test_normalize_archive_in_place_edits_title_and_labels() -> None:
     ref = IssueRef("org", ".github", 88)
-    with patch("vergil_tooling.lib.github.run") as mock_run:
+    with (
+        patch("vergil_tooling.lib.epics._ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.run") as mock_run,
+    ):
         epics._normalize_archive_in_place(ref, "Archive (ad hoc): tooling — 2026-Q3")
     args = list(mock_run.call_args.args)
     assert args[:2] == ["issue", "edit"] and "88" in args
     assert "--title" in args and "Archive (ad hoc): tooling — 2026-Q3" in args
     assert args[args.index("--add-label") + 1] == "archive"
     assert args[args.index("--remove-label") + 1] == "epic"
+    # The 'archive' label is self-healed in the target repo before it is applied,
+    # so a not-yet-migrated org's .github does not fail with 'archive' not found.
+    mock_ensure.assert_called_once_with("org/.github", ("archive",))
+
+
+def test_ensure_labels_creates_missing_labels_from_registry() -> None:
+    # Each named label is created (idempotent --force) with the canonical colour
+    # and description drawn from labels.json — the self-healing primitive that
+    # makes the ad-hoc/archive machinery work in every org (#305).
+    with patch("vergil_tooling.lib.github.run") as mock_run:
+        epics._ensure_labels("org/.github", ("archive", "ad-hoc"))
+    created = [list(c.args) for c in mock_run.call_args_list]
+    assert [c[:3] for c in created] == [
+        ["label", "create", "archive"],
+        ["label", "create", "ad-hoc"],
+    ]
+    for call_args in created:
+        assert call_args[3:5] == ["--repo", "org/.github"]
+        assert "--force" in call_args
+        assert "--color" in call_args and "--description" in call_args
+
+
+def test_ensure_adhoc_archive_create_self_heals_labels() -> None:
+    # The create branch ensures 'archive'+'ad-hoc' exist before creating the
+    # archive issue, so the org's .github self-heals rather than failing.
+    created = "https://github.com/org/.github/issues/88"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created),
+    ):
+        epics.ensure_adhoc_archive("org/tooling", "2026-Q3")
+    mock_ensure.assert_called_once_with("org/.github", ("archive", "ad-hoc"))
+
+
+def test_ensure_adhoc_epic_create_self_heals_labels() -> None:
+    # The create branch ensures 'epic'+'ad-hoc' exist before creating the epic.
+    created = "https://github.com/org/.github/issues/77"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels") as mock_ensure,
+        patch("vergil_tooling.lib.github.create_issue", return_value=created),
+    ):
+        epics.ensure_adhoc_epic("org/tooling")
+    mock_ensure.assert_called_once_with("org/.github", ("epic", "ad-hoc"))
 
 
 def test_ensure_adhoc_archive_heals_legacy_in_place() -> None:
