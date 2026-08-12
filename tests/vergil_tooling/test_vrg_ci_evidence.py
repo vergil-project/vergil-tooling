@@ -175,7 +175,7 @@ def test_bundle_missing_required_gate_errors(
 
     assert rc == 1
     err = capsys.readouterr().err
-    assert "missing evidence" in err
+    assert "no evidence artifact" in err
     assert "security" in err
     assert not (out_dir / "v2.1.129-ci-evidence.tar.gz").exists()
 
@@ -303,7 +303,7 @@ def test_harvest_missing_required_gate_errors(
 
     assert rc == 1
     err = capsys.readouterr().err
-    assert "missing evidence" in err
+    assert "no evidence artifact" in err
     assert "security" in err
     # A failed gate persists no state file (the raise precedes the write).
     assert not (staging / "harvest-state.json").exists()
