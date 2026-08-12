@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.193/">
       
       
         <link rel="next" href="../v2.1.191/">
@@ -1189,6 +1189,8 @@
       
         
       
+        
+      
     
     
     
@@ -1244,6 +1246,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.193/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.193
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13645,6 +13675,7 @@ _find_markdown_files now also discovers epics/*<em>/</em>.md, honouring the exis
 The markdownlint step now runs as two passes: docs/site/ + README.md against the strict bundled config (MD013 line-length enforced), and epics/ against a new prose-relaxed config (configs/markdownlint-prose.yaml) that disables MD013 while keeping every other rule. Epic specs/plans/retrospectives are long-form prose consumed rendered, not raw, so hard-wrapping at 100 columns fights the author for near-zero value. Both passes always run and the step fails if either reports a violation; both honor the existing [markdownlint].ignore paths. Splits _find_markdown_files into _find_strict_markdown_files and _find_prose_markdown_files so the two scopes are distinct. Refs #2803</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.192/v2.1.192-ci-evidence.tar.gz">Download →</a></p>
 
 
 
