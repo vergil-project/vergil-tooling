@@ -709,6 +709,23 @@ def test_has_ansible_content_roles_dir(tmp_path: Path) -> None:
     assert _has_ansible_content(tmp_path) is True
 
 
+def test_has_ansible_content_ansible_dir(tmp_path: Path) -> None:
+    # A top-level ``ansible/`` directory is the common convention for
+    # standardizing Ansible layout (issue #1906).
+    (tmp_path / "ansible").mkdir()
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_nested_ansible_roles(tmp_path: Path) -> None:
+    (tmp_path / "ansible" / "roles").mkdir(parents=True)
+    assert _has_ansible_content(tmp_path) is True
+
+
+def test_has_ansible_content_nested_ansible_playbooks(tmp_path: Path) -> None:
+    (tmp_path / "ansible" / "playbooks").mkdir(parents=True)
+    assert _has_ansible_content(tmp_path) is True
+
+
 def test_has_ansible_content_signal_file_must_be_file(tmp_path: Path) -> None:
     # A directory named like a file signal must not count as content.
     (tmp_path / "ansible.cfg").mkdir()
