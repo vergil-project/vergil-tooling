@@ -9835,7 +9835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -9863,7 +9863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -10310,6 +10310,56 @@
     <span class="md-ellipsis">
       
         Inspecting the declared list
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build-command
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="build-command">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-out-of-workspace-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The out-of-workspace contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_path-for-baked-npm-libraries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NODE_PATH for baked npm libraries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-key_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache key
       
     </span>
   </a>
@@ -13598,6 +13648,56 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#build-command" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        build-command
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="build-command">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#the-out-of-workspace-contract" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The out-of-workspace contract
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_path-for-baked-npm-libraries" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        NODE_PATH for baked npm libraries
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cache-key_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cache key
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -13619,13 +13719,17 @@
 <p>A repo customizes its <strong>dev container</strong> through the <code>[container]</code> section of its
 <code>vergil.toml</code>. The section is optional; every key defaults to empty, so a repo
 that omits <code>[container]</code> behaves exactly as it would with an empty table.</p>
-<p>Both keys describe the <em>same</em> container from two angles: <code>env-prefixes</code> controls
+<p>The keys describe the <em>same</em> container from a few angles: <code>env-prefixes</code> controls
 which host environment variables <code>vrg-container-run</code> forwards <strong>into</strong> the
-container, and <code>system-packages</code> declares Debian packages installed <strong>inside</strong> it.</p>
+container, <code>system-packages</code> declares Debian packages installed <strong>inside</strong> it, and
+<code>build-command</code> runs a repo-declared provisioning step when the cached dev image
+is built (with <code>build-cache-files</code> naming the inputs that invalidate the cache).</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;CONAN_AUDIT_PROVIDER_TOKEN&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;lilypond&quot;</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;npm install -g @coderline/alphatab&quot;</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;package-lock.json&quot;</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
 </code></pre></div>
 <h2 id="keys">Keys<a class="headerlink" href="#keys" title="Permanent link">&para;</a></h2>
 <table>
@@ -13649,6 +13753,18 @@ container, and <code>system-packages</code> declares Debian packages installed <
 <td>list of strings</td>
 <td><code>[]</code></td>
 <td>Debian <code>apt</code> package <strong>names</strong> baked into the local cached dev image and installed on CI test jobs (see below)</td>
+</tr>
+<tr>
+<td><code>build-command</code></td>
+<td>string</td>
+<td><em>(unset)</em></td>
+<td>A shell command run while the cached dev image is built, to provision a non-apt dependency <strong>outside <code>/workspace</code></strong> (see below)</td>
+</tr>
+<tr>
+<td><code>build-cache-files</code></td>
+<td>list of strings</td>
+<td><code>[]</code></td>
+<td>Repo-relative files the <code>build-command</code> reads; folded into the image cache hash so a bump forces a rebuild</td>
 </tr>
 </tbody>
 </table>
@@ -13735,6 +13851,63 @@ the local bake and CI both use (<code>container_system_packages</code> in
 <p>The plain-list mode is a human-facing inspection affordance ("what would this
 repo install?"); <code>--install-script</code> emits the single, shared apt speller that
 both the local image build and the CI step execute verbatim.</p>
+<h2 id="build-command"><code>build-command</code><a class="headerlink" href="#build-command" title="Permanent link">&para;</a></h2>
+<p>A shell command run once while the per-branch cached dev image is built (after the
+<code>system-packages</code> apt step and the vergil-tooling install, before the language
+warmup). It is the escape hatch for a dependency that is <strong>not</strong> an apt package and
+<strong>not</strong> a language package the base image already carries — for example a JS
+library a test driver consumes at runtime (epic
+<a href="https://github.com/vergil-project/.github/issues/291">vergil-project/.github#291</a>).</p>
+<h3 id="the-out-of-workspace-contract">The out-of-workspace contract<a class="headerlink" href="#the-out-of-workspace-contract" title="Permanent link">&para;</a></h3>
+<p><code>vrg-container-run</code> bind-mounts the repo over <code>/workspace</code> at run time, which
+<strong>masks</strong> anything the build wrote under <code>/workspace</code>. So a <code>build-command</code> must
+install its artifact <strong>outside <code>/workspace</code></strong> (a global/system location baked into
+the image), or the run-time mount hides it. A global install is the usual way to
+land outside the workspace — e.g. <code>npm install -g &lt;pkg&gt;</code> writes to
+<code>/usr/lib/node_modules</code>, which is image-resident and survives the mount.</p>
+<p>Landing the artifact outside <code>/workspace</code> makes it <strong>present</strong>, but <em>present</em> is
+not the same as <em>resolvable</em>, and the two differ by artifact kind:</p>
+<ul>
+<li><strong>Executables</strong> are on <code>PATH</code>. A globally-installed CLI (<code>npm install -g</code> of a
+  package with a <code>bin</code>, a <code>pip install</code> console script, a Go binary in
+  <code>/usr/local/bin</code>) is on <code>PATH</code> and runs as-is — no extra configuration.</li>
+<li><strong>Libraries are not automatically on the language's module-resolution path.</strong>
+  This is the correction to the earlier contract wording: a global <code>npm install -g</code>
+  of a <em>library</em> is <strong>not</strong> "on the default resolution path." A global npm install
+  puts <em>executables</em> on <code>PATH</code> but does <strong>not</strong> add the npm global root
+  (<code>/usr/lib/node_modules</code>) to Node's <code>require</code> search path. Without help,
+  <code>require("&lt;lib&gt;")</code> / <code>require.resolve("&lt;lib&gt;")</code> returns <code>MODULE_NOT_FOUND</code> even
+  though the package is baked into the image (validated in
+  <a href="https://github.com/vergil-project/vergil-tooling/issues/2766">vergil-project/vergil-tooling#2766</a>;
+  this also corrects the design spec's §4, tracked for the epic doc-sweep
+  <a href="https://github.com/vergil-project/vergil-tooling/issues/2756">#2756</a>).</li>
+</ul>
+<h3 id="node_path-for-baked-npm-libraries"><code>NODE_PATH</code> for baked npm libraries<a class="headerlink" href="#node_path-for-baked-npm-libraries" title="Permanent link">&para;</a></h3>
+<p>To make a baked npm <strong>library</strong> resolvable, <code>vrg-container-run</code> sets <code>NODE_PATH</code>
+to the npm global root (<code>/usr/lib/node_modules</code>, i.e. <code>npm root -g</code> on the vergil
+base images) <strong>whenever the repo declares a <code>build-command</code></strong>, so
+<code>require.resolve("&lt;lib&gt;")</code> resolves out of the box. A repo that declares no
+<code>build-command</code> is unaffected — no <code>NODE_PATH</code> is set, and its container
+environment is byte-for-byte unchanged.</p>
+<p>Two caveats:</p>
+<ul>
+<li><strong>CommonJS only.</strong> <code>NODE_PATH</code> is honoured by CommonJS <code>require</code>; <strong>ESM <code>import</code>
+  ignores it</strong>. A library consumed via ESM <code>import</code> needs a different mechanism
+  (e.g. a repo-local <code>node_modules</code> populated by <code>npm ci</code>, or staging the module
+  into a directory ESM resolution walks up to).</li>
+<li><strong>Overridable.</strong> An explicit <code>NODE_PATH</code> in the host environment wins, so a
+  consumer can point resolution at a different location at run time.</li>
+</ul>
+<p>The value rides the container <strong>run</strong> invocation rather than being baked into the
+image with <code>commit --change ENV</code>, because the <code>nerdctl</code> runtime's <code>commit --change</code>
+supports only <code>CMD</code>/<code>ENTRYPOINT</code> directives (not <code>ENV</code>); setting it on the run
+path works identically across the <code>docker</code> and <code>nerdctl</code> runtimes.</p>
+<h3 id="cache-key_1">Cache key<a class="headerlink" href="#cache-key_1" title="Permanent link">&para;</a></h3>
+<p>Like <code>system-packages</code>, editing <code>build-command</code> changes <code>vergil.toml</code>, which is in
+the cache-sensitive file set, so a change forces an image rebuild. When the command
+reads a lockfile whose <em>contents</em> (not the command string) determine what gets
+installed, list that lockfile in <code>build-cache-files</code> so a dependency bump also
+invalidates the cache.</p>
 
 
 
