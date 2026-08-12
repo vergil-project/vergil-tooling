@@ -76,6 +76,7 @@ followed by the usual sweep, pull, and prune.
 vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
                 [--strategy {merge,squash,rebase}]
                 [--allow-provenance-violation] [--clean-dirty] [--dry-run]
+                [--no-wait-cd]
 ```
 
 ## Arguments
@@ -89,6 +90,7 @@ vrg-finalize-pr [PR | --cleanup-only] [--target-branch BRANCH]
 | `--allow-provenance-violation` | Proceed despite provenance violations (conscious human override) |
 | `--clean-dirty` | Opt-in: clear a merged/closed worktree whose only dirt is untracked build/validation output, after showing what will be deleted and confirming. Never touches modified tracked files or a reused-branch straggler with unmerged commits (issue #2348). |
 | `--dry-run` | Show what would be done without making changes |
+| `--no-wait-cd` | Do not block on the CD workflow run the merge triggers. Blocking (and failing on a non-success run) is the default (issue #2753); this is the conscious opt-out. |
 
 ## Behavior
 
@@ -209,11 +211,19 @@ files are cleaned up before the next issue.
 Runs canonical validation via `vrg-container-run` to catch problems on
 the target branch before the next PR is created.
 
-### 8. CD Workflow Check
+### 8. CD Workflow Wait
 
-Inspects the most recent CD workflow run on the target branch and fails
-if it did not succeed. Docs publishing is async and used to fail
-silently (issue #303).
+Blocks on the CD workflow run **this merge triggered** — identified by
+the merge commit SHA, not "the latest run on the branch" — and fails if
+that run does not succeed (issue #2753). The base-branch push a merge
+produces dispatches CD asynchronously (docker build/publish, docs,
+release), so finalize polls for the run to register (bounded by a
+dispatch timeout), watches it to completion (bounded by a watch
+timeout), and surfaces the failing run's URL so a post-merge publish
+failure is caught here rather than discovered later. `--no-wait-cd` is
+the conscious opt-out from blocking. When the repo has no CD workflow,
+or no run is dispatched for the merge within the dispatch window (a
+change CD legitimately skips), finalize does not block.
 
 ## Batch mode (comma-list / `--all`)
 

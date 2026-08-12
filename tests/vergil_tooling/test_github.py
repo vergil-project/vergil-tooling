@@ -1679,6 +1679,15 @@ def test_head_ref() -> None:
         assert github.head_ref("1423") == "feature/1423-x"
 
 
+def test_merge_commit_sha_reads_merge_commit_oid() -> None:
+    with patch("vergil_tooling.lib.github.read_output", return_value="cafef00dbabe") as mock_read:
+        assert github.merge_commit_sha("1423") == "cafef00dbabe"
+    args = mock_read.call_args.args
+    assert "mergeCommit" in args
+    # The jq default keeps an unmerged PR from yielding "null".
+    assert any("mergeCommit.oid" in a for a in args)
+
+
 def test_pr_for_branch_none_when_payload_not_dict() -> None:
     with patch("vergil_tooling.lib.github.read_json", return_value=["nope"]):
         assert github.pr_for_branch("feature/1423-pr-interface") is None

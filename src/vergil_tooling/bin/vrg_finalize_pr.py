@@ -21,10 +21,11 @@ per-stage status lines and a run log at
 plain renderer. ``vrg-release`` passes ``--output-format plain``
 explicitly because two live displays cannot nest (issue #1470).
 
-After cleanup succeeds, validation runs in the dev container, then the
-most recent CD workflow run on the target branch is checked and the
-command fails if it did not succeed (issue #303 — docs publish is async
-and used to fail silently).
+After cleanup succeeds, validation runs in the dev container, then
+finalize blocks on the CD workflow run its merge triggered — identified
+by the merge commit SHA, not "latest run on branch" — and fails if that
+run does not succeed (issue #2753; supersedes the non-blocking #303
+check). ``--no-wait-cd`` is the conscious opt-out from blocking.
 
 ``--release`` chains straight into ``vrg-release`` after the finalize
 pipeline completes **successfully** (issue #1634) — the fast-turnaround
@@ -41,6 +42,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -68,6 +70,17 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 _CD_WORKFLOW_NAME = "CD"
+
+# CD is dispatched asynchronously by the base-branch push the merge produces,
+# so the run may not be registered the instant finalize looks. Poll up to
+# _CD_DISPATCH_TIMEOUT_SECS for the run whose headSha matches the merge commit
+# to appear; if none has by then, treat it as "this change triggered no CD run"
+# (path filters / skip) and move on without failing. Once found, watch it up to
+# _CD_WATCH_TIMEOUT_SECS before bailing with a timeout so finalize never hangs
+# indefinitely. _CD_POLL_INTERVAL_SECS paces both loops.
+_CD_DISPATCH_TIMEOUT_SECS = 120
+_CD_WATCH_TIMEOUT_SECS = 1800
+_CD_POLL_INTERVAL_SECS = 10
 
 _ETERNAL_BY_MODEL: dict[str, list[str]] = {
     "docs-single-branch": ["develop"],
@@ -172,6 +185,11 @@ class FinalizeContext:
     args: argparse.Namespace
     root: Path
     merged_branch: str | None = None
+    # SHA of the commit this merge produced on the target branch (mergeCommit
+    # oid). The CD workflow the merge triggers runs on this SHA, so the cd-check
+    # stage waits on exactly that run rather than "latest run on branch"
+    # (issue #2753). None until _stage_merge records it (and on dry-run).
+    merge_commit_sha: str | None = None
     deleted: list[str] = field(default_factory=list)
     # Merged/closed worktrees the sweep could not remove — dirty, or a
     # reused branch name with unmerged commits (issue #1719). Collected in
@@ -251,6 +269,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip the post-merge validation and CD-status stages (and any "
         "release chain). Used by the batch orchestrator, which runs those "
         "once at the end of the batch (issue #1673).",
+    )
+    parser.add_argument(
+        "--no-wait-cd",
+        action="store_true",
+        help="Do not block on the CD workflow run the merge triggers. By "
+        "default finalize waits for that run to complete and fails if it does "
+        "not succeed (issue #2753); this is the conscious opt-out for the rare "
+        "case where blocking on the post-merge publish is not wanted.",
     )
     add_yes_argument(parser)
     progress.add_progress_args(parser, ())
@@ -565,20 +591,17 @@ def _infer_pr(root: Path, target_branch: str, *, assume_yes: bool = False) -> st
     return pr["url"]
 
 
-def _check_cd_workflow_status(target_branch: str) -> str | None:
-    """Inspect the most recent CD workflow run on ``target_branch`` and
-    return a one-line message if it failed, None if it succeeded, is in
-    progress, or doesn't exist.
+_CD_PASSING_CONCLUSIONS = ("success", "skipped", "neutral")
 
-    The CD workflow is async relative to the merge that triggers it, so
-    a failure here doesn't block any PR — but it does mean the site or
-    release artifacts may be stale. This check surfaces such failures
-    during finalize so they can be investigated immediately. Issue #303.
 
-    Returns None when:
-      - no CD workflow exists in the repo
-      - the latest run succeeded or is still in progress
-      - the JSON response is malformed (defensive)
+def _list_cd_runs(target_branch: str) -> list[dict[str, object]] | None:
+    """List recent CD workflow runs on ``target_branch``.
+
+    Returns a list of run dicts (possibly empty when the workflow exists but
+    has not run yet), or ``None`` when the runs cannot be determined — the CD
+    workflow does not exist in the repo, ``gh`` errored, or the response was
+    malformed. ``None`` means "do not block"; an empty list means "keep
+    polling, the run may not have registered yet."
     """
     result = subprocess.run(  # noqa: S603
         [  # noqa: S607
@@ -590,9 +613,9 @@ def _check_cd_workflow_status(target_branch: str) -> str | None:
             "--branch",
             target_branch,
             "--limit",
-            "1",
+            "30",
             "--json",
-            "conclusion,databaseId,headSha,createdAt,url",
+            "conclusion,databaseId,headSha,status,createdAt,url",
         ],
         check=False,
         capture_output=True,
@@ -605,18 +628,123 @@ def _check_cd_workflow_status(target_branch: str) -> str | None:
         runs = json.loads(stdout) if stdout.strip() else []
     except json.JSONDecodeError:
         return None
-    if not runs:
-        return None
-    run = runs[0]
-    conclusion = run.get("conclusion") or ""
-    if conclusion in ("", "success", "skipped", "neutral"):
-        return None
-    sha = (run.get("headSha") or "")[:7]
-    return (
-        f"CD workflow run {run.get('databaseId')} on "
-        f"{target_branch} ({sha}) ended with conclusion '{conclusion}'.\n"
-        f"  {run.get('url') or ''}"
+    return runs if isinstance(runs, list) else None
+
+
+def _match_cd_run(runs: list[dict[str, object]], head_sha: str) -> dict[str, object] | None:
+    """Return the run in ``runs`` whose ``headSha`` equals ``head_sha``."""
+    for run in runs:
+        if isinstance(run, dict) and (run.get("headSha") or "") == head_sha:
+            return run
+    return None
+
+
+def _view_cd_run(run_id: object) -> dict[str, object] | None:
+    """Fetch a CD run's current status/conclusion/url, or ``None`` on error."""
+    result = subprocess.run(  # noqa: S603
+        [  # noqa: S607
+            "gh",
+            "run",
+            "view",
+            str(run_id),
+            "--json",
+            "status,conclusion,url",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
     )
+    if result.returncode != 0:
+        return None
+    stdout = result.stdout or ""
+    try:
+        data = json.loads(stdout) if stdout.strip() else None
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _cd_failure_message(
+    run_id: object, target_branch: str, head_sha: str, conclusion: str, url: str
+) -> str:
+    return (
+        f"CD workflow run {run_id} on {target_branch} ({head_sha[:7]}) "
+        f"ended with conclusion '{conclusion}'.\n"
+        f"  {url}"
+    )
+
+
+def _wait_for_cd_run(
+    target_branch: str,
+    head_sha: str,
+    *,
+    dispatch_timeout: float = _CD_DISPATCH_TIMEOUT_SECS,
+    watch_timeout: float = _CD_WATCH_TIMEOUT_SECS,
+    poll_interval: float = _CD_POLL_INTERVAL_SECS,
+) -> str | None:
+    """Block until the CD run triggered by ``head_sha`` completes.
+
+    The merge's base-branch push dispatches CD asynchronously, so this first
+    polls ``gh run list`` (up to ``dispatch_timeout``) for the run whose
+    ``headSha`` matches the merge commit — not "latest run on branch," which
+    can be a stale or unrelated run (issue #2753). Once the run registers it
+    watches it (up to ``watch_timeout``) until it concludes.
+
+    Returns a one-line failure message when the run concludes non-success or
+    the watch times out. Returns ``None`` — do not fail finalize — when:
+      - the CD workflow does not exist / cannot be queried,
+      - no run was dispatched for this SHA within ``dispatch_timeout``
+        (a change CD legitimately skips, e.g. path filters), or
+      - the run concluded success / skipped / neutral.
+    """
+    # Phase 1: wait for the run this merge triggered to register.
+    dispatch_deadline = time.monotonic() + dispatch_timeout
+    run: dict[str, object] | None = None
+    while True:
+        runs = _list_cd_runs(target_branch)
+        if runs is None:
+            # No CD workflow in this repo, or it cannot be queried — nothing
+            # to block on. Preserves graceful behavior for repos without CD.
+            return None
+        run = _match_cd_run(runs, head_sha)
+        if run is not None:
+            break
+        if time.monotonic() >= dispatch_deadline:
+            print(
+                f"  No CD workflow run registered for {head_sha[:7]} within "
+                f"{int(dispatch_timeout)}s — assuming this change triggers no "
+                "CD run and not blocking.",
+                file=sys.stderr,
+            )
+            return None
+        time.sleep(poll_interval)
+
+    run_id = run.get("databaseId")
+    url = str(run.get("url") or "")
+    print(f"  Waiting on CD workflow run {run_id} for {head_sha[:7]} ...")
+    if url:
+        print(f"  {url}")
+
+    # Phase 2: watch the registered run to completion.
+    watch_deadline = time.monotonic() + watch_timeout
+    while True:
+        view = _view_cd_run(run_id)
+        if view is not None:
+            url = str(view.get("url") or url)
+            if view.get("status") == "completed":
+                conclusion = str(view.get("conclusion") or "")
+                if conclusion in _CD_PASSING_CONCLUSIONS:
+                    return None
+                return _cd_failure_message(
+                    run_id, target_branch, head_sha, conclusion or "unknown", url
+                )
+        if time.monotonic() >= watch_deadline:
+            return (
+                f"CD workflow run {run_id} on {target_branch} ({head_sha[:7]}) "
+                f"did not complete within {int(watch_timeout)}s.\n"
+                f"  {url}"
+            )
+        time.sleep(poll_interval)
 
 
 def _stage_provenance(ctx: FinalizeContext) -> None:
@@ -684,6 +812,11 @@ def _stage_merge(ctx: FinalizeContext) -> None:
         except pr_merge.MergeAbortError as exc:
             raise FinalizeError(str(exc)) from exc
     ctx.merged_branch = branch
+    # Record the merge commit SHA so the cd-check stage waits on exactly the
+    # CD run this merge triggered (issue #2753). Skipped on dry-run, where no
+    # merge commit exists.
+    if not args.dry_run:
+        ctx.merge_commit_sha = github.merge_commit_sha(args.pr) or None
 
 
 def _stage_cleanup(ctx: FinalizeContext) -> None:
@@ -889,24 +1022,57 @@ def _stage_validation(ctx: FinalizeContext) -> None:
 
 
 def _stage_cd_check(ctx: FinalizeContext) -> None:
-    """Docs-publish sanity check (issue #303). CD is async relative to the
-    merge that triggers it, so a failure doesn't block any PR — but it
-    means the site or release artifacts may be stale."""
+    """Block on the CD workflow run this merge triggered (issue #2753).
+
+    The base-branch push a merge produces dispatches CD asynchronously
+    (docker build/publish, docs, release). Rather than glance at the latest
+    run — which may be a stale or unrelated one — this identifies the run by
+    the merge commit SHA, waits for it to complete, and fails finalize if it
+    concludes non-success so a post-merge publish failure is caught here
+    rather than discovered later. ``--no-wait-cd`` is the conscious opt-out.
+    """
     args = ctx.args
     if args.dry_run:
-        print("  [dry-run] check most recent CD workflow run")
+        print("  [dry-run] wait on the CD workflow run triggered by the merge")
         return
-    failure = _check_cd_workflow_status(args.target_branch)
+    if args.no_wait_cd:
+        print("  Skipping CD wait (--no-wait-cd).")
+        return
+
+    # In the PR path the merge stage recorded the exact merge commit. In the
+    # cleanup-only path (release / batch tail) no merge happened in this
+    # invocation, so the CD run to watch is the one on the current tip of the
+    # target branch, which cleanup has just switched to and synced.
+    head_sha = ctx.merge_commit_sha
+    if not head_sha:
+        try:
+            head_sha = git.read_output("rev-parse", args.target_branch).strip()
+        except subprocess.CalledProcessError:
+            head_sha = ""
+    if not head_sha:
+        # Could not resolve the SHA to associate a CD run with — cleanup has
+        # already succeeded, so warn loudly rather than fail finalize over the
+        # post-merge wait, and do not silently pretend CD passed.
+        print(
+            f"  WARNING: could not resolve the tip of {args.target_branch} to "
+            "wait on its CD run — skipping the post-merge CD wait.",
+            file=sys.stderr,
+        )
+        return
+
+    failure = _wait_for_cd_run(args.target_branch, head_sha)
     if failure is None:
         return
-    print("ERROR: most recent CD workflow run did not succeed.", file=sys.stderr)
-    print(f"  {failure}", file=sys.stderr)
     print(
-        "  CD workflow is async — investigate before the next merge so",
+        "ERROR: the CD workflow run triggered by this merge did not succeed.",
         file=sys.stderr,
     )
-    print("  the site doesn't drift further from develop.", file=sys.stderr)
-    raise FinalizeError("most recent CD workflow run did not succeed")
+    print(f"  {failure}", file=sys.stderr)
+    print(
+        "  The post-merge publish did not complete — investigate the run above.",
+        file=sys.stderr,
+    )
+    raise FinalizeError("CD workflow run triggered by the merge did not succeed")
 
 
 def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple[Stage, ...]:
@@ -916,8 +1082,10 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
     runs. provision, validation, and cd-check run unless *include_post_checks*
     is False (the batch path defers them to one end-of-batch run, issue #1673).
     provision warms the target-branch image (fail_fast, before it is used);
-    validation and cd-check are fail_defer so a validation failure still surfaces
-    the CD status — matching the pre-pipeline control flow.
+    validation is fail_defer so a validation failure still lets cd-check run and
+    surface the CD status. cd-check is fail_fast: a post-merge CD run that did
+    not succeed is a hard finalize failure (issue #2753), and it is the last
+    stage so nothing is lost by stopping there.
     """
     stages: list[Stage] = []
     if include_pr:
@@ -930,7 +1098,7 @@ def build_stages(*, include_pr: bool, include_post_checks: bool = True) -> tuple
         # or absent one (issue #2462).
         stages.append(Stage("provision", _stage_provision, "fail_fast"))
         stages.append(Stage("validation", _stage_validation, "fail_defer"))
-        stages.append(Stage("cd-check", _stage_cd_check, "fail_defer"))
+        stages.append(Stage("cd-check", _stage_cd_check, "fail_fast"))
     return tuple(stages)
 
 
