@@ -10848,10 +10848,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#8-cd-workflow-check" class="md-nav__link">
+  <a href="#8-cd-workflow-wait" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. CD Workflow Check
+        8. CD Workflow Wait
       
     </span>
   </a>
@@ -13803,10 +13803,10 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#8-cd-workflow-check" class="md-nav__link">
+  <a href="#8-cd-workflow-wait" class="md-nav__link">
     <span class="md-ellipsis">
       
-        8. CD Workflow Check
+        8. CD Workflow Wait
       
     </span>
   </a>
@@ -13925,6 +13925,7 @@ followed by the usual sweep, pull, and prune.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>vrg-finalize-pr<span class="w"> </span><span class="o">[</span>PR<span class="w"> </span><span class="p">|</span><span class="w"> </span>--cleanup-only<span class="o">]</span><span class="w"> </span><span class="o">[</span>--target-branch<span class="w"> </span>BRANCH<span class="o">]</span>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">                </span><span class="o">[</span>--strategy<span class="w"> </span><span class="o">{</span>merge,squash,rebase<span class="o">}]</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">                </span><span class="o">[</span>--allow-provenance-violation<span class="o">]</span><span class="w"> </span><span class="o">[</span>--clean-dirty<span class="o">]</span><span class="w"> </span><span class="o">[</span>--dry-run<span class="o">]</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">                </span><span class="o">[</span>--no-wait-cd<span class="o">]</span>
 </code></pre></div>
 <h2 id="arguments">Arguments<a class="headerlink" href="#arguments" title="Permanent link">&para;</a></h2>
 <table>
@@ -13962,6 +13963,10 @@ followed by the usual sweep, pull, and prune.</p>
 <tr>
 <td><code>--dry-run</code></td>
 <td>Show what would be done without making changes</td>
+</tr>
+<tr>
+<td><code>--no-wait-cd</code></td>
+<td>Do not block on the CD workflow run the merge triggers. Blocking (and failing on a non-success run) is the default (issue #2753); this is the conscious opt-out.</td>
 </tr>
 </tbody>
 </table>
@@ -14078,10 +14083,18 @@ files are cleaned up before the next issue.</p>
 <h3 id="7-post-finalization-validation">7. Post-Finalization Validation<a class="headerlink" href="#7-post-finalization-validation" title="Permanent link">&para;</a></h3>
 <p>Runs canonical validation via <code>vrg-container-run</code> to catch problems on
 the target branch before the next PR is created.</p>
-<h3 id="8-cd-workflow-check">8. CD Workflow Check<a class="headerlink" href="#8-cd-workflow-check" title="Permanent link">&para;</a></h3>
-<p>Inspects the most recent CD workflow run on the target branch and fails
-if it did not succeed. Docs publishing is async and used to fail
-silently (issue #303).</p>
+<h3 id="8-cd-workflow-wait">8. CD Workflow Wait<a class="headerlink" href="#8-cd-workflow-wait" title="Permanent link">&para;</a></h3>
+<p>Blocks on the CD workflow run <strong>this merge triggered</strong> — identified by
+the merge commit SHA, not "the latest run on the branch" — and fails if
+that run does not succeed (issue #2753). The base-branch push a merge
+produces dispatches CD asynchronously (docker build/publish, docs,
+release), so finalize polls for the run to register (bounded by a
+dispatch timeout), watches it to completion (bounded by a watch
+timeout), and surfaces the failing run's URL so a post-merge publish
+failure is caught here rather than discovered later. <code>--no-wait-cd</code> is
+the conscious opt-out from blocking. When the repo has no CD workflow,
+or no run is dispatched for the merge within the dispatch window (a
+change CD legitimately skips), finalize does not block.</p>
 <h2 id="batch-mode-comma-list-all">Batch mode (comma-list / <code>--all</code>)<a class="headerlink" href="#batch-mode-comma-list-all" title="Permanent link">&para;</a></h2>
 <p>A comma-separated PR argument (<code>vrg-finalize-pr 123,124,125</code>) or <code>--all</code>
 (every open PR in <code>.worktrees/</code>) finalizes several PRs as a single
