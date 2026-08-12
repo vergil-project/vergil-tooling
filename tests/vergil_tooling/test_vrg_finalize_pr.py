@@ -15,7 +15,6 @@ import pytest
 from vergil_tooling.bin.vrg_finalize_pr import (
     FinalizeContext,
     FinalizeError,
-    _check_cd_workflow_status,
     _delete_branch_and_worktree,
     _dirt_is_untracked_only,
     _parse_pr_list,
@@ -29,6 +28,7 @@ from vergil_tooling.bin.vrg_finalize_pr import (
     _stage_provenance,
     _stage_provision,
     _stage_validation,
+    _wait_for_cd_run,
     _worktree_is_dirty,
     build_stages,
     main,
@@ -138,6 +138,19 @@ def _provisioning_passes() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _merge_commit_sha_stub() -> Iterator[None]:
+    """Default: the merge stage resolves a fake merge commit SHA without gh.
+
+    _stage_merge records the merge commit SHA for the cd-check wait (issue
+    #2753) via github.merge_commit_sha; stub it so the many pipeline tests
+    neither hit the network nor need to know about it. Tests that assert on
+    the recorded SHA re-patch it directly — the innermost patch wins.
+    """
+    with patch(_MOD + ".github.merge_commit_sha", return_value="mergecommitsha"):
+        yield
+
+
 def test_parse_args_defaults() -> None:
     args = parse_args([])
     assert args.target_branch == "develop"
@@ -210,7 +223,7 @@ def test_main_library_release(tmp_path: Path) -> None:
         ),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -239,7 +252,7 @@ def test_main_cleanup_syncs_target_without_pull(tmp_path: Path) -> None:
         ),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -263,7 +276,7 @@ def test_main_already_on_target(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -292,7 +305,7 @@ def test_main_no_profile(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -320,7 +333,7 @@ def test_main_application_promotion(tmp_path: Path) -> None:
         ),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -333,7 +346,7 @@ def test_main_docs_single_branch(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -346,7 +359,7 @@ def test_main_no_deleted_branches(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=["develop"]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -363,7 +376,7 @@ def test_main_validation_fails(tmp_path: Path) -> None:
             _MOD + ".progress.run",
             side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",)),
         ),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None) as cd_check,
+        patch(_MOD + "._wait_for_cd_run", return_value=None) as cd_check,
     ):
         result = main([])
     assert result == 1
@@ -371,63 +384,103 @@ def test_main_validation_fails(tmp_path: Path) -> None:
     cd_check.assert_called_once()
 
 
-# -- _check_cd_workflow_status (issue #303) --------------------------------
+# -- _wait_for_cd_run (issue #2753) ----------------------------------------
+
+_HEAD_SHA = "abc123def456"
 
 
-def _gh_run_json(conclusion: str | None) -> str:
-    """Build a single-element gh run list JSON response."""
-    return json.dumps(
-        [
-            {
-                "conclusion": conclusion,
-                "databaseId": 12345,
-                "headSha": "abc123def456",
-                "createdAt": "2026-04-26T18:00:00Z",
-                "url": "https://github.com/owner/repo/actions/runs/12345",
-            }
-        ]
+def _cd_list_resp(runs: list[dict]) -> CompletedProcess:
+    """A ``gh run list`` response carrying *runs*."""
+    return CompletedProcess(args=(), returncode=0, stdout=json.dumps(runs))
+
+
+def _cd_run(*, sha: str = _HEAD_SHA, run_id: int = 12345, status: str = "queued") -> dict:
+    return {
+        "databaseId": run_id,
+        "headSha": sha,
+        "status": status,
+        "conclusion": None,
+        "url": f"https://github.com/o/r/actions/runs/{run_id}",
+    }
+
+
+def _cd_view_resp(
+    status: str,
+    conclusion: str | None,
+    url: str = "https://github.com/o/r/actions/runs/12345",
+) -> CompletedProcess:
+    """A ``gh run view`` response."""
+    return CompletedProcess(
+        args=(),
+        returncode=0,
+        stdout=json.dumps({"status": status, "conclusion": conclusion, "url": url}),
     )
 
 
-def test_check_cd_workflow_returns_none_when_gh_fails() -> None:
+def test_wait_returns_none_when_gh_list_fails() -> None:
+    # gh errors (e.g. the repo has no CD workflow) -> do not block.
     with patch(
         _MOD + ".subprocess.run",
         return_value=CompletedProcess(args=(), returncode=1, stdout="", stderr="oops"),
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
 
 
-def test_check_cd_workflow_returns_none_when_no_runs() -> None:
+def test_wait_returns_none_on_malformed_list_json() -> None:
     with patch(
         _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout="[]"),
+        return_value=CompletedProcess(args=(), returncode=0, stdout="not json"),
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
 
 
-def test_check_cd_workflow_returns_none_on_success() -> None:
-    with patch(
-        _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json("success")),
+def test_wait_returns_none_when_no_run_dispatched(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The CD workflow exists but no run matches this merge SHA within the
+    # dispatch window (a change CD legitimately skips) -> warn, do not fail.
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".subprocess.run", return_value=_cd_list_resp([])),
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA, dispatch_timeout=0.0) is None
+    assert "No CD workflow run registered" in capsys.readouterr().err
 
 
-def test_check_cd_workflow_returns_none_on_in_progress() -> None:
-    # gh reports null conclusion (in_progress / queued).
-    with patch(
-        _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json(None)),
+def test_wait_matches_run_by_sha_not_latest() -> None:
+    # The most recent run on the branch is an unrelated FAILED run; the run
+    # this merge triggered (matching headSha) succeeded. Must report success.
+    unrelated = _cd_run(sha="deadbeef0000", run_id=999)
+    mine = _cd_run(sha=_HEAD_SHA, run_id=555)
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([unrelated, mine]),
+                _cd_view_resp("completed", "success"),
+            ],
+        ),
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
 
 
-def test_check_cd_workflow_returns_message_on_failure() -> None:
-    with patch(
-        _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout=_gh_run_json("failure")),
+def test_wait_fails_on_non_success_conclusion() -> None:
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run(run_id=12345)]),
+                _cd_view_resp(
+                    "completed",
+                    "failure",
+                    url="https://github.com/o/r/actions/runs/12345",
+                ),
+            ],
+        ),
     ):
-        msg = _check_cd_workflow_status("develop")
+        msg = _wait_for_cd_run("develop", _HEAD_SHA)
     assert msg is not None
     assert "12345" in msg
     assert "develop" in msg
@@ -436,21 +489,123 @@ def test_check_cd_workflow_returns_message_on_failure() -> None:
     assert "actions/runs/12345" in msg
 
 
-def test_check_cd_workflow_returns_none_on_malformed_json() -> None:
-    with patch(
-        _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout="not json"),
+def test_wait_treats_skipped_as_pass() -> None:
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                _cd_view_resp("completed", "skipped"),
+            ],
+        ),
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
 
 
-def test_check_cd_workflow_returns_none_on_empty_stdout() -> None:
-    # Defensive: stdout missing entirely (None) shouldn't crash.
-    with patch(
-        _MOD + ".subprocess.run",
-        return_value=CompletedProcess(args=(), returncode=0, stdout=None),
+def test_wait_polls_until_run_registers() -> None:
+    # First list has no matching run (dispatch latency); second registers it;
+    # then the run completes successfully.
+    calls: list[CompletedProcess] = [
+        _cd_list_resp([]),
+        _cd_list_resp([_cd_run()]),
+        _cd_view_resp("completed", "success"),
+    ]
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(_MOD + ".subprocess.run", side_effect=calls) as run,
     ):
-        assert _check_cd_workflow_status("develop") is None
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+    assert run.call_count == 3
+
+
+def test_wait_polls_run_until_completed() -> None:
+    # The registered run is in progress on the first view, completed on the next.
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                _cd_view_resp("in_progress", None),
+                _cd_view_resp("completed", "success"),
+            ],
+        ),
+    ):
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
+
+
+def test_wait_times_out_watching_run() -> None:
+    # The run registers but never completes within the watch window.
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                _cd_view_resp("in_progress", None),
+            ],
+        ),
+    ):
+        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert msg is not None
+    assert "did not complete" in msg
+    assert "12345" in msg
+
+
+def test_wait_tolerates_view_errors_until_timeout() -> None:
+    # A gh error while viewing the run (rc != 0) is transient — the watcher
+    # keeps trying rather than crashing — and times out cleanly if it persists.
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                CompletedProcess(args=(), returncode=1, stdout="", stderr="boom"),
+            ],
+        ),
+    ):
+        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert msg is not None
+    assert "did not complete" in msg
+
+
+def test_wait_tolerates_malformed_view_json() -> None:
+    # A malformed gh run view payload is treated as "unknown yet", not a crash.
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([_cd_run()]),
+                CompletedProcess(args=(), returncode=0, stdout="not json"),
+            ],
+        ),
+    ):
+        msg = _wait_for_cd_run("develop", _HEAD_SHA, watch_timeout=0.0)
+    assert msg is not None
+    assert "did not complete" in msg
+
+
+def test_wait_handles_run_without_url() -> None:
+    # A registered run missing its url must not crash the "waiting on" print.
+    run_no_url = {"databaseId": 777, "headSha": _HEAD_SHA, "status": "queued"}
+    with (
+        patch(_MOD + ".time.sleep"),
+        patch(
+            _MOD + ".subprocess.run",
+            side_effect=[
+                _cd_list_resp([run_no_url]),
+                CompletedProcess(
+                    args=(),
+                    returncode=0,
+                    stdout=json.dumps({"status": "completed", "conclusion": "success", "url": ""}),
+                ),
+            ],
+        ),
+    ):
+        assert _wait_for_cd_run("develop", _HEAD_SHA) is None
 
 
 def test_main_returns_one_on_docs_failure(
@@ -462,8 +617,9 @@ def test_main_returns_one_on_docs_failure(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
+        patch(_MOD + ".git.read_output", return_value="deadbeefcafe"),
         patch(
-            _MOD + "._check_cd_workflow_status",
+            _MOD + "._wait_for_cd_run",
             return_value=(
                 "CD workflow run 999 on develop (deadbee) ended with conclusion 'failure'."
             ),
@@ -482,7 +638,7 @@ def test_main_skips_docs_check_on_dry_run(tmp_path: Path) -> None:
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(
-            _MOD + "._check_cd_workflow_status",
+            _MOD + "._wait_for_cd_run",
             return_value="should not appear",
         ) as mock_check,
     ):
@@ -563,7 +719,7 @@ def test_main_removes_worktree_before_deleting_branch(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=False),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -596,7 +752,7 @@ def test_main_skips_worktree_remove_when_branch_not_in_worktree(tmp_path: Path) 
         patch(_MOD + ".git.merged_branches", return_value=["feature/99-x"]),
         patch(_MOD + ".git.read_output", return_value=porcelain),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -629,7 +785,7 @@ def test_main_skips_dirty_worktree(tmp_path: Path, capsys: pytest.CaptureFixture
         # is patched directly (the autouse fixture stubs list_worktrees).
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=wt_dir.resolve()),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -653,7 +809,7 @@ def test_main_cleans_docker_cache_on_branch_delete(
         patch(_MOD + ".git.merged_branches", return_value=["feature/x"]),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".clean_branch_images", return_value=2) as mock_clean,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -729,7 +885,7 @@ def test_pr_arg_runs_provenance_then_merges(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
     ):
         result = main(["42"])
     assert result == 0
@@ -767,7 +923,7 @@ def test_provenance_violation_override_merges(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
     ):
         result = main(["42", "--allow-provenance-violation"])
     assert result == 0
@@ -789,7 +945,7 @@ def test_advisory_surfaced_and_merge_proceeds(
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
     ):
         result = main(["42"])
     assert result == 0
@@ -810,7 +966,7 @@ def test_already_merged_skips_merge(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
     ):
         result = main(["42"])
     assert result == 0
@@ -861,7 +1017,7 @@ def test_no_pr_arg_is_cleanup_only(tmp_path: Path) -> None:
         patch(f"{_MOD}.git.working_tree_status", return_value=""),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
         patch(f"{_MOD}.config.read_config", side_effect=FileNotFoundError),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0
@@ -1137,7 +1293,7 @@ def test_explicit_target_cleanup_deletes_merged_pr_branch(tmp_path: Path) -> Non
         patch(_MOD + ".git.read_output", return_value="feature/7-foo"),
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1160,7 +1316,7 @@ def test_explicit_target_cleanup_respects_eternal_branches(tmp_path: Path) -> No
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1189,7 +1345,7 @@ def test_explicit_target_cleanup_skips_missing_local_branch(
         patch(_MOD + ".git.run", side_effect=mock_git_run),
         patch(_MOD + ".git.merged_branches", return_value=[]),
         patch(_MOD + ".git.read_output", return_value=""),  # no local branch
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1222,7 +1378,7 @@ def test_explicit_target_cleanup_skips_dirty_worktree(
             return_value=Path("/repo/.worktrees/issue-7-foo"),
         ),
         patch(_MOD + "._worktree_is_dirty", return_value=True),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1251,7 +1407,7 @@ def test_sweep_skips_zero_commit_branch(tmp_path: Path, capsys: pytest.CaptureFi
         patch(_MOD + ".git.merged_branches", return_value=["feature/1439-fresh"]),
         patch(_MOD + ".git.commit_sha", return_value="same-sha"),
         patch(_MOD + ".github.closed_pr_for_branch") as evidence,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -1283,7 +1439,7 @@ def test_sweep_skips_branch_without_merge_evidence(
         patch(_MOD + ".git.merged_branches", return_value=["feature/77-stale-tip"]),
         patch(_MOD + ".git.commit_sha", side_effect=lambda ref: f"sha-of-{ref}"),
         patch(_MOD + ".github.closed_pr_for_branch", return_value=None),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -1312,7 +1468,7 @@ def test_sweep_deletes_straggler_with_commits_and_merge_evidence(tmp_path: Path)
         patch(_MOD + ".git.merged_branches", return_value=["feature/55-straggler"]),
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
 
@@ -1343,7 +1499,7 @@ def test_explicit_target_cleanup_bypasses_sweep_guards(tmp_path: Path) -> None:
         patch(_MOD + ".github.closed_pr_for_branch") as evidence,
         patch(_MOD + ".worktrees.worktree_for_branch", return_value=None),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         rc = main(["123"])
     assert rc == 0
@@ -1397,10 +1553,13 @@ def test_stage_merge_uses_wait_and_merge() -> None:
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
         patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+        patch(_MOD + ".github.merge_commit_sha", return_value="mergesha0"),
     ):
         _stage_merge(ctx)
     engine.assert_called_once_with("123", strategy="squash")
     assert ctx.merged_branch == "feature/42-x"
+    # The merge commit SHA is captured for the cd-check stage (issue #2753).
+    assert ctx.merge_commit_sha == "mergesha0"
 
 
 def test_stage_merge_abort_raises() -> None:
@@ -1437,6 +1596,7 @@ def test_stage_merge_release_branch_uses_merge_commit() -> None:
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
         patch(_MOD + ".github.head_ref", return_value="release/post-2.1.30"),
+        patch(_MOD + ".github.merge_commit_sha", return_value="mergesha0"),
     ):
         _stage_merge(ctx)
     engine.assert_called_once_with("123", strategy="merge")
@@ -1448,6 +1608,7 @@ def test_stage_merge_explicit_strategy_overrides_prefix() -> None:
         patch(_MOD + ".github.pr_state", return_value="OPEN"),
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
         patch(_MOD + ".github.head_ref", return_value="release/2.1.30"),
+        patch(_MOD + ".github.merge_commit_sha", return_value="mergesha0"),
     ):
         _stage_merge(ctx)
     engine.assert_called_once_with("123", strategy="squash")
@@ -1459,6 +1620,7 @@ def test_stage_merge_already_merged_skips_engine() -> None:
         patch(_MOD + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + ".pr_merge.wait_and_merge") as engine,
         patch(_MOD + ".github.head_ref", return_value="feature/42-x"),
+        patch(_MOD + ".github.merge_commit_sha", return_value="mergesha0"),
     ):
         _stage_merge(ctx)
     engine.assert_not_called()
@@ -1500,10 +1662,12 @@ def test_build_stages_failure_modes() -> None:
     # Provisioning is a prerequisite: fail_fast so validation never runs against
     # a broken or absent image (issue #2462).
     assert modes["provision"] == "fail_fast"
-    # fail_defer preserves current semantics: a validation failure still
-    # runs the cd-check, and either failure exits 1.
+    # fail_defer keeps a validation failure from stopping the pipeline before
+    # cd-check runs and surfaces the CD status; either failure exits 1.
     assert modes["validation"] == "fail_defer"
-    assert modes["cd-check"] == "fail_defer"
+    # cd-check is fail_fast: a post-merge CD run that did not succeed is a hard
+    # finalize failure (issue #2753).
+    assert modes["cd-check"] == "fail_fast"
 
 
 def test_stage_provision_warms_image(tmp_path: Path) -> None:
@@ -1583,17 +1747,20 @@ def test_stage_validation_dry_run_skips(tmp_path: Path) -> None:
 
 def test_stage_cd_check_passes_when_clean(tmp_path: Path) -> None:
     ctx = _stage_ctx([], root=tmp_path)
-    with patch(_MOD + "._check_cd_workflow_status", return_value=None):
+    ctx.merge_commit_sha = _HEAD_SHA
+    with patch(_MOD + "._wait_for_cd_run", return_value=None) as wait:
         _stage_cd_check(ctx)  # must not raise
+    wait.assert_called_once_with("develop", _HEAD_SHA)
 
 
 def test_stage_cd_check_raises_on_failure(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ctx = _stage_ctx([], root=tmp_path)
+    ctx.merge_commit_sha = _HEAD_SHA
     with (
         patch(
-            _MOD + "._check_cd_workflow_status",
+            _MOD + "._wait_for_cd_run",
             return_value="CD workflow run 999 on develop (deadbee) ended with 'failure'.",
         ),
         pytest.raises(FinalizeError, match="CD workflow"),
@@ -1604,9 +1771,46 @@ def test_stage_cd_check_raises_on_failure(
 
 def test_stage_cd_check_dry_run_skips(tmp_path: Path) -> None:
     ctx = _stage_ctx(["--dry-run"], root=tmp_path)
-    with patch(_MOD + "._check_cd_workflow_status") as check:
+    with patch(_MOD + "._wait_for_cd_run") as check:
         _stage_cd_check(ctx)
     check.assert_not_called()
+
+
+def test_stage_cd_check_no_wait_flag_skips(tmp_path: Path) -> None:
+    ctx = _stage_ctx(["--no-wait-cd"], root=tmp_path)
+    ctx.merge_commit_sha = _HEAD_SHA
+    with patch(_MOD + "._wait_for_cd_run") as check:
+        _stage_cd_check(ctx)
+    check.assert_not_called()
+
+
+def test_stage_cd_check_falls_back_to_target_tip(tmp_path: Path) -> None:
+    # cleanup-only path: no merge this invocation, so wait on the CD run for
+    # the current tip of the target branch.
+    ctx = _stage_ctx([], root=tmp_path)  # merge_commit_sha stays None
+    with (
+        patch(_MOD + ".git.read_output", return_value="tip1234sha\n") as read,
+        patch(_MOD + "._wait_for_cd_run", return_value=None) as wait,
+    ):
+        _stage_cd_check(ctx)
+    read.assert_called_once_with("rev-parse", "develop")
+    wait.assert_called_once_with("develop", "tip1234sha")
+
+
+def test_stage_cd_check_warns_when_tip_unresolvable(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # If the target tip cannot be resolved, warn and skip the wait rather than
+    # crash finalize after cleanup already succeeded — and do not call the wait.
+    ctx = _stage_ctx([], root=tmp_path)  # merge_commit_sha stays None
+    err = subprocess.CalledProcessError(128, ("git", "rev-parse", "develop"))
+    with (
+        patch(_MOD + ".git.read_output", side_effect=err),
+        patch(_MOD + "._wait_for_cd_run") as wait,
+    ):
+        _stage_cd_check(ctx)  # must not raise
+    wait.assert_not_called()
+    assert "could not resolve the tip" in capsys.readouterr().err
 
 
 # -- squash-merge-aware straggler sweep (issue #1552) ------------------------
@@ -1628,7 +1832,7 @@ def test_sweep_removes_squash_merged_worktree_branch(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
         patch(_MOD + "._delete_branch_and_worktree", return_value=True) as deleter,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
@@ -1654,7 +1858,7 @@ def test_sweep_keeps_open_pr_worktree(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=not_removable),
         patch(_MOD + ".github.closed_pr_for_branch") as ancestry_evidence,
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
@@ -1681,7 +1885,7 @@ def test_sweep_worktree_delete_decline_does_not_record(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=removable),
         patch(_MOD + "._delete_branch_and_worktree", return_value=False) as deleter,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
@@ -1719,7 +1923,7 @@ def test_sweep_keeps_reused_branch_name_worktree(tmp_path: Path) -> None:
         ),
         patch(_wt_mod + ".github.pr_state", return_value="MERGED"),
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
@@ -1739,7 +1943,7 @@ def test_sweep_skips_eternal_branch_worktree(tmp_path: Path) -> None:
         patch(_MOD + ".worktrees.list_worktrees", return_value=[wt]),
         patch(_MOD + ".worktrees.gather_worktree_status") as gather,
         patch(_MOD + "._delete_branch_and_worktree") as deleter,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main(["--cleanup-only"])
     assert result == 0
@@ -1789,7 +1993,7 @@ def _sweep_with_stuck(tmp_path: Path, status: WorktreeStatus) -> Iterator[list[t
         patch(_MOD + ".worktrees.list_worktrees", return_value=[status.worktree]),
         patch(_MOD + ".worktrees.gather_worktree_status", return_value=status),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         yield calls
 
@@ -1996,7 +2200,9 @@ def test_release_chains_into_vrg_release_on_success(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        # cleanup-only path: cd-check resolves the target tip for its CD wait.
+        patch(_MOD + ".git.read_output", return_value="deadbeef"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 0
@@ -2020,7 +2226,8 @@ def test_release_skipped_when_finalize_fails(tmp_path: Path) -> None:
             _MOD + ".progress.run",
             side_effect=subprocess.CalledProcessError(1, ("vrg-container-run",)),
         ),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".git.read_output", return_value="deadbeef"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         result = main(["--release"])
@@ -2037,7 +2244,7 @@ def test_release_dry_run_notes_without_running(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         result = main(["--release", "--dry-run"])
@@ -2057,7 +2264,7 @@ def test_release_failure_reports_pr_unaffected(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 2
@@ -2075,7 +2282,8 @@ def test_no_release_flag_does_not_invoke_release(tmp_path: Path) -> None:
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".git.read_output", return_value="deadbeef"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         result = main([])
@@ -2102,7 +2310,8 @@ def test_install_chains_into_vrg_release_install_on_success(tmp_path: Path) -> N
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + ".git.read_output", return_value="deadbeef"),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 0
@@ -2123,7 +2332,7 @@ def test_install_dry_run_notes_release_install_without_running(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         result = main(["--install", "--dry-run"])
@@ -2141,7 +2350,7 @@ def test_install_failure_points_at_release_install_rerun(
         patch(_MOD + ".git.current_branch", return_value="develop"),
         patch(_MOD + ".git.run"),
         patch(_MOD + ".git.merged_branches", return_value=[]),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".subprocess.run") as mock_run,
     ):
         mock_run.return_value.returncode = 2
@@ -2348,7 +2557,7 @@ def test_main_merged_branch_prunes_relay_ref(tmp_path: Path) -> None:
         patch(f"{_MOD}.worktrees.worktree_for_branch", return_value=None),
         patch(f"{_MOD}.clean_branch_images", return_value=0),
         patch(f"{_MOD}.git.repo_root", return_value=tmp_path),
-        patch(f"{_MOD}._check_cd_workflow_status", return_value=None),
+        patch(f"{_MOD}._wait_for_cd_run", return_value=None),
         patch(f"{_MOD}.github_transport.GitHubTransport") as mock_transport,
     ):
         result = main(["42"])
@@ -2368,7 +2577,7 @@ def test_main_closed_pr_cleanup_prunes_relay_ref(tmp_path: Path) -> None:
         patch(_MOD + ".git.merged_branches", return_value=["feature/x", "develop"]),
         patch(_MOD + ".git.read_output", return_value=""),
         patch(_MOD + ".clean_branch_images", return_value=0),
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
     ):
         result = main([])
@@ -2463,7 +2672,7 @@ def test_main_sweeps_orphan_relay_ref(tmp_path: Path) -> None:
             return_value=["feature/orphan"],
         ),
         patch(_MOD + ".github_transport.GitHubTransport") as mock_transport,
-        patch(_MOD + "._check_cd_workflow_status", return_value=None),
+        patch(_MOD + "._wait_for_cd_run", return_value=None),
     ):
         result = main([])
     assert result == 0

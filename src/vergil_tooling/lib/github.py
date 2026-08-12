@@ -926,6 +926,18 @@ def head_ref(pr: str) -> str:
     return read_output("pr", "view", pr, "--json", "headRefName", "--jq", ".headRefName")
 
 
+def merge_commit_sha(pr: str) -> str:
+    """Return the SHA of the commit *pr*'s merge produced on the base branch.
+
+    ``mergeCommit.oid`` is the resulting base-branch commit regardless of
+    strategy — the merge commit for ``--merge``, the squashed commit for
+    ``--squash``, the last rebased commit for ``--rebase`` — and is the
+    ``headSha`` the base-branch push event hands to the CD workflow. Empty
+    string if the PR is not yet merged (no merge commit exists).
+    """
+    return read_output("pr", "view", pr, "--json", "mergeCommit", "--jq", '.mergeCommit.oid // ""')
+
+
 def merge(pr: str, *, strategy: str) -> None:
     """Merge a PR synchronously (without ``--auto``).
 

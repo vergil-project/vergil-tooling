@@ -170,13 +170,15 @@ the MkDocs site to GitHub Pages on every push to `develop` and
 `dev-base:latest` and uses
 `vergil-project/vergil-actions/actions/docs-deploy`.
 
-**Sanity-check the docs publication.** Docs publication is async
-relative to the merge — a failure on this workflow doesn't block
-the PR. To catch silent failures, `vrg-finalize-pr` checks the
-status of the most recent CD workflow run on `develop`
-after pulling the merge. If it failed, finalize prints the failure
-with a direct link to the log and exits non-zero, so you investigate
-before moving on to the next PR.
+**The post-merge publish is awaited, not glanced at.** The CD
+workflow (docker build/publish, docs, release) is dispatched
+asynchronously by the base-branch push the merge produces. To catch
+silent failures, `vrg-finalize-pr` blocks on the CD run **this merge
+triggered** — identified by the merge commit SHA, not "the latest run
+on the branch" — and waits for it to complete. If that run does not
+succeed, finalize prints the failure with a direct link to the log and
+exits non-zero, so you investigate before moving on. The wait is
+bounded by timeouts and `--no-wait-cd` opts out (issue #2753).
 
 For deeper investigation, view recent runs directly:
 
