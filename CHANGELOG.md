@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.189] - 2026-08-12
+
+### Features
+
+- add [container].build-command + build-cache-files keys (#2770)
+- bake [container].build-command into the cached image (#2772)
+- add vrg-container-build-command speller for CI (#2773)
+
 ## [2.1.188] - 2026-08-11
 
 ### Documentation
