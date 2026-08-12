@@ -5,6 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.192] - 2026-08-12
+
+### Bug fixes
+
+- detect Ansible content under a top-level ansible/ directory (#2790)
+- add bug and docs to complete the canonical kind axis (#2796)
+- derive clone target from the org layout, not CWD (#2797)
+- gate batch ready selection on is_frozen so unfrozen worktrees are excluded (#2798)
+- detect orphaned check-run instead of hanging forever (#2800)
+- update stale close-keyword rejection guidance in vrg-commit and vrg-reword (#2801)
+- block on the CD run the merge triggers, keyed to the merge SHA (#2802)
+- make GitHubTransport.write quiet-by-design on stdout (#2805)
+- resolve named-branch submit path from actual state, not the mere fact a branch was named (#2806)
+- adopt regenerates managed files instead of resuming from init checkpoints (#2807)
+- raise CI-check poll ceiling 180s -> 1800s to stop spurious merge failures (#2810)
+
+### Documentation
+
+- complete the [container].build-command site docs (#2789)
+- clarify vrg-validate is single-interpreter, not full coverage parity with PR-CI (#2804)
+
+### Features
+
+- extend markdownlint coverage to the epics/ directory (#2799)
+- exempt epics/ from MD013 in the markdownlint step (#2808)
+
 ## [2.1.191] - 2026-08-12
 
 ### Bug fixes
