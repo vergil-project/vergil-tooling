@@ -65,6 +65,14 @@ class Language:
 # evidence-producer composite (epic vergil-project/.github#140): the composite
 # globs these exact names to bundle real report data instead of empty
 # envelopes. Keep this list in sync with the T8 composite glob.
+#
+# RUFF_REPORT and MYPY_REPORT close the ``quality`` gate's evidence gap: lint
+# and typecheck previously emitted no report files, so the producer bundled an
+# empty payload for that gate. These two filenames are the shared glob contract
+# with the T8 evidence-producer composite (vergil-actions#836) — a locked
+# contract with the producer bridge PR, so keep the names exact.
+RUFF_REPORT = "quality-ruff.json"
+MYPY_REPORT = "quality-mypy.xml"
 COVERAGE_REPORT = "coverage.xml"
 JUNIT_REPORT = "junit.xml"
 PIP_AUDIT_REPORT = "pip-audit.json"
@@ -74,6 +82,8 @@ LICENSES_REPORT = "licenses.json"
 # single source of truth so consumers (and tests) can assert the contract
 # without re-deriving the individual filenames.
 PYTHON_REPORT_FILES = (
+    RUFF_REPORT,
+    MYPY_REPORT,
     COVERAGE_REPORT,
     JUNIT_REPORT,
     PIP_AUDIT_REPORT,
@@ -262,8 +272,19 @@ _REGISTRY: dict[str, Language] = {
             CheckKind.LINT: [
                 ["ruff", "check", "src/", "tests/"],
                 ["ruff", "format", "--check", "src/", "tests/"],
+                [
+                    "ruff",
+                    "check",
+                    "--output-format=json",
+                    f"--output-file={RUFF_REPORT}",
+                    "src/",
+                    "tests/",
+                ],
             ],
-            CheckKind.TYPECHECK: [["mypy", "src/"], ["ty", "check", "src", "tests"]],
+            CheckKind.TYPECHECK: [
+                ["mypy", "src/", "--junit-xml", MYPY_REPORT],
+                ["ty", "check", "src", "tests"],
+            ],
             CheckKind.TEST: [
                 [
                     "pytest",
