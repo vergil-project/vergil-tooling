@@ -2,8 +2,9 @@
 
 Runs inside the dev container via ``vrg-container-run``:
   1. Repository profile validation (includes README structural checks)
-  2. markdownlint on published markdown (docs/site/, epics/, README.md)
-     using the bundled canonical config
+  2. markdownlint on published markdown, in two passes: docs/site/ +
+     README.md against the strict bundled config, and epics/ against a
+     prose-relaxed config that disables MD013 line-length (issue #2803)
   3. shellcheck on all shell scripts under ``scripts/``
   4. yamllint on YAML files under ``.github/`` and ``docs/`` using
      the bundled canonical config (issue #302, #590)
@@ -46,9 +47,15 @@ def _find_shell_files(repo_root: Path) -> list[str]:
     return sorted(found)
 
 
-def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
-    """Discover published markdown files: docs/site/**/*.md, epics/**/*.md,
-    and README.md."""
+def _find_strict_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
+    """Discover human-edited markdown that gets the strict ruleset:
+    ``docs/site/**/*.md`` and ``README.md``.
+
+    These are hand-authored and rendered *and* read raw, so line-length
+    (MD013) still earns its keep here. Long-form epic prose is discovered
+    separately by :func:`_find_prose_markdown_files` and linted against a
+    relaxed config (issue #2803).
+    """
     found: list[str] = []
     ignore_paths = [repo_root / p for p in (ignore or [])]
 
@@ -59,16 +66,30 @@ def _find_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> li
                 continue
             found.append(str(path))
 
+    readme = repo_root / "README.md"
+    if readme.is_file():
+        found.append(str(readme))
+
+    return sorted(found)
+
+
+def _find_prose_markdown_files(repo_root: Path, ignore: list[str] | None = None) -> list[str]:
+    """Discover long-form epic prose: ``epics/**/*.md``.
+
+    Epic specs/plans/retrospectives are consumed rendered, not raw, so they
+    are linted against the prose-relaxed config that disables MD013
+    (line-length) while keeping every other rule (issue #2803). Honors the
+    same ``[markdownlint].ignore`` paths as the strict scope.
+    """
+    found: list[str] = []
+    ignore_paths = [repo_root / p for p in (ignore or [])]
+
     epics_dir = repo_root / "epics"
     if epics_dir.is_dir():
         for path in epics_dir.rglob("*.md"):
             if any(path.is_relative_to(ip) for ip in ignore_paths):
                 continue
             found.append(str(path))
-
-    readme = repo_root / "README.md"
-    if readme.is_file():
-        found.append(str(readme))
 
     return sorted(found)
 
@@ -214,19 +235,37 @@ def main(argv: list[str] | None = None) -> int:  # noqa: ARG001
         return rc
 
     cfg = read_config(repo_root)
-    md_files = _find_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    strict_md = _find_strict_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
+    prose_md = _find_prose_markdown_files(repo_root, ignore=cfg.markdownlint.ignore)
     # The "(N files ...)" counts below name their fixed discovery scope on
     # purpose: each check lints a scoped slice of the working tree (published
     # docs, scripts/, etc.), NOT the branch diff. Agents kept reading a bare
     # "(N files)" as "N markdown files I changed" and reporting a phantom
     # off-by-one when a changed file fell outside the scope (issue #2601).
-    if md_files:
-        print(f"Running: markdownlint ({len(md_files)} files in docs/site/, epics/, README.md)")
-        config = files("vergil_tooling.configs") / "markdownlint.yaml"
-        cmd: list[str] = ["markdownlint", "--config", str(config), *md_files]
-        result = subprocess.run(cmd, check=False)  # noqa: S603, S607
-        if result.returncode != 0:
-            return result.returncode
+    #
+    # markdownlint runs as two passes so long-form epic prose can be exempted
+    # from MD013 (line-length) while docs/site and README stay strict (issue
+    # #2803). Both passes always run and the step fails if EITHER reports a
+    # violation, so a failure in the first scope never masks the second.
+    markdownlint_rc = 0
+    if strict_md:
+        print(f"Running: markdownlint ({len(strict_md)} files in docs/site/, README.md)")
+        strict_config = files("vergil_tooling.configs") / "markdownlint.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["markdownlint", "--config", str(strict_config), *strict_md],  # noqa: S607
+            check=False,
+        )
+        markdownlint_rc = markdownlint_rc or result.returncode
+    if prose_md:
+        print(f"Running: markdownlint ({len(prose_md)} files in epics/, MD013 relaxed)")
+        prose_config = files("vergil_tooling.configs") / "markdownlint-prose.yaml"
+        result = subprocess.run(  # noqa: S603
+            ["markdownlint", "--config", str(prose_config), *prose_md],  # noqa: S607
+            check=False,
+        )
+        markdownlint_rc = markdownlint_rc or result.returncode
+    if markdownlint_rc != 0:
+        return markdownlint_rc
 
     shell_files = _find_shell_files(repo_root)
     if shell_files:

@@ -1,0 +1,15 @@
+# Prose-relaxed markdownlint config for long-form epic docs (epics/**).
+#
+# Mirrors the canonical markdownlint.yaml ruleset but disables MD013
+# (line-length). Epic specs/plans/retrospectives are long-form prose
+# (often authored voice->text->spec) consumed rendered, not raw, so
+# hard-wrapping at 100 columns fights the author for near-zero value
+# (issue #2803). Every other rule still applies to epics/.
+#
+# Keep this in sync with markdownlint.yaml; the only intended
+# divergence is MD013.
+default: true
+no-duplicate-heading:
+  siblings_only: true
+MD013: false
+MD060: false
