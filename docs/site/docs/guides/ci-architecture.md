@@ -321,6 +321,15 @@ repository.
 :   Base: `debian:trixie-slim`. Includes g++, gcov, CMake, Conan 2,
     cppcheck, and gcovr.
 
+**`dev-ts-node`** (22, 24)
+:   Base: `debian:trixie-slim` + prebuilt Node from NodeSource (never
+    built from source). Includes Node.js, npm, TypeScript (`tsc`),
+    ESLint + typescript-eslint, Prettier, Vitest, `@vitest/coverage-v8`,
+    and license-checker. The runtime family rides the `ts-node` image
+    suffix and the Node major is the tag (`node-24` → `prod-ts-node:24`);
+    `node-24` is the primary, `node-22` the second (epic
+    [vergil-project/.github#284](https://github.com/vergil-project/.github/issues/284)).
+
 C++ is the one language with a compiler-family axis: it ships **two**
 image families (`dev-cpp-clang` / `dev-cpp-gcc`, and matching `prod-`
 images) so TYPECHECK and TEST run per compiler and per version. The
