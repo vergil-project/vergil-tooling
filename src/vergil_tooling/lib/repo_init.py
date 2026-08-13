@@ -432,26 +432,13 @@ def render_readme(ctx: RepoInitContext) -> str:
 
 
 def render_gitignore() -> str:
-    """Render baseline .gitignore."""
-    return (
-        "# Editors\n"
-        "*.swp\n"
-        "*.swo\n"
-        "*~\n"
-        ".idea/\n"
-        ".vscode/\n"
-        "\n"
-        "# OS\n"
-        ".DS_Store\n"
-        "Thumbs.db\n"
-        "\n"
-        "# Vergil\n"
-        ".venv/\n"
-        ".worktrees/\n"
-        ".vergil/\n"
-        ".superpowers/\n"
-        "build/\n"
-    )
+    """Render the baseline .gitignore from the packaged single source of truth.
+
+    The baseline lives at ``vergil_tooling.data/gitignore.baseline`` so
+    scaffolding and the audit check (`repo_config._check_gitignore`) share one
+    definition and cannot diverge (epic vergil-project/.github#311).
+    """
+    return _load_data_file("gitignore.baseline")
 
 
 def _cpp_family_and_version(versions: list[str] | None) -> tuple[str, str] | None:

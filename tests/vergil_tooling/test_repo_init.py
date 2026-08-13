@@ -469,6 +469,22 @@ class TestRenderGitignore:
         missing = [entry for entry in baseline_entries if entry not in flagship_entries]
         assert not missing, f"baseline entries missing from flagship .gitignore: {missing}"
 
+    def test_render_gitignore_returns_packaged_baseline(self) -> None:
+        import importlib.resources
+
+        rendered = render_gitignore()
+        # Reads the single source of truth, not a hardcoded string.
+        assert ".venv/" in rendered
+        assert "quality-ruff.json" in rendered
+        assert "docs/site/site/" in rendered
+        # It IS the packaged asset, byte-for-byte.
+        packaged = (
+            importlib.resources.files("vergil_tooling.data")
+            .joinpath("gitignore.baseline")
+            .read_text(encoding="utf-8")
+        )
+        assert rendered == packaged
+
 
 class TestRenderCiWorkflow:
     def test_python_workflow(self) -> None:
