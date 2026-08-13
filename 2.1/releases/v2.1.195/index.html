@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.196/">
       
       
         <link rel="next" href="../v2.1.194/">
@@ -1195,6 +1195,8 @@
       
         
       
+        
+      
     
     
     
@@ -1250,6 +1252,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.196/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.196
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13580,6 +13610,7 @@
 The CI-evidence completeness check only verified a required gate's artifact NAME was present. For ~4 weeks the test/audit/quality gates shipped EMPTY payloads (just an evidence.json envelope, no report files) and the check passed them green even though the gate is enforcing. This hardens the check: a required gate is complete only if it is present AND carries at least one report file besides evidence.json.</li>
 </ul>
 <p>The crucial detail is that load_gate_evidence builds GateEvidence.files from gate_dir.rglob glob, which always includes evidence.json itself, so an empty gate still has one file. A naive len(files) &gt; 0 would not catch the bug. A new _has_report_payload helper counts report files EXCLUDING evidence.json. validate_completeness now collects both failure modes and IncompleteEvidenceError distinguishes them via .missing (absent) and .empty_payload (present but no report file), with an actionable message for each.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.195/v2.1.195-ci-evidence.tar.gz">Download →</a></p>
 
 
 

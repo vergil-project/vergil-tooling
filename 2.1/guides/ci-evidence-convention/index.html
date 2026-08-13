@@ -1188,6 +1188,8 @@
       
         
       
+        
+      
     
     
     
@@ -1240,6 +1242,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.196/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.196
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13917,6 +13947,10 @@ report, bundles it into a compressed, self-describing archive, cryptographically
 attests the archive to the pipeline and the exact released commit, and attaches
 it to the GitHub Release — where it lives permanently, independent of Actions
 retention.</p>
+<p>The evidence step is an <strong>enforcing gate</strong>: a release does <strong>not</strong> publish
+without complete, attested evidence for every required gate. Incomplete or
+failed evidence hard-fails the release before anything is attached (see the
+<a href="#deployment-lifecycle">deployment lifecycle</a>).</p>
 <p>The mechanism has <strong>two sides coupled only by a naming convention</strong> — no direct
 calls — which is what keeps the harvester language-agnostic and the whole
 mechanism fleet-wide:</p>
@@ -13946,7 +13980,7 @@ every repository.</p>
 <ul>
 <li><strong>Artifact name:</strong> <code>ci-evidence-&lt;gate&gt;</code> — for example <code>ci-evidence-security</code>,
   <code>ci-evidence-test</code>, <code>ci-evidence-audit</code>, <code>ci-evidence-quality</code>.</li>
-<li><strong>Contents:</strong> the gate's full report files (SARIF, coverage XML/HTML, JUnit
+<li><strong>Contents:</strong> the gate's full report files (SARIF, coverage XML, JUnit
   XML, audit/license JSON, SBOM, …), plus an <code>evidence.json</code> fragment at the
   artifact root describing what the gate ran and found.</li>
 </ul>
@@ -13967,7 +14001,7 @@ artifact. It is the gate's self-description:</p>
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span><span class="nt">&quot;gate&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;security&quot;</span><span class="p">,</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span><span class="nt">&quot;tools&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;codeql&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}],</span>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;findings_by_severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;critical&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;high&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;codeql.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;trivy.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;semgrep.sarif&quot;</span><span class="p">]</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;python.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;trivy-results.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;semgrep-results.sarif&quot;</span><span class="p">]</span>
 <a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="p">}</span>
 </code></pre></div>
 <table>
@@ -14001,10 +14035,29 @@ artifact. It is the gate's self-description:</p>
 </tr>
 </tbody>
 </table>
+<p><strong>Current limitations (shipped state).</strong> The <code>tools</code> and <code>metrics</code> values above
+show the <strong>intended shape</strong>, not what every bundle carries today. Verified
+against the v2.1.195 bundle:</p>
+<ul>
+<li>The <code>security</code> gate's <code>tools</code> array currently ships <strong>empty</strong> (<code>[]</code>) — the
+  scanners run and emit their SARIF, but the fragment does not yet enumerate
+  them. (The <code>test</code>, <code>audit</code>, and <code>quality</code> gates do populate <code>tools</code>.)</li>
+<li><code>metrics</code> currently ships <strong>empty</strong> (<code>{}</code>) for <strong>every</strong> gate; the
+  <code>findings_by_severity</code> / <code>coverage_pct</code> / <code>tests</code> summaries are the target
+  shape, not yet populated.</li>
+</ul>
+<p>These are producer-side gaps, not schema changes: the fields exist and the
+consumer reads them; they populate as producers are updated.</p>
 <p>If the fragment is absent, the harvester still bundles the raw files and records
 the gate's conclusion from the check-runs API — but for a required gate an
 absent fragment or an absent artifact counts against completeness (see the
 <a href="#deployment-lifecycle">deployment lifecycle</a>).</p>
+<p>Completeness requires the <strong>report payload</strong>, not merely the artifact or the
+<code>evidence.json</code> envelope. A required gate whose artifact carries <em>only</em> an
+<code>evidence.json</code> and no report file fails completeness — the <strong>empty-payload
+guard</strong> (<a href="https://github.com/vergil-project/vergil-tooling/issues/2812">#2812</a>)
+rejects an envelope with no attested report behind it. An empty report is not
+evidence, so it does not satisfy the gate.</p>
 <h2 id="the-evidence-producing-gate-set">The evidence-producing gate set<a class="headerlink" href="#the-evidence-producing-gate-set" title="Permanent link">&para;</a></h2>
 <p>The set of gates that MUST emit evidence is <strong>not a hand-maintained list.</strong> It
 is <strong>derived from the same source of truth that drives branch protection</strong>:
@@ -14078,6 +14131,9 @@ carry only an <code>evidence.json</code> envelope and no report is an <strong>em
 there is no point publishing empty reports.</strong></p>
 <p>Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:</p>
+<p>The test, audit, and quality report files are emitted <strong>per Python version</strong>
+(<code>&lt;ver&gt;</code> ∈ <code>3.12</code> / <code>3.13</code> / <code>3.14</code>); the security SARIF are <strong>not</strong>
+per-version:</p>
 <table>
 <thead>
 <tr>
@@ -14088,28 +14144,31 @@ producer composite globs for:</p>
 <tbody>
 <tr>
 <td><code>test</code></td>
-<td><code>coverage.xml</code>, <code>junit.xml</code></td>
+<td><code>coverage-&lt;ver&gt;.xml</code>, <code>junit-&lt;ver&gt;.xml</code></td>
 </tr>
 <tr>
 <td><code>audit</code></td>
-<td><code>pip-audit.json</code>, <code>licenses.json</code></td>
+<td><code>pip-audit-&lt;ver&gt;.json</code>, <code>licenses-&lt;ver&gt;.json</code></td>
 </tr>
 <tr>
 <td><code>quality</code></td>
-<td>the quality tool's machine-readable output</td>
+<td><code>quality-ruff-&lt;ver&gt;.json</code>, <code>quality-mypy-&lt;ver&gt;.xml</code></td>
 </tr>
 <tr>
 <td><code>security</code></td>
-<td><code>codeql.sarif</code>, <code>trivy.sarif</code>, <code>semgrep.sarif</code></td>
+<td><code>python.sarif</code>, <code>trivy-results.sarif</code>, <code>semgrep-results.sarif</code></td>
 </tr>
 </tbody>
 </table>
-<p>Historically the check registry ran <code>pytest --cov … --cov-fail-under=100</code> with
-no <code>--cov-report=xml</code> / <code>--junitxml</code>, and <code>pip-audit</code> / license checks with no
-<code>--output</code> — pass/fail only, no persisted report. Closing that is in scope and
-blocking for the mechanism: <strong>no bundle is attached until its reports carry real
-data.</strong> A producer that has not yet been updated to write these files is not
-ready to contribute evidence.</p>
+<p>Producers emit these files today: the check registry runs <code>pytest --cov …
+--cov-report=xml --junitxml=…</code>, <code>pip-audit</code> / license checks write <code>--output</code>
+JSON, and ruff / mypy write their machine-readable reports — each per Python
+version. The <strong>empty-payload guard</strong> enforces the prerequisite at harvest time:
+<strong>no bundle is attached until its reports carry real data</strong>, so a gate that
+emitted only an <code>evidence.json</code> envelope hard-fails rather than shipping an
+empty report. (An earlier registry ran the checks pass/fail only — <code>pytest</code>
+with no <code>--cov-report=xml</code> / <code>--junitxml</code>, <code>pip-audit</code> with no <code>--output</code> — and
+persisted no report; that gap is closed.)</p>
 <h2 id="the-bundle-tree">The bundle tree<a class="headerlink" href="#the-bundle-tree" title="Permanent link">&para;</a></h2>
 <p>The harvester assembles a single compressed archive,
 <code>v{version}-ci-evidence.tar.gz</code>, designed to be consumed by a machine auditor —
@@ -14119,11 +14178,12 @@ self-describing and verifiable:</p>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>   ├─ manifest.json          # top-level machine index (see below)
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>   ├─ checks.json            # raw check-runs snapshot (name, conclusion, timing, log URL)
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>   ├─ gates/
-<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>   │   ├─ security/          # codeql.sarif, trivy.sarif, semgrep.sarif, evidence.json
-<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage.xml, htmlcov/, junit.xml, evidence.json
-<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>   │   ├─ audit/             # pip-audit.json, licenses.json, evidence.json
-<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   └─ sbom/              # sbom.cdx.json
-<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   └─ README.md              # human orientation for the archive
+<a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a>   │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
+<a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a>   │   ├─ test/              # coverage-&lt;ver&gt;.xml, junit-&lt;ver&gt;.xml (per Python version), evidence.json
+<a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>   │   ├─ audit/             # pip-audit-&lt;ver&gt;.json, licenses-&lt;ver&gt;.json (per Python version), evidence.json
+<a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>   │   ├─ quality/           # quality-ruff-&lt;ver&gt;.json, quality-mypy-&lt;ver&gt;.xml (per Python version), evidence.json
+<a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>   │   └─ sbom/              # sbom.cdx.json
+<a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>   └─ README.md              # human orientation for the archive
 </code></pre></div>
 <ul>
 <li><code>manifest.json</code> is the curated, per-gate machine index (schema below).</li>
@@ -14160,13 +14220,13 @@ the provenance anchor, and a per-gate summary with per-file <code>sha256</code>:
 <a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a><span class="w">      </span><span class="nt">&quot;conclusion&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;success&quot;</span><span class="p">,</span>
 <a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="w">      </span><span class="nt">&quot;tools&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;codeql&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;version&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}],</span>
 <a id="__codelineno-2-20" name="__codelineno-2-20" href="#__codelineno-2-20"></a><span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;findings_by_severity&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;critical&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;high&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="w"> </span><span class="p">}</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">      </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gates/security/codeql.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}]</span>
+<a id="__codelineno-2-21" name="__codelineno-2-21" href="#__codelineno-2-21"></a><span class="w">      </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gates/security/python.sarif&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}]</span>
 <a id="__codelineno-2-22" name="__codelineno-2-22" href="#__codelineno-2-22"></a><span class="w">    </span><span class="p">},</span>
 <a id="__codelineno-2-23" name="__codelineno-2-23" href="#__codelineno-2-23"></a><span class="w">    </span><span class="p">{</span>
 <a id="__codelineno-2-24" name="__codelineno-2-24" href="#__codelineno-2-24"></a><span class="w">      </span><span class="nt">&quot;name&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span>
 <a id="__codelineno-2-25" name="__codelineno-2-25" href="#__codelineno-2-25"></a><span class="w">      </span><span class="nt">&quot;conclusion&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;success&quot;</span><span class="p">,</span>
 <a id="__codelineno-2-26" name="__codelineno-2-26" href="#__codelineno-2-26"></a><span class="w">      </span><span class="nt">&quot;metrics&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nt">&quot;coverage_pct&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">100</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;tests&quot;</span><span class="p">:</span><span class="w"> </span><span class="mi">1423</span><span class="w"> </span><span class="p">},</span>
-<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gates/test/coverage.xml&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}]</span>
+<a id="__codelineno-2-27" name="__codelineno-2-27" href="#__codelineno-2-27"></a><span class="w">      </span><span class="nt">&quot;files&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="w"> </span><span class="nt">&quot;path&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;gates/test/coverage-3.14.xml&quot;</span><span class="p">,</span><span class="w"> </span><span class="nt">&quot;sha256&quot;</span><span class="p">:</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="w"> </span><span class="p">}]</span>
 <a id="__codelineno-2-28" name="__codelineno-2-28" href="#__codelineno-2-28"></a><span class="w">    </span><span class="p">}</span>
 <a id="__codelineno-2-29" name="__codelineno-2-29" href="#__codelineno-2-29"></a><span class="w">  </span><span class="p">],</span>
 <a id="__codelineno-2-30" name="__codelineno-2-30" href="#__codelineno-2-30"></a><span class="w">  </span><span class="nt">&quot;missing_gates&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[]</span>
@@ -14210,6 +14270,11 @@ the provenance anchor, and a per-gate summary with per-file <code>sha256</code>:
 </tr>
 </tbody>
 </table>
+<p><strong>Current limitations (shipped state).</strong> As with the <code>evidence.json</code> fragment,
+the <code>metrics</code> and (for <code>security</code>) <code>tools</code> values shown are the <strong>intended
+shape</strong>. In the v2.1.195 bundle the manifest ships <code>metrics: {}</code> for <strong>every</strong>
+gate and an empty <code>tools: []</code> for the <code>security</code> gate. The fields are present
+and read by auditors; they populate as producers are updated.</p>
 <p>Two trust properties are load-bearing:</p>
 <ol>
 <li><strong>Every file carries a <code>sha256</code>.</strong> An auditor can prove the archive is intact
@@ -14243,7 +14308,7 @@ commit." This is the chain-of-custody core of the mechanism.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>tar<span class="w"> </span>-xzf<span class="w"> </span>v2.1.129-ci-evidence.tar.gz
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nb">cd</span><span class="w"> </span>evidence
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="c1"># For each gate file listed in manifest.json:</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>sha256sum<span class="w"> </span>gates/security/codeql.sarif
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>sha256sum<span class="w"> </span>gates/security/python.sarif
 <a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a><span class="c1"># compare against manifest.json → gates[].files[].sha256</span>
 </code></pre></div>
 <p>Every file listed in the manifest carries a <code>sha256</code>, so an automated auditor
@@ -14251,21 +14316,28 @@ can confirm the archive is intact, then read <code>gates[].conclusion</code> and
 <code>gates[].metrics</code> to confirm what ran, with what result, against which commit —
 and that <code>missing_gates</code> is empty.</p>
 <h2 id="deployment-lifecycle">Deployment lifecycle<a class="headerlink" href="#deployment-lifecycle" title="Permanent link">&para;</a></h2>
-<p>The evidence step is a <strong>hard gate</strong>, introduced in <strong>warning mode</strong> and
-promoted to <strong>enforcing mode</strong> only once it is proven reliable in production:</p>
+<p>The evidence step is a <strong>hard, enforcing gate today.</strong> <code>evidence-enforce</code>
+defaults to <code>true</code> (as of <code>vergil-actions</code> v2.1.27), so evidence-first ordering
+is in force: the step harvests, validates completeness, bundles, attests, and
+attaches — and <strong>substantive incompleteness or any failure is terminal</strong>.
+Incomplete or failed evidence hard-fails the release <strong>before publish</strong>; nothing
+is published without complete, attested evidence for every required gate.</p>
+<p>The gate reached enforcing mode through a completed <strong>warning → enforcing</strong>
+lifecycle, now behind us:</p>
 <ul>
-<li><strong>Warning mode (initial).</strong> The step runs the full path — harvest → bundle →
-  attest → attach — but on any failure it emits a loud warning and the release
-  proceeds, attaching whatever evidence it gathered. It is timeout-bounded and
-  never aborts a release.</li>
-<li><strong>Enforcing mode (end state).</strong> A single, global, human-gated flag flip
-  promotes the gate: evidence-first ordering, substantive incompleteness is
-  terminal, and nothing publishes without complete attested evidence.</li>
+<li><strong>Warning mode (historical, initial rollout).</strong> The step ran the full path —
+  harvest → bundle → attest → attach — but on any failure it emitted a loud
+  warning and let the release proceed with whatever evidence it had gathered. It
+  was timeout-bounded and never aborted a release. This was always a temporary
+  <strong>deployment state of a hard gate — not a permanent soft gate.</strong></li>
+<li><strong>Enforcing mode (current state).</strong> After baking ~4 weeks in warning mode and
+  proving reliable, the gate was promoted by a single, global, human-gated flag
+  flip (<code>evidence-enforce</code> → <code>true</code>). That promotion is complete: the gate now
+  enforces on every release.</li>
 </ul>
-<p>Warning mode is a temporary <strong>deployment state of a hard gate — not a permanent
-soft gate.</strong> A permanent soft/report-only gate remains rejected. For the full
-lifecycle, the bake-in window, and the human-gated flip, see epic
-vergil-project/.github#140 (§9.2, §14.1).</p>
+<p>A permanent soft/report-only gate was never on the table and remains rejected.
+For the full lifecycle history, the bake-in window, and the human-gated flip,
+see epic vergil-project/.github#140 (§9.2, §14.1).</p>
 <p>This safety property is load-bearing on the <strong>all-hard-gates model</strong>: bundling
 everything onto a public Release asset is safe precisely because every gate is a
 hard gate, so a bundle by definition reflects a passing scan with no
