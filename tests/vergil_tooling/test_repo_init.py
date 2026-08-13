@@ -509,6 +509,20 @@ class TestRenderOpsWorkflow:
         assert "ops-github-config.yml@v2.1" in yaml
         assert "workflow_dispatch:" in yaml
 
+    def test_scaffolded_repo_passes_new_audit_checks(self, tmp_path: Path) -> None:
+        """A freshly scaffolded repo passes both new audit checks (round-trip)."""
+        from vergil_tooling.lib import repo_config
+
+        (tmp_path / ".gitignore").write_text(repo_init.render_gitignore(), encoding="utf-8")
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True, exist_ok=True)
+        (wf / "ops.yml").write_text(repo_init.render_ops_workflow(ctx), encoding="utf-8")
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        repo_config._check_required_workflows(tmp_path, items)
+        assert items == []
+
 
 class TestRenderCiWorkflow:
     def test_python_workflow(self) -> None:

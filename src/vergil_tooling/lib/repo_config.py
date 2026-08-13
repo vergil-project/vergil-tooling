@@ -83,14 +83,10 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
     if not gitignore.is_file():
         present: set[str] = set()
     else:
-        present = {
-            line.rstrip() for line in gitignore.read_text(encoding="utf-8").splitlines()
-        }
+        present = {line.rstrip() for line in gitignore.read_text(encoding="utf-8").splitlines()}
     for pattern in required:
         if pattern not in present:
-            items.append(
-                DiffItem(field="local.gitignore", expected=pattern, actual="missing")
-            )
+            items.append(DiffItem(field="local.gitignore", expected=pattern, actual="missing"))
 
 
 def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
@@ -105,9 +101,7 @@ def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
     """
     ops = repo_root / ".github" / "workflows" / "ops.yml"
     if not ops.is_file():
-        items.append(
-            DiffItem(field="local.ops_workflow", expected="present", actual="missing")
-        )
+        items.append(DiffItem(field="local.ops_workflow", expected="present", actual="missing"))
         return
     content = ops.read_text(encoding="utf-8")
     if "ops-github-config.yml" not in content:
