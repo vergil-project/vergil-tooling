@@ -1,8 +1,7 @@
-# This repo's .gitignore is a SUPERSET of the Vergil baseline
-# (src/vergil_tooling/data/gitignore.baseline, epic vergil-project/.github#311).
-# The baseline lines below are matched verbatim by the nightly config audit
-# (repo_config._check_gitignore); change the baseline in this package and
-# release, do not diverge here. Repo-local extras live in their own section.
+# Vergil baseline .gitignore — single source of truth (epic vergil-project/.github#311).
+# Every managed repo's .gitignore must be a SUPERSET of the non-comment lines
+# below (verbatim). Repos may add their own local entries. Do not edit a
+# consuming repo to diverge — change this file in vergil-tooling and release.
 
 # Editors
 *.swp
@@ -72,8 +71,3 @@ vendor/bundle/
 *.obj
 *.a
 *.so
-
-# --- Repo-local extras (beyond the baseline) ---
-
-# Legacy egg-info path from the standard_tooling era (kept for old checkouts)
-src/standard_tooling.egg-info/

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 
+from vergil_tooling.lib import repo_init
 from vergil_tooling.lib.config import CiConfig, ProjectConfig, _parse_raw_config
 from vergil_tooling.lib.repo_init import (
     RepoInitContext,
@@ -468,6 +469,59 @@ class TestRenderGitignore:
         ]
         missing = [entry for entry in baseline_entries if entry not in flagship_entries]
         assert not missing, f"baseline entries missing from flagship .gitignore: {missing}"
+
+    def test_render_gitignore_returns_packaged_baseline(self) -> None:
+        import importlib.resources
+
+        rendered = render_gitignore()
+        # Reads the single source of truth, not a hardcoded string.
+        assert ".venv/" in rendered
+        assert "quality-ruff.json" in rendered
+        assert "docs/site/site/" in rendered
+        # It IS the packaged asset, byte-for-byte.
+        packaged = (
+            importlib.resources.files("vergil_tooling.data")
+            .joinpath("gitignore.baseline")
+            .read_text(encoding="utf-8")
+        )
+        assert rendered == packaged
+
+
+class TestRenderOpsWorkflow:
+    def test_ops_cron_minute_deterministic_and_in_range(self) -> None:
+        a = repo_init._ops_cron_minute("vergil-project", "vergil-tooling")
+        b = repo_init._ops_cron_minute("vergil-project", "vergil-tooling")
+        assert a == b
+        assert 0 <= a <= 59
+
+    def test_ops_cron_minute_varies_by_repo(self) -> None:
+        minutes = {
+            repo_init._ops_cron_minute("vergil-project", n)
+            for n in ("vergil-tooling", "vergil-actions", "vergil-vm", "vergil-containers")
+        }
+        assert len(minutes) >= 2  # spread, not all identical
+
+    def test_render_ops_workflow_wires_audit_with_staggered_cron(self) -> None:
+        ctx = RepoInitContext(org="vergil-project", name="vergil-actions")
+        yaml = repo_init.render_ops_workflow(ctx)
+        minute = repo_init._ops_cron_minute("vergil-project", "vergil-actions")
+        assert f"- cron: '{minute} 6 * * *'" in yaml
+        assert "ops-github-config.yml@v2.1" in yaml
+        assert "workflow_dispatch:" in yaml
+
+    def test_scaffolded_repo_passes_new_audit_checks(self, tmp_path: Path) -> None:
+        """A freshly scaffolded repo passes both new audit checks (round-trip)."""
+        from vergil_tooling.lib import repo_config
+
+        (tmp_path / ".gitignore").write_text(repo_init.render_gitignore(), encoding="utf-8")
+        ctx = RepoInitContext(org="vergil-project", name="demo")
+        wf = tmp_path / ".github" / "workflows"
+        wf.mkdir(parents=True, exist_ok=True)
+        (wf / "ops.yml").write_text(repo_init.render_ops_workflow(ctx), encoding="utf-8")
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        repo_config._check_required_workflows(tmp_path, items)
+        assert items == []
 
 
 class TestRenderCiWorkflow:
@@ -1556,6 +1610,8 @@ class TestStepCiCdWorkflows:
         assert not (tmp_path / ".github" / "workflows" / "cd.yml").exists()
         # Event-driven rollup ships in every repo, even without docs/release.
         assert (tmp_path / ".github" / "workflows" / "epic-rollup.yml").exists()
+        # Daily config-audit caller ships in every repo (epic #311).
+        assert (tmp_path / ".github" / "workflows" / "ops.yml").exists()
 
 
 class TestRenderEpicRollupWorkflow:
