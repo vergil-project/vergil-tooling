@@ -434,7 +434,7 @@ class TestClaudeSettings:
 
 def _write_compliant_repo(root: Path) -> None:
     """Scaffold a fully compliant repo structure."""
-    (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML)
+    (root / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.1"))
     hooks_dir = root / ".claude" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "guard.sh").write_text("#!/usr/bin/env bash\nexec vrg-hook-guard\n")
@@ -453,6 +453,14 @@ def _write_compliant_repo(root: Path) -> None:
         "enabledPlugins": {"vergil@vergil-marketplace": True},
     }
     (root / ".claude" / "settings.json").write_text(json.dumps(compliant_settings))
+    # A fully compliant repo carries the baseline .gitignore and a wired,
+    # scheduled ops.yml (epic vergil-project/.github#311). The ops.yml ref is
+    # pinned to the repo's declared vergil version (v2.1) so _check_workflow_refs
+    # stays clean.
+    (root / ".gitignore").write_text(repo_config._load_gitignore_baseline(), encoding="utf-8")
+    wf = root / ".github" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "ops.yml").write_text(_SCHED + "\njobs:\n" + _WIRED, encoding="utf-8")
 
 
 class TestIntegration:
@@ -634,3 +642,49 @@ class TestCheckGitignore:
         items: list = []
         repo_config._check_gitignore(tmp_path, items)
         assert items == []
+
+
+_WIRED = (
+    "  github-config:\n"
+    "    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@v2.1\n"
+)
+_SCHED = "on:\n  schedule:\n    - cron: '7 6 * * *'\n  workflow_dispatch:\n"
+
+
+def _write_ops(dir_: Path, body: str) -> None:
+    wf = dir_ / ".github" / "workflows"
+    wf.mkdir(parents=True, exist_ok=True)
+    (wf / "ops.yml").write_text(body, encoding="utf-8")
+
+
+class TestCheckRequiredWorkflows:
+    def test_present_wired_scheduled_passes(self, tmp_path: Path) -> None:
+        _write_ops(tmp_path, _SCHED + "\njobs:\n" + _WIRED)
+        items: list = []
+        repo_config._check_required_workflows(tmp_path, items)
+        assert items == []
+
+    def test_absent_fails(self, tmp_path: Path) -> None:
+        items: list = []
+        repo_config._check_required_workflows(tmp_path, items)
+        assert [i.field for i in items] == ["local.ops_workflow"]
+        assert items[0].actual == "missing"
+
+    def test_present_but_not_wired_fails(self, tmp_path: Path) -> None:
+        _write_ops(
+            tmp_path,
+            _SCHED
+            + "\njobs:\n  x:\n"
+            + "    uses: vergil-project/vergil-actions/.github/workflows/ci.yml@v2.1\n",
+        )
+        items: list = []
+        repo_config._check_required_workflows(tmp_path, items)
+        assert all(i.field == "local.ops_workflow" for i in items)
+        assert any("does not wire" in i.actual for i in items)
+
+    def test_wired_but_unscheduled_fails(self, tmp_path: Path) -> None:
+        _write_ops(tmp_path, "on:\n  workflow_dispatch:\n\njobs:\n" + _WIRED)
+        items: list = []
+        repo_config._check_required_workflows(tmp_path, items)
+        assert all(i.field == "local.ops_workflow" for i in items)
+        assert any("no schedule" in i.actual for i in items)

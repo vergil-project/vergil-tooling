@@ -93,6 +93,41 @@ def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
             )
 
 
+def _check_required_workflows(repo_root: Path, items: list[DiffItem]) -> None:
+    """Assert .github/workflows/ops.yml exists, wires the audit, and is scheduled.
+
+    A WIRING validator: it verifies a *present* ops.yml (a) calls the reusable
+    ops-github-config workflow and (b) carries a scheduled (cron) trigger, so a
+    wired-but-unscheduled ops.yml can't silently never run nightly. It cannot
+    detect a repo missing ops.yml entirely (no workflow -> no nightly run ->
+    this check never fires there); that from-outside guarantee is deferred to
+    follow-on C (#315). (#311)
+    """
+    ops = repo_root / ".github" / "workflows" / "ops.yml"
+    if not ops.is_file():
+        items.append(
+            DiffItem(field="local.ops_workflow", expected="present", actual="missing")
+        )
+        return
+    content = ops.read_text(encoding="utf-8")
+    if "ops-github-config.yml" not in content:
+        items.append(
+            DiffItem(
+                field="local.ops_workflow",
+                expected="calls ops-github-config.yml",
+                actual="ops.yml present but does not wire the config audit",
+            )
+        )
+    if "cron:" not in content:
+        items.append(
+            DiffItem(
+                field="local.ops_workflow",
+                expected="scheduled (cron) trigger",
+                actual="ops.yml present but has no schedule",
+            )
+        )
+
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
@@ -103,6 +138,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_claude_settings(repo_root, items, warnings)
     _check_workflow_refs(repo_root, items)
     _check_gitignore(repo_root, items)
+    _check_required_workflows(repo_root, items)
     return ConfigDiff(items=items, warnings=warnings)
 
 
