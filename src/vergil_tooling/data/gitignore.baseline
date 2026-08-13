@@ -1,0 +1,73 @@
+# Vergil baseline .gitignore — single source of truth (epic vergil-project/.github#311).
+# Every managed repo's .gitignore must be a SUPERSET of the non-comment lines
+# below (verbatim). Repos may add their own local entries. Do not edit a
+# consuming repo to diverge — change this file in vergil-tooling and release.
+
+# Editors
+*.swp
+*.swo
+*~
+*.bak
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment / secrets
+.env
+.env.*
+
+# Logs
+*.log
+
+# Vergil internals
+.venv/
+.worktrees/
+.vergil/
+.superpowers/
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+
+# Build / packaging output
+build/
+dist/
+*.egg-info/
+
+# Python bytecode / caches
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Coverage / validation / CI-gate evidence
+.coverage
+coverage.xml
+junit.xml
+pip-audit.json
+licenses.json
+quality-ruff.json
+quality-mypy.xml
+
+# Docs (mkdocs build output; mkdocs.yml lives at docs/site/)
+docs/site/site/
+
+# Node / TypeScript
+node_modules/
+*.tsbuildinfo
+
+# Go (test/coverage output; binaries usually have no extension)
+*.test
+*.out
+
+# Ruby
+.bundle/
+vendor/bundle/
+
+# C/C++ object & archive output
+*.o
+*.obj
+*.a
+*.so
