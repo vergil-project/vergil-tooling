@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.196] - 2026-08-13
+
+### Bug fixes
+
+- retry transient GitHub failures on raw git network ops (#2836)
+
+### Documentation
+
+- reconcile CI-evidence convention guide with shipped reality (#2830)
+
+### Features
+
+- surface a clear error when no GitHub token is available (#2832)
+- centralize baseline .gitignore + self-policing ops audit + scaffold ops.yml (#311) (#2837)
+
 ## [2.1.195] - 2026-08-12
 
 ### Bug fixes

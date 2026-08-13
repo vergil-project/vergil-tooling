@@ -30,6 +30,11 @@ attests the archive to the pipeline and the exact released commit, and attaches
 it to the GitHub Release — where it lives permanently, independent of Actions
 retention.
 
+The evidence step is an **enforcing gate**: a release does **not** publish
+without complete, attested evidence for every required gate. Incomplete or
+failed evidence hard-fails the release before anything is attached (see the
+[deployment lifecycle](#deployment-lifecycle)).
+
 The mechanism has **two sides coupled only by a naming convention** — no direct
 calls — which is what keeps the harvester language-agnostic and the whole
 mechanism fleet-wide:
@@ -60,7 +65,7 @@ Each evidence-producing gate uploads exactly one workflow-run artifact:
 
 - **Artifact name:** `ci-evidence-<gate>` — for example `ci-evidence-security`,
   `ci-evidence-test`, `ci-evidence-audit`, `ci-evidence-quality`.
-- **Contents:** the gate's full report files (SARIF, coverage XML/HTML, JUnit
+- **Contents:** the gate's full report files (SARIF, coverage XML, JUnit
   XML, audit/license JSON, SBOM, …), plus an `evidence.json` fragment at the
   artifact root describing what the gate ran and found.
 
@@ -87,7 +92,7 @@ artifact. It is the gate's self-description:
   "gate": "security",
   "tools": [{ "name": "codeql", "version": "..." }],
   "metrics": { "findings_by_severity": { "critical": 0, "high": 0 } },
-  "files": ["codeql.sarif", "trivy.sarif", "semgrep.sarif"]
+  "files": ["python.sarif", "trivy-results.sarif", "semgrep-results.sarif"]
 }
 ```
 
@@ -98,10 +103,31 @@ artifact. It is the gate's self-description:
 | `metrics` | object            | Gate-specific summary (e.g. `findings_by_severity`, `coverage_pct`, `tests`). |
 | `files`   | array of strings  | The report file names present in the artifact.                |
 
+**Current limitations (shipped state).** The `tools` and `metrics` values above
+show the **intended shape**, not what every bundle carries today. Verified
+against the v2.1.195 bundle:
+
+- The `security` gate's `tools` array currently ships **empty** (`[]`) — the
+  scanners run and emit their SARIF, but the fragment does not yet enumerate
+  them. (The `test`, `audit`, and `quality` gates do populate `tools`.)
+- `metrics` currently ships **empty** (`{}`) for **every** gate; the
+  `findings_by_severity` / `coverage_pct` / `tests` summaries are the target
+  shape, not yet populated.
+
+These are producer-side gaps, not schema changes: the fields exist and the
+consumer reads them; they populate as producers are updated.
+
 If the fragment is absent, the harvester still bundles the raw files and records
 the gate's conclusion from the check-runs API — but for a required gate an
 absent fragment or an absent artifact counts against completeness (see the
 [deployment lifecycle](#deployment-lifecycle)).
+
+Completeness requires the **report payload**, not merely the artifact or the
+`evidence.json` envelope. A required gate whose artifact carries *only* an
+`evidence.json` and no report file fails completeness — the **empty-payload
+guard** ([#2812](https://github.com/vergil-project/vergil-tooling/issues/2812))
+rejects an envelope with no attested report behind it. An empty report is not
+evidence, so it does not satisfy the gate.
 
 ## The evidence-producing gate set
 
@@ -155,19 +181,26 @@ there is no point publishing empty reports.**
 Producers must therefore emit real report files at the workspace-root paths the
 producer composite globs for:
 
-| Gate      | Required report file(s)                       |
-| --------- | --------------------------------------------- |
-| `test`    | `coverage.xml`, `junit.xml`                   |
-| `audit`   | `pip-audit.json`, `licenses.json`             |
-| `quality` | the quality tool's machine-readable output    |
-| `security`| `codeql.sarif`, `trivy.sarif`, `semgrep.sarif`|
+The test, audit, and quality report files are emitted **per Python version**
+(`<ver>` ∈ `3.12` / `3.13` / `3.14`); the security SARIF are **not**
+per-version:
 
-Historically the check registry ran `pytest --cov … --cov-fail-under=100` with
-no `--cov-report=xml` / `--junitxml`, and `pip-audit` / license checks with no
-`--output` — pass/fail only, no persisted report. Closing that is in scope and
-blocking for the mechanism: **no bundle is attached until its reports carry real
-data.** A producer that has not yet been updated to write these files is not
-ready to contribute evidence.
+| Gate      | Required report file(s)                                             |
+| --------- | ------------------------------------------------------------------- |
+| `test`    | `coverage-<ver>.xml`, `junit-<ver>.xml`                             |
+| `audit`   | `pip-audit-<ver>.json`, `licenses-<ver>.json`                       |
+| `quality` | `quality-ruff-<ver>.json`, `quality-mypy-<ver>.xml`                 |
+| `security`| `python.sarif`, `trivy-results.sarif`, `semgrep-results.sarif`      |
+
+Producers emit these files today: the check registry runs `pytest --cov …
+--cov-report=xml --junitxml=…`, `pip-audit` / license checks write `--output`
+JSON, and ruff / mypy write their machine-readable reports — each per Python
+version. The **empty-payload guard** enforces the prerequisite at harvest time:
+**no bundle is attached until its reports carry real data**, so a gate that
+emitted only an `evidence.json` envelope hard-fails rather than shipping an
+empty report. (An earlier registry ran the checks pass/fail only — `pytest`
+with no `--cov-report=xml` / `--junitxml`, `pip-audit` with no `--output` — and
+persisted no report; that gap is closed.)
 
 ## The bundle tree
 
@@ -181,9 +214,10 @@ v{version}-ci-evidence.tar.gz
    ├─ manifest.json          # top-level machine index (see below)
    ├─ checks.json            # raw check-runs snapshot (name, conclusion, timing, log URL)
    ├─ gates/
-   │   ├─ security/          # codeql.sarif, trivy.sarif, semgrep.sarif, evidence.json
-   │   ├─ test/              # coverage.xml, htmlcov/, junit.xml, evidence.json
-   │   ├─ audit/             # pip-audit.json, licenses.json, evidence.json
+   │   ├─ security/          # python.sarif, trivy-results.sarif, semgrep-results.sarif, evidence.json
+   │   ├─ test/              # coverage-<ver>.xml, junit-<ver>.xml (per Python version), evidence.json
+   │   ├─ audit/             # pip-audit-<ver>.json, licenses-<ver>.json (per Python version), evidence.json
+   │   ├─ quality/           # quality-ruff-<ver>.json, quality-mypy-<ver>.xml (per Python version), evidence.json
    │   └─ sbom/              # sbom.cdx.json
    └─ README.md              # human orientation for the archive
 ```
@@ -226,13 +260,13 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
       "conclusion": "success",
       "tools": [{ "name": "codeql", "version": "..." }],
       "metrics": { "findings_by_severity": { "critical": 0, "high": 0 } },
-      "files": [{ "path": "gates/security/codeql.sarif", "sha256": "..." }]
+      "files": [{ "path": "gates/security/python.sarif", "sha256": "..." }]
     },
     {
       "name": "test",
       "conclusion": "success",
       "metrics": { "coverage_pct": 100, "tests": 1423 },
-      "files": [{ "path": "gates/test/coverage.xml", "sha256": "..." }]
+      "files": [{ "path": "gates/test/coverage-3.14.xml", "sha256": "..." }]
     }
   ],
   "missing_gates": []
@@ -248,6 +282,12 @@ the provenance anchor, and a per-gate summary with per-file `sha256`:
 | `generated_at`   | ISO-8601 timestamp, injected by the CD environment.                     |
 | `gates`          | Per-gate record: `name`, `conclusion`, `tools`, `metrics`, and `files` (each with `path` and `sha256`). |
 | `missing_gates`  | Names of required gates that produced no evidence — recorded as data, never silently dropped. |
+
+**Current limitations (shipped state).** As with the `evidence.json` fragment,
+the `metrics` and (for `security`) `tools` values shown are the **intended
+shape**. In the v2.1.195 bundle the manifest ships `metrics: {}` for **every**
+gate and an empty `tools: []` for the `security` gate. The fields are present
+and read by auditors; they populate as producers are updated.
 
 Two trust properties are load-bearing:
 
@@ -292,7 +332,7 @@ commit." This is the chain-of-custody core of the mechanism.
 tar -xzf v2.1.129-ci-evidence.tar.gz
 cd evidence
 # For each gate file listed in manifest.json:
-sha256sum gates/security/codeql.sarif
+sha256sum gates/security/python.sarif
 # compare against manifest.json → gates[].files[].sha256
 ```
 
@@ -303,21 +343,29 @@ and that `missing_gates` is empty.
 
 ## Deployment lifecycle
 
-The evidence step is a **hard gate**, introduced in **warning mode** and
-promoted to **enforcing mode** only once it is proven reliable in production:
+The evidence step is a **hard, enforcing gate today.** `evidence-enforce`
+defaults to `true` (as of `vergil-actions` v2.1.27), so evidence-first ordering
+is in force: the step harvests, validates completeness, bundles, attests, and
+attaches — and **substantive incompleteness or any failure is terminal**.
+Incomplete or failed evidence hard-fails the release **before publish**; nothing
+is published without complete, attested evidence for every required gate.
 
-- **Warning mode (initial).** The step runs the full path — harvest → bundle →
-  attest → attach — but on any failure it emits a loud warning and the release
-  proceeds, attaching whatever evidence it gathered. It is timeout-bounded and
-  never aborts a release.
-- **Enforcing mode (end state).** A single, global, human-gated flag flip
-  promotes the gate: evidence-first ordering, substantive incompleteness is
-  terminal, and nothing publishes without complete attested evidence.
+The gate reached enforcing mode through a completed **warning → enforcing**
+lifecycle, now behind us:
 
-Warning mode is a temporary **deployment state of a hard gate — not a permanent
-soft gate.** A permanent soft/report-only gate remains rejected. For the full
-lifecycle, the bake-in window, and the human-gated flip, see epic
-vergil-project/.github#140 (§9.2, §14.1).
+- **Warning mode (historical, initial rollout).** The step ran the full path —
+  harvest → bundle → attest → attach — but on any failure it emitted a loud
+  warning and let the release proceed with whatever evidence it had gathered. It
+  was timeout-bounded and never aborted a release. This was always a temporary
+  **deployment state of a hard gate — not a permanent soft gate.**
+- **Enforcing mode (current state).** After baking ~4 weeks in warning mode and
+  proving reliable, the gate was promoted by a single, global, human-gated flag
+  flip (`evidence-enforce` → `true`). That promotion is complete: the gate now
+  enforces on every release.
+
+A permanent soft/report-only gate was never on the table and remains rejected.
+For the full lifecycle history, the bake-in window, and the human-gated flip,
+see epic vergil-project/.github#140 (§9.2, §14.1).
 
 This safety property is load-bearing on the **all-hard-gates model**: bundling
 everything onto a public Release asset is safe precisely because every gate is a
