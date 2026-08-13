@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -822,6 +823,48 @@ def render_epic_rollup_workflow() -> str:
     )
 
 
+def _ops_cron_minute(org: str, name: str) -> int:
+    """Deterministic per-repo minute in [0,59] for the ops schedule.
+
+    A stable hash of ``<org>/<name>`` spreads scheduled runs across the hour so
+    the fleet does not stampede a single minute as it grows (spec §4, O3). Cron
+    is static YAML, so "randomize" means "derive deterministically per repo."
+    """
+    digest = hashlib.sha256(f"{org}/{name}".encode()).digest()
+    return digest[0] % 60
+
+
+def render_ops_workflow(ctx: RepoInitContext) -> str:
+    """Render .github/workflows/ops.yml — the daily config-audit caller.
+
+    Scheduled minute is staggered per repo (`_ops_cron_minute`); the reusable
+    workflow is pinned to the rolling @v2.1 tag (epic vergil-project/.github#311).
+    """
+    minute = _ops_cron_minute(ctx.org, ctx.name)
+    return (
+        "name: Ops\n"
+        "\n"
+        "on:\n"
+        "  schedule:\n"
+        f"    - cron: '{minute} 6 * * *'\n"
+        "  workflow_dispatch:\n"
+        "\n"
+        "permissions:\n"
+        "  contents: read\n"
+        "  issues: write\n"
+        "\n"
+        "jobs:\n"
+        "  github-config:\n"
+        "    uses: vergil-project/vergil-actions/.github/workflows/ops-github-config.yml@v2.1\n"
+        "    permissions:\n"
+        "      contents: read\n"
+        "      issues: write\n"
+        "    secrets:\n"
+        "      APP_CLIENT_ID: ${{ secrets.APP_CLIENT_ID }}\n"
+        "      APP_PRIVATE_KEY: ${{ secrets.APP_PRIVATE_KEY }}\n"
+    )
+
+
 def render_mkdocs_yml(ctx: RepoInitContext) -> str:
     """Render docs/site/mkdocs.yml."""
     return (
@@ -1256,6 +1299,11 @@ def step_ci_cd_workflows(ctx: RepoInitContext) -> None:
     # vergil-project/.github#75) so a merged task closes and its epic rolls up
     # with no per-command step.
     (workflows_dir / "epic-rollup.yml").write_text(render_epic_rollup_workflow())
+
+    # Daily config-audit caller so every managed repo is born self-policing
+    # (epic vergil-project/.github#311). Staggered per-repo cron avoids a
+    # fleet-wide thundering herd at a single minute.
+    (workflows_dir / "ops.yml").write_text(render_ops_workflow(ctx))
 
     if ctx.publish_docs or ctx.publish_release:
         cd_content = render_cd_workflow(ctx)
