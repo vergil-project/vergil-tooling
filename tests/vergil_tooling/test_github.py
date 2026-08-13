@@ -56,6 +56,42 @@ def test_read_output_returns_stripped_stdout() -> None:
     )
 
 
+def test_missing_token_error_raised_on_gh_token_signature() -> None:
+    err = subprocess.CalledProcessError(
+        4,
+        ("gh", "repo", "view"),
+        output="",
+        stderr=(
+            "gh: To use GitHub CLI in a GitHub Actions workflow, set the "
+            "GH_TOKEN environment variable.\n"
+        ),
+    )
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+        pytest.raises(github.MissingGitHubTokenError),
+    ):
+        github.read_output("repo", "view")
+
+
+def test_generic_gh_error_is_not_a_missing_token_error() -> None:
+    err = subprocess.CalledProcessError(
+        1, ("gh", "repo", "view"), output="", stderr="HTTP 404: Not Found\n"
+    )
+    with (
+        patch("vergil_tooling.lib.retry.subprocess.run", side_effect=err),
+        pytest.raises(github.GitHubAPIError) as excinfo,
+    ):
+        github.read_output("repo", "view")
+    assert not isinstance(excinfo.value, github.MissingGitHubTokenError)
+
+
+def test_missing_token_message_is_actionable() -> None:
+    msg = github.missing_token_message("vrg-roadmap")
+    assert "vrg-roadmap" in msg
+    assert "GH_TOKEN" in msg
+    assert "github.token" in msg
+
+
 def test_current_org_returns_remote_owner() -> None:
     with patch("vergil_tooling.lib.github.current_repo", return_value="logical-minds-foundry/docs"):
         assert github.current_org() == "logical-minds-foundry"

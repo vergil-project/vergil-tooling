@@ -52,6 +52,16 @@ def test_main_reports_missing_installation() -> None:
     assert rc == 1
 
 
+def test_main_reports_missing_token(capsys: pytest.CaptureFixture[str]) -> None:
+    err = github.MissingGitHubTokenError(4, ("gh", "repo", "view"), None, "no token")
+    with patch(f"{_MOD}.github.current_org", side_effect=err):
+        rc = main([])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "no GitHub token" in captured.err
+    assert "GH_TOKEN" in captured.err
+
+
 def test_main_repo_uses_resolved_home() -> None:
     with (
         patch(f"{_MOD}.epics.resolve_epic_home", return_value="org/lab") as mock_home,
