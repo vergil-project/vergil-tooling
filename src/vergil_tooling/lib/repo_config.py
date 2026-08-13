@@ -46,6 +46,29 @@ def _load_settings_template() -> dict[str, Any]:
     return template
 
 
+def _load_gitignore_baseline() -> str:
+    return (
+        importlib.resources.files("vergil_tooling.data")
+        .joinpath("gitignore.baseline")
+        .read_text(encoding="utf-8")
+    )
+
+
+def _gitignore_patterns(text: str) -> list[str]:
+    """Baseline pattern lines: non-comment, non-blank, trailing-ws trimmed.
+
+    Comments and blanks in the baseline are documentation, not requirements
+    (spec §2, resolved O2).
+    """
+    patterns: list[str] = []
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        patterns.append(line)
+    return patterns
+
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []

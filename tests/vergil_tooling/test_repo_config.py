@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from vergil_tooling.lib import repo_config
 from vergil_tooling.lib.repo_config import audit_local_config
 
 if TYPE_CHECKING:
@@ -583,3 +584,18 @@ class TestWorkflowRefs:
         (tmp_path / "vergil.toml").write_text(_MINIMAL_VERGIL_TOML_VER.format(version="v2.0"))
         diff = audit_local_config(tmp_path)
         assert not [i for i in diff.items if i.field == "local.workflow_ref"]
+
+
+def _write_gitignore(p: Path, text: str) -> None:
+    p.write_text(text, encoding="utf-8")
+
+
+class TestGitignorePatterns:
+    def test_strips_comments_blanks_and_trailing_ws(self) -> None:
+        text = "# comment\n\n.venv/  \n  # indented comment\nbuild/\n"
+        assert repo_config._gitignore_patterns(text) == [".venv/", "build/"]
+
+    def test_baseline_has_required_patterns(self) -> None:
+        patterns = repo_config._gitignore_patterns(repo_config._load_gitignore_baseline())
+        for required in (".venv/", ".worktrees/", "quality-ruff.json", "docs/site/site/"):
+            assert required in patterns
