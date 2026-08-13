@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v1.4.8/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v1.4.6/">
+        <link rel="next" href="../v2.1.195/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>1.4.7 - VERGIL Tooling</title>
+        <title>2.1.196 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-147-2026-04-30" class="md-skip">
+        <a href="#release-21196-2026-08-13" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              1.4.7
+              2.1.196
             
           </span>
         </div>
@@ -1258,10 +1258,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.196/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.196
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1277,6 +1304,59 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -9630,37 +9710,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    1.4.7
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v1.4.7/" class="md-nav__link">
         
   
   
@@ -9676,37 +9729,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13586,6 +13608,28 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#features" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Features
+      
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -13603,30 +13647,51 @@
 
 
 
-<h1 id="release-147-2026-04-30">Release 1.4.7 (2026-04-30)<a class="headerlink" href="#release-147-2026-04-30" title="Permanent link">&para;</a></h1>
+<h1 id="release-21196-2026-08-13">Release 2.1.196 (2026-08-13)<a class="headerlink" href="#release-21196-2026-08-13" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
+<li><strong>retry transient GitHub failures on raw git network ops (#2836)</strong>
+A GitHub instability window (SSH auth-backend blips rejecting a valid, static key with 'Permission denied (publickey)', plus a 502 Bad Gateway on 'gh pr merge') turned routine submit/finalize runs into manual-recovery showstoppers. Retry logic existed only around the gh/API path; raw git network operations had none, and the retryable-pattern set matched the literal 'HTTP 502' token but not the '502 Bad Gateway' string gh actually emits.</li>
+</ul>
+<p>Extend lib/retry.py with the missing gateway/transport phrases (bad gateway, service unavailable, gateway timeout, could not read from remote, the remote end hung up, connection closed, kex_exchange_identification, permission denied (publickey)); this alone closes the gh merge-502 gap. Wrap git network subcommands (push/pull/fetch/ls-remote/clone) in lib/git.py and the vrg-git wrapper in the shared 5-attempt jittered backoff; non-network subcommands are never retried. Every retry is announced on stderr so a genuinely non-transient failure (a real auth error, a missing repo) still surfaces and hard-fails after the last attempt, with no silent masking.</p>
+<p>Retrying writes is sound: a push that secretly landed is refused on retry by --force-with-lease, and a landed merge returns a clear already-merged error; the worst case is a clean terminal error, never a double-apply.</p>
+<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>reconcile CI-evidence convention guide with shipped reality (#2830)</strong>
+The guide described the evidence mechanism's planned/rollout state rather than what v2.1.194/195 bundles actually ship. Reconciled against real release bundles: the evidence gate now enforces (evidence-enforce defaults true as of vergil-actions v2.1.27) so the warning-&gt;enforcing lifecycle is described as complete/historical; report files are per-Python-version (coverage-<ver>.xml, junit-<ver>.xml, pip-audit-<ver>.json, licenses-<ver>.json, quality-ruff-<ver>.json, quality-mypy-<ver>.xml) while security SARIF (python.sarif, trivy-results.sarif, semgrep-results.sarif) are not; the bundle tree gains the missing quality/ gate directory and drops htmlcov/ (no longer shipped); completeness now requires report-payload presence per the empty-payload guard (#2812); and the metrics {} / security tools [] residuals are documented honestly as current limitations rather than as done.</li>
+</ul>
+<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
+<ul>
 <li>
-<p><strong>force-update tags on git fetch to prevent stale local state</strong>
-All git fetch calls in st-prepare-release and st-finalize-repo now include --tags --force, ensuring floating tags (e.g. v1.4) are updated even when the remote has force-pushed them.</p>
+<p><strong>surface a clear error when no GitHub token is available (#2832)</strong>
+gh in a runner with no token exits non-zero telling the operator to set GH_TOKEN; previously this reached the operator as a raw GitHubAPIError traceback (e.g. vrg-roadmap in a CD docs-refresh job). Detect gh's no-token stderr in _run_with_retry and raise a distinct MissingGitHubTokenError, and have vrg-roadmap catch it to print an actionable 'set GH_TOKEN' message instead of a traceback. The typed error is centralized so other gh-backed tools can adopt the same handling.</p>
 </li>
 <li>
-<p><strong>add --pull=always to docker run to prevent stale image cache</strong>
-Docker does not check the registry for newer images when a tag
-exists locally. This caused st-docker-run to use a stale
-dev-base:latest with standard-tooling v1.4.1 pre-baked, producing
-spurious repo-profile validation errors. The --pull=always flag
-checks the manifest digest on each run (sub-second) and only
-downloads layers when the image has actually changed.</p>
+<p><strong>centralize baseline .gitignore + self-policing ops audit + scaffold ops.yml (#311) (#2837)</strong></p>
 </li>
 <li>
-<p><strong>use uv run for validation in Python repos during finalization</strong>
-st-finalize-repo ran st-docker-run -- st-validate-local, which
-fails in Python consumer repos because the console script lives
-in the project .venv, not on the container system PATH. Detect
-pyproject.toml and use uv run st-validate-local for Python repos.</p>
+<p>feat(gitignore): add canonical baseline data asset (#311)</p>
+</li>
+<li>
+<p>refactor(repo-init): render_gitignore reads the baseline asset (#311)</p>
+</li>
+<li>
+<p>feat(github-config): add gitignore baseline loader + pattern parser (#311)</p>
+</li>
+<li>
+<p>feat(github-config): audit .gitignore is a superset of the baseline (#311)</p>
+</li>
+<li>
+<p>feat(repo-init): scaffold ops.yml with staggered per-repo cron (#311)</p>
+</li>
+<li>
+<p>feat(github-config): audit ops.yml presence-and-wiring (#311)</p>
+</li>
+<li>
+<p>test(github-config): round-trip scaffolded repo passes new checks; reconcile flagship .gitignore (#311)</p>
 </li>
 </ul>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.196/v2.1.196-ci-evidence.tar.gz">Download →</a></p>
 
 
 
