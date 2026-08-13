@@ -29,22 +29,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.org and args.repo:
         print("vrg-roadmap: --org and --repo are mutually exclusive", file=sys.stderr)
         return 1
-    if args.repo:
-        if "/" not in args.repo:
-            print(
-                f"vrg-roadmap: --repo must be 'owner/repo' (got {args.repo!r})",
-                file=sys.stderr,
-            )
-            return 1
-        owner, bare = args.repo.split("/", 1)
-        org, home = owner, epics.resolve_epic_home(owner, bare)
-    else:
-        org, home = args.org or github.current_org(), None
-    # Scope the App token to the org being read so a cross-org --org/--repo selects
-    # that org's installation, not the cwd repo's (#2070).
+    if args.repo and "/" not in args.repo:
+        print(
+            f"vrg-roadmap: --repo must be 'owner/repo' (got {args.repo!r})",
+            file=sys.stderr,
+        )
+        return 1
+    # Resolve the org/home and render inside one try: every step here shells out
+    # to gh, so a missing token or missing installation must surface as a clean
+    # message, not a traceback. Scope the App token to the org being read so a
+    # cross-org --org/--repo selects that org's installation, not the cwd repo's
+    # (#2070).
     try:
+        if args.repo:
+            owner, bare = args.repo.split("/", 1)
+            org, home = owner, epics.resolve_epic_home(owner, bare)
+        else:
+            org, home = args.org or github.current_org(), None
         with github.target_org(org):
             print(roadmap.render(roadmap.gather(org, home=home), org, home=home))
+    except github.MissingGitHubTokenError:
+        print(github.missing_token_message("vrg-roadmap"), file=sys.stderr)
+        return 1
     except github.NoInstallationError as exc:
         print(f"vrg-roadmap: {github.no_installation_message(exc)}", file=sys.stderr)
         return 1

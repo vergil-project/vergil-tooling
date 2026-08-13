@@ -375,6 +375,39 @@ class GitHubAPIError(subprocess.CalledProcessError):
         return base
 
 
+# gh in a GitHub Actions runner exits non-zero with this guidance when no auth
+# token is present. It is a configuration error (a step that forgot to pass a
+# token), not a tooling bug, so we surface it as a distinct, catchable error
+# with an actionable message instead of a raw traceback. The value is a
+# substring of gh's stderr matched to classify the failure — not a credential,
+# so S105 (which flags the word "token") is a false positive here.
+_MISSING_TOKEN_SIGNATURE = "gh_token environment variable"  # noqa: S105
+
+
+def _is_missing_token_error(stderr: str | None) -> bool:
+    """True when *stderr* is gh's "no token available" message."""
+    return stderr is not None and _MISSING_TOKEN_SIGNATURE in stderr.lower()
+
+
+class MissingGitHubTokenError(GitHubAPIError):
+    """A ``gh`` failure caused solely by the absence of an auth token.
+
+    Distinct from a generic :class:`GitHubAPIError` so entry points can catch
+    it and print :func:`missing_token_message` — a configuration fix — rather
+    than letting a raw traceback reach the operator.
+    """
+
+
+def missing_token_message(tool: str) -> str:
+    """An actionable message for the "no GitHub token" configuration error."""
+    return (
+        f"{tool}: no GitHub token available. Set GH_TOKEN (or GITHUB_TOKEN) in "
+        "the environment. In a GitHub Actions step, add:\n"
+        "    env:\n"
+        "      GH_TOKEN: ${{ github.token }}"
+    )
+
+
 _POLL_INTERVAL_SECS = 5
 # Ceiling for how long the check-poll waiters block on still-PENDING checks
 # before giving up. Real CI here runs 3-8 min, so 180s guaranteed a spurious
@@ -397,6 +430,8 @@ def _run_with_retry(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[st
         return retry.run_with_retry(*args, **kwargs)
     except subprocess.CalledProcessError as exc:
         detail = ((exc.stderr or "") + (exc.stdout or "")).strip()
+        if _is_missing_token_error(exc.stderr):
+            raise MissingGitHubTokenError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
         if detail:
             raise GitHubAPIError(exc.returncode, exc.cmd, exc.stdout, exc.stderr) from exc
         raise
