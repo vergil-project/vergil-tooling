@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from vergil_tooling.lib import git
+from vergil_tooling.lib import git, retry
 
 
 def _completed(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess[str]:
@@ -400,3 +400,96 @@ def test_committer_timestamp_invokes_log_with_dash_c() -> None:
     with patch("vergil_tooling.lib.git.read_output", return_value="1700000000") as mock_ro:
         git.committer_timestamp("/wt")
     mock_ro.assert_called_once_with("-C", "/wt", "log", "-1", "--format=%ct", "HEAD")
+
+
+class TestNetworkRetry:
+    """Retry of transient GitHub failures on raw git network ops (#2835)."""
+
+    _PUBLICKEY = "git@github.com: Permission denied (publickey)."
+    _TRANSPORT = "fatal: Could not read from remote repository."
+
+    def test_run_retries_transient_push_then_succeeds(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(255, ("git", "push"), stderr=self._PUBLICKEY)
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        ):
+            m_progress.run.side_effect = [err, err, 0]
+            git.run("push", "--force-with-lease", "-u", "origin", "feature/x")
+        assert m_progress.run.call_count == 3
+        assert m_sleep.call_count == 2
+        # "loudly": every retry is announced so a real auth failure surfaces.
+        assert "retrying" in capsys.readouterr().err
+
+    def test_run_does_not_retry_non_network_subcommand(self) -> None:
+        # A retryable-looking stderr must NOT trigger retry for a local op.
+        err = subprocess.CalledProcessError(1, ("git", "status"), stderr=self._PUBLICKEY)
+        with (
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            m_progress.run.side_effect = err
+            git.run("status")
+        assert m_progress.run.call_count == 1
+        m_sleep.assert_not_called()
+
+    def test_run_raises_after_max_retries_on_persistent_transient(self) -> None:
+        err = subprocess.CalledProcessError(128, ("git", "fetch"), stderr=self._TRANSPORT)
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            m_progress.run.side_effect = err
+            git.run("fetch", "origin", "develop")
+        assert m_progress.run.call_count == retry.MAX_RETRIES + 1
+        assert m_sleep.call_count == retry.MAX_RETRIES
+
+    def test_run_raises_immediately_on_non_transient_network_error(self) -> None:
+        err = subprocess.CalledProcessError(
+            1, ("git", "push"), stderr="! [rejected] main -> main (non-fast-forward)"
+        )
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.progress") as m_progress,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            m_progress.run.side_effect = err
+            git.run("push", "origin", "main")
+        assert m_progress.run.call_count == 1
+        m_sleep.assert_not_called()
+
+    def test_read_output_retries_ls_remote_transient_then_succeeds(self) -> None:
+        err = subprocess.CalledProcessError(128, ("git", "ls-remote"), stderr=self._TRANSPORT)
+        err.stdout = ""
+        ok = _completed(stdout="deadbeef\trefs/heads/main\n")
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.subprocess.run", side_effect=[err, ok]) as m_run,
+            patch("vergil_tooling.lib.git.time.sleep") as m_sleep,
+        ):
+            out = git.read_output("ls-remote", "--heads", "origin")
+        assert m_run.call_count == 2
+        assert m_sleep.call_count == 1
+        assert "refs/heads/main" in out
+
+    def test_read_output_ls_remote_raises_after_max_and_prints_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        err = subprocess.CalledProcessError(128, ("git", "ls-remote"), stderr=self._TRANSPORT)
+        err.stdout = ""
+        with (
+            patch("vergil_tooling.lib.git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.lib.git.subprocess.run", side_effect=err) as m_run,
+            patch("vergil_tooling.lib.git.time.sleep"),
+            pytest.raises(subprocess.CalledProcessError),
+        ):
+            git.read_output("ls-remote", "--heads", "origin")
+        assert m_run.call_count == retry.MAX_RETRIES + 1
+        assert "Could not read from remote" in capsys.readouterr().err

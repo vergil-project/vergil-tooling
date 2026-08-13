@@ -6,15 +6,51 @@ import base64
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from vergil_tooling.lib import github, progress
+from vergil_tooling.lib import github, progress, retry
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # Subcommands that may contact the remote and therefore need the installation
 # token. "remote" is included because `git remote prune`/`update` ls-remote the
 # origin to compute stale refs — a network op — even though most `git remote`
 # subcommands are local (#1830).
 _REMOTE_SUBCOMMANDS: set[str] = {"push", "pull", "fetch", "ls-remote", "remote"}
+
+# Subcommands whose transient GitHub failures we retry (#2835). A subset of
+# _REMOTE_SUBCOMMANDS: "remote" is excluded because `git remote prune` is
+# finalize-time cleanup, out of the approved retry scope. Each transfers to or
+# from GitHub, so a 502/SSH-backend blip should be ridden out rather than
+# becoming a manual-recovery showstopper.
+_RETRYABLE_SUBCOMMANDS: frozenset[str] = frozenset({"push", "pull", "fetch", "ls-remote", "clone"})
+
+
+def _retry_network[T](subcommand: str, run_once: Callable[[], T]) -> T:
+    """Invoke *run_once* for a network *subcommand*, retrying transient failures.
+
+    *run_once* runs the command once and raises ``CalledProcessError`` on
+    failure. Every retry is announced on stderr so a genuinely non-transient
+    failure (e.g. a real SSH auth error, not a GitHub backend blip) still
+    surfaces before the final raise — no silent masking (#2835).
+    """
+    for attempt in range(retry.MAX_RETRIES + 1):
+        try:
+            return run_once()
+        except subprocess.CalledProcessError as exc:
+            if attempt == retry.MAX_RETRIES or not retry.is_retryable(exc):
+                raise
+            delay = retry.compute_delay(attempt)
+            print(
+                f"git {subcommand}: transient GitHub failure, retrying in "
+                f"{delay:.1f}s (attempt {attempt + 1}/{retry.MAX_RETRIES + 1})",
+                file=sys.stderr,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def _git_auth_env(token: str) -> dict[str, str]:
@@ -49,21 +85,44 @@ def _git_env(args: tuple[str, ...]) -> dict[str, str]:
 
 
 def run(*args: str) -> None:
-    """Run a git command, streaming output, and raise on failure."""
-    progress.run(("git", *args), env=_git_env(args))
+    """Run a git command, streaming output, and raise on failure.
+
+    Network subcommands (push/pull/fetch/ls-remote/clone) are retried on
+    transient GitHub failures; every other subcommand runs exactly once (#2835).
+    """
+    env = _git_env(args)
+
+    def _once() -> int:
+        return progress.run(("git", *args), env=env)
+
+    if args and args[0] in _RETRYABLE_SUBCOMMANDS:
+        _retry_network(args[0], _once)
+    else:
+        _once()
 
 
 def read_output(*args: str) -> str:
-    """Run a git command and return stripped stdout."""
+    """Run a git command and return stripped stdout.
+
+    Network subcommands (e.g. ``ls-remote``) are retried on transient GitHub
+    failures; every other subcommand runs exactly once (#2835).
+    """
     env = _git_env(args)
-    try:
-        result = subprocess.run(  # noqa: S603
+
+    def _once() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(  # noqa: S603
             ("git", *args),  # noqa: S607
             check=True,
             text=True,
             capture_output=True,
             env=env,
         )
+
+    try:
+        if args and args[0] in _RETRYABLE_SUBCOMMANDS:
+            result = _retry_network(args[0], _once)
+        else:
+            result = _once()
     except subprocess.CalledProcessError as exc:
         if exc.stderr:
             print(exc.stderr, end="", file=sys.stderr)

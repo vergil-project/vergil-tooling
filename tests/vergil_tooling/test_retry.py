@@ -56,6 +56,30 @@ class TestIsRetryable:
     @pytest.mark.parametrize(
         "stderr",
         [
+            # gh's 502/503/504 phrasing during the 2026-08-13 incident, which
+            # carries no "HTTP <code>" token so the code-only patterns miss it.
+            'non-200 OK status code: 502 Bad Gateway body: "<html>..."',
+            "502 Bad Gateway",
+            "error: 503 Service Unavailable",
+            "504 Gateway Timeout",
+            "504 Gateway Time-out",
+            # raw git transport transients (git never reached retry before #2835)
+            "fatal: Could not read from remote repository.",
+            "fatal: the remote end hung up unexpectedly",
+            "Connection closed by 140.82.112.3 port 22",
+            "kex_exchange_identification: Connection closed by remote host",
+            # SSH auth backend hiccup rejecting a valid, static key: retried
+            # loudly per the issue #2835 decision (a real misconfig still
+            # surfaces after the loud retries and the final raise).
+            "git@github.com: Permission denied (publickey).",
+        ],
+    )
+    def test_retryable_transport_and_incident_errors(self, stderr: str) -> None:
+        assert retry.is_retryable(_api_error(stderr=stderr)) is True
+
+    @pytest.mark.parametrize(
+        "stderr",
+        [
             "HTTP 404 Not Found",
             "HTTP 422 Unprocessable Entity",
             "GraphQL: Pull request is not mergeable (mergePullRequest)",
