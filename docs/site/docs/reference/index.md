@@ -18,6 +18,8 @@ the dev-tree override venv.
 | [vrg-prepare-release](dev/prepare-release.md) | Automated release preparation |
 | [vrg-finalize-pr](dev/finalize-pr.md) | Merge a PR and run post-merge cleanup |
 | [vrg-ensure-label](cli-tools-overview.md#vrg-ensure-label) | Ensure GitHub labels exist |
+| [vrg-github-repo-config](config-audit.md) | Audit/reconcile a repo against canonical config |
+| [vrg-github-repo-init](cli-tools-overview.md#vrg-github-repo-init) | Bootstrap a new managed repository |
 | [vrg-container-run](cli-tools-overview.md#vrg-container-run) | Run commands inside a dev container |
 | [vrg-container-test](cli-tools-overview.md#vrg-container-test) | Run test suite inside a dev container |
 | [vrg-container-docs](cli-tools-overview.md#vrg-container-docs) | Preview/build MkDocs in a dev container |
