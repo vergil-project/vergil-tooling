@@ -69,6 +69,30 @@ def _gitignore_patterns(text: str) -> list[str]:
     return patterns
 
 
+def _check_gitignore(repo_root: Path, items: list[DiffItem]) -> None:
+    """Require the repo .gitignore to be a superset of the baseline.
+
+    Every baseline pattern line (`_gitignore_patterns`) must appear verbatim as a
+    line in the repo's .gitignore (trailing whitespace trimmed on both sides).
+    Repos may add any extra lines. Matching is verbatim by design — the baseline
+    defines the one canonical spelling per pattern and the fleet is standardized
+    to it (spec §2). (#311)
+    """
+    required = _gitignore_patterns(_load_gitignore_baseline())
+    gitignore = repo_root / ".gitignore"
+    if not gitignore.is_file():
+        present: set[str] = set()
+    else:
+        present = {
+            line.rstrip() for line in gitignore.read_text(encoding="utf-8").splitlines()
+        }
+    for pattern in required:
+        if pattern not in present:
+            items.append(
+                DiffItem(field="local.gitignore", expected=pattern, actual="missing")
+            )
+
+
 def audit_local_config(repo_root: Path) -> ConfigDiff:
     """Run all local config checks against a repo root directory."""
     items: list[DiffItem] = []
@@ -78,6 +102,7 @@ def audit_local_config(repo_root: Path) -> ConfigDiff:
     _check_claude_md(repo_root, items)
     _check_claude_settings(repo_root, items, warnings)
     _check_workflow_refs(repo_root, items)
+    _check_gitignore(repo_root, items)
     return ConfigDiff(items=items, warnings=warnings)
 
 

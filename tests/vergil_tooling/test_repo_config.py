@@ -599,3 +599,38 @@ class TestGitignorePatterns:
         patterns = repo_config._gitignore_patterns(repo_config._load_gitignore_baseline())
         for required in (".venv/", ".worktrees/", "quality-ruff.json", "docs/site/site/"):
             assert required in patterns
+
+
+class TestCheckGitignore:
+    def test_superset_passes(self, tmp_path: Path) -> None:
+        baseline = repo_config._load_gitignore_baseline()
+        _write_gitignore(tmp_path / ".gitignore", baseline + "\n# local\nmy-local-thing/\n")
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
+
+    def test_missing_pattern_fails(self, tmp_path: Path) -> None:
+        _write_gitignore(tmp_path / ".gitignore", ".venv/\n")  # missing almost everything
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        fields = {i.field for i in items}
+        expecteds = {i.expected for i in items}
+        assert fields == {"local.gitignore"}
+        assert ".worktrees/" in expecteds
+        assert all(i.actual == "missing" for i in items)
+
+    def test_absent_file_reports_all(self, tmp_path: Path) -> None:
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        required = repo_config._gitignore_patterns(repo_config._load_gitignore_baseline())
+        assert len(items) == len(required)
+
+    def test_trailing_whitespace_tolerated(self, tmp_path: Path) -> None:
+        baseline = repo_config._load_gitignore_baseline()
+        _write_gitignore(
+            tmp_path / ".gitignore",
+            "\n".join(line + "   " for line in baseline.splitlines()),
+        )
+        items: list = []
+        repo_config._check_gitignore(tmp_path, items)
+        assert items == []
