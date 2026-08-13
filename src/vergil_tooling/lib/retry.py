@@ -1,9 +1,11 @@
-"""Retry logic for transient GitHub API errors.
+"""Retry logic for transient GitHub API and git transport errors.
 
-Shared by ``github.py`` (library wrappers) and ``vrg_gh.py`` (CLI wrapper)
-so both paths handle HTTP 401/502/503/504/429 and ``net/http`` transport
-failures (TLS handshake, i/o timeout, connection refused, DNS lookup,
-EOF) identically.
+Shared by ``github.py`` (library wrappers), ``vrg_gh.py`` (CLI wrapper),
+``git.py`` and ``vrg_git.py`` (raw git network ops) so every path that
+talks to GitHub handles HTTP 401/502/503/504/429, proxy/gateway bodies
+("502 Bad Gateway"), ``net/http`` transport failures (TLS handshake, i/o
+timeout, connection refused, DNS lookup, EOF) and raw git/SSH transport
+drops identically (#2835).
 
 HTTP 401 "Bad credentials" is treated as transient: GitHub's API
 (notably the GraphQL endpoint behind ``gh pr checks --watch``)
@@ -39,6 +41,15 @@ _RETRYABLE_PATTERNS = (
     "http 503",
     "http 504",
     "http 429",
+    # Proxy/gateway phrasings that carry no "HTTP <code>" token: gh emits
+    # "non-200 OK status code: 502 Bad Gateway ..." (and nginx bodies say
+    # "502 Bad Gateway"), which the code-only patterns above miss. This gap
+    # let a 502 fail `gh pr merge` on the first attempt during the 2026-08-13
+    # GitHub incident (#2835).
+    "bad gateway",
+    "service unavailable",
+    "gateway timeout",
+    "gateway time-out",  # nginx's hyphenated 504 wording
     # net/http transport-layer transients (request never reached the app
     # layer, so retrying is safe for writes too)
     "timed out",
@@ -46,9 +57,20 @@ _RETRYABLE_PATTERNS = (
     "tls handshake",
     "connection reset",
     "connection refused",
+    "connection closed",  # SSH transport drop mid-op during an incident
+    "kex_exchange_identification",  # SSH handshake aborted by GitHub's frontend
     "no such host",  # DNS resolution failure
     "server misbehaving",  # Go DNS resolver transient
     "eof",  # "unexpected EOF" / "EOF" mid-request
+    # raw git transport transients — now reachable because git network ops
+    # are wrapped in retry too (#2835), not only the gh/API path.
+    "could not read from remote",
+    "the remote end hung up",
+    # A valid, static SSH key rejected because GitHub's key-lookup backend is
+    # degraded presents identically to a real misconfigured key. Per #2835 we
+    # retry it, but every attempt is announced (see git.py / vrg_git.py), so a
+    # genuine misconfig still surfaces loudly and hard-fails after the last try.
+    "permission denied (publickey)",
 )
 
 

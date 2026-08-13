@@ -18,6 +18,7 @@ from vergil_tooling.bin.vrg_git import (
     _worktree_convention_active,
     main,
 )
+from vergil_tooling.lib import retry
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -850,6 +851,103 @@ class TestPushWorkflowErrorDetection:
             )
             rc = main(["push", "origin", "feature/x"])
         assert rc == 0
+
+
+# -- transient network retry (#2835) ------------------------------------------
+
+
+class TestNetworkRetry:
+    """vrg-git retries transient GitHub failures on network ops (#2835)."""
+
+    _PUBLICKEY = "git@github.com: Permission denied (publickey).\n"
+    _TRANSPORT = "fatal: Could not read from remote repository.\n"
+
+    @staticmethod
+    def _fail(stderr: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["git"], returncode=128, stdout="", stderr=stderr)
+
+    @staticmethod
+    def _ok() -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=["git"], returncode=0, stdout="", stderr="")
+
+    def test_fetch_retries_transient_then_succeeds(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch(
+                "vergil_tooling.bin.vrg_git.subprocess.run",
+                side_effect=[self._fail(self._TRANSPORT), self._ok()],
+            ) as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            rc = main(["fetch", "origin", "develop"])
+        assert rc == 0
+        assert mock_run.call_count == 2
+        assert mock_sleep.call_count == 1
+        assert "retrying" in capsys.readouterr().err
+
+    def test_push_retries_transient_then_succeeds(self, capsys: pytest.CaptureFixture[str]) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            # Skip the pre-push freeze lookup so it does not consume a side_effect.
+            patch("vergil_tooling.bin.vrg_git._current_worktree_root", return_value=None),
+            patch(
+                "vergil_tooling.bin.vrg_git.subprocess.run",
+                side_effect=[self._fail(self._PUBLICKEY), self._fail(self._PUBLICKEY), self._ok()],
+            ) as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            rc = main(["push", "origin", "feature/x"])
+        assert rc == 0
+        assert mock_run.call_count == 3
+        assert mock_sleep.call_count == 2
+
+    def test_persistent_transient_fails_after_max_and_surfaces_stderr(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            mock_run.return_value = self._fail(self._TRANSPORT)
+            rc = main(["fetch", "origin", "develop"])
+        assert rc == 128
+        assert mock_run.call_count == retry.MAX_RETRIES + 1
+        assert mock_sleep.call_count == retry.MAX_RETRIES
+        # The real error still surfaces after the loud retries — no masking.
+        assert "Could not read from remote" in capsys.readouterr().err
+
+    def test_publickey_retried_loudly_then_hard_fails(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep"),
+        ):
+            mock_run.return_value = self._fail(self._PUBLICKEY)
+            rc = main(["push", "origin", "feature/x"])
+        assert rc == 128
+        err = capsys.readouterr().err
+        # Announced on every retry (loud), and the real error is never hidden.
+        assert err.lower().count("retrying") == retry.MAX_RETRIES
+        assert "Permission denied (publickey)" in err
+
+    def test_non_transient_network_error_not_retried(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        with (
+            patch("vergil_tooling.bin.vrg_git.github.get_installation_token", return_value=None),
+            patch("vergil_tooling.bin.vrg_git.subprocess.run") as mock_run,
+            patch("vergil_tooling.bin.vrg_git.time.sleep") as mock_sleep,
+        ):
+            mock_run.return_value = self._fail("fatal: repository not found\n")
+            rc = main(["fetch", "origin", "develop"])
+        assert rc == 128
+        assert mock_run.call_count == 1
+        mock_sleep.assert_not_called()
 
 
 # -- worktree convention -------------------------------------------------------

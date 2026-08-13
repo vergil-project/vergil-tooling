@@ -9,9 +9,10 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
-from vergil_tooling.lib import branch_names, github
+from vergil_tooling.lib import branch_names, github, retry
 from vergil_tooling.lib.git import _git_auth_env, main_worktree_root
 from vergil_tooling.lib.pr_workflow import freeze
 
@@ -491,6 +492,42 @@ def _print_workflow_push_guidance() -> None:
     )
 
 
+def _run_network_with_retry(
+    argv: list[str], env: dict[str, str] | None
+) -> subprocess.CompletedProcess[str]:
+    """Run ``git *argv`` capturing output, retrying transient GitHub failures.
+
+    Returns the final attempt's ``CompletedProcess``. Network ops are captured
+    (not streamed) so their stderr can be inspected for retryable transients —
+    GitHub 502s, SSH-backend blips rejecting a valid key. Every retry is
+    announced on stderr so a genuinely non-transient failure (a real auth error,
+    a missing repo) still surfaces before the final result — no silent masking
+    (#2835).
+    """
+    for attempt in range(retry.MAX_RETRIES + 1):
+        result = subprocess.run(  # noqa: S603
+            ["git", *argv],  # noqa: S607
+            check=False,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0 or attempt == retry.MAX_RETRIES:
+            return result
+        exc = subprocess.CalledProcessError(
+            result.returncode, ("git", *argv), output=result.stdout, stderr=result.stderr
+        )
+        if not retry.is_retryable(exc):
+            return result
+        delay = retry.compute_delay(attempt)
+        sys.stderr.write(
+            f"vrg-git {argv[0]}: transient GitHub failure, retrying in "
+            f"{delay:.1f}s (attempt {attempt + 1}/{retry.MAX_RETRIES + 1})\n"
+        )
+        time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
 def _print_help() -> None:
     """Print vrg-git's own help — what the wrapper enforces before forwarding."""
     denied = ", ".join(sorted(_DENIED))
@@ -619,19 +656,20 @@ def main(argv: list[str] | None = None) -> int:
     if subcmd == "rebase":
         env = _noninteractive_rebase_env(env)
 
-    if subcmd == "push":
-        push_result = subprocess.run(  # noqa: S603
-            ["git", *argv],  # noqa: S607
-            check=False,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
-        if push_result.stdout:
-            sys.stdout.write(push_result.stdout)
-        if push_result.stderr:
-            sys.stderr.write(push_result.stderr)
-        if push_result.returncode != 0 and _WORKFLOW_PERMISSION_RE.search(push_result.stderr or ""):
+    if subcmd in _REMOTE_SUBCOMMANDS:
+        # Network op: capture output so its stderr can be inspected for
+        # retryable transients (GitHub 502s, SSH-backend blips), and ride
+        # those out instead of failing the first attempt (#2835).
+        net_result = _run_network_with_retry(argv, env)
+        if net_result.stdout:
+            sys.stdout.write(net_result.stdout)
+        if net_result.stderr:
+            sys.stderr.write(net_result.stderr)
+        if (
+            subcmd == "push"
+            and net_result.returncode != 0
+            and _WORKFLOW_PERMISSION_RE.search(net_result.stderr or "")
+        ):
             # A workflow-file push refusal is expected and routine: the agent
             # never pushes a workflow branch — the human's vrg-submit-pr does,
             # at submit time. Warn and report success so the agent proceeds to
@@ -639,7 +677,7 @@ def main(argv: list[str] | None = None) -> int:
             # (#2540). Any other push failure keeps its original returncode.
             _print_workflow_push_guidance()
             return 0
-        return push_result.returncode
+        return net_result.returncode
 
     result = subprocess.run(["git", *argv], check=False, env=env)  # noqa: S603, S607
     return result.returncode
