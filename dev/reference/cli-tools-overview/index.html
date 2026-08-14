@@ -14,7 +14,7 @@
         <link rel="prev" href="../">
       
       
-        <link rel="next" href="../vm-spec/">
+        <link rel="next" href="../config-audit/">
       
       
         
@@ -10217,6 +10217,8 @@
       
         
       
+        
+      
     
     
     
@@ -10452,6 +10454,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-github-repo-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-github-repo-config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-github-repo-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-github-repo-init
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -10677,6 +10701,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../config-audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitHub Config Audit
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../vm-spec/" class="md-nav__link">
         
   
@@ -10753,10 +10805,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
             
   
   
@@ -10774,8 +10826,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10850,10 +10902,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
             
   
   
@@ -10871,8 +10923,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10981,10 +11033,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
             
   
   
@@ -11002,8 +11054,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -14001,6 +14053,28 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#vrg-github-repo-config" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-github-repo-config
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vrg-github-repo-init" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        vrg-github-repo-init
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#vrg-container-run" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -14615,6 +14689,91 @@ and project (discover repos via a GitHub Project and sync each).</p>
 <tr>
 <td>Exit codes</td>
 <td>0 success</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-github-repo-config">vrg-github-repo-config<a class="headerlink" href="#vrg-github-repo-config" title="Permanent link">&para;</a></h3>
+<p>Audit a managed repo against the canonical Vergil configuration, and
+in <code>apply</code> mode reconcile the GitHub half. Combines local filesystem
+checks (<code>vergil.toml</code>, <code>CLAUDE.md</code>, <code>.claude/settings.json</code>, hook-guard
+shim, workflow pins, <code>.gitignore</code> baseline superset, <code>ops.yml</code> wiring)
+with GitHub-API checks (repo settings, rulesets, required-check set).
+Runs nightly from each repo's <code>ops.yml</code> via the reusable
+<code>ops-github-config.yml</code> workflow, where drift is fatal. See the
+<a href="../config-audit/">GitHub Config Audit reference</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_github_repo_config</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>audit</code> | <code>diff</code> | <code>apply</code>; <code>--repo OWNER/REPO</code>, <code>--config PATH</code></td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td>Local checks require the repo's own checkout as CWD; GitHub checks require <code>gh</code> credentials</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td><code>DiffItem</code> list on drift; clean diagnostic on unreachable GitHub state</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 compliant, 1 non-compliant (drift), 2 audit could not complete</td>
+</tr>
+<tr>
+<td>Status</td>
+<td>Active</td>
+</tr>
+</tbody>
+</table>
+<h3 id="vrg-github-repo-init">vrg-github-repo-init<a class="headerlink" href="#vrg-github-repo-init" title="Permanent link">&para;</a></h3>
+<p>Interactive (or <code>--non-interactive</code>) wizard that bootstraps a new
+managed repository: creates and clones the repo, generates
+<code>vergil.toml</code>, scaffolds config files (<code>CLAUDE.md</code>, hook-guard shim,
+the baseline <code>.gitignore</code>), CI/CD/epic-rollup/<code>ops.yml</code> workflows, the
+docs site, branch structure, GitHub config, and Pages. The scaffolded
+<code>.gitignore</code> and staggered-cron <code>ops.yml</code> make a new repo pass the
+config audit's two baseline checks from day one.</p>
+<table>
+<thead>
+<tr>
+<th>Attribute</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Source</td>
+<td><code>vergil_tooling.bin.vrg_github_repo_init</code></td>
+</tr>
+<tr>
+<td>Args</td>
+<td><code>org/name</code> positional; <code>--adopt</code>, <code>--non-interactive</code>, <code>--target-dir</code>, and per-field overrides (<code>--primary-language</code>, <code>--repository-type</code>, …)</td>
+</tr>
+<tr>
+<td>Preconditions</td>
+<td><code>gh</code> and <code>git</code> on PATH; run from the org-layout parent (or pass <code>--target-dir</code>)</td>
+</tr>
+<tr>
+<td>Failure mode</td>
+<td>Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values</td>
+</tr>
+<tr>
+<td>Exit codes</td>
+<td>0 success, 1 error</td>
 </tr>
 <tr>
 <td>Status</td>
