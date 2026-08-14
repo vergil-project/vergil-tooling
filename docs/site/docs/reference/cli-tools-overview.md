@@ -190,6 +190,45 @@ and project (discover repos via a GitHub Project and sync each).
 | Exit codes | 0 success |
 | Status | Active |
 
+### vrg-github-repo-config
+
+Audit a managed repo against the canonical Vergil configuration, and
+in `apply` mode reconcile the GitHub half. Combines local filesystem
+checks (`vergil.toml`, `CLAUDE.md`, `.claude/settings.json`, hook-guard
+shim, workflow pins, `.gitignore` baseline superset, `ops.yml` wiring)
+with GitHub-API checks (repo settings, rulesets, required-check set).
+Runs nightly from each repo's `ops.yml` via the reusable
+`ops-github-config.yml` workflow, where drift is fatal. See the
+[GitHub Config Audit reference](config-audit.md).
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_github_repo_config` |
+| Args | `audit` \| `diff` \| `apply`; `--repo OWNER/REPO`, `--config PATH` |
+| Preconditions | Local checks require the repo's own checkout as CWD; GitHub checks require `gh` credentials |
+| Failure mode | `DiffItem` list on drift; clean diagnostic on unreachable GitHub state |
+| Exit codes | 0 compliant, 1 non-compliant (drift), 2 audit could not complete |
+| Status | Active |
+
+### vrg-github-repo-init
+
+Interactive (or `--non-interactive`) wizard that bootstraps a new
+managed repository: creates and clones the repo, generates
+`vergil.toml`, scaffolds config files (`CLAUDE.md`, hook-guard shim,
+the baseline `.gitignore`), CI/CD/epic-rollup/`ops.yml` workflows, the
+docs site, branch structure, GitHub config, and Pages. The scaffolded
+`.gitignore` and staggered-cron `ops.yml` make a new repo pass the
+config audit's two baseline checks from day one.
+
+| Attribute | Value |
+|---|---|
+| Source | `vergil_tooling.bin.vrg_github_repo_init` |
+| Args | `org/name` positional; `--adopt`, `--non-interactive`, `--target-dir`, and per-field overrides (`--primary-language`, `--repository-type`, …) |
+| Preconditions | `gh` and `git` on PATH; run from the org-layout parent (or pass `--target-dir`) |
+| Failure mode | Loud refusal on a foreign-repo CWD, an occupied clone path, or missing required non-interactive values |
+| Exit codes | 0 success, 1 error |
+| Status | Active |
+
 ### vrg-container-run
 
 Run arbitrary commands inside a dev container. Auto-detects the

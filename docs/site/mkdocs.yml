@@ -65,6 +65,7 @@ nav:
   - Script Reference:
       - Overview: reference/index.md
       - CLI Tools Overview: reference/cli-tools-overview.md
+      - GitHub Config Audit: reference/config-audit.md
       - VM Spec ([vm]): reference/vm-spec.md
       - Container Config ([container]): reference/container-config.md
       - Hook Guard:
