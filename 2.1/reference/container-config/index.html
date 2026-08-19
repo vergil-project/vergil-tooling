@@ -1190,6 +1190,8 @@
       
         
       
+        
+      
     
     
     
@@ -1242,6 +1244,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.197/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.197
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -10015,7 +10045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -10043,7 +10073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -10217,6 +10247,8 @@
       
         
       
+        
+      
     
     
     
@@ -10289,6 +10321,34 @@
     
   
     CLI Tools Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitHub Config Audit
   
 
     
@@ -10609,10 +10669,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
             
   
   
@@ -10630,8 +10690,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10706,10 +10766,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
             
   
   
@@ -10727,8 +10787,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10837,10 +10897,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
             
   
   
@@ -10858,8 +10918,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13950,10 +14010,10 @@ container, <code>system-packages</code> declares Debian packages installed <stro
 is built (with <code>build-cache-files</code> naming the inputs that invalidate the cache).</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;CONAN_AUDIT_PROVIDER_TOKEN&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;lilypond&quot;</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;npm install -g @coderline/alphatab&quot;</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;package-lock.json&quot;</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"CONAN_AUDIT_PROVIDER_TOKEN"</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
 </code></pre></div>
 <h2 id="keys">Keys<a class="headerlink" href="#keys" title="Permanent link">&para;</a></h2>
 <table>
@@ -14048,7 +14108,7 @@ for the mechanism in full.</p>
 the CI runner's arch). If a declared package has <strong>no installation candidate</strong>
 for that architecture, the build and the CI setup step both <strong>fail immediately</strong>,
 naming the package and the architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>system package &#39;X&#39; is not installable on linux/arm64 (apt: no installation candidate)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
 </code></pre></div>
 <p>There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.</p>

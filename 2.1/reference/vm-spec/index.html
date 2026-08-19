@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../cli-tools-overview/">
+        <link rel="prev" href="../config-audit/">
       
       
         <link rel="next" href="../container-config/">
@@ -1190,6 +1190,8 @@
       
         
       
+        
+      
     
     
     
@@ -1242,6 +1244,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../releases/v2.1.197/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.197
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -10015,7 +10045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.0/" class="md-nav__link">
+      <a href="../../releases/v1.2.1/" class="md-nav__link">
         
   
   
@@ -10043,7 +10073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../releases/v1.2.1/" class="md-nav__link">
+      <a href="../../releases/v1.2.0/" class="md-nav__link">
         
   
   
@@ -10217,6 +10247,8 @@
       
         
       
+        
+      
     
     
     
@@ -10289,6 +10321,34 @@
     
   
     CLI Tools Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-audit/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    GitHub Config Audit
   
 
     
@@ -10537,10 +10597,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
             
   
   
@@ -10558,8 +10618,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10634,10 +10694,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
             
   
   
@@ -10655,8 +10715,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -10765,10 +10825,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_7" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_8" >
         
           
-          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="">
+          <label class="md-nav__link" for="__nav_4_8" id="__nav_4_8_label" tabindex="">
             
   
   
@@ -10786,8 +10846,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_7">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_8">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -13807,22 +13867,22 @@ design spec
 this page is the key-by-key reference.</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[vm]</span><span class="w">                      </span><span class="c1"># applies to every identity</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;qemu-system-x86&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;libvirt-clients&quot;</span><span class="p">]</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"qemu-system-x86"</span><span class="p">,</span><span class="w"> </span><span class="s2">"libvirt-clients"</span><span class="p">]</span>
 <a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>
 <a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="k">[[vm.apt_repos]]</span><span class="w">          </span><span class="c1"># extra apt repositories (list of tables)</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;hashicorp&quot;</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">key_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://apt.releases.hashicorp.com/gpg&quot;</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;https://apt.releases.hashicorp.com&quot;</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">suite</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;noble&quot;</span>
-<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;main&quot;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"hashicorp"</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">key_url</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://apt.releases.hashicorp.com/gpg"</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">uri</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"https://apt.releases.hashicorp.com"</span>
+<a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">suite</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"noble"</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">components</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"main"</span>
 <a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a>
 <a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="k">[vm.vergil-user]</span><span class="w">          </span><span class="c1"># role overlay: only the vergil-user identity</span>
 <a id="__codelineno-0-12" name="__codelineno-0-12" href="#__codelineno-0-12"></a><span class="n">cpus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;64GiB&quot;</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;300GiB&quot;</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13" href="#__codelineno-0-13"></a><span class="n">memory</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"64GiB"</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14" href="#__codelineno-0-14"></a><span class="n">disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"300GiB"</span>
 <a id="__codelineno-0-15" name="__codelineno-0-15" href="#__codelineno-0-15"></a><span class="n">stale_days</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">7</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">vagrant_plugins</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;vagrant-libvirt&quot;</span><span class="p">]</span>
-<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">port_forwards</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;3000|10.50.0.2:3000&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># local VM port | nested target</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16" href="#__codelineno-0-16"></a><span class="n">vagrant_plugins</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"vagrant-libvirt"</span><span class="p">]</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17" href="#__codelineno-0-17"></a><span class="n">port_forwards</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"3000|10.50.0.2:3000"</span><span class="p">]</span><span class="w">   </span><span class="c1"># local VM port | nested target</span>
 <a id="__codelineno-0-18" name="__codelineno-0-18" href="#__codelineno-0-18"></a><span class="n">nested</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span>
 </code></pre></div>
 <h2 id="precedence">Precedence<a class="headerlink" href="#precedence" title="Permanent link">&para;</a></h2>
@@ -13972,11 +14032,16 @@ halves together:</p>
 <p>A repo with no VM of its own can run its sessions inside another repo's
 dedicated VM:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">[vm]</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">shared_from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;logical-minds-foundry/mq-resiliency-lab&quot;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="n">shared_from</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"logical-minds-foundry/mq-resiliency-lab"</span>
 </code></pre></div>
 <p><code>vrg-vm session &lt;org&gt;/&lt;borrower&gt;</code> then shells into the <strong>lender's</strong> box
-and <code>cd</code>s into the borrower's checkout (the whole projects directory is
-mounted into every VM, so both checkouts are present).</p>
+and <code>cd</code>s into the borrower's checkout. On a <strong>local (Lima)</strong> box both
+checkouts are already present because the whole projects directory is
+mounted into every VM. A <strong>cloud (off-platform)</strong> box has no such mount, so
+the borrower's checkout does not exist until the session creates it: the
+session clones-or-fetches the borrower onto the box's persistent volume
+before homing on it (idempotent and self-healing — no rebuild, and the
+lender's checkout and running services are untouched).</p>
 <ul>
 <li>The value must be a fully-qualified <code>org/repo</code>.</li>
 <li><code>shared_from</code> is the <strong>only</strong> key allowed under <code>[vm]</code> — combining it
@@ -13998,15 +14063,15 @@ and provisioning live in vergil-vm
 design spec is
 <a href="https://github.com/vergil-project/vergil-vm/blob/main/docs/specs/2026-06-19-off-platform-vm-backend-design.md"><code>vergil-vm docs/specs/2026-06-19-off-platform-vm-backend-design.md</code></a>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="k">[vm.vergil-user]</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">backend</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;off-platform&quot;</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">provider</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;gcp&quot;</span><span class="w">              </span><span class="c1"># selects the OpenTofu module</span>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">region</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;us-central1&quot;</span><span class="w">      </span><span class="c1"># provider-native region</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">instance</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;n2-standard-16&quot;</span><span class="w">   </span><span class="c1"># provider-native, nested-virt-capable</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">volume</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;300GiB&quot;</span><span class="w">           </span><span class="c1"># PERSISTENT volume — outlives the VM</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">boot_disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;100GiB&quot;</span><span class="w">           </span><span class="c1"># EPHEMERAL boot disk — optional; dies with the VM</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="n">backend</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="s2">"off-platform"</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">provider</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">"gcp"</span><span class="w">              </span><span class="c1"># selects the OpenTofu module</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">region</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"us-central1"</span><span class="w">      </span><span class="c1"># provider-native region</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="n">instance</span><span class="w">  </span><span class="o">=</span><span class="w"> </span><span class="s2">"n2-standard-16"</span><span class="w">   </span><span class="c1"># provider-native, nested-virt-capable</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="n">volume</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"300GiB"</span><span class="w">           </span><span class="c1"># PERSISTENT volume — outlives the VM</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="n">boot_disk</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"100GiB"</span><span class="w">           </span><span class="c1"># EPHEMERAL boot disk — optional; dies with the VM</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">nested</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="kc">true</span><span class="w">               </span><span class="c1"># /dev/kvm in the cloud box too</span>
 <a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a><span class="n">cpus</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="mi">12</span><span class="w">                 </span><span class="c1"># request / under-provision intent (see below)</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">memory</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;64GiB&quot;</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="n">memory</span><span class="w">    </span><span class="o">=</span><span class="w"> </span><span class="s2">"64GiB"</span>
 </code></pre></div>
 <ul>
 <li>The five keys are <strong>last-wins scalars</strong> that ride the same five-tier
