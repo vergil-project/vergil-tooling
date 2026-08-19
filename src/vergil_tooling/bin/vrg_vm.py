@@ -2418,9 +2418,20 @@ def _cloud_session(target: Target, args: argparse.Namespace) -> int:
     # Claude derives the host's memory slug and finds the projected memory under
     # ~/.claude/projects/<host-slug>/. A symlink from that path onto the /vergil
     # checkout makes the host path resolve in the guest.
-    assert target.org is not None  # noqa: S101 — dedicated cloud target always carries org/repo
-    assert target.repo is not None  # noqa: S101
-    workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, target.org, target.repo)
+    #
+    # #2843: after a [vm] shared_from borrow, target.org/repo are the LENDER's, but the
+    # session must run in the BORROWER's checkout (args.workspace) — the same contract
+    # the Lima path honors. A cloud box has no host mount, so a borrowed repo is absent
+    # until we check it out here: clone-or-fetch it onto the volume (bootstrap_volume,
+    # idempotent and self-healing — no rebuild) before homing the session on it. A repo
+    # that owns its VM was already checked out at create/start, so it is not
+    # re-bootstrapped (no per-session fetch).
+    req_org, req_repo = _workspace_org_repo(args.workspace)
+    assert req_org is not None  # noqa: S101 — dedicated cloud target always carries org/repo
+    assert req_repo is not None  # noqa: S101
+    if (req_org, req_repo) != (target.org, target.repo):
+        vm_cloud.bootstrap_volume(transport, identity, req_org, req_repo)
+    workdir = vm_cloud.ensure_host_path(transport, identity.projects_dir, req_org, req_repo)
     # #2411 (Component 3): project this repo's memory subset (per-repo memory/ +
     # MEMORY.md) and the global CLAUDE.md from the host into the guest at the
     # matching slug, so the cloud session reads canonical host memory rather than a

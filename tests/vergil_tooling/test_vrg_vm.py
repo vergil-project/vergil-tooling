@@ -4187,6 +4187,63 @@ class TestCloudSession:
         assert order.index("link") < order.index("exec")
 
 
+class TestCloudBorrowSession:
+    """#2843: a cloud session that borrows another repo's VM ([vm] shared_from).
+
+    On a cloud box there is no host mount, so the borrower repo is absent until the
+    session checks it out; and the session must home on the borrower's checkout, not
+    the lender's (whose org/repo `target` carries after the borrow redirect).
+    """
+
+    @staticmethod
+    def _borrow_cfg(tmp_path: Path) -> Path:
+        """lmf/lab is an off-platform lender; lmf/tooling borrows its VM."""
+        projects = tmp_path / "projects"
+        _make_repo(projects, "lmf", "lab", _OFF_PLATFORM_VM)
+        _make_repo(projects, "lmf", "tooling", '\n[vm]\nshared_from = "lmf/lab"\n')
+        return _identities(tmp_path, projects)
+
+    def test_borrow_session_homes_on_borrower(self, tmp_path: Path) -> None:
+        # The host-path indirection must be built for the BORROWER (args.workspace),
+        # not the lender lmf/lab that target.org/repo carries after the redirect.
+        cfg = self._borrow_cfg(tmp_path)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/tooling", "--config", str(cfg)])
+        m["ensure_host_path"].assert_called_once()
+        ensure_args = m["ensure_host_path"].call_args.args
+        assert (ensure_args[2], ensure_args[3]) == ("lmf", "tooling")
+
+    def test_borrow_session_checks_out_borrower(self, tmp_path: Path) -> None:
+        # The borrower repo must be cloned-or-fetched onto the volume (bootstrap_volume)
+        # BEFORE the host-path indirection homes the session on it.
+        cfg = self._borrow_cfg(tmp_path)
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            manager = MagicMock()
+            manager.attach_mock(m["bootstrap_volume"], "bootstrap")
+            manager.attach_mock(m["ensure_host_path"], "ensure")
+            manager.attach_mock(transport.exec_session, "exec")
+            main(["session", "lmf/tooling", "--config", str(cfg)])
+        m["bootstrap_volume"].assert_called_once()
+        boot_args = m["bootstrap_volume"].call_args.args
+        assert boot_args[0] is transport
+        assert (boot_args[2], boot_args[3]) == ("lmf", "tooling")
+        order = [name for name, _, _ in manager.mock_calls]
+        assert order.index("bootstrap") < order.index("ensure") < order.index("exec")
+
+    def test_nonborrow_session_skips_bootstrap(self, _cloud_repo: Path, tmp_path: Path) -> None:
+        # A repo that owns its VM was already checked out at create/start, so the
+        # session path must NOT re-bootstrap it (no per-session fetch regression).
+        transport = MagicMock()
+        with _CloudPatches(tmp_path / "state") as m:
+            m["transport"].return_value = transport
+            main(["session", "lmf/cloud", "--config", str(_cloud_repo)])
+        m["bootstrap_volume"].assert_not_called()
+
+
 class TestCloudUpdate:
     def test_cloud_update_in_place_over_iap(self, _cloud_repo: Path, tmp_path: Path) -> None:
         # #1812: a running off-platform box updates IN PLACE over its IAP transport —
