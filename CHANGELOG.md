@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.197] - 2026-08-19
+
+### Bug fixes
+
+- check out and home on the borrower for shared_from cloud sessions (#2844)
+
+### Documentation
+
+- document gitignore baseline + self-policing ops audit (#2833) (#2841)
+
 ## [2.1.196] - 2026-08-13
 
 ### Bug fixes
