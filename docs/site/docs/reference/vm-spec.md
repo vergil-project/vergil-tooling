@@ -104,8 +104,13 @@ shared_from = "logical-minds-foundry/mq-resiliency-lab"
 ```
 
 `vrg-vm session <org>/<borrower>` then shells into the **lender's** box
-and `cd`s into the borrower's checkout (the whole projects directory is
-mounted into every VM, so both checkouts are present).
+and `cd`s into the borrower's checkout. On a **local (Lima)** box both
+checkouts are already present because the whole projects directory is
+mounted into every VM. A **cloud (off-platform)** box has no such mount, so
+the borrower's checkout does not exist until the session creates it: the
+session clones-or-fetches the borrower onto the box's persistent volume
+before homing on it (idempotent and self-healing — no rebuild, and the
+lender's checkout and running services are untouched).
 
 - The value must be a fully-qualified `org/repo`.
 - `shared_from` is the **only** key allowed under `[vm]` — combining it
