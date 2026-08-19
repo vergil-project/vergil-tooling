@@ -13980,10 +13980,10 @@ container, <code>system-packages</code> declares Debian packages installed <stro
 is built (with <code>build-cache-files</code> naming the inputs that invalidate the cache).</p>
 <h2 id="structure">Structure<a class="headerlink" href="#structure" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="k">[container]</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;CONAN_AUDIT_PROVIDER_TOKEN&quot;</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;lilypond&quot;</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;npm install -g @coderline/alphatab&quot;</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;package-lock.json&quot;</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="n">env-prefixes</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"CONAN_AUDIT_PROVIDER_TOKEN"</span><span class="p">]</span><span class="w">   </span><span class="c1"># forward matching host env vars</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">system-packages</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"lilypond"</span><span class="p">]</span><span class="w">                  </span><span class="c1"># install Debian packages</span>
+<a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="n">build-command</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"npm install -g @coderline/alphatab"</span><span class="w">  </span><span class="c1"># provision non-apt deps</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">build-cache-files</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">"package-lock.json"</span><span class="p">]</span><span class="w">       </span><span class="c1"># inputs that invalidate the cache</span>
 </code></pre></div>
 <h2 id="keys">Keys<a class="headerlink" href="#keys" title="Permanent link">&para;</a></h2>
 <table>
@@ -14078,7 +14078,7 @@ for the mechanism in full.</p>
 the CI runner's arch). If a declared package has <strong>no installation candidate</strong>
 for that architecture, the build and the CI setup step both <strong>fail immediately</strong>,
 naming the package and the architecture:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>system package &#39;X&#39; is not installable on linux/arm64 (apt: no installation candidate)
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>system package 'X' is not installable on linux/arm64 (apt: no installation candidate)
 </code></pre></div>
 <p>There is no silent skip and no degraded image — a missing dependency stops the
 build rather than producing a container that fails mysteriously inside a test.</p>

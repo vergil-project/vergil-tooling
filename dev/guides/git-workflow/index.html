@@ -14262,8 +14262,8 @@ you try to commit, so name the branch correctly now.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>vrg-commit<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--type<span class="w"> </span>feat<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--scope<span class="w"> </span>cache<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">&quot;cache computed results&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">&quot;Adds an LRU cache to the computation pipeline...&quot;</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--message<span class="w"> </span><span class="s2">"cache computed results"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--body<span class="w"> </span><span class="s2">"Adds an LRU cache to the computation pipeline..."</span><span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--agent<span class="w"> </span>claude
 </code></pre></div>
 <p><code>vrg-commit</code>:</p>
@@ -14277,15 +14277,15 @@ you try to commit, so name the branch correctly now.</p>
 </ul>
 <p><strong>Multi-line bodies go in a file</strong>, not a heredoc. The plugin blocks
 heredocs in CLI args because they cause escaping bugs:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">&quot;…&quot;</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">&quot;</span><span class="w"> </span>--agent<span class="w"> </span>claude
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>vrg-commit<span class="w"> </span>--type<span class="w"> </span>feat<span class="w"> </span>--message<span class="w"> </span><span class="s2">"…"</span><span class="w"> </span>--body<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/body.txt<span class="k">)</span><span class="s2">"</span><span class="w"> </span>--agent<span class="w"> </span>claude
 </code></pre></div>
 <p>See the <a href="../../reference/dev/commit/">vrg-commit reference</a> for the
 full flag list.</p>
 <h3 id="3-submit-the-pr-with-vrg-submit-pr">3. Submit the PR with <code>vrg-submit-pr</code><a class="headerlink" href="#3-submit-the-pr-with-vrg-submit-pr" title="Permanent link">&para;</a></h3>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>vrg-submit-pr<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>--issue<span class="w"> </span><span class="m">42</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">&quot;Add LRU cache to pipeline&quot;</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--notes<span class="w"> </span><span class="s2">&quot;</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/pr-notes.txt<span class="k">)</span><span class="s2">&quot;</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>--summary<span class="w"> </span><span class="s2">"Add LRU cache to pipeline"</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span>--notes<span class="w"> </span><span class="s2">"</span><span class="k">$(</span>cat<span class="w"> </span>/tmp/pr-notes.txt<span class="k">)</span><span class="s2">"</span>
 </code></pre></div>
 <p><code>vrg-submit-pr</code>:</p>
 <ul>
@@ -14399,7 +14399,7 @@ This section is the user-level "how to."</p>
 <a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a>  CLAUDE.md, src/, docs/, …               ← main worktree (develop)
 <a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>  .worktrees/                             ← gitignored, local-only
 <a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>    issue-42-add-caching/                 ← your worktree, on feature/42-…
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    issue-101-fix-npe/                    ← another agent&#39;s worktree
+<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a>    issue-101-fix-npe/                    ← another agent's worktree
 </code></pre></div>
 <h3 id="launching-a-session-with-a-worktree-assignment">Launching a session with a worktree assignment<a class="headerlink" href="#launching-a-session-with-a-worktree-assignment" title="Permanent link">&para;</a></h3>
 <p><strong>Always start the Claude Code session at the project root</strong>, not
