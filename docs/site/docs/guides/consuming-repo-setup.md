@@ -248,20 +248,21 @@ Every managed repo adopts the worktree convention so multiple
 Claude Code agents can work in parallel without colliding. Two
 tiny changes:
 
-Add `.worktrees/` to your `.gitignore`:
+Make sure `.worktrees/` is in your `.gitignore`. It is already one of
+the entries in the central baseline (see
+[Step 8: Baseline `.gitignore` and config audit](#step-8-baseline-gitignore-and-config-audit)),
+so a repo that carries the baseline superset already has it; the
+plugin's commit-block hook activates against its presence.
 
-```bash
-echo '.worktrees/' >> .gitignore
-```
-
-!!! tip "Gitignore your validation/build output too"
-    Also keep validation and build artifacts (coverage reports, compiled
-    output, cache dirs, temporary venvs) out of the tree via `.gitignore`.
-    Un-gitignored output dirties a worktree, and a *merged* worktree left
+!!! tip "The baseline already ignores your validation/build output"
+    Validation and build artifacts (coverage reports, compiled output,
+    cache dirs, temporary venvs) are part of the central baseline your
+    `.gitignore` must be a superset of. Keeping them ignored matters:
+    un-gitignored output dirties a worktree, and a *merged* worktree left
     dirty is one `vrg-finalize-pr` cannot auto-remove — it surfaces as
     **needs-attention** in `vrg-worktree-status` and requires the opt-in
-    `--clean-dirty` (or a manual clean) to clear. Gitignoring the output
-    up front means merged worktrees sweep automatically.
+    `--clean-dirty` (or a manual clean) to clear. Carrying the full
+    baseline means merged worktrees sweep automatically.
 
 Add a `## Parallel AI agent development` section to your
 `CLAUDE.md`. Every managed repo has one you can copy — they differ
@@ -313,7 +314,46 @@ no further setup is needed in the workflow.
 See the [CI Architecture](ci-architecture.md) guide if you also want
 per-language test/lint/audit tiers.
 
-## Step 8: Verify end-to-end
+## Step 8: Baseline `.gitignore` and config audit
+
+Every managed repo owes two things to the fleet's self-policing config
+audit, and both are checked nightly:
+
+1. **Your `.gitignore` must be a superset of the central baseline.** The
+   baseline is a single source of truth owned by vergil-tooling
+   (`src/vergil_tooling/data/gitignore.baseline`) — the integral of the
+   fleet's ignores (editors, OS, secrets, Vergil internals, all
+   build/validation output, and every managed language's artifacts). Each
+   baseline pattern line must appear **verbatim** in your `.gitignore`;
+   matching is order-independent and you may add any number of local
+   entries below it. Matching is verbatim by design — `.venv/` and
+   `.venv` are not equivalent, so use the canonical baseline spelling.
+
+2. **Your repo must carry a scheduled `ops.yml` wired to the config
+   audit.** `.github/workflows/ops.yml` must call the reusable
+   `ops-github-config.yml` workflow **on a `cron` schedule**. That
+   scheduled job is what runs the audit each night.
+
+Both are **fatal in the nightly audit**: any drift returns exit 1 and
+turns the scheduled `ops.yml` run red. A repo bootstrapped with
+`vrg-github-repo-init` is born conforming — it scaffolds the baseline
+`.gitignore` and a staggered-cron `ops.yml` for you. For an existing
+repo, reconcile `.gitignore` to the baseline superset and add `ops.yml`.
+
+You never bump a pin to receive baseline changes: every repo tracks the
+rolling `vergil-tooling@vX.Y` tag, so a new baseline released under that
+line is picked up automatically on the next nightly run.
+
+Check your repo locally before relying on the nightly run:
+
+```bash
+vrg-github-repo-config audit   # exit 0 compliant, 1 drift, 2 could-not-complete
+```
+
+See the [GitHub Config Audit reference](../reference/config-audit.md)
+for the full check list and the baseline propagation model.
+
+## Step 9: Verify end-to-end
 
 Once the above is in place, sanity-check each layer:
 
