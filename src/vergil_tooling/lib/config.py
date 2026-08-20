@@ -707,6 +707,29 @@ def primary_ci_version(repo_root: Path) -> str | None:
     return cfg.ci.versions[0]
 
 
+def declared_primary_language(repo_root: Path) -> str | None:
+    """Return the repo's asserted ``[project].primary-language``, or ``None``.
+
+    This is the *asserted* language from ``vergil.toml`` — authoritative for
+    container/image selection, exactly as ``vrg-validate`` already trusts it to
+    pick its check pipeline. Asserting the language lets a repo be bootstrapped
+    before any filesystem language markers exist (issue #2858): a freshly created
+    C++ repo declares ``primary-language = "cpp"`` and gets the C++ image
+    immediately, even though it has no ``CMakeLists.txt``/``conanfile`` yet.
+
+    Returns ``None`` — the caller falls back to filesystem detection — when the
+    repo has no ``vergil.toml`` or declares no ``primary-language``. A
+    ``ConfigError`` from a malformed config propagates, matching
+    :func:`primary_ci_version`; a silent default is exactly how the run and
+    validate paths drifted apart in the first place.
+    """
+    try:
+        cfg = read_config(repo_root)
+    except FileNotFoundError:
+        return None
+    return cfg.project.primary_language
+
+
 def container_env_prefixes(repo_root: Path) -> list[str]:
     """Return ``[container].env-prefixes`` from vergil.toml, or ``[]``."""
     try:

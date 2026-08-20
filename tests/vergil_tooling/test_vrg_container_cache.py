@@ -157,7 +157,7 @@ def test_status_no_cache_with_expected_tag(
             return_value=("sha256:abc", True),
         ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=None),
-        patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_container_cache.resolve_language", return_value="go"),
         patch(
             "vergil_tooling.bin.vrg_container_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
@@ -189,7 +189,7 @@ def test_status_current(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> N
             return_value=("sha256:abc", True),
         ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_container_cache.resolve_language", return_value="go"),
         patch(
             "vergil_tooling.bin.vrg_container_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
@@ -214,7 +214,7 @@ def test_status_stale(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> Non
             return_value=("sha256:abc", True),
         ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_container_cache.resolve_language", return_value="go"),
         patch(
             "vergil_tooling.bin.vrg_container_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",
@@ -246,7 +246,7 @@ def test_status_stale_when_base_digest_changes(
             return_value=("sha256:NEW", True),
         ),
         patch("vergil_tooling.bin.vrg_container_cache.find_cached_image", return_value=cached),
-        patch("vergil_tooling.bin.vrg_container_cache.detect_language", return_value="go"),
+        patch("vergil_tooling.bin.vrg_container_cache.resolve_language", return_value="go"),
         patch(
             "vergil_tooling.bin.vrg_container_cache.default_image",
             return_value="ghcr.io/r/dev-go:1.26",

@@ -24,8 +24,8 @@ from vergil_tooling.lib.container import (
     assert_runtime_available,
     build_container_args,
     default_image,
-    detect_language,
     detect_runtime,
+    resolve_language,
 )
 from vergil_tooling.lib.container_cache import ensure_cached_image
 
@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
 
     runtime = detect_runtime()
     repo_root = git.repo_root()
-    lang = detect_language(repo_root)
+    lang = resolve_language(repo_root)
     command = _apply_validation_override(command, repo_root)
 
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
