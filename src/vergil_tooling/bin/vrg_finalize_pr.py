@@ -56,7 +56,7 @@ from vergil_tooling.lib import (
     worktrees,
 )
 from vergil_tooling.lib.confirm import add_yes_argument, confirm
-from vergil_tooling.lib.container import detect_language
+from vergil_tooling.lib.container import resolve_language
 from vergil_tooling.lib.container_cache import (
     clean_branch_images,
     provision_dev_image,
@@ -983,7 +983,7 @@ def _stage_provision(ctx: FinalizeContext) -> None:
         print("  [dry-run] provision dev image for the target branch")
         return
     print("Provisioning dev image for post-finalization validation...")
-    lang = detect_language(ctx.root)
+    lang = resolve_language(ctx.root)
     try:
         image, source = provision_dev_image(ctx.root, lang)
     except RuntimeError as exc:

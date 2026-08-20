@@ -20,6 +20,7 @@ from vergil_tooling.lib.container import (
     detect_language,
     detect_runtime,
     docker_platform,
+    resolve_language,
     workspace_mount_args,
     worktree_parent_gitdir,
 )
@@ -152,6 +153,73 @@ def test_detect_typescript_non_object_package_json_not_detected(tmp_path: Path) 
     # a TypeScript marker and must not crash detection.
     (tmp_path / "package.json").write_text('["typescript"]')
     assert detect_language(tmp_path) == ""
+
+
+# -- resolve_language ---------------------------------------------------------
+
+# A minimal valid vergil.toml whose [project].primary-language we vary per test.
+_RESOLVE_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "{lang}"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["{version}"]
+"""
+
+
+def _write_vergil(tmp_path: Path, *, lang: str, version: str = "3.14") -> None:
+    (tmp_path / "vergil.toml").write_text(_RESOLVE_TOML.format(lang=lang, version=version))
+
+
+def test_resolve_language_asserted_wins_without_markers(tmp_path: Path) -> None:
+    # The bootstrap case (issue #2858): a repo declares cpp but has none of the
+    # C++ filesystem markers yet. The asserted language must still resolve to cpp
+    # so the C++ image is selected instead of the base image.
+    _write_vergil(tmp_path, lang="cpp", version="clang-20")
+    assert resolve_language(tmp_path) == "cpp"
+
+
+def test_resolve_language_asserted_wins_over_conflicting_markers(tmp_path: Path) -> None:
+    # An asserted language overrides a conflicting filesystem marker: the repo
+    # declares go but also carries a pyproject.toml.
+    _write_vergil(tmp_path, lang="go")
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    assert resolve_language(tmp_path) == "go"
+
+
+def test_resolve_language_falls_back_to_detection_without_config(tmp_path: Path) -> None:
+    # No vergil.toml: fall back to filesystem detection.
+    (tmp_path / "pyproject.toml").write_text("[project]\n")
+    assert resolve_language(tmp_path) == "python"
+
+
+def test_resolve_language_falls_back_when_language_unset(tmp_path: Path) -> None:
+    # A config that omits primary-language asserts nothing; detection wins.
+    toml = (
+        "[project]\n"
+        'repository-type = "infrastructure"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        "\n[dependencies]\n"
+        'vergil = "v2.0"\n'
+        '\n[ci]\nversions = ["3.14"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    (tmp_path / "Gemfile").write_text("source 'https://rubygems.org'\n")
+    assert resolve_language(tmp_path) == "ruby"
+
+
+def test_resolve_language_empty_when_neither_asserted_nor_detected(tmp_path: Path) -> None:
+    # No config and no markers: empty, exactly like detect_language.
+    assert resolve_language(tmp_path) == ""
 
 
 # -- default_image ------------------------------------------------------------
@@ -389,6 +457,15 @@ def test_workspace_mount_args_non_python_omits_venv_mask(tmp_path: Path) -> None
     args = workspace_mount_args(tmp_path)
     assert args == ["-v", f"{tmp_path}:/workspace", "-w", "/workspace"]
     assert "/workspace/.venv" not in args
+
+
+def test_workspace_mount_args_asserted_python_masks_venv_without_markers(tmp_path: Path) -> None:
+    # The venv mask keys off the asserted language too (issue #2858): a repo that
+    # declares python but has no pyproject.toml marker yet still gets the mask, so
+    # the mount decision matches the image the same asserted language selects.
+    _write_vergil(tmp_path, lang="python")
+    args = workspace_mount_args(tmp_path)
+    assert "/workspace/.venv" in args
 
 
 # -- build_container_args -----------------------------------------------------

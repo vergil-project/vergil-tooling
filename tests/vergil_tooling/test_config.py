@@ -26,6 +26,7 @@ from vergil_tooling.lib.config import (
     container_build_command,
     container_env_prefixes,
     container_system_packages,
+    declared_primary_language,
     parse_vm_stanza,
     primary_ci_version,
     read_config,
@@ -158,6 +159,46 @@ def test_primary_ci_version_propagates_config_error(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text("[invalid\n")
     with pytest.raises(ConfigError):
         primary_ci_version(tmp_path)
+
+
+# -- declared_primary_language (asserted language for container selection) -----
+
+
+def test_declared_primary_language_returns_asserted(tmp_path: Path) -> None:
+    # The asserted [project].primary-language is authoritative for container
+    # selection (issue #2858), independent of any filesystem markers.
+    toml = _VALID_TOML.replace('primary-language = "python"', 'primary-language = "cpp"')
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert declared_primary_language(tmp_path) == "cpp"
+
+
+def test_declared_primary_language_none_when_no_config(tmp_path: Path) -> None:
+    # No vergil.toml: the caller falls back to filesystem detection.
+    assert declared_primary_language(tmp_path) is None
+
+
+def test_declared_primary_language_none_when_unset(tmp_path: Path) -> None:
+    # A config that omits primary-language asserts nothing; the caller falls back.
+    toml = (
+        "[project]\n"
+        'repository-type = "infrastructure"\n'
+        'versioning-scheme = "semver"\n'
+        'branching-model = "library-release"\n'
+        'release-model = "tagged-release"\n'
+        "\n[dependencies]\n"
+        'vergil = "v2.0"\n'
+        '\n[ci]\nversions = ["3.14"]\n'
+    )
+    (tmp_path / "vergil.toml").write_text(toml)
+    assert declared_primary_language(tmp_path) is None
+
+
+def test_declared_primary_language_propagates_config_error(tmp_path: Path) -> None:
+    # A malformed config fails loudly rather than silently defaulting — matching
+    # primary_ci_version (issue #2858).
+    (tmp_path / "vergil.toml").write_text("[invalid\n")
+    with pytest.raises(ConfigError):
+        declared_primary_language(tmp_path)
 
 
 def test_read_config_missing_required_project_field(tmp_path: Path) -> None:
