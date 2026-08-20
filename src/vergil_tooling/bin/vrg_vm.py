@@ -7,6 +7,7 @@ import datetime
 import json
 import os
 import platform
+import posixpath
 import random
 import shlex
 import shutil
@@ -124,6 +125,88 @@ class BorrowError(Exception):
     no VM) and for a MANAGE command invoked against a borrowing repo. Caught in
     main(), which prints the message and returns 1.
     """
+
+
+class CopyPlanError(Exception):
+    """The ``cp`` path arguments do not describe a valid one-direction copy.
+
+    Raised when no paths are given, or when host and guest paths are mixed on the
+    source side (a copy has exactly one host side and one guest side). Caught in
+    main(), which prints the message and returns 1.
+    """
+
+
+@dataclass
+class CopyPlan:
+    """A resolved ``cp`` operation: which direction, which sources, one dest dir.
+
+    ``direction`` is ``"push"`` (host -> guest) or ``"pull"`` (guest -> host).
+    ``sources`` and ``dest`` are fully resolved absolute paths on their respective
+    sides; ``dest`` is always treated as a directory (no rename-on-copy).
+    """
+
+    direction: str
+    sources: list[str]
+    dest: str
+
+
+def _is_guest(token: str) -> bool:
+    """A leading colon marks a guest path (the scp idiom, empty host)."""
+    return token.startswith(":")
+
+
+def _resolve_guest(token: str, workspace_abs: str) -> str:
+    """Resolve a ``:``-prefixed guest token to an absolute guest path.
+
+    ``:`` (or ``:``+relative) anchors under the session workspace dir — the dir a
+    ``session`` lands in — so the default lands where the agent works. ``:/abs``
+    is absolute on the guest.
+    """
+    body = token[1:]
+    if body.startswith("/"):
+        return body
+    if body == "":
+        return workspace_abs
+    return posixpath.join(workspace_abs, body)
+
+
+def _resolve_host(token: str) -> str:
+    """Resolve a host token to an absolute path (``~`` expanded, cwd-relative)."""
+    return str(Path(token).expanduser().resolve())
+
+
+def plan_copy(paths: list[str], workspace_abs: str) -> CopyPlan:
+    """Turn raw ``cp`` path args into a resolved, one-direction :class:`CopyPlan`.
+
+    Grammar: a ``:``-prefixed token is a guest path, everything else a host path.
+    All-host -> push (dest defaults to the workspace dir). All-guest -> pull (dest
+    defaults to the host cwd). A mix -> the last token is the dest and every
+    remaining token must be on the *other* side; mixing sides among the sources is
+    a :class:`CopyPlanError`.
+    """
+    if not paths:
+        msg = "cp needs at least one path"
+        raise CopyPlanError(msg)
+
+    if all(_is_guest(t) for t in paths):
+        return CopyPlan("pull", [_resolve_guest(t, workspace_abs) for t in paths], str(Path.cwd()))
+
+    if all(not _is_guest(t) for t in paths):
+        return CopyPlan("push", [_resolve_host(t) for t in paths], workspace_abs)
+
+    # Mixed: the last token is the dest; the rest must all be on the other side.
+    *rest, last = paths
+    if _is_guest(last):
+        if any(_is_guest(t) for t in rest):
+            msg = "cp: mix of host and guest sources — a copy has one host side and one guest side"
+            raise CopyPlanError(msg)
+        return CopyPlan(
+            "push", [_resolve_host(t) for t in rest], _resolve_guest(last, workspace_abs)
+        )
+    if any(not _is_guest(t) for t in rest):
+        msg = "cp: mix of host and guest sources — a copy has one host side and one guest side"
+        raise CopyPlanError(msg)
+    return CopyPlan("pull", [_resolve_guest(t, workspace_abs) for t in rest], _resolve_host(last))
 
 
 @dataclass
@@ -2530,6 +2613,62 @@ def _cmd_session(args: argparse.Namespace) -> int:
     return 0  # unreachable, keeps the type checker happy
 
 
+def _cp_push(target: Target, transport: Transport, plan: CopyPlan) -> int:
+    """Push host sources into the guest at ``plan.dest`` (always a directory)."""
+    missing = [src for src in plan.sources if not Path(src).exists()]
+    if missing:
+        print(f"ERROR: local source not found: {', '.join(missing)}", file=sys.stderr)
+        return 1
+    # On a cloud box the host-equivalent workspace path is a sudo-created symlink onto
+    # the /vergil checkout (vm_cloud.ensure_host_path); without it a plain mkdir under
+    # the root-owned host prefix would be denied. Idempotent, so it is safe to repeat.
+    if target.spec.off_platform and target.org and target.repo:
+        vm_cloud.ensure_host_path(transport, target.identity.projects_dir, target.org, target.repo)
+    transport.run("bash", "-c", f"mkdir -p {shlex.quote(plan.dest)}")
+    transport.copy_to(plan.sources, plan.dest)
+    print(f"Copied {len(plan.sources)} item(s) into {plan.dest} on the VM.")
+    return 0
+
+
+def _cp_pull(transport: Transport, plan: CopyPlan) -> int:
+    """Pull guest sources to the host at ``plan.dest`` (always a directory)."""
+    Path(plan.dest).mkdir(parents=True, exist_ok=True)
+    transport.copy_from(plan.sources, plan.dest)
+    print(f"Copied {len(plan.sources)} item(s) to {plan.dest}.")
+    return 0
+
+
+def _cmd_cp(args: argparse.Namespace) -> int:
+    """Copy files/dirs between the host and a resolved VM (bidirectional)."""
+    target = _resolve_target(args, borrow_allowed=True)
+    workspace_abs = os.path.normpath(
+        resolve_workspace(args.workspace, target.identity.projects_dir)
+    )
+    plan = plan_copy(args.paths, workspace_abs)
+
+    try:
+        transport = target.backend.transport(target.instance)
+    except RuntimeError:
+        print(
+            f"ERROR: VM for {_target_ref(target)} does not exist yet — "
+            f"create it with: vrg-vm session {_target_ref(target)}",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        if plan.direction == "push":
+            return _cp_push(target, transport, plan)
+        return _cp_pull(transport, plan)
+    except subprocess.CalledProcessError:
+        print(
+            f"ERROR: copy failed — is the VM running and reachable? "
+            f"Start it with: vrg-vm start {_target_ref(target)}",
+            file=sys.stderr,
+        )
+        return 1
+
+
 def _add_identity_args(parser: argparse.ArgumentParser) -> None:
     """Add per-subcommand ``--identity``/``--config`` (placed after the subcommand).
 
@@ -2858,6 +2997,31 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
 
+    p_cp = sub.add_parser(
+        "cp",
+        help="Copy files/dirs between the host and a VM (bidirectional)",
+        description=(
+            "Copy files and directories (always recursive) between the host and the VM "
+            "that <workspace> resolves to. A ':'-prefixed path is on the VM; everything "
+            "else is on the host. All host paths -> push (dest defaults to the session "
+            "workspace dir); a ':'-prefixed source -> pull (dest defaults to the host "
+            "cwd). The destination is always treated as a directory (no rename). "
+            "Examples: 'vrg-vm cp acme/widgets spec.pdf' (into the workspace); "
+            "'vrg-vm cp acme/widgets spec.pdf :docs'; "
+            "'vrg-vm cp acme/widgets :artifacts/out.json .'"
+        ),
+    )
+    _add_identity_args(p_cp)
+    _add_name_arg(p_cp)
+    p_cp.add_argument(
+        "workspace", help="Workspace path relative to projects_dir (use '.' for the root)"
+    )
+    p_cp.add_argument(
+        "paths",
+        nargs="+",
+        help="Source path(s) then optional destination; ':'-prefix marks the VM side.",
+    )
+
     args = parser.parse_args(argv)
     warn_if_off_host()
     if args.command is None:
@@ -2876,10 +3040,11 @@ def main(argv: list[str] | None = None) -> int:
         "list": _cmd_list,
         "volumes": _cmd_volumes,
         "session": _cmd_session,
+        "cp": _cmd_cp,
     }
     try:
         return dispatch[args.command](args)
-    except (BorrowError, SpecError, NotImplementedError) as exc:
+    except (BorrowError, CopyPlanError, SpecError, NotImplementedError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

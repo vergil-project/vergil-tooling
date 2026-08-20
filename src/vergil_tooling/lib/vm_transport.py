@@ -344,6 +344,17 @@ def _shutdown_master(dest: str, control_path: Path) -> None:
         control_path.unlink(missing_ok=True)
 
 
+def _run_transfer(cmd: list[str]) -> None:
+    """Run a file-transfer command (scp / limactl copy / gcloud scp), raising on failure.
+
+    Unlike :func:`_run_checked`, output is *not* captured: the native tool writes its
+    progress meter straight to the terminal so a large copy is visible while it runs. A
+    nonzero exit raises ``CalledProcessError`` for the caller to turn into an actionable
+    message (an unreachable box, a missing source).
+    """
+    subprocess.run(cmd, check=True)  # noqa: S603
+
+
 @runtime_checkable
 class Transport(Protocol):
     """Execute commands inside a guest, regardless of how we reach it."""
@@ -369,6 +380,14 @@ class Transport(Protocol):
     ) -> subprocess.Popen[str]: ...  # pragma: no cover
 
     def exec_session(self, workdir: str, inner: str) -> NoReturn: ...  # pragma: no cover
+
+    def copy_to(self, sources: list[str], dest: str) -> None:
+        """Copy host paths *sources* into the guest at absolute *dest* (a directory)."""
+        ...  # pragma: no cover
+
+    def copy_from(self, sources: list[str], dest: str) -> None:
+        """Copy guest paths *sources* to the host at *dest* (a directory)."""
+        ...  # pragma: no cover
 
     def close(self) -> None:
         """Tear down any shared connection state (no-op for connectionless backends)."""
@@ -442,6 +461,13 @@ class LimaTransport:
             inner,
         ]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
+
+    def copy_to(self, sources: list[str], dest: str) -> None:
+        _run_transfer(["limactl", "copy", "--recursive", *sources, f"{self.instance}:{dest}"])
+
+    def copy_from(self, sources: list[str], dest: str) -> None:
+        remote = [f"{self.instance}:{src}" for src in sources]
+        _run_transfer(["limactl", "copy", "--recursive", *remote, dest])
 
     def close(self) -> None:
         """No persistent connection to tear down — limactl has no control master."""
@@ -543,6 +569,24 @@ class IapTransport:
         cmd = [*self._base(mux=False, forward_term=True), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
+    def _scp_base(self) -> list[str]:
+        return [
+            "gcloud",
+            "compute",
+            "scp",
+            "--recurse",
+            "--tunnel-through-iap",
+            f"--zone={self.zone}",
+            f"--project={self.project}",
+        ]
+
+    def copy_to(self, sources: list[str], dest: str) -> None:
+        _run_transfer([*self._scp_base(), *sources, f"{self.ssh_user}@{self.host}:{dest}"])
+
+    def copy_from(self, sources: list[str], dest: str) -> None:
+        remote = [f"{self.ssh_user}@{self.host}:{src}" for src in sources]
+        _run_transfer([*self._scp_base(), *remote, dest])
+
     def close(self) -> None:
         """Tear down the shared IAP/SSH control master for this box (best effort)."""
         if _mux_disabled():
@@ -627,6 +671,26 @@ class SshTransport:
         # forward_term: carry the terminal env vars so Shift+Enter works (#2848).
         cmd = [*self._base(pty=True, mux=False, forward_term=True), remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
+
+    def _scp_base(self) -> list[str]:
+        return [
+            "scp",
+            "-r",
+            "-i",
+            self.key_path,
+            # accept-new + the vergil known_hosts file, mirroring run()'s host-key handling.
+            "-o",
+            "StrictHostKeyChecking=accept-new",
+            "-o",
+            "UserKnownHostsFile=~/.config/vergil/known_hosts",
+        ]
+
+    def copy_to(self, sources: list[str], dest: str) -> None:
+        _run_transfer([*self._scp_base(), *sources, f"{self.ssh_user}@{self.host}:{dest}"])
+
+    def copy_from(self, sources: list[str], dest: str) -> None:
+        remote = [f"{self.ssh_user}@{self.host}:{src}" for src in sources]
+        _run_transfer([*self._scp_base(), *remote, dest])
 
     def close(self) -> None:
         """Tear down the shared SSH control master for this box (best effort)."""
