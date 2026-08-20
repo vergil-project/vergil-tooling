@@ -188,6 +188,9 @@ def test_branch_protection_pr_rule_details() -> None:
     assert params["required_approving_review_count"] == 0
     assert params["dismiss_stale_reviews_on_push"] is True
     assert params["require_code_owner_review"] is False
+    # GitHub began emitting this default as True server-side; we explicitly
+    # declare it False so the audit owns the setting and keeps it off (#2860).
+    assert params["require_extra_approval_for_unattributed_changes"] is False
 
 
 def test_tag_protection_ruleset() -> None:
