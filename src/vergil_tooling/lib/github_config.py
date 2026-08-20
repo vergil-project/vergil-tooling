@@ -187,6 +187,7 @@ def desired_branch_protection_ruleset() -> DesiredRuleset:
                     "require_code_owner_review": False,
                     "require_last_push_approval": False,
                     "required_review_thread_resolution": False,
+                    "require_extra_approval_for_unattributed_changes": False,
                     "allowed_merge_methods": ["merge", "squash", "rebase"],
                 },
             },
