@@ -331,6 +331,30 @@ class TestIapTransport:
         assert "--ssh-flag=-oServerAliveInterval=15" in cmd
         assert "--ssh-flag=-oConnectTimeout=30" in cmd
 
+    @patch("vergil_tooling.lib.vm_transport.os.execvp")
+    def test_exec_session_forwards_terminal_env(self, mock_execvp: MagicMock) -> None:
+        # #2848: the interactive session forwards the terminal env vars (glued
+        # --ssh-flag form) so Claude Code can detect kitty-keyboard support and
+        # Shift+Enter inserts a newline instead of submitting.
+        IapTransport("inst", "z", "p", "vergil").exec_session("/work", "exec bash")
+        cmd = mock_execvp.call_args[0][1]
+        for name in ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"):
+            assert f"--ssh-flag=-oSendEnv={name}" in cmd
+        # The forwarding flags precede the ``--`` gcloud/ssh argument separator.
+        assert all(
+            cmd.index(f"--ssh-flag=-oSendEnv={name}") < cmd.index("--")
+            for name in ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION")
+        )
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_does_not_forward_terminal_env(self, mock_run: MagicMock) -> None:
+        # Terminal env forwarding is interactive-only: provisioning commands
+        # (run/pipe/popen) never carry it.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z", "p", "vergil").run("echo", "hi", workdir="/work")
+        cmd = mock_run.call_args[0][0]
+        assert not any("SendEnv" in a for a in cmd)
+
     @patch("vergil_tooling.lib.vm_transport.subprocess.Popen")
     def test_popen_streams_over_iap_tunnel(self, mock_popen: MagicMock) -> None:
         IapTransport("inst", "z", "p", "vergil").popen(
@@ -513,6 +537,33 @@ class TestSshTransport:
         assert not any("Control" in a for a in cmd)
         assert "ServerAliveInterval=15" in cmd
         assert "ConnectTimeout=30" in cmd
+
+    @patch("vergil_tooling.lib.vm_transport.os.execvp")
+    def test_exec_session_forwards_terminal_env(self, mock_execvp: MagicMock) -> None:
+        # #2848: forward the terminal env vars (split ``-o SendEnv=`` pairs) so
+        # Claude Code detects kitty-keyboard support and Shift+Enter inserts a
+        # newline instead of submitting.
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").exec_session(
+            "/work", "exec bash"
+        )
+        cmd = mock_execvp.call_args[0][1]
+        host_idx = cmd.index("ubuntu@1.2.3.4")
+        for name in ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION"):
+            assert f"SendEnv={name}" in cmd
+            i = cmd.index(f"SendEnv={name}")
+            assert cmd[i - 1] == "-o"  # split option pair, not glued
+            assert i < host_idx  # options precede user@host
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_run_does_not_forward_terminal_env(self, mock_run: MagicMock) -> None:
+        # Terminal env forwarding is interactive-only: provisioning commands
+        # (run/pipe/popen) never carry it.
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").run(
+            "echo", "hi", workdir="/work"
+        )
+        cmd = mock_run.call_args[0][0]
+        assert not any("SendEnv" in a for a in cmd)
 
 
 _HEX16 = 16
