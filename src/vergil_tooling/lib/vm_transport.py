@@ -23,7 +23,12 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 _DEFAULT_WORKDIR = "/tmp"  # noqa: S108
-_TERMINAL_ENV_VARS = "COLORTERM,TERM_PROGRAM,TERM_PROGRAM_VERSION"
+# Terminal env vars Claude Code reads to detect kitty-keyboard-protocol support;
+# forwarded on interactive sessions so Shift+Enter is distinguishable from a plain
+# Enter over SSH (#2848). Single source of truth: the comma-joined ``_TERMINAL_ENV_VARS``
+# (Lima's ``LIMA_SHELLENV_ALLOW`` allow-list) is derived from the name tuple.
+_TERMINAL_ENV_NAMES: tuple[str, ...] = ("COLORTERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION")
+_TERMINAL_ENV_VARS = ",".join(_TERMINAL_ENV_NAMES)
 
 # Transient-transport retry for the off-platform transports (IAP tunnel, plain
 # ssh). Both ``gcloud compute ssh`` and ``ssh`` exit 255 when the *transport
@@ -71,6 +76,20 @@ def _ssh_keepalive_options() -> list[tuple[str, str]]:
         ("ServerAliveInterval", str(_SSH_ALIVE_INTERVAL)),
         ("ServerAliveCountMax", str(_SSH_ALIVE_COUNT_MAX)),
     ]
+
+
+def _terminal_env_names() -> list[str]:
+    """Terminal env vars forwarded on an interactive off-platform session (#2848).
+
+    Claude Code detects kitty-keyboard-protocol support from ``COLORTERM`` /
+    ``TERM_PROGRAM`` / ``TERM_PROGRAM_VERSION``; without them Shift+Enter and a
+    plain Enter are indistinguishable over SSH (both arrive as ``\\r``) and the
+    prompt just submits. The guest sshd already ``AcceptEnv``s these, and the
+    Lima path forwards them via ``LIMA_SHELLENV_ALLOW`` — the cloud transports
+    forward the same set (from the single ``_TERMINAL_ENV_NAMES`` source of
+    truth) via ssh ``SendEnv``.
+    """
+    return list(_TERMINAL_ENV_NAMES)
 
 
 # Wall-clock backstop on a single guest command. The keepalive options above catch a
@@ -444,7 +463,7 @@ class IapTransport:
         self.project = project
         self.ssh_user = ssh_user
 
-    def _base(self, *, mux: bool = True) -> list[str]:
+    def _base(self, *, mux: bool = True, forward_term: bool = False) -> list[str]:
         # Multiplexing options ride the underlying ssh via ``--ssh-flag``. The
         # glued ``-oKey=Val`` form (no space) is used deliberately: gcloud splits a
         # ``--ssh-flag`` value on spaces, so ``-o ControlPath=…`` would arrive as
@@ -463,6 +482,14 @@ class IapTransport:
         )
         # Connection-liveness bounding (#2202) rides the same glued --ssh-flag form.
         keepalive = [f"--ssh-flag=-o{key}={value}" for key, value in _ssh_keepalive_options()]
+        # Interactive sessions forward the operator's terminal env vars so Claude
+        # Code can detect kitty-keyboard support (Shift+Enter) — one glued
+        # --ssh-flag per var, since gcloud splits a --ssh-flag value on spaces (#2848).
+        term_flags = (
+            [f"--ssh-flag=-oSendEnv={name}" for name in _terminal_env_names()]
+            if forward_term
+            else []
+        )
         return [
             "gcloud",
             "compute",
@@ -473,6 +500,7 @@ class IapTransport:
             f"--project={self.project}",
             *keepalive,
             *mux_flags,
+            *term_flags,
         ]
 
     def run(
@@ -511,7 +539,8 @@ class IapTransport:
         remote = f"cd {workdir} && {inner}"
         # mux=False: the interactive session stays off the shared control socket so a
         # concurrent session's reap-on-start can't tear it down mid-use (#2345).
-        cmd = [*self._base(mux=False), "--", "-t", remote]
+        # forward_term: carry the terminal env vars so Shift+Enter works (#2848).
+        cmd = [*self._base(mux=False, forward_term=True), "--", "-t", remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
     def close(self) -> None:
@@ -535,7 +564,9 @@ class SshTransport:
         self.ssh_user = ssh_user
         self.key_path = key_path
 
-    def _base(self, *, pty: bool = False, mux: bool = True) -> list[str]:
+    def _base(
+        self, *, pty: bool = False, mux: bool = True, forward_term: bool = False
+    ) -> list[str]:
         # Connection-liveness bounding (#2202) + multiplexing, both as split -o pairs.
         # ``mux=False`` (interactive :meth:`exec_session` only) drops the shared control
         # socket so a concurrent session's reap-on-start can't kill the PTY mid-use
@@ -544,6 +575,11 @@ class SshTransport:
         opts: list[str] = []
         for key, value in [*_ssh_keepalive_options(), *mux_opts]:
             opts += ["-o", f"{key}={value}"]
+        # Interactive sessions forward the operator's terminal env vars so Claude
+        # Code can detect kitty-keyboard support (Shift+Enter) over SSH (#2848).
+        if forward_term:
+            for name in _terminal_env_names():
+                opts += ["-o", f"SendEnv={name}"]
         return [
             "ssh",
             *(["-t"] if pty else []),
@@ -588,7 +624,8 @@ class SshTransport:
     def exec_session(self, workdir: str, inner: str) -> NoReturn:
         remote = f"cd {shlex.quote(workdir)} && {inner}"
         # mux=False: keep the interactive session off the shared control socket (#2345).
-        cmd = [*self._base(pty=True, mux=False), remote]
+        # forward_term: carry the terminal env vars so Shift+Enter works (#2848).
+        cmd = [*self._base(pty=True, mux=False, forward_term=True), remote]
         os.execvp(cmd[0], cmd)  # noqa: S606, S607
 
     def close(self) -> None:
