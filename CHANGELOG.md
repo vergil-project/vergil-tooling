@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.199] - 2026-08-21
+
+### Bug fixes
+
+- handle merge-endpoint 'not up to date' rejection, not just the lazy mergeStateStatus precheck (#2857)
+- select dev image from asserted primary-language, not filesystem markers (#2859)
+- declare require_extra_approval_for_unattributed_changes=False in branch-protection ruleset (#2861)
+
+### Features
+
+- add 'vrg-vm cp' to copy files/dirs between host and VM (#2855)
+
 ## [2.1.198] - 2026-08-20
 
 ### Bug fixes
