@@ -141,3 +141,51 @@ def test_update_branch_failure_aborts_cleanly() -> None:
     ):
         wait_and_merge("99", strategy="squash")
     gh.merge.assert_not_called()
+
+
+_NOT_UP_TO_DATE_STDERR = (
+    "Pull request org/repo#278 is not mergeable: the head branch is not up to "
+    "date with the base branch."
+)
+
+
+def test_merge_endpoint_not_up_to_date_updates_and_retries() -> None:
+    """mergeStateStatus lagged (never BEHIND) but the merge endpoint rejects the
+    stale-behind branch — the authoritative rejection must drive update+retry."""
+    gh = _gh(merge_states=["CLEAN", "CLEAN", "CLEAN", "CLEAN"])
+    gh.merge.side_effect = [
+        GitHubAPIError(1, "gh pr merge", stderr=_NOT_UP_TO_DATE_STDERR),
+        None,
+    ]
+    with patch(_MOD + ".github", gh), patch(_MOD + ".time.sleep"):
+        wait_and_merge("99", strategy="squash")
+    gh.update_branch.assert_called_once_with("99")
+    assert gh.merge.call_count == 2
+
+
+def test_merge_endpoint_not_up_to_date_respects_update_cap() -> None:
+    """A merge endpoint that keeps rejecting as behind is bounded by the same
+    branch-update cap as the mergeStateStatus path — it never loops forever."""
+    gh = _gh(merge_states=["CLEAN"] * 40)
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr=_NOT_UP_TO_DATE_STDERR)
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(MergeAbortError, match="still behind"),
+    ):
+        wait_and_merge("99", strategy="squash")
+    assert gh.update_branch.call_count == 5
+
+
+def test_merge_endpoint_unrelated_error_reraises() -> None:
+    """A merge failure that is not a stale-behind rejection is a real error —
+    it must propagate, not be swallowed into an update-and-retry loop."""
+    gh = _gh(merge_states=["CLEAN", "CLEAN"])
+    gh.merge.side_effect = GitHubAPIError(1, "gh pr merge", stderr="required status check failing")
+    with (
+        patch(_MOD + ".github", gh),
+        patch(_MOD + ".time.sleep"),
+        pytest.raises(GitHubAPIError, match="required status check"),
+    ):
+        wait_and_merge("99", strategy="squash")
+    gh.update_branch.assert_not_called()

@@ -1679,7 +1679,7 @@ def test_build_stages_failure_modes() -> None:
 def test_stage_provision_warms_image(tmp_path: Path) -> None:
     ctx = _stage_ctx([], root=tmp_path)
     with (
-        patch(_MOD + ".detect_language", return_value="python"),
+        patch(_MOD + ".resolve_language", return_value="python"),
         patch(
             _MOD + ".provision_dev_image", return_value=("img--develop--abcd1234", "cached")
         ) as prov,
@@ -1693,7 +1693,7 @@ def test_stage_provision_reports_env_override(
 ) -> None:
     ctx = _stage_ctx([], root=tmp_path)
     with (
-        patch(_MOD + ".detect_language", return_value="python"),
+        patch(_MOD + ".resolve_language", return_value="python"),
         patch(_MOD + ".provision_dev_image", return_value=("custom:img", "env")),
     ):
         _stage_provision(ctx)
@@ -1703,7 +1703,7 @@ def test_stage_provision_reports_env_override(
 def test_stage_provision_failure_raises(tmp_path: Path) -> None:
     ctx = _stage_ctx([], root=tmp_path)
     with (
-        patch(_MOD + ".detect_language", return_value="python"),
+        patch(_MOD + ".resolve_language", return_value="python"),
         patch(_MOD + ".provision_dev_image", side_effect=RuntimeError("Cache build failed")),
         pytest.raises(FinalizeError, match="dev-image provisioning failed"),
     ):

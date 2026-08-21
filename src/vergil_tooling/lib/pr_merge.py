@@ -13,6 +13,14 @@ letting a pointless CI run finish:
   iteration — a conflict can arise mid-loop when another PR merges.
 - BEHIND: the current CI run is irrelevant; update-branch cancels it
   and starts a fresh one, so update immediately instead of waiting.
+
+The BEHIND precheck reads ``mergeStateStatus``, which GitHub computes lazily
+and serves stale for a window after the base branch advances — so in a merge
+train (serial batch finalize, issue #1673) a freshly-behind branch can pass the
+precheck and only be caught by the merge endpoint itself, which rejects with
+"the head branch is not up to date with the base branch." That authoritative
+rejection is fed back into the same update-and-retry path rather than surfaced
+as a hard failure (issue #2856).
 """
 
 from __future__ import annotations
@@ -37,6 +45,17 @@ class MergeAbortError(Exception):
     """The PR cannot be merged; the message explains why and what to do."""
 
 
+# Substring of the merge endpoint's rejection when the repo requires branches to
+# be up to date and the head is behind base. This is the authoritative signal the
+# lazily-computed mergeStateStatus precheck can miss in a merge train (issue #2856).
+_BEHIND_REJECTION_SIGNATURE = "not up to date"
+
+
+def _is_behind_rejection(exc: GitHubAPIError) -> bool:
+    """True when a merge rejection means the head branch is behind base."""
+    return _BEHIND_REJECTION_SIGNATURE in (exc.stderr or "").lower()
+
+
 def wait_and_merge(
     pr: str,
     *,
@@ -53,6 +72,29 @@ def wait_and_merge(
     """
     wait = wait_checks if wait_checks is not None else github.wait_for_checks
     updates = 0
+
+    def _update_or_abort() -> None:
+        """Update the behind branch, or abort once the merge-train cap is hit.
+
+        Shared by the mergeStateStatus precheck and the merge endpoint's own
+        stale-behind rejection so both are bounded by one branch-update cap.
+        """
+        nonlocal updates
+        updates += 1
+        if updates > _MAX_BRANCH_UPDATES:
+            msg = (
+                f"PR {pr} still behind after {_MAX_BRANCH_UPDATES} branch updates "
+                "— the merge train is busy; re-run when it settles."
+            )
+            raise MergeAbortError(msg)
+        print("Branch is behind base — updating and re-checking...")
+        try:
+            github.update_branch(pr)
+        except GitHubAPIError as exc:
+            msg = f"update-branch failed for PR {pr}: {exc}"
+            raise MergeAbortError(msg) from exc
+        time.sleep(_UPDATE_SETTLE_SECS)
+
     while True:
         if github.pr_state(pr) == "MERGED":
             msg = (
@@ -70,20 +112,7 @@ def wait_and_merge(
             )
             raise MergeAbortError(msg)
         if github.merge_state_status(pr) == "BEHIND":
-            updates += 1
-            if updates > _MAX_BRANCH_UPDATES:
-                msg = (
-                    f"PR {pr} still behind after {_MAX_BRANCH_UPDATES} branch updates "
-                    "— the merge train is busy; re-run when it settles."
-                )
-                raise MergeAbortError(msg)
-            print("Branch is behind base — updating and re-checking...")
-            try:
-                github.update_branch(pr)
-            except GitHubAPIError as exc:
-                msg = f"update-branch failed for PR {pr}: {exc}"
-                raise MergeAbortError(msg) from exc
-            time.sleep(_UPDATE_SETTLE_SECS)
+            _update_or_abort()
             continue
 
         print(f"Waiting for checks on {pr}...")
@@ -105,8 +134,18 @@ def wait_and_merge(
 
         if github.merge_state_status(pr) == "BEHIND":
             continue  # something merged while we waited -> update at loop top
-        break
 
-    print(f"Checks passed. Merging {pr} (--{strategy})...")
-    github.merge(pr, strategy=strategy)
-    print("Merged.")
+        print(f"Checks passed. Merging {pr} (--{strategy})...")
+        try:
+            github.merge(pr, strategy=strategy)
+        except GitHubAPIError as exc:
+            # The merge endpoint enforces "require branches up to date" itself.
+            # A stale-behind rejection here is the authoritative signal the lazy
+            # mergeStateStatus precheck missed (issue #2856) — feed it back into
+            # the same update-and-retry path. Any other failure is real; re-raise.
+            if not _is_behind_rejection(exc):
+                raise
+            _update_or_abort()
+            continue
+        print("Merged.")
+        return

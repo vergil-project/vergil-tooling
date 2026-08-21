@@ -150,6 +150,27 @@ def detect_language(repo_root: Path) -> str:
     return ""
 
 
+def resolve_language(repo_root: Path) -> str:
+    """Return the repo's language, preferring the *asserted* primary-language.
+
+    The asserted ``[project].primary-language`` in ``vergil.toml`` wins over
+    filesystem-marker detection so container/image selection matches the language
+    ``vrg-validate`` runs its pipeline for. Falls back to :func:`detect_language`
+    only when the repo asserts nothing (no ``vergil.toml`` or no
+    ``primary-language``).
+
+    This closes the bootstrap trap of issue #2858: a new C++ repo declares
+    ``cpp`` but has none of its ``CMakeLists.txt``/``conanfile`` markers yet, so
+    marker-only detection returned ``""`` and handed the repo the base image —
+    which then failed the C++ validate pipeline with a missing toolchain
+    (``FileNotFoundError: conan``). Selecting off the asserted language keeps the
+    image and the validate pipeline agreed on one source of truth.
+    """
+    from vergil_tooling.lib.config import declared_primary_language
+
+    return declared_primary_language(repo_root) or detect_language(repo_root)
+
+
 def _parse_node_version_tag(tag: str) -> str | None:
     """Extract the Node major from a ``node-`` prefixed version tag.
 
@@ -259,7 +280,7 @@ def workspace_mount_args(repo_root: Path) -> list[str]:
     the cache-build path — one source of truth so a new mount site can't
     silently reintroduce the corruption."""
     args = ["-v", f"{repo_root}:/workspace", "-w", "/workspace"]
-    if detect_language(repo_root) == "python":
+    if resolve_language(repo_root) == "python":
         args += ["-v", "/workspace/.venv"]
     return args
 

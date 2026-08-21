@@ -536,8 +536,9 @@ def _capture_create_cmd(tmp_path: Path, lang: str) -> list[str]:
 def test_build_cached_image_masks_venv_for_python(tmp_path: Path) -> None:
     # The cache-build (cold-rebuild) path masks the bind-mounted host `.venv`
     # for a Python repo, so its `setup` step can never corrupt the host venv —
-    # the second mount site the run-path mask (#2486) missed (#2495).
-    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    # the second mount site the run-path mask (#2486) missed (#2495). The mask
+    # keys off the asserted primary-language (#2858), so the repo declares python.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML.replace('"go"', '"python"'))
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     create_cmd = _capture_create_cmd(tmp_path, "python")
     assert "/workspace/.venv" in create_cmd

@@ -21,6 +21,7 @@ from vergil_tooling.lib.container import (
     default_image,
     detect_language,
     detect_runtime,
+    resolve_language,
 )
 
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     _parse_args(argv)
     runtime = detect_runtime()
     repo_root = git.repo_root()
-    lang = detect_language(repo_root)
+    lang = resolve_language(repo_root)
 
     if not lang and not os.environ.get("DOCKER_DEV_IMAGE"):
         print(

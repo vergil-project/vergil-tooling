@@ -520,6 +520,51 @@ def test_validate_default_no_override_passthrough(tmp_path: Path) -> None:
     assert args[-1] == "vrg-validate"
 
 
+# -- asserted primary-language drives image selection (issue #2858) -----------
+
+_CPP_VERGIL_TOML = """\
+[project]
+repository-type = "library"
+versioning-scheme = "semver"
+branching-model = "library-release"
+release-model = "tagged-release"
+primary-language = "cpp"
+
+[dependencies]
+vergil = "v2.0"
+
+[ci]
+versions = ["clang-20"]
+"""
+
+
+def test_asserted_cpp_language_selects_cpp_image_without_markers(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The reported bug: a freshly bootstrapped C++ repo declares
+    # primary-language = "cpp" but has no CMakeLists.txt/conanfile yet. Image
+    # selection must key off the asserted language, not filesystem markers, so
+    # the C++ image is chosen instead of the base image (whose missing toolchain
+    # produced the misleading `FileNotFoundError: conan`).
+    (tmp_path / "vergil.toml").write_text(_CPP_VERGIL_TOML)
+    env = {"GH_TOKEN": "tok"}
+    with (
+        patch("vergil_tooling.bin.vrg_container_run.git.repo_root", return_value=tmp_path),
+        patch("vergil_tooling.bin.vrg_container_run.assert_runtime_available"),
+        patch(
+            "vergil_tooling.bin.vrg_container_run.ensure_cached_image", return_value="cached:img"
+        ) as mock_cache,
+        patch("vergil_tooling.bin.vrg_container_run.detect_runtime", return_value="docker"),
+        patch("vergil_tooling.bin.vrg_container_run.os.execvp"),
+        patch.dict("os.environ", env, clear=True),
+    ):
+        main(["--", "echo", "hi"])
+    # ensure_cached_image(repo_root, lang, base, ...) — lang and base both cpp.
+    assert mock_cache.call_args[0][1] == "cpp"
+    assert mock_cache.call_args[0][2] == "ghcr.io/vergil-project/prod-cpp-clang:20"
+    assert "Language: cpp" in capsys.readouterr().out
+
+
 def test_python_routes_through_cache(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\n")
     env = {"GH_TOKEN": "tok"}

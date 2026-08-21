@@ -864,3 +864,91 @@ class TestReapIsBounded:
         socket.write_text("")
         transport.close()
         assert mock_run.call_args[1]["timeout"] == vm_transport._REAP_TIMEOUT_SECS
+
+
+class TestLimaCopy:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_to_pushes_recursively(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        LimaTransport("vm-x").copy_to(["/host/a.pdf", "/host/b.pdf"], "/guest/dest")
+        assert mock_run.call_args[0][0] == [
+            "limactl",
+            "copy",
+            "--recursive",
+            "/host/a.pdf",
+            "/host/b.pdf",
+            "vm-x:/guest/dest",
+        ]
+        assert mock_run.call_args[1]["check"] is True
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_from_pulls_recursively(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        LimaTransport("vm-x").copy_from(["/guest/out.json"], "/host/dest")
+        assert mock_run.call_args[0][0] == [
+            "limactl",
+            "copy",
+            "--recursive",
+            "vm-x:/guest/out.json",
+            "/host/dest",
+        ]
+
+
+class TestIapCopy:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_to_uses_gcloud_scp_recurse(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z1", "proj", "vergil").copy_to(["/h/a.pdf"], "/g/dest")
+        assert mock_run.call_args[0][0] == [
+            "gcloud",
+            "compute",
+            "scp",
+            "--recurse",
+            "--tunnel-through-iap",
+            "--zone=z1",
+            "--project=proj",
+            "/h/a.pdf",
+            "vergil@inst:/g/dest",
+        ]
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_from_prefixes_remote_sources(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        IapTransport("inst", "z1", "proj", "vergil").copy_from(["/g/out.json"], "/h/dest")
+        assert mock_run.call_args[0][0] == [
+            "gcloud",
+            "compute",
+            "scp",
+            "--recurse",
+            "--tunnel-through-iap",
+            "--zone=z1",
+            "--project=proj",
+            "vergil@inst:/g/out.json",
+            "/h/dest",
+        ]
+
+
+class TestSshCopy:
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_to_uses_scp_recursive(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").copy_to(
+            ["/h/a.pdf"], "/g/dest"
+        )
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == "scp"
+        assert "-r" in argv
+        assert argv[argv.index("-i") + 1] == "/k/key"
+        assert "StrictHostKeyChecking=accept-new" in " ".join(argv)
+        assert argv[-2:] == ["/h/a.pdf", "ubuntu@1.2.3.4:/g/dest"]
+
+    @patch("vergil_tooling.lib.vm_transport.subprocess.run")
+    def test_copy_from_prefixes_remote_sources(self, mock_run: MagicMock) -> None:
+        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        SshTransport(host="1.2.3.4", ssh_user="ubuntu", key_path="/k/key").copy_from(
+            ["/g/out.json"], "/h/dest"
+        )
+        argv = mock_run.call_args[0][0]
+        assert argv[0] == "scp"
+        assert "-r" in argv
+        assert argv[-2:] == ["ubuntu@1.2.3.4:/g/out.json", "/h/dest"]

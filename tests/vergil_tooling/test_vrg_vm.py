@@ -17,6 +17,7 @@ import pytest
 
 from vergil_tooling.bin.vrg_vm import (
     BorrowError,
+    CopyPlanError,
     DedicatedRow,
     OffPlatformVm,
     Target,
@@ -42,6 +43,7 @@ from vergil_tooling.bin.vrg_vm import (
     _warn_under,
     discover_dedicated,
     main,
+    plan_copy,
     recover_handle,
     resolve_borrow,
     warn_if_off_host,
@@ -6128,3 +6130,228 @@ class TestHostGuard:
         # No subcommand: main prints help and returns 1 — the warning still fires.
         assert main([]) == 1
         assert "vrg-vm is a macOS host tool" in capsys.readouterr().err
+
+
+WS = "/Users/me/projects/acme/widgets"
+
+
+class TestPlanCopy:
+    def test_single_host_source_defaults_to_workspace(self) -> None:
+        plan = plan_copy(["/host/a.pdf"], WS)
+        assert plan.direction == "push"
+        assert plan.sources == ["/host/a.pdf"]
+        assert plan.dest == WS
+
+    def test_multiple_host_sources_default_to_workspace(self) -> None:
+        plan = plan_copy(["/host/a.pdf", "/host/b.pdf"], WS)
+        assert plan.direction == "push"
+        assert plan.sources == ["/host/a.pdf", "/host/b.pdf"]
+        assert plan.dest == WS
+
+    def test_relative_host_source_is_absolutized(self) -> None:
+        plan = plan_copy(["rel.pdf"], WS)
+        assert plan.sources == [str(Path("rel.pdf").resolve())]
+
+    def test_push_to_guest_subdir_anchors_under_workspace(self) -> None:
+        plan = plan_copy(["/host/a.pdf", ":docs"], WS)
+        assert plan.direction == "push"
+        assert plan.sources == ["/host/a.pdf"]
+        assert plan.dest == f"{WS}/docs"
+
+    def test_push_to_bare_colon_is_workspace_root(self) -> None:
+        plan = plan_copy(["/host/a.pdf", ":"], WS)
+        assert plan.direction == "push"
+        assert plan.dest == WS
+
+    def test_push_to_absolute_guest_path(self) -> None:
+        plan = plan_copy(["/host/a.pdf", ":/tmp/x"], WS)  # noqa: S108
+        assert plan.direction == "push"
+        assert plan.dest == "/tmp/x"  # noqa: S108
+
+    def test_pull_guest_source_to_host_dir(self) -> None:
+        plan = plan_copy([":artifacts/out.json", "/host/dest"], WS)
+        assert plan.direction == "pull"
+        assert plan.sources == [f"{WS}/artifacts/out.json"]
+        assert plan.dest == "/host/dest"
+
+    def test_single_guest_source_defaults_to_cwd(self) -> None:
+        plan = plan_copy([":out.json"], WS)
+        assert plan.direction == "pull"
+        assert plan.sources == [f"{WS}/out.json"]
+        assert plan.dest == str(Path.cwd())
+
+    def test_multiple_guest_sources_default_to_cwd(self) -> None:
+        plan = plan_copy([":a", ":b"], WS)
+        assert plan.direction == "pull"
+        assert plan.sources == [f"{WS}/a", f"{WS}/b"]
+        assert plan.dest == str(Path.cwd())
+
+    def test_multiple_guest_sources_to_host_dir(self) -> None:
+        plan = plan_copy([":a", ":b", "/host/dest"], WS)
+        assert plan.direction == "pull"
+        assert plan.sources == [f"{WS}/a", f"{WS}/b"]
+        assert plan.dest == "/host/dest"
+
+    def test_empty_paths_is_error(self) -> None:
+        with pytest.raises(CopyPlanError):
+            plan_copy([], WS)
+
+    def test_mixed_sources_with_guest_dest_is_error(self) -> None:
+        with pytest.raises(CopyPlanError):
+            plan_copy(["/host/a.pdf", ":b", ":dest"], WS)
+
+    def test_mixed_sources_with_host_dest_is_error(self) -> None:
+        with pytest.raises(CopyPlanError):
+            plan_copy(["/host/a.pdf", ":b", "/host/dest"], WS)
+
+
+def _cp_args(paths: list[str], workspace: str = "acme/widgets") -> argparse.Namespace:
+    return argparse.Namespace(
+        command="cp",
+        workspace=workspace,
+        name=None,
+        identity="vergil-user",
+        config=None,
+        paths=list(paths),
+    )
+
+
+def _cp_target(
+    *,
+    off_platform: bool = False,
+    transport: object = None,
+    org: str = "acme",
+    repo: str = "widgets",
+) -> types.SimpleNamespace:
+    """A minimal Target stand-in whose backend hands back *transport*.
+
+    projects_dir + workspace 'acme/widgets' resolve to WS via the real
+    resolve_workspace, so the default-dest assertions line up with TestPlanCopy.
+    """
+    backend = types.SimpleNamespace(transport=lambda instance=None: transport)
+    return types.SimpleNamespace(
+        identity=types.SimpleNamespace(projects_dir="/Users/me/projects"),
+        identity_name="vergil-user",
+        config=_FakeConfig(),
+        org=org,
+        repo=repo,
+        instance="vergil-user",
+        spec=types.SimpleNamespace(off_platform=off_platform),
+        backend=backend,
+    )
+
+
+class TestCmdCp:
+    def test_push_copies_to_workspace_dir(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+        transport = MagicMock()
+        target = _cp_target(transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        ensured: list[object] = []
+        monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: ensured.append(a))
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 0
+        transport.copy_to.assert_called_once_with([str(src)], WS)
+        assert ensured == []  # on-platform: the mount is enough, no symlink dance
+        assert any("mkdir -p" in " ".join(c.args) for c in transport.run.call_args_list)
+
+    def test_push_off_platform_ensures_host_path_first(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+        transport = MagicMock()
+        target = _cp_target(off_platform=True, transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        calls: list[tuple[str, str, str]] = []
+        monkeypatch.setattr(
+            vrg_vm.vm_cloud,
+            "ensure_host_path",
+            lambda t, pd, org, repo: calls.append((pd, org, repo)),
+        )
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 0
+        assert calls == [("/Users/me/projects", "acme", "widgets")]
+        transport.copy_to.assert_called_once()
+
+    def test_pull_makes_host_dir_and_copies_from_vm(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        transport = MagicMock()
+        target = _cp_target(transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        dest = tmp_path / "landing"
+
+        assert vrg_vm._cmd_cp(_cp_args([":artifacts/out.json", str(dest)])) == 0
+        assert dest.is_dir()
+        transport.copy_from.assert_called_once_with([f"{WS}/artifacts/out.json"], str(dest))
+
+    def test_push_missing_local_source_errors_before_copy(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        transport = MagicMock()
+        target = _cp_target(transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+
+        assert vrg_vm._cmd_cp(_cp_args(["/nonexistent/x.pdf"])) == 1
+        transport.copy_to.assert_not_called()
+        assert "not found" in capsys.readouterr().err
+
+    def test_copy_failure_reports_reachability(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+        transport = MagicMock()
+        transport.copy_to.side_effect = subprocess.CalledProcessError(1, "scp")
+        target = _cp_target(transport=transport)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        monkeypatch.setattr(vrg_vm.vm_cloud, "ensure_host_path", lambda *a, **k: None)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        assert "reachable" in capsys.readouterr().err.lower()
+
+    def test_missing_vm_reports_clearly(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        src = tmp_path / "a.pdf"
+        src.write_text("x")
+
+        def _boom(instance: object = None) -> object:
+            msg = "zone not persisted"
+            raise RuntimeError(msg)
+
+        target = _cp_target(transport=None)
+        target.backend = types.SimpleNamespace(transport=_boom)
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+
+        assert vrg_vm._cmd_cp(_cp_args([str(src)])) == 1
+        assert "does not exist" in capsys.readouterr().err.lower()
+
+    def test_main_dispatches_cp_and_reports_plan_errors(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from vergil_tooling.bin import vrg_vm
+
+        target = _cp_target(transport=MagicMock())
+        monkeypatch.setattr(vrg_vm, "_resolve_target", lambda args, **k: target)
+        monkeypatch.setattr(vrg_vm, "warn_if_off_host", lambda: None)
+
+        rc = vrg_vm.main(["cp", "acme/widgets", "/h/a.pdf", ":b", "/h/dest"])
+        assert rc == 1
+        assert "one host side" in capsys.readouterr().err
