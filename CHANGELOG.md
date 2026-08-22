@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.200] - 2026-08-22
+
+### Bug fixes
+
+- roll ad-hoc archives past GitHub's 100-sub-issue cap (#2873)
+
 ## [2.1.199] - 2026-08-21
 
 ### Bug fixes
