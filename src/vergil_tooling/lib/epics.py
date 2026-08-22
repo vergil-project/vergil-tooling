@@ -410,8 +410,17 @@ _ADHOC_EPIC_BODY = (
 )
 # A stamped per-quarter archive: "Archive (ad hoc): <bare> — <YYYY>-Qn". The
 # separator is a space, U+2014 em-dash, space. Matching this distinguishes a
-# terminal archive from the live canonical ad-hoc epic (which has no stamp).
-_ADHOC_ARCHIVE_RE = re.compile(r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])$")
+# terminal archive from the live canonical ad-hoc epic (which has no stamp). A
+# busy quarter overflows GitHub's 100-sub-issue cap into further segments stamped
+# " (N)" for N≥2 (issue #2872); the optional segment group captures that suffix
+# (absent → segment 1, the unsuffixed original form, so existing archives match).
+_ADHOC_ARCHIVE_RE = re.compile(
+    r"^Archive \(ad hoc\): (?P<bare>.+) — (?P<quarter>\d{4}-Q[1-4])(?: \((?P<segment>\d+)\))?$"
+)
+# GitHub rejects a 101st sub-issue, so an archive segment is treated as full at
+# this count and the drain rolls to the next segment. The 5-slot margin below the
+# hard 100 cap absorbs races between concurrent drain runs near the boundary.
+_ADHOC_ARCHIVE_SEGMENT_CAP = 95
 # Legacy pre-rename archive title ("Epic (ad hoc): <bare> — <YYYY>-Qn"), used
 # ONLY by the self-healing creation path and the normalize sweep to find
 # archives still in the old form. Steady-state code keys off _ADHOC_ARCHIVE_RE.
@@ -566,30 +575,67 @@ def _normalize_archive_in_place(ref: IssueRef, new_title: str) -> None:
     )
 
 
-def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
-    """Return *target_repo*'s ``— <quarter>`` archive, creating it if absent.
+def _archive_title(bare: str, quarter: str, segment: int) -> str:
+    """Title of *bare*'s ``quarter`` archive segment.
+
+    Segment 1 is the original unsuffixed form (so archives created before
+    segmentation keep their exact title, no migration); segment N≥2 appends
+    ``" (N)"`` — the overflow buckets for a quarter past GitHub's 100-sub-issue
+    cap (issue #2872).
+    """
+    base = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
+    return base if segment <= 1 else f"{base} ({segment})"
+
+
+def _segment_placements(
+    start_segment: int, start_occupancy: int, num_children: int, cap: int
+) -> list[int]:
+    """Segment number for each of *num_children* successive children.
+
+    Fills *start_segment* (already holding *start_occupancy* children), rolling to
+    the next segment each time one reaches *cap*. Pure — the read-then-mutate fill
+    core of :func:`apply_adhoc_drain`, split out so the roll logic is testable
+    without any GitHub IO.
+    """
+    placements: list[int] = []
+    segment, occupancy = start_segment, start_occupancy
+    for _ in range(num_children):
+        if occupancy >= cap:
+            segment += 1
+            occupancy = 0
+        placements.append(segment)
+        occupancy += 1
+    return placements
+
+
+def ensure_adhoc_archive(target_repo: str, quarter: str, segment: int = 1) -> IssueRef:
+    """Return *target_repo*'s ``— <quarter>`` archive *segment*, creating it if absent.
 
     The archive is the stamped sibling of the live ad-hoc epic — same home,
     labelled ``archive`` + ``ad-hoc`` — into which closed children of *quarter*
-    are re-parented. Self-healing and idempotent: an existing new-form archive is
-    reused; else a legacy-form archive (old ``Epic (ad hoc): … — Qn`` title,
-    ``epic`` + ``ad-hoc``) is normalized in place and returned; else a fresh
-    new-form archive is created. This makes creation race-free regardless of
-    whether the bulk normalize sweep has run. Pre-existing duplicate archives
-    (the list-consistency race, #2698) collapse to the oldest.
+    are re-parented. *segment* selects the overflow bucket: 1 is the original
+    unsuffixed archive, N≥2 the ``" (N)"``-suffixed spillover for a quarter that
+    exceeds GitHub's 100-sub-issue cap (issue #2872). Self-healing and idempotent:
+    an existing new-form archive is reused; else — **for segment 1 only** — a
+    legacy-form archive (old ``Epic (ad hoc): … — Qn`` title, ``epic`` +
+    ``ad-hoc``) is normalized in place and returned; else a fresh new-form archive
+    is created. This makes creation race-free regardless of whether the bulk
+    normalize sweep has run. Pre-existing duplicate archives (the list-consistency
+    race, #2698) collapse to the oldest.
     """
     owner, bare = target_repo.split("/", 1)
     home = resolve_epic_home(owner, bare)
     home_repo = home.split("/", 1)[1]
-    title = f"{_ADHOC_ARCHIVE_TITLE_PREFIX}{bare} — {quarter}"
+    title = _archive_title(bare, quarter, segment)
     existing = _find_epic_by_title(home, title, prefer_oldest=True, labels=_ADHOC_ARCHIVE_LABELS)
     if existing is not None:
         return existing
-    legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
-    legacy = _find_epic_by_title(home, legacy_title, prefer_oldest=True)
-    if legacy is not None:
-        _normalize_archive_in_place(legacy, title)
-        return legacy
+    if segment <= 1:
+        legacy_title = f"{_ADHOC_EPIC_TITLE_PREFIX}{bare} — {quarter}"
+        legacy = _find_epic_by_title(home, legacy_title, prefer_oldest=True)
+        if legacy is not None:
+            _normalize_archive_in_place(legacy, title)
+            return legacy
     _ensure_labels(home, _ADHOC_ARCHIVE_LABELS)
     url = github.create_issue(
         repo=home,
@@ -598,6 +644,34 @@ def ensure_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
         labels=list(_ADHOC_ARCHIVE_LABELS),
     )
     return IssueRef(owner=owner, repo=home_repo, number=int(url.rstrip("/").rsplit("/", 1)[-1]))
+
+
+def _adhoc_archive_segments(home: str, bare: str, quarter: str) -> list[tuple[int, IssueRef]]:
+    """Open archive segments for *bare*'s *quarter* in *home*, sorted by segment.
+
+    Returns ``(segment_number, ref)`` pairs for every open ``archive``-labelled
+    issue whose title matches *bare* + *quarter* (segment absent → 1). Used by the
+    drain to find a quarter's current write head before filling (issue #2872).
+    """
+    owner, home_repo = home.split("/", 1)
+    raw: Any = github.read_json(
+        "issue",
+        "list",
+        "--repo",
+        home,
+        *[arg for label in _ADHOC_ARCHIVE_LABELS for arg in ("--label", label)],
+        "--state",
+        "open",
+        "--json",
+        "number,title",
+    )
+    out: list[tuple[int, IssueRef]] = []
+    for r in raw if isinstance(raw, list) else []:
+        m = _ADHOC_ARCHIVE_RE.match(str(r.get("title", ""))) if isinstance(r, dict) else None
+        if m and m.group("bare") == bare and m.group("quarter") == quarter:
+            segment = int(m.group("segment")) if m.group("segment") else 1
+            out.append((segment, IssueRef(owner, home_repo, int(r["number"]))))
+    return sorted(out, key=lambda pair: pair[0])
 
 
 def list_open_adhoc_archives(home: str) -> list[tuple[IssueRef, str]]:
@@ -663,8 +737,52 @@ def plan_adhoc_drain(target_repo: str, *, now: datetime) -> DrainPlan | None:
     return DrainPlan(live=live, moves=moves, close=close)
 
 
+def _archive_child_count(archive: IssueRef) -> int:
+    """Number of native sub-issues under *archive* (capped at 100 by the query).
+
+    The occupancy read the drain uses to decide whether a quarter's write-head
+    segment still has room before GitHub's 100-sub-issue cap (issue #2872). The
+    query fetches the first 100, which is exactly the bound that matters: a
+    full archive reports 100 and the drain rolls to the next segment.
+    """
+    return len(_native_child_states(archive))
+
+
+def _adhoc_archive_head(target_repo: str, quarter: str) -> tuple[int, IssueRef]:
+    """The current write-head segment for (*target_repo*, *quarter*): ``(segment, ref)``.
+
+    The highest existing archive segment for the quarter, or a freshly ensured
+    segment 1 when none exist yet. Shared by the single-child event path
+    (:func:`ensure_writable_adhoc_archive`) and the batch drain
+    (:func:`apply_adhoc_drain`) so both resolve the head identically (issue #2872).
+    """
+    owner, bare = target_repo.split("/", 1)
+    home = resolve_epic_home(owner, bare)
+    segments = dict(_adhoc_archive_segments(home, bare, quarter))
+    if segments:
+        head = max(segments)
+        return head, segments[head]
+    return 1, ensure_adhoc_archive(target_repo, quarter, segment=1)
+
+
+def ensure_writable_adhoc_archive(target_repo: str, quarter: str) -> IssueRef:
+    """The quarter's archive segment with room for one more child, rolling if full.
+
+    Single-child entry point (the ``on: issues.closed`` :func:`rollup` path):
+    resolve the write-head segment and, if it has reached
+    :data:`_ADHOC_ARCHIVE_SEGMENT_CAP`, create and return the next segment so the
+    child never lands in a full archive — GitHub rejects a 101st sub-issue (issue
+    #2872). The batch drain does not use this; it fills across segments in one pass
+    via :func:`_segment_placements`.
+    """
+    head_segment, head_ref = _adhoc_archive_head(target_repo, quarter)
+    if _archive_child_count(head_ref) >= _ADHOC_ARCHIVE_SEGMENT_CAP:
+        return ensure_adhoc_archive(target_repo, quarter, segment=head_segment + 1)
+    return head_ref
+
+
 def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
-    """Execute *plan*: ensure each archive, atomically re-parent, close past.
+    """Execute *plan*: ensure each archive segment, atomically re-parent, close past.
 
     Each closed child is atomically re-parented from the live epic into its
     quarter's archive via :func:`reparent_child` (``replaceParent: true``) — one
@@ -672,21 +790,34 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
     then closed. ``YYYY-Qn`` is lexicographically chronological, so ``q < cur`` in
     the plan is a correct "quarter is past" test.
 
-    Each distinct quarter's archive is ensured **once** and cached, not once per
-    child: :func:`ensure_adhoc_archive` is find-or-create by title, and the list
-    index lags issue creation, so calling it per child let many same-quarter
-    children each create their own archive before the first became visible
-    (duplicate archives, #2698). Ensuring once per quarter closes that race.
+    A single quarter can exceed GitHub's 100-sub-issue cap, so each quarter's
+    children are distributed across capped **segments** (issue #2872). Per quarter:
+    discover existing segments, take the highest as the write head, read its
+    occupancy once, and fill forward via :func:`_segment_placements` — creating the
+    next segment on demand when one reaches :data:`_ADHOC_ARCHIVE_SEGMENT_CAP`.
+    Segments are ensured **once** each and cached, never once per child: the list
+    index lags issue creation, so ensuring per child let same-quarter children each
+    create their own archive before the first became visible (duplicate archives,
+    #2698). Caching per (quarter, segment) closes that race.
     """
-    archives: dict[str, IssueRef] = {}
+    by_quarter: dict[str, list[IssueRef]] = {}
     for child, quarter in plan.moves:
-        archive = archives.get(quarter)
-        if archive is None:
-            archive = ensure_adhoc_archive(target_repo, quarter)
-            archives[quarter] = archive
-        if archive == plan.live:
-            continue  # defensive: never re-parent into the live epic
-        reparent_child(archive, child)
+        by_quarter.setdefault(quarter, []).append(child)
+    for quarter, children in by_quarter.items():
+        head_segment, head_ref = _adhoc_archive_head(target_repo, quarter)
+        cache: dict[int, IssueRef] = {head_segment: head_ref}
+        occupancy = _archive_child_count(head_ref)
+        placements = _segment_placements(
+            head_segment, occupancy, len(children), _ADHOC_ARCHIVE_SEGMENT_CAP
+        )
+        for child, segment in zip(children, placements, strict=True):
+            archive = cache.get(segment)
+            if archive is None:
+                archive = ensure_adhoc_archive(target_repo, quarter, segment=segment)
+                cache[segment] = archive
+            if archive == plan.live:
+                continue  # defensive: never re-parent into the live epic
+            reparent_child(archive, child)
     for archive in plan.close:
         github.run(
             "issue", "close", str(archive.number), "--repo", f"{archive.owner}/{archive.repo}"
@@ -891,7 +1022,7 @@ def rollup(task: IssueRef) -> None:
         closed_at = _issue_closed_at(task)
         if not closed_at:
             return
-        archive = ensure_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
+        archive = ensure_writable_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
         if archive != parent:
             reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
         return

@@ -574,7 +574,9 @@ def test_rollup_public_repo_epic_archives_into_own_bucket() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): some-repo"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
-        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch(
+            "vergil_tooling.lib.epics.ensure_writable_adhoc_archive", return_value=arch
+        ) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
@@ -596,7 +598,9 @@ def test_rollup_dotgithub_own_epic_unchanged() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True) as mock_exists,
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
-        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
+        patch(
+            "vergil_tooling.lib.epics.ensure_writable_adhoc_archive", return_value=arch
+        ) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.epics.add_child") as mock_add,
         patch("vergil_tooling.lib.epics.remove_child") as mock_rm,
@@ -622,7 +626,7 @@ def test_rollup_skips_non_repo_adhoc_epic() -> None:
         patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
         patch("vergil_tooling.lib.epics._issue_title", return_value=title),
         patch("vergil_tooling.lib.github.repo_exists") as mock_exists,
-        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics.ensure_writable_adhoc_archive") as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(task)
@@ -657,7 +661,7 @@ def test_rollup_noop_when_closed_child_lacks_closed_at() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value=""),
-        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics.ensure_writable_adhoc_archive") as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
@@ -675,7 +679,7 @@ def test_rollup_skips_reparent_when_archive_is_the_live_epic() -> None:
         patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): .github"),
         patch("vergil_tooling.lib.github.repo_exists", return_value=True),
         patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
-        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
+        patch("vergil_tooling.lib.epics.ensure_writable_adhoc_archive", return_value=live),
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.rollup(TASK)
@@ -1295,6 +1299,9 @@ def test_apply_drain_ensures_archive_moves_then_closes() -> None:
     )
     arch = IssueRef("org", ".github", 88)
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.epics.add_child") as mock_add,
@@ -1302,7 +1309,7 @@ def test_apply_drain_ensures_archive_moves_then_closes() -> None:
         patch("vergil_tooling.lib.github.run") as mock_run,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
-    mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2", segment=1)
     # Single atomic re-parent — no add-before-remove (single-parent safe, #2691).
     mock_reparent.assert_called_once_with(arch, IssueRef("org", ".github", 101))
     mock_add.assert_not_called()
@@ -1319,6 +1326,9 @@ def test_apply_drain_skips_archive_equal_to_live() -> None:
         close=[],
     )
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=live),
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
         patch("vergil_tooling.lib.github.run") as mock_run,
@@ -1329,9 +1339,8 @@ def test_apply_drain_skips_archive_equal_to_live() -> None:
 
 
 def test_apply_drain_ensures_archive_once_per_quarter() -> None:
-    # Many closed children in the SAME quarter must ensure that quarter's archive
-    # exactly ONCE (cache by quarter), then re-parent each child — the fix for the
-    # duplicate-archive race (#2698).
+    # Many closed children in the SAME quarter, all fitting under the cap, ensure
+    # that quarter's segment 1 exactly ONCE, then re-parent each child.
     live = IssueRef("org", ".github", 40)
     arch = IssueRef("org", ".github", 88)
     kids = [IssueRef("org", ".github", n) for n in (101, 102, 103)]
@@ -1341,11 +1350,14 @@ def test_apply_drain_ensures_archive_once_per_quarter() -> None:
         close=[],
     )
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=arch) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
         epics.apply_adhoc_drain("org/tooling", plan)
-    mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2", segment=1)
     assert mock_reparent.call_count == len(kids)
     assert [c.args for c in mock_reparent.call_args_list] == [(arch, k) for k in kids]
 
@@ -1367,9 +1379,12 @@ def test_apply_drain_two_quarters_ensures_twice() -> None:
         close=[],
     )
     with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=0),
         patch(
             "vergil_tooling.lib.epics.ensure_adhoc_archive",
-            side_effect=lambda _repo, q: archives[q],
+            side_effect=lambda _repo, q, segment=1: archives[q],
         ) as mock_ens,
         patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
     ):
@@ -1377,6 +1392,154 @@ def test_apply_drain_two_quarters_ensures_twice() -> None:
     assert mock_ens.call_count == 2
     assert {c.args[1] for c in mock_ens.call_args_list} == {"2026-Q2", "2026-Q3"}
     assert mock_reparent.call_count == 3
+
+
+def test_archive_child_count_returns_native_child_count() -> None:
+    arch = IssueRef("org", ".github", 88)
+    kids = [ChildState(IssueRef("org", ".github", n), "CLOSED", "t", "") for n in (1, 2, 3)]
+    with patch("vergil_tooling.lib.epics._native_child_states", return_value=kids):
+        assert epics._archive_child_count(arch) == 3
+
+
+def test_apply_drain_rolls_to_new_segment_when_head_full() -> None:
+    # The bug case: the quarter's segment 1 already holds 100 children (GitHub's
+    # cap), so the next child must roll into a freshly created segment 2 — never
+    # re-parented into the full segment 1.
+    live = IssueRef("org", ".github", 40)
+    seg1 = IssueRef("org", ".github", 249)  # full
+    seg2 = IssueRef("org", ".github", 250)  # created on roll
+    child = IssueRef("org", ".github", 2860)
+    plan = epics.DrainPlan(live=live, moves=[(child, "2026-Q2")], close=[])
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[(1, seg1)]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=100),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=seg2) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2", segment=2)
+    mock_reparent.assert_called_once_with(seg2, child)
+
+
+def test_apply_drain_fills_head_then_rolls() -> None:
+    # Segment 1 has room for one more (occupancy 94, cap 95); the batch fills it,
+    # then rolls the remainder into a newly ensured segment 2.
+    live = IssueRef("org", ".github", 40)
+    seg1 = IssueRef("org", ".github", 249)
+    seg2 = IssueRef("org", ".github", 250)
+    kids = [IssueRef("org", ".github", n) for n in (301, 302, 303)]
+    plan = epics.DrainPlan(live=live, moves=[(k, "2026-Q2") for k in kids], close=[])
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[(1, seg1)]),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=94),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=seg2) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    # seg1 came from discovery (never ensured); only the rolled segment 2 is ensured, once.
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2", segment=2)
+    assert [c.args for c in mock_reparent.call_args_list] == [
+        (seg1, kids[0]),
+        (seg2, kids[1]),
+        (seg2, kids[2]),
+    ]
+
+
+def test_apply_drain_writes_to_highest_existing_segment_without_rolling() -> None:
+    # Two segments already exist; the head is the highest with room, and no new
+    # segment is created when the batch fits.
+    live = IssueRef("org", ".github", 40)
+    seg1 = IssueRef("org", ".github", 249)
+    seg2 = IssueRef("org", ".github", 250)
+    child = IssueRef("org", ".github", 400)
+    plan = epics.DrainPlan(live=live, moves=[(child, "2026-Q2")], close=[])
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch(
+            "vergil_tooling.lib.epics._adhoc_archive_segments",
+            return_value=[(1, seg1), (2, seg2)],
+        ),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=10),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.apply_adhoc_drain("org/tooling", plan)
+    mock_ens.assert_not_called()  # head resolved from discovery; batch fits, no roll
+    mock_reparent.assert_called_once_with(seg2, child)
+
+
+def test_adhoc_archive_head_returns_highest_existing_segment() -> None:
+    seg1 = IssueRef("org", ".github", 249)
+    seg2 = IssueRef("org", ".github", 250)
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch(
+            "vergil_tooling.lib.epics._adhoc_archive_segments",
+            return_value=[(1, seg1), (2, seg2)],
+        ),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+    ):
+        assert epics._adhoc_archive_head("org/tooling", "2026-Q3") == (2, seg2)
+    mock_ens.assert_not_called()  # existing segment reused, never created
+
+
+def test_adhoc_archive_head_ensures_segment_one_when_none() -> None:
+    seg1 = IssueRef("org", ".github", 88)
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.epics._adhoc_archive_segments", return_value=[]),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=seg1) as mock_ens,
+    ):
+        assert epics._adhoc_archive_head("org/tooling", "2026-Q3") == (1, seg1)
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q3", segment=1)
+
+
+def test_ensure_writable_adhoc_archive_returns_head_when_room() -> None:
+    seg2 = IssueRef("org", ".github", 250)
+    with (
+        patch("vergil_tooling.lib.epics._adhoc_archive_head", return_value=(2, seg2)),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=10),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive") as mock_ens,
+    ):
+        assert epics.ensure_writable_adhoc_archive("org/tooling", "2026-Q3") == seg2
+    mock_ens.assert_not_called()  # head has room; no roll
+
+
+def test_ensure_writable_adhoc_archive_rolls_when_head_full() -> None:
+    seg2 = IssueRef("org", ".github", 250)
+    seg3 = IssueRef("org", ".github", 251)
+    with (
+        patch("vergil_tooling.lib.epics._adhoc_archive_head", return_value=(2, seg2)),
+        patch("vergil_tooling.lib.epics._archive_child_count", return_value=95),
+        patch("vergil_tooling.lib.epics.ensure_adhoc_archive", return_value=seg3) as mock_ens,
+    ):
+        assert epics.ensure_writable_adhoc_archive("org/tooling", "2026-Q3") == seg3
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q3", segment=3)
+
+
+def test_rollup_rolls_into_new_segment_when_head_full() -> None:
+    # The steady-state on:issues.closed path must also spill past the 100-cap: a
+    # single closed child whose quarter's head segment is full re-parents into a
+    # freshly rolled segment, not the full one (issue #2872).
+    task = IssueRef("org", ".github", 2860)
+    live = IssueRef("org", ".github", 40)
+    seg2 = IssueRef("org", ".github", 250)
+    with (
+        patch("vergil_tooling.lib.epics.parent_of", return_value=live),
+        patch("vergil_tooling.lib.epics._labels", return_value={"epic", "ad-hoc"}),
+        patch("vergil_tooling.lib.epics._issue_title", return_value="Epic (ad hoc): tooling"),
+        patch("vergil_tooling.lib.github.repo_exists", return_value=True),
+        patch("vergil_tooling.lib.epics._issue_closed_at", return_value="2026-05-01T00:00:00Z"),
+        patch(
+            "vergil_tooling.lib.epics.ensure_writable_adhoc_archive", return_value=seg2
+        ) as mock_ens,
+        patch("vergil_tooling.lib.epics.reparent_child") as mock_reparent,
+    ):
+        epics.rollup(task)
+    mock_ens.assert_called_once_with("org/tooling", "2026-Q2")
+    mock_reparent.assert_called_once_with(seg2, task)
 
 
 def test_drain_adhoc_repo_applies_when_apply_true() -> None:
@@ -1447,3 +1610,110 @@ def test_drain_adhoc_org_skips_repo_that_raises() -> None:
         plans = epics.drain_adhoc_org("org", apply=True, now=NOW)  # must NOT raise
     assert seen == ["org/bad", "org/good"]  # continued past the failure
     assert plans == [good]  # the healthy repo still drained
+
+
+# -- in-quarter archive segments (issue #2872): overflow past 100 sub-issues --
+
+
+def test_segment_placements_stays_in_segment_below_cap() -> None:
+    # Room in the head segment: every child lands there, none roll.
+    assert epics._segment_placements(1, 0, 3, 95) == [1, 1, 1]
+
+
+def test_segment_placements_rolls_when_head_reaches_cap() -> None:
+    # Head at occupancy 94, cap 95: one more fills it, the rest roll to segment 2.
+    assert epics._segment_placements(1, 94, 3, 95) == [1, 2, 2]
+
+
+def test_segment_placements_rolls_immediately_when_head_already_full() -> None:
+    # The bug case: head is a full (100/100) segment 1; every child rolls forward.
+    assert epics._segment_placements(1, 100, 2, 95) == [2, 2]
+
+
+def test_segment_placements_spans_multiple_new_segments() -> None:
+    # A large batch cascades across several fresh segments, each capped.
+    assert epics._segment_placements(2, 0, 5, 2) == [2, 2, 3, 3, 4]
+
+
+def test_segment_placements_empty_batch_places_nothing() -> None:
+    assert epics._segment_placements(1, 0, 0, 95) == []
+
+
+def test_archive_regex_parses_segment_suffix() -> None:
+    m = epics._ADHOC_ARCHIVE_RE.match("Archive (ad hoc): tooling — 2026-Q3 (2)")
+    assert m and m.group("bare") == "tooling"
+    assert m.group("quarter") == "2026-Q3" and m.group("segment") == "2"
+
+
+def test_archive_regex_segment_absent_on_unsuffixed_title() -> None:
+    m = epics._ADHOC_ARCHIVE_RE.match("Archive (ad hoc): tooling — 2026-Q3")
+    assert m and m.group("segment") is None
+
+
+def test_archive_title_segment_one_is_unsuffixed() -> None:
+    assert epics._archive_title("tooling", "2026-Q3", 1) == "Archive (ad hoc): tooling — 2026-Q3"
+
+
+def test_archive_title_later_segments_carry_suffix() -> None:
+    assert (
+        epics._archive_title("tooling", "2026-Q3", 2) == "Archive (ad hoc): tooling — 2026-Q3 (2)"
+    )
+
+
+def test_ensure_adhoc_archive_creates_segment_two_with_suffix() -> None:
+    created = "https://github.com/org/.github/issues/92"
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
+        patch("vergil_tooling.lib.github.create_issue", return_value=created) as mock_create,
+    ):
+        ref = epics.ensure_adhoc_archive("org/tooling", "2026-Q3", segment=2)
+    assert ref == IssueRef("org", ".github", 92)
+    assert mock_create.call_args.kwargs["title"] == "Archive (ad hoc): tooling — 2026-Q3 (2)"
+
+
+def test_ensure_adhoc_archive_segment_two_skips_legacy_normalize() -> None:
+    # Only segment 1 has a legacy pre-rename form; a >1 segment must never adopt
+    # a legacy issue — it creates its own suffixed archive.
+    with (
+        patch("vergil_tooling.lib.epics.resolve_epic_home", return_value="org/.github"),
+        patch("vergil_tooling.lib.github.read_json", return_value=[]),
+        patch("vergil_tooling.lib.epics._ensure_labels"),
+        patch("vergil_tooling.lib.epics._normalize_archive_in_place") as mock_norm,
+        patch(
+            "vergil_tooling.lib.github.create_issue",
+            return_value="https://github.com/org/.github/issues/92",
+        ),
+    ):
+        epics.ensure_adhoc_archive("org/tooling", "2026-Q3", segment=2)
+    mock_norm.assert_not_called()
+
+
+def test_adhoc_archive_segments_lists_sorted_for_quarter() -> None:
+    rows = [
+        {"number": 91, "title": "Archive (ad hoc): tooling — 2026-Q3 (2)"},
+        {"number": 88, "title": "Archive (ad hoc): tooling — 2026-Q3"},
+        {"number": 70, "title": "Archive (ad hoc): tooling — 2026-Q2"},  # other quarter
+        {"number": 71, "title": "Archive (ad hoc): other — 2026-Q3"},  # other repo
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        got = epics._adhoc_archive_segments("org/.github", "tooling", "2026-Q3")
+    assert got == [(1, IssueRef("org", ".github", 88)), (2, IssueRef("org", ".github", 91))]
+
+
+def test_adhoc_archive_segments_empty_when_none_for_quarter() -> None:
+    rows = [{"number": 70, "title": "Archive (ad hoc): tooling — 2026-Q2"}]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        assert epics._adhoc_archive_segments("org/.github", "tooling", "2026-Q3") == []
+
+
+def test_list_open_adhoc_archives_includes_segmented_titles() -> None:
+    rows = [
+        {"number": 88, "title": "Archive (ad hoc): tooling — 2026-Q3"},
+        {"number": 91, "title": "Archive (ad hoc): tooling — 2026-Q3 (2)"},
+    ]
+    with patch("vergil_tooling.lib.github.read_json", return_value=rows):
+        got = epics.list_open_adhoc_archives("org/.github")
+    assert (IssueRef("org", ".github", 88), "2026-Q3") in got
+    assert (IssueRef("org", ".github", 91), "2026-Q3") in got
