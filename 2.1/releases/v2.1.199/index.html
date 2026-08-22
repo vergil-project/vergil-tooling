@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.200/">
       
       
         <link rel="next" href="../v2.1.198/">
@@ -1203,6 +1203,8 @@
       
         
       
+        
+      
     
     
     
@@ -1258,6 +1260,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.200/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.200
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13783,6 +13813,7 @@ Adds a bidirectional 'cp' verb to vrg-vm so files (e.g. PDFs for cloud agents) c
 </ul>
 <p>A ':'-prefixed path is on the VM, everything else on the host. All-host paths push (dest defaults to the session workspace dir); a ':'-prefixed source pulls (dest defaults to the host cwd). The destination is always treated as a directory (no rename). Copies are recursive, so directories work.</p>
 <p>Transport gains copy_to/copy_from on the protocol and all three backends: limactl copy for Lima, gcloud compute scp --tunnel-through-iap for cloud IAP, and scp for the Azure public-IP path. The command attaches to an already-running box via the same state-reading transport list/status use, and on cloud runs ensure_host_path first so the workspace symlink exists and is writable before the copy. Failures are surfaced with actionable messages (VM missing vs unreachable); a missing local source errors before shelling out.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.199/v2.1.199-ci-evidence.tar.gz">Download →</a></p>
 
 
 
