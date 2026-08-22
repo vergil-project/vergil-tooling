@@ -800,6 +800,13 @@ def apply_adhoc_drain(target_repo: str, plan: DrainPlan) -> None:
     create their own archive before the first became visible (duplicate archives,
     #2698). Caching per (quarter, segment) closes that race.
     """
+    # SIBLING RE-PARENT SITE: rollup() moves single closed children into these same
+    # ad-hoc archives on the on:issues.closed event. Both sites must honour the
+    # per-segment cap; they can't merge (batch vs single-child) but they share
+    # _adhoc_archive_head + _ADHOC_ARCHIVE_SEGMENT_CAP. Change a capacity rule in
+    # those helpers — never open-code a reparent that skips them — and if you
+    # touch how one site fills or rolls segments, make the matching change in the
+    # other. See rollup().
     by_quarter: dict[str, list[IssueRef]] = {}
     for child, quarter in plan.moves:
         by_quarter.setdefault(quarter, []).append(child)
@@ -1022,6 +1029,11 @@ def rollup(task: IssueRef) -> None:
         closed_at = _issue_closed_at(task)
         if not closed_at:
             return
+        # SIBLING RE-PARENT SITE: apply_adhoc_drain() moves closed children into
+        # these same ad-hoc archives in the scheduled batch drain. Both sites must
+        # honour the per-segment cap — this single-child path rolls via
+        # ensure_writable_adhoc_archive(); if you change how segments fill or when
+        # they roll, make the matching change there too. See apply_adhoc_drain().
         archive = ensure_writable_adhoc_archive(f"{parent.owner}/{bare}", quarter_of(closed_at))
         if archive != parent:
             reparent_child(archive, task)  # atomic move: single-parent safe (#2691)
