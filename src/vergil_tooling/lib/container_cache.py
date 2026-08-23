@@ -47,13 +47,54 @@ _CACHE_FILES: dict[str, list[str]] = {
     "rust": ["Cargo.lock", "vergil.toml"],
     "go": ["go.sum", "vergil.toml"],
     "java": ["pom.xml", "vergil.toml"],
+    # cpp names both conanfile spellings; cache_files() filters to what exists.
+    "cpp": ["conanfile.txt", "conanfile.py", "conan.lock", "CMakeLists.txt", "vergil.toml"],
+    "typescript": ["package-lock.json", "vergil.toml"],
 }
 _DEFAULT_CACHE_FILES = ["vergil.toml"]
 
+# Files each language's warmup reads. The warmup IS the install-stage command
+# list, so it fails outright on a repo whose manifests do not exist yet — the
+# bootstrap case, where the container is the natural place to author them
+# (issue #2871). Each entry is a list of groups; a group is satisfied when ANY
+# of its names is present, and every group must be satisfied for the warmup to
+# run. The group form exists for cpp, which accepts either conanfile spelling.
+_WARMUP_REQUIRES: dict[str, list[list[str]]] = {
+    "python": [["pyproject.toml"], ["uv.lock"]],
+    "ruby": [["Gemfile"]],
+    "rust": [["Cargo.toml"]],
+    "go": [["go.mod"]],
+    "java": [["pom.xml"], ["mvnw"]],
+    "cpp": [["conanfile.txt", "conanfile.py"], ["CMakeLists.txt"]],
+    "typescript": [["package.json"], ["package-lock.json"]],
+}
 
-def _warmup_command(lang: str) -> str:
+
+def missing_warmup_files(lang: str, repo_root: Path) -> list[str]:
+    """Return unsatisfied warmup prerequisites for *lang*, as display strings.
+
+    Empty when the repo is bootstrapped for *lang* (or when the language
+    declares no prerequisites). Each returned entry renders one unsatisfied
+    group, e.g. ``"conanfile.txt or conanfile.py"``.
+    """
+    return [
+        " or ".join(group)
+        for group in _WARMUP_REQUIRES.get(lang, [])
+        if not any((repo_root / name).is_file() for name in group)
+    ]
+
+
+def _warmup_command(lang: str, repo_root: Path) -> str:
+    """Return the warmup shell command, or ``""`` when it cannot run.
+
+    Skipping yields an image that is unwarmed but usable, rather than aborting
+    the image build and taking ``vrg-container-run`` down with it. The caller
+    reports the skip; see :func:`missing_warmup_files`.
+    """
     cmds = language_commands(lang, CheckKind.INSTALL)
-    return " && ".join(" ".join(cmd) for cmd in cmds) if cmds else ""
+    if not cmds or missing_warmup_files(lang, repo_root):
+        return ""
+    return " && ".join(" ".join(cmd) for cmd in cmds)
 
 
 def apt_install_command(packages: list[str], platform_label: str) -> str:
@@ -286,7 +327,7 @@ def _compose_setup(repo_root: Path, lang: str) -> str:
         container_system_packages,
     )
 
-    warmup = _warmup_command(lang)
+    warmup = _warmup_command(lang, repo_root)
     build = container_build_command(repo_root)
 
     # The post-install tail: build-command then warmup, each included only when
@@ -318,7 +359,8 @@ def _build_cached_image(
     """Build a cached image with vergil-tooling installed."""
     rt = runtime or detect_runtime()
     self_repo = _is_self_repo(repo_root)
-    warmup = _warmup_command(lang)
+    warmup = _warmup_command(lang, repo_root)
+    warmup_missing = missing_warmup_files(lang, repo_root)
 
     from vergil_tooling.lib.config import (
         container_build_command,
@@ -347,6 +389,13 @@ def _build_cached_image(
         print(f"  Build:   {build}")
     if warmup:
         print(f"  Warmup:  {warmup}")
+    elif warmup_missing:
+        # Say so out loud: a silently unwarmed image would look identical to a
+        # warmed one right up until a dependency was unexpectedly absent.
+        print(
+            f"  Warmup:  skipped — no {', '.join(warmup_missing)} "
+            f"({lang} repo not bootstrapped yet)"
+        )
     if apt:
         print(f"  Packages: {' '.join(container_system_packages(repo_root))}")
 

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.202] - 2026-08-23
+
+### Bug fixes
+
+- skip the warmup when its manifests are absent (#2881) (#2887)
+
+### Testing
+
+- run the suite under pytest-xdist (-n auto) (#2886)
+
 ## [2.1.201] - 2026-08-23
 
 ### Testing
