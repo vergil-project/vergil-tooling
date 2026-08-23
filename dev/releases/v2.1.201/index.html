@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.154/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.152/">
+        <link rel="next" href="../v2.1.200/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.153 - VERGIL Tooling</title>
+        <title>2.1.201 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21153-2026-07-17" class="md-skip">
+        <a href="#release-21201-2026-08-23" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.153
+              2.1.201
             
           </span>
         </div>
@@ -1268,10 +1268,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.201/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.201
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1287,6 +1314,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#testing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Testing
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2612,37 +2670,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.153
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.153/" class="md-nav__link">
         
   
   
@@ -2658,37 +2689,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13756,10 +13756,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
+  <a href="#testing" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Bug fixes
+        Testing
       
     </span>
   </a>
@@ -13783,13 +13783,15 @@
 
 
 
-<h1 id="release-21153-2026-07-17">Release 2.1.153 (2026-07-17)<a class="headerlink" href="#release-21153-2026-07-17" title="Permanent link">&para;</a></h1>
-<h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
+<h1 id="release-21201-2026-08-23">Release 2.1.201 (2026-08-23)<a class="headerlink" href="#release-21201-2026-08-23" title="Permanent link">&para;</a></h1>
+<h2 id="testing">Testing<a class="headerlink" href="#testing" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>make copy_claude_config tolerate the read-only projected CLAUDE.md (#2437)</strong>
-Interaction between #2412 (lock) and pre-existing copy_claude_config: lock_projection chmod a-w's ~/.claude/CLAUDE.md at the end of a cloud session; the next session's copy_claude_config runs before project_memory and did a plain 'cat &gt; ~/.claude/CLAUDE.md', failing with 'permission denied' and aborting every 2nd+ cloud session. Now chmod u+w each target (2&gt;/dev/null) before the cat, mirroring project_memory's guard. No-op on Lima and on a fresh file. Host-side change only. Ref vergil-project/.github#156.</li>
+<li><strong>stub relay push in report-ready e2e tests (#2879)</strong>
+The report-ready e2e tests ran in a temp repo with no origin, so report-ready's real relay-ref push (git push --force origin, github_transport.write) failed with 'could not read from remote' — which retry.is_retryable() treats as transient. git.run then burned the full 4-step backoff (~30s of real time.sleep) before report-ready swallowed the non-fatal failure. The 11 report-ready tests that reach the push cost ~386s, ~96% of the whole suite's wall-clock and nearly all of the ~7min vrg-validate test stage.</li>
 </ul>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.153/v2.1.153-ci-evidence.tar.gz">Download →</a></p>
+<p>Add an autouse fixture stubbing vrg_pr_workflow.GitHubTransport for the module, so the relay push is a no-op. The two tests that assert on the transport re-patch it locally and keep exercising the real contract, which is also covered by test_github_transport.py. Production behaviour is unchanged; this is test hygiene only.</p>
+<p>The file now runs in ~1s (was ~386s) and the full vrg-validate drops from ~7:10 to ~0:29.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.201/v2.1.201-ci-evidence.tar.gz">Download →</a></p>
 
 
 
