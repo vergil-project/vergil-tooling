@@ -73,7 +73,7 @@ vrg-whoami = "vergil_tooling.bin.vrg_whoami:main"
 vrg-worktree-status = "vergil_tooling.bin.vrg_worktree_status:main"
 
 [dependency-groups]
-dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pip-audit", "pip-licenses", "types-pyyaml"]
+dev = ["ruff", "mypy", "ty", "pytest", "pytest-cov", "pytest-xdist", "pip-audit", "pip-licenses", "types-pyyaml"]
 
 [tool.uv]
 # Security floors for TRANSITIVE dependencies. These are not direct dependencies —
@@ -111,6 +111,13 @@ warn_unused_configs = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Run the suite in parallel across all cores (pytest-xdist). vergil-tooling has
+# the fleet's largest suite (~5,100 tests); single-process wall-clock scaled
+# linearly with it. pytest-cov aggregates per-worker coverage, so the
+# --cov-fail-under=100 gate is preserved. Override with `-n0` for a serial run
+# when debugging (e.g. to use -s / pdb). Scoped to this repo, not the shared
+# languages.py test command (issue #2880).
+addopts = ["-n", "auto"]
 
 [tool.coverage.report]
 exclude_lines = [
