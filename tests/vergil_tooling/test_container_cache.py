@@ -23,6 +23,7 @@ from vergil_tooling.lib.container_cache import (
     compute_cache_hash,
     ensure_cached_image,
     find_cached_image,
+    missing_warmup_files,
     provision_dev_image,
     prune_orphan_branch_images,
     resolve_base_digest,
@@ -50,6 +51,23 @@ vergil = "v2.0"
 [ci]
 versions = ["3.14"]
 """
+
+
+def _bootstrap_go(root: Path) -> None:
+    """Create the manifests the go warmup requires."""
+    (root / "go.mod").write_text("module example.com/x\n")
+
+
+def _bootstrap_python(root: Path) -> None:
+    """Create the manifests the python warmup requires."""
+    (root / "pyproject.toml").write_text('[project]\nname = "x"\n')
+    (root / "uv.lock").write_text("")
+
+
+def _bootstrap_cpp(root: Path) -> None:
+    """Create the manifests the cpp warmup requires."""
+    (root / "conanfile.txt").write_text("[generators]\nCMakeToolchain\n")
+    (root / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
 
 
 # -- cache_sensitive_files ----------------------------------------------------
@@ -690,6 +708,7 @@ def test_ensure_python_builds_cached_image(tmp_path: Path) -> None:
 
 def test_build_cached_image_python_includes_uv_install(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    _bootstrap_python(tmp_path)
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -776,6 +795,7 @@ def test_is_self_repo_false_invalid_toml(tmp_path: Path) -> None:
 def test_build_cached_image_self_repo_skips_uv_install(tmp_path: Path) -> None:
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    (tmp_path / "uv.lock").write_text("")
     create_result = MagicMock(returncode=0, stdout="abc123\n")
     ok = MagicMock(returncode=0)
     create_cmd: list[str] = []
@@ -1098,8 +1118,9 @@ def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -
     # For a non-self repo the composed setup is
     # `<uv tool install …> && <build-command> && <warmup>`.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
+    _bootstrap_go(tmp_path)
     setup = _compose_setup(tmp_path, "go")
-    warmup = _warmup_command("go")
+    warmup = _warmup_command("go", tmp_path)
     assert "uv tool install" in setup
     assert "make deps" in setup
     assert setup.index("uv tool install") < setup.index("make deps") < setup.index(warmup)
@@ -1108,10 +1129,11 @@ def test_compose_setup_slots_build_after_install_before_warmup(tmp_path: Path) -
 def test_compose_setup_absent_build_is_identical_to_install_and_warmup(tmp_path: Path) -> None:
     # Absent build-command ⇒ byte-identical to the pre-existing composition.
     (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    _bootstrap_go(tmp_path)
     setup = _compose_setup(tmp_path, "go")
     tag = vrg_install_tag(tmp_path)
     uv_install = f"uv tool install --quiet 'vergil-tooling @ git+{_VRG_GIT_URL}@{tag}'"
-    warmup = _warmup_command("go")
+    warmup = _warmup_command("go", tmp_path)
     assert setup == f"{uv_install} && {warmup}"
 
 
@@ -1120,8 +1142,9 @@ def test_compose_setup_self_repo_slots_build_after_apt_before_warmup(tmp_path: P
     # before warmup, the same relative slot.
     (tmp_path / "vergil.toml").write_text(_BUILD_CMD_TOML)
     (tmp_path / "pyproject.toml").write_text('[project]\nname = "vergil-tooling"\n')
+    (tmp_path / "uv.lock").write_text("")
     setup = _compose_setup(tmp_path, "python")
-    warmup = _warmup_command("python")
+    warmup = _warmup_command("python", tmp_path)
     assert "uv tool install" not in setup
     assert setup.index("make deps") < setup.index(warmup)
 
@@ -1204,3 +1227,101 @@ def test_cache_hash_changes_when_build_cache_file_changes(tmp_path: Path) -> Non
     (tmp_path / "deps.txt").write_text("v2\n")
     h2 = compute_cache_hash(cache_sensitive_files(tmp_path, "go"))
     assert h1 != h2
+
+
+# -- conditional warmup (issue #2881) -----------------------------------------
+
+
+def test_missing_warmup_files_empty_when_bootstrapped(tmp_path: Path) -> None:
+    _bootstrap_cpp(tmp_path)
+    assert missing_warmup_files("cpp", tmp_path) == []
+
+
+def test_missing_warmup_files_reports_each_unsatisfied_group(tmp_path: Path) -> None:
+    assert missing_warmup_files("cpp", tmp_path) == [
+        "conanfile.txt or conanfile.py",
+        "CMakeLists.txt",
+    ]
+
+
+def test_missing_warmup_files_accepts_either_conanfile_spelling(tmp_path: Path) -> None:
+    # conanfile.py satisfies the same group as conanfile.txt.
+    (tmp_path / "conanfile.py").write_text("from conan import ConanFile\n")
+    (tmp_path / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.20)\n")
+    assert missing_warmup_files("cpp", tmp_path) == []
+
+
+def test_missing_warmup_files_partial_bootstrap_reports_only_the_gap(tmp_path: Path) -> None:
+    (tmp_path / "conanfile.txt").write_text("[generators]\n")
+    assert missing_warmup_files("cpp", tmp_path) == ["CMakeLists.txt"]
+
+
+def test_missing_warmup_files_unknown_language_has_no_requirements(tmp_path: Path) -> None:
+    assert missing_warmup_files("cobol", tmp_path) == []
+
+
+def test_warmup_command_skipped_when_manifests_absent(tmp_path: Path) -> None:
+    # The bootstrap case: no conanfile means no warmup, rather than a command
+    # guaranteed to fail and abort the image build (issue #2871).
+    assert _warmup_command("cpp", tmp_path) == ""
+
+
+def test_warmup_command_runs_when_manifests_present(tmp_path: Path) -> None:
+    _bootstrap_cpp(tmp_path)
+    warmup = _warmup_command("cpp", tmp_path)
+    assert "conan lock create" in warmup
+    assert "cmake -S . -B build" in warmup
+
+
+def test_warmup_command_empty_for_language_without_install_commands(tmp_path: Path) -> None:
+    assert _warmup_command("cobol", tmp_path) == ""
+
+
+def test_compose_setup_omits_warmup_on_unbootstrapped_repo(tmp_path: Path) -> None:
+    # An unbootstrapped repo still yields a usable setup string: install only.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    setup = _compose_setup(tmp_path, "cpp")
+    assert "conan lock create" not in setup
+    assert "uv tool install" in setup
+
+
+def test_build_cached_image_reports_skipped_warmup(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The skip is announced; a silently unwarmed image would be
+    # indistinguishable from a warmed one until a dependency turned up missing.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    ok = MagicMock(returncode=0, stdout="abc123\n")
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", return_value=ok):
+        _build_cached_image(tmp_path, "cpp", "img:1", "img:1--branch--hash", runtime="docker")
+    out = capsys.readouterr().out
+    assert "Warmup:  skipped" in out
+    assert "conanfile.txt or conanfile.py" in out
+    assert "CMakeLists.txt" in out
+
+
+def test_cache_files_cpp_tracks_conan_and_cmake_manifests(tmp_path: Path) -> None:
+    # Without these the cache key is vergil.toml alone, so a dependency change
+    # would silently reuse a stale warmed image.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    _bootstrap_cpp(tmp_path)
+    (tmp_path / "conan.lock").write_text("{}")
+    names = {p.name for p in cache_sensitive_files(tmp_path, "cpp")}
+    assert names == {"conanfile.txt", "conan.lock", "CMakeLists.txt", "vergil.toml"}
+
+
+def test_cache_files_typescript_tracks_lockfile(tmp_path: Path) -> None:
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    (tmp_path / "package-lock.json").write_text("{}")
+    names = {p.name for p in cache_sensitive_files(tmp_path, "typescript")}
+    assert names == {"package-lock.json", "vergil.toml"}
+
+
+def test_cpp_cache_hash_changes_when_conanfile_appears(tmp_path: Path) -> None:
+    # This is what makes a skipped warmup self-healing: bootstrapping the repo
+    # changes the cache key, forcing a rebuild that warms properly.
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    before = compute_cache_hash(cache_sensitive_files(tmp_path, "cpp"))
+    _bootstrap_cpp(tmp_path)
+    after = compute_cache_hash(cache_sensitive_files(tmp_path, "cpp"))
+    assert before != after
