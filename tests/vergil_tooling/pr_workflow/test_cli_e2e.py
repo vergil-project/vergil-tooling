@@ -12,6 +12,7 @@ import pytest
 from vergil_tooling.bin import vrg_pr_workflow
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
     from pathlib import Path
 
 
@@ -41,6 +42,26 @@ def in_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
     return repo
+
+
+@pytest.fixture(autouse=True)
+def _stub_relay_push() -> Iterator[None]:
+    """Stub the relay-ref push for every test in this module (#2877).
+
+    report-ready mirrors state onto refs/vergil/pr-workflow/<branch> via a real
+    ``git push --force origin`` (github_transport.write). These tests run in a
+    temp repo with no ``origin``, so that push fails with "could not read from
+    remote" — which retry.is_retryable() treats as transient, so git.run burns the
+    full 4-step backoff (~30s of real time.sleep) before report-ready swallows the
+    non-fatal failure. That made each report-ready test cost ~30-60s (11 tests =
+    ~96% of the whole suite's wall-clock). Stubbing GitHubTransport keeps the relay
+    push a no-op. The real push contract is still covered by
+    test_report_ready_pushes_relay_ref and
+    test_report_ready_relay_push_failure_surfaces_but_local_persists (which
+    re-patch GitHubTransport locally), and by test_github_transport.py.
+    """
+    with patch("vergil_tooling.bin.vrg_pr_workflow.GitHubTransport"):
+        yield
 
 
 def test_report_ready_initializes_and_records(
