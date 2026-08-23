@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.201] - 2026-08-23
+
+### Testing
+
+- stub relay push in report-ready e2e tests (#2879)
+
 ## [2.1.200] - 2026-08-22
 
 ### Bug fixes
