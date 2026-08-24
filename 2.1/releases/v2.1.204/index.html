@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.205/">
       
       
         <link rel="next" href="../v2.1.203/">
@@ -1213,6 +1213,8 @@
       
         
       
+        
+      
     
     
     
@@ -1268,6 +1270,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.205/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.205
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -13880,6 +13910,7 @@
 failed_check_names() counted every fail/cancel bucket from gh pr checks as a failure, but gh reports check-runs across all workflow runs on the head commit. A cancelled attempt superseded by a later run (common after a close/reopen under concurrency: cancel-in-progress) leaves stale cancelled check-runs behind — often under the unexpanded "${{ matrix.version }}" name — so an all-green PR that GitHub reports MERGEABLE/CLEAN could not be finalized (#2897).</li>
 </ul>
 <p>Subtract check-run names that exist only on a superseded run of their workflow, with the latest run resolved by the Actions run id in each check detailsUrl. A cancel/fail on the latest run still blocks; the rollup is queried only when at least one check is failing, so the all-green path stays a single gh call.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.204/v2.1.204-ci-evidence.tar.gz">Download →</a></p>
 
 
 

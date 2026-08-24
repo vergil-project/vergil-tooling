@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.106/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.104/">
+        <link rel="next" href="../v2.1.204/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.105 - VERGIL Tooling</title>
+        <title>2.1.205 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21105-2026-07-02" class="md-skip">
+        <a href="#release-21205-2026-08-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.105
+              2.1.205
             
           </span>
         </div>
@@ -1276,10 +1276,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.205/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.205
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1295,6 +1322,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#bug-fixes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Bug fixes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -4076,37 +4134,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.105
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.105/" class="md-nav__link">
         
   
   
@@ -4122,37 +4153,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#bug-fixes" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Bug fixes
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13903,12 +13903,15 @@
 
 
 
-<h1 id="release-21105-2026-07-02">Release 2.1.105 (2026-07-02)<a class="headerlink" href="#release-21105-2026-07-02" title="Permanent link">&para;</a></h1>
+<h1 id="release-21205-2026-08-24">Release 2.1.205 (2026-08-24)<a class="headerlink" href="#release-21205-2026-08-24" title="Permanent link">&para;</a></h1>
 <h2 id="bug-fixes">Bug fixes<a class="headerlink" href="#bug-fixes" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>honor cross-repo Refs and skip unresolvable tasks in task_drift (#2112)</strong>
-task_drift extracted only the issue number and looked it up in the PR's own repo, so a cross-repo Ref (owner/repo#N) resolved to the wrong repo, and an unresolvable/inaccessible task raised an uncaught GitHubAPIError that crashed the whole sweep. Use extract_tracking_ref to keep the owner/repo, look the task up in its actual repo, and skip (with a stderr warning) when it can't be resolved from this run (cross-org, private, deleted). close_drift then acts on the task's real repo. Surfaced by the scheduled sweep in logical-minds-foundry/.github choking on a PR that Ref'd vergil-project/vergil-tooling#2105 cross-org. Part of epic vergil-project/.github#80.</li>
+<li><strong>skip conan audit scan when no ConanCenter token is set (#2895) (#2896)</strong>
+The cpp audit stage ran 'conan audit scan .' unconditionally. It authenticates against ConanCenter's advisory API and hard-fails with 'Missing authentication token' when no provider token is set - an empty token does not degrade it either. So every cpp repo whose org has not set CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER failed the audit gate.</li>
 </ul>
+<p>ci-audit.yml already documents the intended behavior: it passes the token from a repo/org secret and states that vrg-validate skips this gate with a notice when the secret is unset - 'a per-language decision that lives in vrg-validate, not here'. But vrg-validate never implemented it: the only reference to the token was a comment in languages.py, and the AUDIT command list was unconditional. This makes the documented contract real.</p>
+<p>_skip_conan_audit_scan drops the 'conan audit scan' command (matched by shape, so only the cpp conan audit is affected) when the token env var is empty or unset, printing a notice to stderr. The rest of the audit stage (conan graph info) still runs, and if the filtered list empties, _build_stages omits the stage. A real token restores the scan unchanged. language_commands stays a pure registry expander - the environment-dependent decision lives in the runner, exactly where ci-audit.yml says it does.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.205/v2.1.205-ci-evidence.tar.gz">Download →</a></p>
 
 
 
