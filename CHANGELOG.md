@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.205] - 2026-08-24
+
+### Bug fixes
+
+- skip conan audit scan when no ConanCenter token is set (#2895) (#2896)
+
 ## [2.1.204] - 2026-08-24
 
 ### Bug fixes

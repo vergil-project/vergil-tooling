@@ -71,6 +71,39 @@ class ValidationError(Exception):
     """One or more validation commands failed."""
 
 
+# The name of an environment variable, not a secret value. (S105 false positive.)
+_CONAN_AUDIT_TOKEN_ENV = "CONAN_AUDIT_PROVIDER_TOKEN_CONANCENTER"  # noqa: S105
+
+
+def _skip_conan_audit_scan(cmds: list[list[str]]) -> list[list[str]]:
+    """Drop ``conan audit scan`` when no ConanCenter provider token is set.
+
+    ``conan audit scan`` authenticates against ConanCenter's advisory API and
+    hard-fails (``Missing authentication token``) without a provider token — an
+    empty token does not degrade it. ``ci-audit.yml`` passes the token from a
+    repo/org secret and documents that *vrg-validate* skips this gate with a
+    notice when the secret is unset, so a cpp repo without the token is not
+    wedged; this is where that promised skip actually lives. The rest of the
+    audit stage (e.g. ``conan graph info``) still runs, and a real token
+    restores the scan. Detection is by command shape, so only the cpp conan
+    audit is affected.
+    """
+    if os.environ.get(_CONAN_AUDIT_TOKEN_ENV, "").strip():
+        return cmds
+    kept: list[list[str]] = []
+    for cmd in cmds:
+        if cmd[:3] == ["conan", "audit", "scan"]:
+            print(
+                f"NOTICE: skipping `conan audit scan` — {_CONAN_AUDIT_TOKEN_ENV} "
+                "is unset, so there is no credential for ConanCenter's advisory "
+                "API. Set the secret to enable CVE scanning.",
+                file=sys.stderr,
+            )
+            continue
+        kept.append(cmd)
+    return kept
+
+
 def _command_stage(label: str, cmds: list[list[str]], *, mode: StageMode) -> Stage:
     def fn(_ctx: object) -> None:
         failed = 0
@@ -113,6 +146,10 @@ def _build_stages(
         kind_cmds = [
             (kind, language_commands(language, kind, cpp_std=cpp_std, cpp_stdlib=cpp_stdlib))
             for kind in kinds
+        ]
+        kind_cmds = [
+            (kind, _skip_conan_audit_scan(cmds) if kind is CheckKind.AUDIT else cmds)
+            for kind, cmds in kind_cmds
         ]
         kind_cmds = [(kind, cmds) for kind, cmds in kind_cmds if cmds]
         if kind_cmds:
