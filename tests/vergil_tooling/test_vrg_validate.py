@@ -13,12 +13,14 @@ if TYPE_CHECKING:
 import pytest
 
 from vergil_tooling.bin.vrg_validate import (
+    _CONAN_AUDIT_TOKEN_ENV,
     ValidationError,
     _build_stages,
     _command_stage,
     _find_custom_validator,
     _in_dev_container,
     _run_common_checks,
+    _skip_conan_audit_scan,
     main,
 )
 from vergil_tooling.lib.languages import CheckKind
@@ -522,3 +524,74 @@ def test_venv_bin_not_prepended_when_already_on_path(
         main(["--check", "lint"])
     count = os.environ["PATH"].split(os.pathsep).count(str(venv_bin))
     assert count == 1
+
+
+# -- _skip_conan_audit_scan (issue #2895) -------------------------------------
+
+_AUDIT_CMDS = [
+    ["conan", "audit", "scan", "."],
+    ["conan", "graph", "info", ".", "--format=json"],
+]
+
+
+def test_skip_conan_audit_scan_kept_when_token_present() -> None:
+    with patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "tok"}):
+        assert _skip_conan_audit_scan(_AUDIT_CMDS) == _AUDIT_CMDS
+
+
+def test_skip_conan_audit_scan_dropped_when_token_unset(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
+    with patch.dict(os.environ, env, clear=True):
+        result = _skip_conan_audit_scan(_AUDIT_CMDS)
+    assert result == [["conan", "graph", "info", ".", "--format=json"]]
+    assert "skipping `conan audit scan`" in capsys.readouterr().err
+
+
+def test_skip_conan_audit_scan_empty_token_treated_as_unset() -> None:
+    with patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "   "}):
+        result = _skip_conan_audit_scan(_AUDIT_CMDS)
+    assert result == [["conan", "graph", "info", ".", "--format=json"]]
+
+
+def test_skip_conan_audit_scan_noop_when_no_scan_command() -> None:
+    cmds = [["conan", "graph", "info", ".", "--format=json"]]
+    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
+    with patch.dict(os.environ, env, clear=True):
+        assert _skip_conan_audit_scan(cmds) == cmds
+
+
+def test_skip_conan_audit_scan_can_empty_the_list() -> None:
+    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
+    with patch.dict(os.environ, env, clear=True):
+        assert _skip_conan_audit_scan([["conan", "audit", "scan", "."]]) == []
+
+
+def test_build_stages_drops_audit_when_only_scan_and_no_token() -> None:
+    # cpp audit degrades to just the scan in this mock; with no token the scan
+    # is dropped, the audit command list empties, and the stage is omitted.
+    env = {k: v for k, v in os.environ.items() if k != _CONAN_AUDIT_TOKEN_ENV}
+    with (
+        patch.dict(os.environ, env, clear=True),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".language_commands") as m_cmds,
+    ):
+        m_cmds.side_effect = lambda _lang, kind, **_kw: (
+            [["conan", "audit", "scan", "."]] if kind is CheckKind.AUDIT else [["echo", kind.value]]
+        )
+        stages = _build_stages(None, "cpp", Path("/tmp/r"))  # noqa: S108
+    assert "audit" not in [s.name for s in stages]
+
+
+def test_build_stages_keeps_audit_when_token_present() -> None:
+    with (
+        patch.dict(os.environ, {_CONAN_AUDIT_TOKEN_ENV: "tok"}),
+        patch(_MOD + "._find_custom_validator", return_value=None),
+        patch(_MOD + ".language_commands") as m_cmds,
+    ):
+        m_cmds.side_effect = lambda _lang, kind, **_kw: (
+            [["conan", "audit", "scan", "."]] if kind is CheckKind.AUDIT else [["echo", kind.value]]
+        )
+        stages = _build_stages(None, "cpp", Path("/tmp/r"))  # noqa: S108
+    assert "audit" in [s.name for s in stages]
