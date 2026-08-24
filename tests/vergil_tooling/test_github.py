@@ -378,6 +378,21 @@ def test_wait_for_checks_default_ceiling_is_1800_and_polls_past_180(
     assert sleeps == [github._POLL_INTERVAL_SECS]
 
 
+def _rollup_node(name: str, run_id: int | None, workflow: str = "CI") -> dict[str, str]:
+    """A statusCheckRollup CheckRun node with an Actions run link (or none)."""
+    details = (
+        f"https://github.com/o/r/actions/runs/{run_id}/job/{run_id}"
+        if run_id is not None
+        else "https://github.com/o/r/actions/runs/"  # no /job/ → unresolvable run id
+    )
+    return {
+        "__typename": "CheckRun",
+        "name": name,
+        "workflowName": workflow,
+        "detailsUrl": details,
+    }
+
+
 def test_failed_check_names_returns_failing_checks() -> None:
     payload = json.dumps(
         [
@@ -387,16 +402,35 @@ def test_failed_check_names_returns_failing_checks() -> None:
             {"name": "optional-lint", "bucket": "skipping"},
         ]
     )
+    # Both failing checks are on the sole (latest) run, so nothing is superseded.
+    rollup = json.dumps(
+        [_rollup_node("security / codeql", 10), _rollup_node("security / semgrep", 10)]
+    )
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
-        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        mock_run.side_effect = [
+            _completed(returncode=8, stdout=payload),
+            _completed(returncode=0, stdout=rollup),
+        ]
         result = github.failed_check_names("https://github.com/pr/1")
     assert result == ["security / codeql", "security / semgrep"]
-    mock_run.assert_called_once_with(
-        ("gh", "pr", "checks", "https://github.com/pr/1", "--json", "name,bucket"),
-        check=False,
-        text=True,
-        capture_output=True,
+    assert mock_run.call_args_list[0].args[0] == (
+        "gh",
+        "pr",
+        "checks",
+        "https://github.com/pr/1",
+        "--json",
+        "name,bucket",
     )
+
+
+def test_failed_check_names_skips_rollup_when_nothing_failing() -> None:
+    # When no check is in a failed bucket, the second (statusCheckRollup) call is
+    # not made — the happy path stays a single gh invocation.
+    payload = json.dumps([{"name": "build", "bucket": "pass"}])
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.return_value = _completed(returncode=0, stdout=payload)
+        assert github.failed_check_names("https://github.com/pr/1") == []
+    assert mock_run.call_count == 1
 
 
 def test_failed_check_names_empty_when_all_pass() -> None:
@@ -411,11 +445,77 @@ def test_failed_check_names_empty_when_all_pass() -> None:
         assert github.failed_check_names("https://github.com/pr/1") == []
 
 
-def test_failed_check_names_treats_cancelled_as_failure() -> None:
+def test_failed_check_names_blocks_latest_run_cancel() -> None:
+    # A cancel on the latest (only) run of its workflow is a real failure.
     payload = json.dumps([{"name": "deploy", "bucket": "cancel"}])
+    rollup = json.dumps([_rollup_node("deploy", 500, workflow="CD")])
     with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
-        mock_run.return_value = _completed(returncode=8, stdout=payload)
+        mock_run.side_effect = [
+            _completed(returncode=8, stdout=payload),
+            _completed(returncode=0, stdout=rollup),
+        ]
         assert github.failed_check_names("https://github.com/pr/1") == ["deploy"]
+
+
+def test_failed_check_names_ignores_superseded_cancelled_check() -> None:
+    # Regression (#2897): a commit carrying a green latest run plus a cancelled
+    # check-run from a *superseded* earlier run (the unexpanded-matrix name that
+    # never appears on the latest run) must not block the merge. GitHub reports
+    # such a PR MERGEABLE/CLEAN; the gate must agree.
+    payload = json.dumps(
+        [
+            {"name": "test / unit / 3.12", "bucket": "pass"},
+            {"name": "test / unit / ${{ matrix.version }}", "bucket": "cancel"},
+        ]
+    )
+    rollup = json.dumps(
+        [
+            _rollup_node("test / unit / 3.12", 200),  # latest run
+            _rollup_node("test / unit / ${{ matrix.version }}", 100),  # superseded
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            _completed(returncode=8, stdout=payload),
+            _completed(returncode=0, stdout=rollup),
+        ]
+        assert github.failed_check_names("https://github.com/pr/1") == []
+
+
+def test_failed_check_names_superseded_filter_covers_edge_nodes() -> None:
+    # Exercises the superseded-name resolver's branches: a non-CheckRun status
+    # context is skipped; a check-run with no resolvable run id is treated as
+    # live (kept); a name present only on an older run is superseded (dropped);
+    # a name on the latest run is kept.
+    payload = json.dumps(
+        [
+            {"name": "orphan", "bucket": "cancel"},  # no run id → live, still blocks
+            {"name": "stale", "bucket": "cancel"},  # only on older run → dropped
+            {"name": "live-pass", "bucket": "pass"},
+        ]
+    )
+    rollup = json.dumps(
+        [
+            None,  # non-dict node → skipped
+            {"__typename": "StatusContext", "context": "external"},  # skipped
+            _rollup_node("orphan", None),  # unresolvable run id → live
+            _rollup_node("stale", 1),  # superseded by run 2
+            _rollup_node("live-pass", 2),  # latest run
+        ]
+    )
+    with patch("vergil_tooling.lib.retry.subprocess.run") as mock_run:
+        mock_run.side_effect = [
+            _completed(returncode=8, stdout=payload),
+            _completed(returncode=0, stdout=rollup),
+        ]
+        assert github.failed_check_names("https://github.com/pr/1") == ["orphan"]
+
+
+def test_superseded_check_names_handles_non_list_rollup() -> None:
+    # Defensive: if statusCheckRollup resolves to a non-list (e.g. null on a PR
+    # with no checks), nothing is superseded rather than crashing the gate.
+    with patch("vergil_tooling.lib.github.read_json", return_value=None):
+        assert github._superseded_check_names("https://github.com/pr/1") == set()
 
 
 def test_failed_check_names_raises_on_empty_output() -> None:
