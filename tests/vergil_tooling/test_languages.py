@@ -338,6 +338,13 @@ def test_cpp_lint_commands() -> None:
     joined = _joined(cmds)
     assert any("clang-format" in c and "--dry-run --Werror" in c for c in joined)
     assert any("run-clang-tidy" in c for c in joined)
+    # clang-format's find driver prunes build/build-sanitize *and* .worktrees as
+    # directories at any depth — a root-level validation must never lint a
+    # sibling worktree's tree or a nested CMake output dir (#2906). The old
+    # top-level-only ``-path ./build`` prune is gone.
+    clang_format_cmd = next(c for c in joined if "clang-format" in c)
+    assert "-name build -o -name build-sanitize -o -name .worktrees" in clang_format_cmd
+    assert "-path ./build" not in clang_format_cmd
     # cppcheck runs with --library=googletest so it parses GoogleTest's TEST()
     # macro instead of throwing a syntaxError on it — GoogleTest is the
     # documented default framework and the images ship googletest.cfg. (#2579)
@@ -347,7 +354,8 @@ def test_cpp_lint_commands() -> None:
     # GoogleTest's static-registered ``TEST()`` functions — cppcheck cannot see
     # cross-TU usage) plus the noisy ``information``/``missingInclude``. The
     # build tree is excluded with ``-i build -i build-sanitize`` so cppcheck
-    # never walks CMake's compiler-probe file and trips ``toomanyconfigs``.
+    # never walks CMake's compiler-probe file and trips ``toomanyconfigs``;
+    # ``.worktrees`` is excluded too so it never reads a sibling worktree (#2906).
     assert any(
         "cppcheck" in c
         and "--enable=warning,style,performance,portability" in c
@@ -356,6 +364,7 @@ def test_cpp_lint_commands() -> None:
         and "--library=googletest" in c
         and "-i build " in c
         and "-i build-sanitize " in c
+        and "-i .worktrees " in c
         for c in joined
     )
 
