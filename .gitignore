@@ -91,6 +91,19 @@ conanrunenv-*.sh
 deactivate_conanbuild*.sh
 deactivate_conanrun*.sh
 
+# Conan CMakeDeps per-package files. Package-named (e.g. GTest → FindGTest.cmake,
+# GTestConfig.cmake, GTest-Target-debug.cmake), so matched by shape rather than an
+# enumerable list. Conan writes these loose at the source root; a repo's own CMake
+# modules belong under cmake/ or are generated into build/, never loose at the
+# root, so these globs do not collide with tracked project files in practice.
+Find*.cmake
+*Config.cmake
+*ConfigVersion.cmake
+*Targets.cmake
+*-Target-*.cmake
+*-data.cmake
+module-*.cmake
+
 # --- Repo-local extras (beyond the baseline) ---
 
 # Legacy egg-info path from the standard_tooling era (kept for old checkouts)
