@@ -237,6 +237,12 @@ _CPP_WARNINGS_CXX_FLAGS = " ".join(_CPP_WARNING_FLAGS)
 _CPP_BUILD_DIR = "build"
 _CPP_SANITIZE_BUILD_DIR = "build-sanitize"
 
+# The canonical parallel-worktree container (``<root>/.worktrees/``). cpp LINT
+# runs from the repo root, so both file-walking linters (clang-format's find
+# driver, cppcheck) must exclude it — a validation of one worktree must never
+# read a sibling worktree's sources or build tree (#2906).
+_WORKTREES_DIR = ".worktrees"
+
 # Recognized C++ compiler families, in declared-primary precedence order. The
 # `[ci].versions` tags carry the compiler family as a `<family>-<version>`
 # prefix (e.g. ``clang-20``), per spec vergil-project/.github#207 §6.
@@ -450,11 +456,22 @@ _REGISTRY: dict[str, Language] = {
             # cppcheck walks ``.``; run-clang-tidy reads the compile DB; only
             # clang-format needs a file list, so it uses an explicit ``sh -c``
             # find/xargs driver.
+            #
+            # The driver prunes *directories* named ``build``/``build-sanitize``
+            # at any depth — not just ``./build`` at the top level — plus
+            # ``.worktrees`` entirely. A root-level validation must never read
+            # another worktree's tree or a nested CMake output dir: the old
+            # ``-path ./build`` prune matched only the top level, so a develop
+            # validation run while a sibling ``.worktrees/<name>/`` existed
+            # descended into it and linted CMake's generated compiler-probe
+            # file (``CMakeCXXCompilerId.cpp``), failing a healthy develop on
+            # another worktree's build artifacts (#2906).
             CheckKind.LINT: [
                 [
                     "sh",
                     "-c",
-                    "find . -path ./build -prune -o -path ./build-sanitize -prune -o "
+                    "find . -type d \\( -name build -o -name build-sanitize "
+                    "-o -name .worktrees \\) -prune -o "
                     '-type f \\( -name "*.cpp" -o -name "*.cxx" -o -name "*.cc" '
                     '-o -name "*.hpp" -o -name "*.hxx" -o -name "*.hh" '
                     '-o -name "*.h" \\) -print0 '
@@ -490,12 +507,17 @@ _REGISTRY: dict[str, Language] = {
                     "--suppressions-list={configs}/cpp/cppcheck-suppressions.txt",
                     # Never walk CMake's ``build/``/``build-sanitize/`` output —
                     # its compiler-probe file (``CMakeCXXCompilerId.cpp``) trips
-                    # ``toomanyconfigs`` (#2585). clang-format prunes the same dirs
-                    # via its find driver above; cppcheck excludes them with -i.
+                    # ``toomanyconfigs`` (#2585) — nor ``.worktrees/``, whose
+                    # sibling worktrees carry their own sources and build trees a
+                    # root-level validation must never read (#2906). clang-format
+                    # prunes the same dirs via its find driver above; cppcheck
+                    # excludes them with -i.
                     "-i",
                     _CPP_BUILD_DIR,
                     "-i",
                     _CPP_SANITIZE_BUILD_DIR,
+                    "-i",
+                    _WORKTREES_DIR,
                     ".",
                 ],
             ],
