@@ -71,3 +71,19 @@ vendor/bundle/
 *.obj
 *.a
 *.so
+
+# C/C++ Conan 2 generator output (written into the source tree by `conan install`).
+# The -debug-armv8 style suffix carries build type + arch, so these need wildcards
+# to match Release builds and x86_64 hosts too. conan.lock is intentionally NOT
+# ignored — it is committed for reproducible resolution, like uv.lock.
+CMakePresets.json
+CMakeUserPresets.json
+cmakedeps_macros.cmake
+conan_toolchain.cmake
+conandeps_legacy.cmake
+conanbuild*.sh
+conanrun*.sh
+conanbuildenv-*.sh
+conanrunenv-*.sh
+deactivate_conanbuild*.sh
+deactivate_conanrun*.sh
