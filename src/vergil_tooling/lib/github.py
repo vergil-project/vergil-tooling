@@ -727,6 +727,10 @@ def wait_for_checks(
         if time.monotonic() >= deadline:
             orphans = orphaned_check_names(pr)
             if orphans:
+                # The close/reopen recovery this advises replaces the run,
+                # leaving cancelled check-runs from the superseded attempt on the
+                # commit. Those are now harmless: failed_check_names ignores
+                # check-runs that live only on a superseded run (#2897).
                 raise OrphanedCheckError(
                     f"GitHub left {', '.join(orphans)} non-terminal after its "
                     "backing workflow run completed (orphaned check-run). Close "
@@ -744,8 +748,62 @@ def wait_for_checks(
 _FAILED_BUCKETS = frozenset({"fail", "cancel"})
 
 
+def _superseded_check_names(pr: str) -> set[str]:
+    """Names of check-runs that exist only on *superseded* workflow runs.
+
+    A commit can carry check-runs from several runs of the same workflow — e.g.
+    when ``concurrency: cancel-in-progress`` cancels an earlier attempt after a
+    close/reopen, or a re-run supersedes a prior one. GitHub keeps every such
+    check-run on the commit, and a cancelled attempt often carries the
+    *unexpanded* matrix job name (``… / ${{ matrix.version }}``) because it was
+    killed before its matrix expanded, so it never shares a name with — and is
+    never superseded by — the latest run's expanded, passing checks
+    (``… / 3.12``).
+
+    Those stale check-runs are not real failures (GitHub's own merge-state
+    ignores them, reporting the PR ``CLEAN``), but ``failed_check_names`` would
+    otherwise count their ``cancel`` bucket as a failure and block an
+    otherwise-clean merge (#2897). This returns the names to subtract: a name is
+    superseded when *every* occurrence of it belongs to a run older than the
+    latest run of its workflow. A ``cancel``/``fail`` on the *latest* run keeps
+    its name live and is therefore still reported.
+
+    Run identity comes from the Actions run id in each check's ``detailsUrl``
+    (:data:`_ACTIONS_RUN_LINK_RE`); a check-run with no resolvable run id, or a
+    non-``CheckRun`` status context (an app-posted status), is treated as live
+    and never suppressed.
+    """
+    rollup = read_json(
+        "pr", "view", pr, "--json", "statusCheckRollup", "--jq", ".statusCheckRollup"
+    )
+    if not isinstance(rollup, list):
+        return set()
+    parsed: list[tuple[str, object, int | None]] = []
+    latest: dict[object, int] = {}
+    for raw in rollup:
+        if not isinstance(raw, dict):
+            continue
+        node = cast("dict[str, object]", raw)
+        if node.get("__typename") != "CheckRun":
+            continue
+        name = str(node.get("name"))
+        workflow = node.get("workflowName")
+        match = _ACTIONS_RUN_LINK_RE.search(str(node.get("detailsUrl") or ""))
+        run_id = int(match.group(1)) if match else None
+        parsed.append((name, workflow, run_id))
+        if run_id is not None and run_id > latest.get(workflow, 0):
+            latest[workflow] = run_id
+    all_names = {name for name, _, _ in parsed}
+    live = {
+        name
+        for name, workflow, run_id in parsed
+        if run_id is None or run_id == latest.get(workflow)
+    }
+    return all_names - live
+
+
 def failed_check_names(pr: str) -> list[str]:
-    """Return the names of checks on *pr* whose result is a failure.
+    """Return the names of checks on *pr* whose result is a genuine failure.
 
     ``gh pr checks --watch`` (without ``--fail-fast``) exits 0 even when a
     check fails — its non-zero exit code 8 signals *pending*, not *failure* —
@@ -754,6 +812,15 @@ def failed_check_names(pr: str) -> list[str]:
     check ``state`` into ``pass``/``fail``/``pending``/``skipping``/``cancel``)
     and returns the names whose bucket is ``fail`` or ``cancel``.  An empty
     list means every check passed or was skipped.
+
+    ``gh pr checks`` reports check-runs across *all* workflow runs on the head
+    commit, so a cancelled check-run left behind by a superseded earlier run
+    (common after a close/reopen under ``concurrency: cancel-in-progress``)
+    would otherwise be miscounted as a failure and block a PR that GitHub itself
+    reports ``MERGEABLE``/``CLEAN`` (#2897). Names that exist only on superseded
+    runs are subtracted via :func:`_superseded_check_names`; a ``cancel``/``fail``
+    on the *latest* run still counts. The rollup is queried only when at least
+    one check is failing, so the all-green path stays a single ``gh`` call.
 
     ``gh pr checks`` exits non-zero when checks are failing or pending but
     still emits the requested JSON on stdout, so the call tolerates a
@@ -774,7 +841,11 @@ def failed_check_names(pr: str) -> list[str]:
             return []
         raise GitHubAPIError(result.returncode or 1, cmd, stderr=result.stderr)
     checks = json.loads(out)
-    return [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+    failing = [str(c["name"]) for c in checks if c.get("bucket") in _FAILED_BUCKETS]
+    if not failing:
+        return []
+    superseded = _superseded_check_names(pr)
+    return [name for name in failing if name not in superseded]
 
 
 def pr_checks(pr: str) -> list[dict[str, str]]:
