@@ -670,6 +670,26 @@ def test_build_cached_image_quiet_warmup_surfaces_output_on_failure(tmp_path: Pa
         )
 
 
+def test_build_cached_image_quiet_warmup_failure_without_output(tmp_path: Path) -> None:
+    """A captured failure with no output falls back to the bare message (#2906)."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return MagicMock(returncode=0, stdout="abc123\n")
+        if cmd[1] == "start":
+            return MagicMock(returncode=1, stdout="", stderr="")
+        return MagicMock(returncode=0)
+
+    with (
+        patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run),
+        pytest.raises(RuntimeError, match=r"^Cache build failed$"),
+    ):
+        _build_cached_image(
+            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", quiet_warmup=True
+        )
+
+
 def test_build_cached_image_warmup_printed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
