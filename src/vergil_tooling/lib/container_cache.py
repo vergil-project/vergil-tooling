@@ -355,8 +355,18 @@ def _build_cached_image(
     target_tag: str,
     *,
     runtime: str = "",
+    quiet_warmup: bool = False,
 ) -> str:
-    """Build a cached image with vergil-tooling installed."""
+    """Build a cached image with vergil-tooling installed.
+
+    ``quiet_warmup`` captures the warmup subprocess's output instead of
+    streaming it to the inherited terminal, surfacing it only on failure. The
+    finalize pipeline sets it: provisioning runs under a live progress display
+    that owns stdout, and a raw-streamed multi-minute build (e.g. cpp compiling
+    GoogleTest from source) reads as output "outside the script" over the
+    progress tree (#2906). The interactive ``vrg-container-run`` path leaves it
+    False so a cold rebuild still streams live and never looks hung.
+    """
     rt = runtime or detect_runtime()
     self_repo = _is_self_repo(repo_root)
     warmup = _warmup_command(lang, repo_root)
@@ -431,9 +441,20 @@ def _build_cached_image(
     try:
         run_result = subprocess.run(  # noqa: S603
             [rt, "start", "-a", container_id],  # noqa: S607
+            capture_output=quiet_warmup,
+            text=True if quiet_warmup else None,
         )
         if run_result.returncode != 0:
             msg = "Cache build failed"
+            if quiet_warmup:
+                # The output was captured (not streamed), so fold it into the
+                # error — otherwise a provisioning failure surfaces with no
+                # diagnostic at all under the finalize progress display (#2906).
+                captured = "".join(
+                    part for part in (run_result.stdout, run_result.stderr) if part
+                ).strip()
+                if captured:
+                    msg = f"{msg}\n{captured}"
             raise RuntimeError(msg)
 
         subprocess.run(  # noqa: S603
@@ -457,10 +478,12 @@ def ensure_cached_image(
     base_image: str,
     *,
     runtime: str = "",
+    quiet_warmup: bool = False,
 ) -> str:
     """Return a cached image tag, building one if needed.
 
     Returns *base_image* unchanged if no cache-sensitive files are found.
+    ``quiet_warmup`` is forwarded to :func:`_build_cached_image` (see there).
     """
     rt = runtime or detect_runtime()
     files = cache_sensitive_files(repo_root, lang)
@@ -485,7 +508,9 @@ def ensure_cached_image(
         )
 
     target_tag = cache_image_tag(base_image, branch, current_hash)
-    return _build_cached_image(repo_root, lang, base_image, target_tag, runtime=rt)
+    return _build_cached_image(
+        repo_root, lang, base_image, target_tag, runtime=rt, quiet_warmup=quiet_warmup
+    )
 
 
 def provision_dev_image(
@@ -494,6 +519,7 @@ def provision_dev_image(
     *,
     prefix: str = "prod",
     runtime: str = "",
+    quiet_warmup: bool = False,
 ) -> tuple[str, str]:
     """Resolve the dev image for *repo_root*, building/warming it if needed.
 
@@ -510,6 +536,10 @@ def provision_dev_image(
     Kept in step with ``vrg_container_run.main``'s inline resolution: both honour
     ``DOCKER_DEV_IMAGE`` first, then fall back to ``default_image`` +
     ``ensure_cached_image``. Change the two together.
+
+    ``quiet_warmup`` is forwarded to the cache build so the warmup output is
+    captured (surfaced on failure) rather than streamed. ``vrg-finalize-pr``
+    sets it because it provisions under a live progress display (#2906).
     """
     env_image = os.environ.get("DOCKER_DEV_IMAGE")
     if env_image:
@@ -518,7 +548,7 @@ def provision_dev_image(
     # hardcoded default (issue #2468), so provisioning warms the same image
     # vrg-container-run selects.
     base = default_image(lang, fallback=True, prefix=prefix, version=primary_ci_version(repo_root))
-    image = ensure_cached_image(repo_root, lang, base, runtime=runtime)
+    image = ensure_cached_image(repo_root, lang, base, runtime=runtime, quiet_warmup=quiet_warmup)
     return image, ("cached" if image != base else "default")
 
 
