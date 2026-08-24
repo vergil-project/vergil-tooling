@@ -985,7 +985,10 @@ def _stage_provision(ctx: FinalizeContext) -> None:
     print("Provisioning dev image for post-finalization validation...")
     lang = resolve_language(ctx.root)
     try:
-        image, source = provision_dev_image(ctx.root, lang)
+        # quiet_warmup: this stage runs under the live progress display, so the
+        # warmup build is captured (surfaced on failure) rather than streamed
+        # raw over the progress tree (#2906).
+        image, source = provision_dev_image(ctx.root, lang, quiet_warmup=True)
     except RuntimeError as exc:
         raise FinalizeError(f"dev-image provisioning failed: {exc}") from exc
     if source == "env":

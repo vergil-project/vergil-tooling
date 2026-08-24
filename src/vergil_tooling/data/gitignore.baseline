@@ -32,6 +32,11 @@ Thumbs.db
 
 # Build / packaging output
 build/
+# C++ TEST runs its ASan/UBSan build out-of-tree in a *separate* dir so the
+# sanitizer instrumentation never shares objects with the coverage build; it is
+# generated output like build/ and must be ignored too, or a cpp dev build
+# leaves the worktree dirty and un-sweepable by finalize cleanup (#2906).
+build-sanitize/
 dist/
 *.egg-info/
 

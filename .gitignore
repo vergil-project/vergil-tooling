@@ -33,6 +33,8 @@ Thumbs.db
 
 # Build / packaging output
 build/
+# C++ ASan/UBSan out-of-tree build dir — generated output like build/ (#2906).
+build-sanitize/
 dist/
 *.egg-info/
 

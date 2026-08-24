@@ -603,6 +603,93 @@ def test_build_cached_image_start_fails(tmp_path: Path) -> None:
         _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
 
 
+def test_build_cached_image_streams_warmup_by_default(tmp_path: Path) -> None:
+    """The default (interactive) path streams warmup output — no capture_output.
+
+    A cold rebuild under ``vrg-container-run`` must stream so a multi-minute
+    build never looks hung; only the finalize path quiets it (#2906).
+    """
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    start_kwargs: dict[str, object] = {}
+
+    def mock_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return MagicMock(returncode=0, stdout="abc123\n")
+        if cmd[1] == "start":
+            start_kwargs.update(kwargs)
+        return MagicMock(returncode=0)
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker")
+
+    # Not captured → streamed to the inherited terminal.
+    assert start_kwargs.get("capture_output") is False
+
+
+def test_build_cached_image_quiet_warmup_captures(tmp_path: Path) -> None:
+    """quiet_warmup captures the warmup subprocess instead of streaming it."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+    start_kwargs: dict[str, object] = {}
+
+    def mock_run(cmd: list[str], **kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return MagicMock(returncode=0, stdout="abc123\n")
+        if cmd[1] == "start":
+            start_kwargs.update(kwargs)
+        return MagicMock(returncode=0, stdout="", stderr="")
+
+    with patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run):
+        _build_cached_image(
+            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", quiet_warmup=True
+        )
+
+    assert start_kwargs.get("capture_output") is True
+
+
+def test_build_cached_image_quiet_warmup_surfaces_output_on_failure(tmp_path: Path) -> None:
+    """A captured warmup failure folds its output into the error (#2906).
+
+    Otherwise a provisioning failure surfaces with no diagnostic under the
+    finalize progress display, which does not stream the warmup.
+    """
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return MagicMock(returncode=0, stdout="abc123\n")
+        if cmd[1] == "start":
+            return MagicMock(returncode=1, stdout="conan: package not found", stderr="boom")
+        return MagicMock(returncode=0)
+
+    with (
+        patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run),
+        pytest.raises(RuntimeError, match="conan: package not found"),
+    ):
+        _build_cached_image(
+            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", quiet_warmup=True
+        )
+
+
+def test_build_cached_image_quiet_warmup_failure_without_output(tmp_path: Path) -> None:
+    """A captured failure with no output falls back to the bare message (#2906)."""
+    (tmp_path / "vergil.toml").write_text(_VALID_TOML)
+
+    def mock_run(cmd: list[str], **_kwargs: object) -> MagicMock:
+        if cmd[1] == "create":
+            return MagicMock(returncode=0, stdout="abc123\n")
+        if cmd[1] == "start":
+            return MagicMock(returncode=1, stdout="", stderr="")
+        return MagicMock(returncode=0)
+
+    with (
+        patch("vergil_tooling.lib.container_cache.subprocess.run", side_effect=mock_run),
+        pytest.raises(RuntimeError, match=r"^Cache build failed$"),
+    ):
+        _build_cached_image(
+            tmp_path, "go", "img:1", "img:1--branch--hash", runtime="docker", quiet_warmup=True
+        )
+
+
 def test_build_cached_image_warmup_printed(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -737,7 +824,13 @@ def test_ensure_repo_name_included_in_hash(tmp_path: Path) -> None:
     built_tags: list[str] = []
 
     def capture_build(
-        repo_root: Path, lang: str, base_image: str, target_tag: str, *, runtime: str = ""
+        repo_root: Path,
+        lang: str,
+        base_image: str,
+        target_tag: str,
+        *,
+        runtime: str = "",
+        quiet_warmup: bool = False,
     ) -> str:
         built_tags.append(target_tag)
         return target_tag

@@ -1685,7 +1685,9 @@ def test_stage_provision_warms_image(tmp_path: Path) -> None:
         ) as prov,
     ):
         _stage_provision(ctx)
-    prov.assert_called_once_with(tmp_path, "python")
+    # quiet_warmup=True: this stage runs under the live progress display, so the
+    # warmup is captured (surfaced on failure), not streamed raw (#2906).
+    prov.assert_called_once_with(tmp_path, "python", quiet_warmup=True)
 
 
 def test_stage_provision_reports_env_override(
