@@ -11,10 +11,10 @@
       
       
       
-        <link rel="prev" href="../v2.1.163/">
+        <link rel="prev" href="../">
       
       
-        <link rel="next" href="../v2.1.161/">
+        <link rel="next" href="../v2.1.202/">
       
       
         
@@ -25,7 +25,7 @@
     
     
       
-        <title>2.1.162 - VERGIL Tooling</title>
+        <title>2.1.203 - VERGIL Tooling</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#release-21162-2026-07-24" class="md-skip">
+        <a href="#release-21203-2026-08-24" class="md-skip">
           Skip to content
         </a>
       
@@ -116,7 +116,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              2.1.162
+              2.1.203
             
           </span>
         </div>
@@ -1272,10 +1272,37 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="../v2.1.203/" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.203
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
         
   
   
@@ -1291,6 +1318,37 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#chores" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chores
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -2420,37 +2478,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    2.1.162
-  
-
-    
-  </span>
-  
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../v2.1.162/" class="md-nav__link">
         
   
   
@@ -2466,48 +2497,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
-      
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -13827,21 +13816,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#documentation" class="md-nav__link">
+  <a href="#chores" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Documentation
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#features" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Features
+        Chores
       
     </span>
   </a>
@@ -13865,19 +13843,15 @@
 
 
 
-<h1 id="release-21162-2026-07-24">Release 2.1.162 (2026-07-24)<a class="headerlink" href="#release-21162-2026-07-24" title="Permanent link">&para;</a></h1>
-<h2 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h2>
+<h1 id="release-21203-2026-08-24">Release 2.1.203 (2026-08-24)<a class="headerlink" href="#release-21203-2026-08-24" title="Permanent link">&para;</a></h1>
+<h2 id="chores">Chores<a class="headerlink" href="#chores" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>align host dev-tree docs with single-.venv model (#2506)</strong></li>
-<li>docs(docs): align host dev-tree docs with single-.venv model</li>
+<li><strong>ignore Conan 2 generator output for C++ repos (#2891)</strong>
+Conan 2's CMakeDeps/CMakeToolchain generators write ten-plus files into the source tree on every conan install (including the cached-image warmup vrg-container-run runs), none of which the baseline covered. Extend the baseline .gitignore C/C++ section with those patterns, using wildcards because the env scripts carry build-type and arch suffixes (e.g. conanbuildenv-debug-armv8.sh) that a literal list would miss on Release/x86_64.</li>
 </ul>
-<h2 id="features">Features<a class="headerlink" href="#features" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>emit language-aware explicit secrets map in cd.yml (#2509)</strong>
-Replace the blanket <code>secrets: inherit</code> in generated cd.yml with a language-keyed least-privilege secrets map so each repo forwards only the secrets its ecosystem's publisher needs to cd-release.yml.</li>
-</ul>
-<p>New helper _cd_release_secrets(language) returns the exact secret set per ecosystem: rust -&gt; CARGO_REGISTRY_TOKEN, ruby -&gt; RUBYGEMS_API_KEY, java -&gt; CENTRAL_USERNAME/CENTRAL_TOKEN/GPG_PRIVATE_KEY/GPG_PASSPHRASE. python (OIDC trusted publishing), go (no token), and any non-listed language forward nothing, so no secrets: block is emitted at all.</p>
-<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.162/v2.1.162-ci-evidence.tar.gz">Download →</a></p>
+<p>conan.lock is intentionally left tracked — committed for reproducible resolution, the C++ analogue of uv.lock (and so #2871's cache key can see it). Both CMakePresets.json and CMakeUserPresets.json are ignored since both are Conan-generated here.</p>
+<p>Mirror the same lines into this repo's own .gitignore to keep it a superset of the baseline (repo_config._check_gitignore / test_baseline_is_subset_of_flagship_gitignore). Found via logical-minds-foundry/mq-protocol-gateway, the fleet's first C++ repo.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.203/v2.1.203-ci-evidence.tar.gz">Download →</a></p>
 
 
 
