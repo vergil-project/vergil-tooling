@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.209] - 2026-08-27
+
+### Features
+
+- strip stale baseline comments on bootstrap (#2940)
+
 ## [2.1.208] - 2026-08-27
 
 ### Features

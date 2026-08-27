@@ -22,6 +22,52 @@ MANAGED_BEGIN_PREFIX = "# >>> vergil-managed:"
 #: Exact line that closes a vergil-managed fence.
 MANAGED_END = "# <<< vergil-managed <<<"
 
+#: The known baseline *comment* scaffolding a bootstrap must strip alongside the
+#: managed patterns. Frozen verbatim from ``data/gitignore.baseline`` (every
+#: comment line: the "single source of truth" preamble and every ``# section``
+#: header) so the set survives the monolith's eventual deletion, plus the header
+#: an earlier sweep appended to some repos (vergil-project/.github#322). A repo
+#: whose ``.gitignore`` *was* repo-init's fully-commented baseline would
+#: otherwise convert to a fence trailed by a now-false preamble and a stack of
+#: emptied section headers (issue #2939). Matched on rstripped exact equality;
+#: genuine repo-local comments are not in this set and survive.
+_MANAGED_COMMENTS: frozenset[str] = frozenset(
+    {
+        "# Vergil baseline .gitignore — single source of truth (epic vergil-project/.github#311).",
+        "# Every managed repo's .gitignore must be a SUPERSET of the non-comment lines",
+        "# below (verbatim). Repos may add their own local entries. Do not edit a",
+        "# consuming repo to diverge — change this file in vergil-tooling and release.",
+        "# Editors",
+        "# OS",
+        "# Environment / secrets",
+        "# Logs",
+        "# Vergil internals",
+        "# Build / packaging output",
+        "# C++ TEST runs its ASan/UBSan build out-of-tree in a *separate* dir so the",
+        "# sanitizer instrumentation never shares objects with the coverage build; it is",
+        "# generated output like build/ and must be ignored too, or a cpp dev build",
+        "# leaves the worktree dirty and un-sweepable by finalize cleanup (#2906).",
+        "# Python bytecode / caches",
+        "# Coverage / validation / CI-gate evidence",
+        "# Docs (mkdocs build output; mkdocs.yml lives at docs/site/)",
+        "# Node / TypeScript",
+        "# Go (test/coverage output; binaries usually have no extension)",
+        "# Ruby",
+        "# C/C++ object & archive output",
+        "# C/C++ Conan 2 generator output (written into the source tree by `conan install`).",
+        "# The -debug-armv8 style suffix carries build type + arch, so these need wildcards",
+        "# to match Release builds and x86_64 hosts too. conan.lock is intentionally NOT",
+        "# ignored — it is committed for reproducible resolution, like uv.lock.",
+        "# Conan CMakeDeps per-package files. Package-named (e.g. GTest → FindGTest.cmake,",
+        "# GTestConfig.cmake, GTest-Target-debug.cmake), so matched by shape rather than an",
+        "# enumerable list. Conan writes these loose at the source root; a repo's own CMake",
+        "# modules belong under cmake/ or are generated into build/, never loose at the",
+        "# root, so these globs do not collide with tracked project files in practice.",
+        "# --- Vergil baseline sync (vergil-project/.github#322): "
+        "lines added to match gitignore.baseline ---",
+    }
+)
+
 FRAGMENT_LANGS: tuple[str, ...] = (
     "python",
     "cpp",
@@ -169,6 +215,24 @@ class SyncResult:
     removed: list[str]
 
 
+def _normalize_blanks(lines: list[str]) -> list[str]:
+    """Strip leading/trailing blank lines and collapse consecutive blank runs.
+
+    Blank means empty after ``strip``. Interior runs of blank lines collapse to
+    a single blank; leading and trailing blanks are removed entirely.
+    """
+    normalized: list[str] = []
+    for line in lines:
+        if not line.strip():
+            if normalized and normalized[-1].strip():
+                normalized.append("")
+            continue
+        normalized.append(line)
+    while normalized and not normalized[-1].strip():
+        normalized.pop()
+    return normalized
+
+
 def _assemble(fence_block: str, repo_local: list[str]) -> str:
     """Join a rendered fence block with its repo-local section, fence first.
 
@@ -188,11 +252,14 @@ def sync(text: str, lang: str | None) -> SyncResult:
 
     * **Bootstrap** (no fence): the loose monolith is replaced by a fresh
       ``render_block(lang)``, and the repo-local section keeps only lines that
-      are *not* in ``managed_vocabulary()``. This deliberately drops both the
-      language's own managed lines and any foreign-language managed lines,
-      leaving only genuinely repo-specific ignores below a blank separator (the
-      section is omitted entirely when nothing genuine remains). Every dropped
-      managed line is reported in ``removed``.
+      are *not* in ``managed_vocabulary()`` and *not* in ``_MANAGED_COMMENTS``.
+      This deliberately drops the language's own managed lines, any
+      foreign-language managed lines, and the known baseline comment scaffolding
+      (the "single source of truth" preamble and the emptied section headers),
+      then normalizes blank lines, leaving only genuinely repo-specific content
+      below a blank separator (the section is omitted entirely when nothing
+      genuine remains). Every dropped managed *pattern* is reported in
+      ``removed``; stripped comments are not.
     * **Update** (fence present): the fence is rewritten to the canonical
       ``render_block(lang)`` and the parsed repo-local section is trusted as-is
       (never re-filtered); ``removed`` is empty.
@@ -206,7 +273,13 @@ def sync(text: str, lang: str | None) -> SyncResult:
     if fence is None:
         vocab = managed_vocabulary()
         removed = [line for line in repo_local if line.rstrip() in vocab]
-        kept = [line for line in repo_local if line.rstrip() not in vocab]
+        kept = _normalize_blanks(
+            [
+                line
+                for line in repo_local
+                if line.rstrip() not in vocab and line.rstrip() not in _MANAGED_COMMENTS
+            ]
+        )
         section = ["", *kept] if kept else []
         new_text = _assemble(fence_block, section)
     else:
