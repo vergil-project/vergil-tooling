@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/)
 and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [2.1.208] - 2026-08-27
+
+### Features
+
+- add composable base + language fragment data and compose() (#2929)
+- add managed-block render/parse/check (#2930)
+- sync() with bootstrap/update semantics (#2931)
+- accept fenced form in _check_gitignore (transitional) (#2932)
+- add vrg-gitignore-sync applicator CLI (#2933)
+- compose repo-init .gitignore through render_block; fence the flagship (#2934)
+- add generic fleet-sweep driver + vrg-fleet-sync (#2935)
+
 ## [2.1.207] - 2026-08-27
 
 ### Bug fixes
