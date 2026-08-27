@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../">
+        <link rel="prev" href="../v2.1.209/">
       
       
         <link rel="next" href="../v2.1.207/">
@@ -1221,6 +1221,8 @@
       
         
       
+        
+      
     
     
     
@@ -1276,6 +1278,34 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../v2.1.209/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    2.1.209
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -14044,6 +14074,7 @@ render_gitignore now emits gitignore.render_block(lang) — the composed base + 
 Add lib/fleet_sweep.py: the generic per-repo work-chain driver (Applicator/SweepSpec/RepoResult + run_sweep). Per repo it creates a detached probe worktree, runs the applicator, and only when the change is real mints a tracking issue, names the feature/<issue>-<slug> branch, commits, and hands off via vrg-pr-workflow report-ready; an unchanged repo is skipped with no issue or branch, and one repo's failure is isolated so the sweep continues. dry-run reports intended actions touching no git/gh state.</li>
 </ul>
 <p>Add bin/vrg_fleet_sync.py wiring the gitignore applicator (shells out to vrg-gitignore-sync --write) as the sole consumer of the seam; a general change-script CLI is follow-on #328. The driver never runs vrg-submit-pr or merges.</p>
+<p><strong>CI Evidence:</strong> All gates passed — full audit bundle available. <a href="https://github.com/vergil-project/vergil-tooling/releases/download/v2.1.208/v2.1.208-ci-evidence.tar.gz">Download →</a></p>
 
 
 
